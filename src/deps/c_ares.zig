@@ -182,23 +182,33 @@ pub const struct_hostent = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
-        var count: u32 = 0;
-        while (this.h_aliases[count] != null) {
-            count += 1;
+    pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime lookup_name: []const u8) JSC.JSValue {
+
+        // A cname lookup always returns a single record but we follow the common API here.
+        if (comptime strings.eqlComptime(lookup_name, "cname")) {
+            const array = JSC.JSValue.createEmptyArray(globalThis, 1);
+            const h_name_len = bun.len(this.h_name);
+            const h_name_slice = this.h_name[0..h_name_len];
+            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toValueGC(globalThis));
+            return array;
+        } else {
+            var count: u32 = 0;
+            while (this.h_aliases[count] != null) {
+                count += 1;
+            }
+
+            const array = JSC.JSValue.createEmptyArray(globalThis, count);
+            count = 0;
+
+            while (this.h_aliases[count]) |alias| {
+                const alias_len = bun.len(alias);
+                const alias_slice = alias[0..alias_len];
+                array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toValueGC(globalThis));
+                count += 1;
+            }
+
+            return array;
         }
-
-        const array = JSC.JSValue.createEmptyArray(globalThis, count);
-        count = 0;
-
-        while (this.h_aliases[count]) |alias| {
-            const alias_len = bun.len(alias);
-            const alias_slice = alias[0..alias_len];
-            array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toValueGC(globalThis));
-            count += 1;
-        }
-
-        return array;
     }
 
     pub fn Callback(comptime Type: type) type {
@@ -228,6 +238,16 @@ pub const struct_hostent = extern struct {
                     function(this, null, timeouts, start);
                 } else if (comptime strings.eqlComptime(lookup_name, "ptr")) {
                     var result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, std.os.AF.INET, &start);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    function(this, null, timeouts, start);
+                } else if (comptime strings.eqlComptime(lookup_name, "cname")) {
+                    var addrttls: [256]struct_ares_addrttl = undefined;
+                    var naddrttls: i32 = 256;
+
+                    var result = ares_parse_a_reply(buffer, buffer_length, &start, &addrttls, &naddrttls);
                     if (result != ARES_SUCCESS) {
                         function(this, Error.get(result), timeouts, null);
                         return;

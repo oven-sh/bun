@@ -512,13 +512,13 @@ declare module "dns" {
    * will contain an array of canonical name records available for the `hostname`(e.g. `['bar.example.com']`).
    * @since v0.3.2
    */
-  // export function resolveCname(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export namespace resolveCname {
-  //   function __promisify__(hostname: string): Promise<string[]>;
-  // }
+  export function resolveCname(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export namespace resolveCname {
+    function __promisify__(hostname: string): Promise<string[]>;
+  }
   /**
    * Uses the DNS protocol to resolve `CAA` records for the `hostname`. The`addresses` argument passed to the `callback` function
    * will contain an array of certification authority authorization records
@@ -861,7 +861,7 @@ declare module "dns" {
     resolve4: typeof resolve4;
     resolve6: typeof resolve6;
     // resolveAny: typeof resolveAny;
-    // resolveCname: typeof resolveCname;
+    resolveCname: typeof resolveCname;
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
     resolveNs: typeof resolveNs;

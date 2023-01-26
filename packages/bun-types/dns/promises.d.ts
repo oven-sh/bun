@@ -230,7 +230,7 @@ declare module "dns/promises" {
    * the `hostname` (e.g. `['bar.example.com']`).
    * @since v10.6.0
    */
-  // function resolveCname(hostname: string): Promise<string[]>;
+  function resolveCname(hostname: string): Promise<string[]>;
   /**
    * Uses the DNS protocol to resolve mail exchange records (`MX` records) for the`hostname`. On success, the `Promise` is resolved with an array of objects
    * containing both a `priority` and `exchange` property (e.g.`[{priority: 10, exchange: 'mx.example.com'}, ...]`).
@@ -384,7 +384,7 @@ declare module "dns/promises" {
     resolve4: typeof resolve4;
     resolve6: typeof resolve6;
     // resolveAny: typeof resolveAny;
-    // resolveCname: typeof resolveCname;
+    resolveCname: typeof resolveCname;
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
     resolveNs: typeof resolveNs;

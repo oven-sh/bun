@@ -17,6 +17,7 @@ test("it exists", () => {
   expect(dns.resolveCaa).toBeDefined();
   expect(dns.resolveNs).toBeDefined();
   expect(dns.resolvePtr).toBeDefined();
+  expect(dns.resolveCname).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -134,6 +135,15 @@ test("dns.resolveNs (bun.sh)", (done) => {
 
 test("dns.resolvePtr (ptr.socketify.dev)", (done) => {
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0]).toBe('bun.sh');
+    done(err);
+  });
+});
+
+test("dns.resolveCname (cname.socketify.dev)", (done) => {
+  dns.resolveCname("cname.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe('bun.sh');

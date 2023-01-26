@@ -11,7 +11,6 @@ const HTTP = @import("./http_client_async.zig");
 const NetworkThread = @This();
 const Environment = @import("bun").Environment;
 const Lock = @import("./lock.zig").Lock;
-const FIFO = @import("./io/fifo.zig").FIFO;
 
 /// Single-thread in this pool
 io: *AsyncIO = undefined,

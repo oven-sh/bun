@@ -1391,10 +1391,19 @@ bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
 
+# lInux only
+MIMALLOC_VALGRIND_ENABLED_FLAG =
+
+ifeq ($(OS_NAME),linux)
+	MIMALLOC_VALGRIND_ENABLED_FLAG = -DMI_VALGRIND=ON
+endif
+
+
+.PHONY: mimalloc-debug
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
 	cd $(BUN_DEPS_DIR)/mimalloc; make clean || echo ""; \
-		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) ${MIMALLOC_OVERRIDE_FLAG} \
+		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) ${MIMALLOC_OVERRIDE_FLAG} ${MIMALLOC_VALGRIND_ENABLED_FLAG} \
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DMI_DEBUG_FULL=1 \
 			-DMI_SKIP_COLLECT_ON_EXIT=1 \

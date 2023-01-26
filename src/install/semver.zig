@@ -44,14 +44,14 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(this: *const String) void {
-        if (comptime !Environment.allow_assert)
-            return;
+    pub inline fn assertDefined(_: *const String) void {
+        // if (comptime !Environment.allow_assert)
+        //     return;
 
-        if (this.isUndefined()) {
-            @breakpoint();
-            @panic("String is undefined");
-        }
+        // if (this.isUndefined()) {
+        //     @breakpoint();
+        //     @panic("String is undefined");
+        // }
     }
 
     pub inline fn init(

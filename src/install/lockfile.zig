@@ -1583,12 +1583,11 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         switch (index.*) {
             .PackageID => |single_| {
                 var ids = try this.allocator.alloc(PackageID, 8);
+                std.mem.set(PackageID, ids, invalid_package_id - 1);
+
                 ids[0] = single_;
                 ids[1] = id;
                 this.unique_packages.unset(single_);
-                for (ids[2..7]) |_, i| {
-                    ids[i + 2] = invalid_package_id - 1;
-                }
 
                 // stage1 compiler doesn't like this
                 ids[7] = invalid_package_id;
@@ -1598,7 +1597,7 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
                 };
             },
             .PackageIDMultiple => |ids_| {
-                var ids = std.mem.span(ids_);
+                var ids = bun.sliceTo(ids_, invalid_package_id - 1);
                 for (ids) |id2, i| {
                     if (id2 == invalid_package_id - 1) {
                         ids[i] = id;
@@ -1607,6 +1606,8 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
                 }
 
                 var new_ids = try this.allocator.alloc(PackageID, ids.len + 8);
+                std.mem.set(PackageID, new_ids, invalid_package_id - 1);
+
                 defer this.allocator.free(ids);
                 for (ids) |id2, i| {
                     new_ids[i] = id2;

@@ -133,7 +133,7 @@ test("dns.resolveNs (bun.sh)", (done) => {
 });
 
 test("dns.resolvePtr (ptr.socketify.dev)", (done) => {
-  dns.resolveNs("ptr.socketify.dev", (err, results) => {
+  dns.resolvePtr("ptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe('bun.sh');

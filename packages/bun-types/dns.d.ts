@@ -318,127 +318,127 @@ declare module "dns" {
     hostname: string,
     callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "A",
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "AAAA",
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "ANY",
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses: AnyRecord[],
-  //   ) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "CNAME",
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "MX",
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses: MxRecord[],
-  //   ) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "NAPTR",
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses: NaptrRecord[],
-  //   ) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "NS",
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "PTR",
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "SOA",
-  //   callback: (err: ErrnoException | null, addresses: SoaRecord) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "SRV",
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses: SrvRecord[],
-  //   ) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: "TXT",
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses: string[][],
-  //   ) => void,
-  // ): void;
-  // export function resolve(
-  //   hostname: string,
-  //   rrtype: string,
-  //   callback: (
-  //     err: ErrnoException | null,
-  //     addresses:
-  //       | string[]
-  //       | MxRecord[]
-  //       | NaptrRecord[]
-  //       | SoaRecord
-  //       | SrvRecord[]
-  //       | string[][]
-  //       | AnyRecord[],
-  //   ) => void,
-  // ): void;
-  // export namespace resolve {
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR",
-  //   ): Promise<string[]>;
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype: "ANY",
-  //   ): Promise<AnyRecord[]>;
-  //   function __promisify__(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype: "NAPTR",
-  //   ): Promise<NaptrRecord[]>;
-  //   function __promisify__(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype: "SRV",
-  //   ): Promise<SrvRecord[]>;
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype: "TXT",
-  //   ): Promise<string[][]>;
-  //   function __promisify__(
-  //     hostname: string,
-  //     rrtype: string,
-  //   ): Promise<
-  //     | string[]
-  //     | MxRecord[]
-  //     | NaptrRecord[]
-  //     | SoaRecord
-  //     | SrvRecord[]
-  //     | string[][]
-  //     | AnyRecord[]
-  //   >;
-  // }
+  export function resolve(
+    hostname: string,
+    rrtype: "A",
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "AAAA",
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "ANY",
+    callback: (
+      err: ErrnoException | null,
+      addresses: AnyRecord[],
+    ) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "CNAME",
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "MX",
+    callback: (
+      err: ErrnoException | null,
+      addresses: MxRecord[],
+    ) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "NAPTR",
+    callback: (
+      err: ErrnoException | null,
+      addresses: NaptrRecord[],
+    ) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "NS",
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "PTR",
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "SOA",
+    callback: (err: ErrnoException | null, addresses: SoaRecord) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "SRV",
+    callback: (
+      err: ErrnoException | null,
+      addresses: SrvRecord[],
+    ) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: "TXT",
+    callback: (
+      err: ErrnoException | null,
+      addresses: string[][],
+    ) => void,
+  ): void;
+  export function resolve(
+    hostname: string,
+    rrtype: string,
+    callback: (
+      err: ErrnoException | null,
+      addresses:
+        | string[]
+        | MxRecord[]
+        | NaptrRecord[]
+        | SoaRecord
+        | SrvRecord[]
+        | string[][]
+        | AnyRecord[],
+    ) => void,
+  ): void;
+  export namespace resolve {
+    function __promisify__(
+      hostname: string,
+      rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR",
+    ): Promise<string[]>;
+    function __promisify__(
+      hostname: string,
+      rrtype: "ANY",
+    ): Promise<AnyRecord[]>;
+    function __promisify__(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
+    function __promisify__(
+      hostname: string,
+      rrtype: "NAPTR",
+    ): Promise<NaptrRecord[]>;
+    function __promisify__(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
+    function __promisify__(
+      hostname: string,
+      rrtype: "SRV",
+    ): Promise<SrvRecord[]>;
+    function __promisify__(
+      hostname: string,
+      rrtype: "TXT",
+    ): Promise<string[][]>;
+    function __promisify__(
+      hostname: string,
+      rrtype: string,
+    ): Promise<
+      | string[]
+      | MxRecord[]
+      | NaptrRecord[]
+      | SoaRecord
+      | SrvRecord[]
+      | string[][]
+      | AnyRecord[]
+    >;
+  }
   /**
    * Uses the DNS protocol to resolve a IPv4 addresses (`A` records) for the`hostname`. The `addresses` argument passed to the `callback` function
    * will contain an array of IPv4 addresses (e.g.`['74.125.79.104', '74.125.79.105', '74.125.79.106']`).

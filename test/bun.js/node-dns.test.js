@@ -89,11 +89,11 @@ test("dns.resolveSoa (bun.sh)", (done) => {
 });
 
 test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
-  dns.resolveNaptr("naptr.socketify.dev ", (err, results) => {
+  dns.resolveNaptr("naptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].flags).toBe('S');
-    expect(results[0].service).toBe('test');
+    expect(results[0].service).toBe('');
     expect(results[0].regexp).toBe('');
     expect(results[0].replacement).toBe('');
     expect(results[0].order).toBe(1);

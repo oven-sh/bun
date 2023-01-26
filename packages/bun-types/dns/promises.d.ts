@@ -10,7 +10,7 @@ declare module "dns/promises" {
     LookupOneOptions,
     LookupAllOptions,
     LookupOptions,
-    // AnyRecord,
+    AnyRecord,
     CaaRecord,
     MxRecord,
     NaptrRecord,
@@ -134,30 +134,30 @@ declare module "dns/promises" {
    * @param [rrtype='A'] Resource record type.
    */
   function resolve(hostname: string): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "A"): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "AAAA"): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "ANY"): Promise<AnyRecord[]>;
-  // function resolve(hostname: string, rrtype: "CAA"): Promise<CaaRecord[]>;
-  // function resolve(hostname: string, rrtype: "CNAME"): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
-  // function resolve(hostname: string, rrtype: "NAPTR"): Promise<NaptrRecord[]>;
-  // function resolve(hostname: string, rrtype: "NS"): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "PTR"): Promise<string[]>;
-  // function resolve(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
+  function resolve(hostname: string, rrtype: "A"): Promise<string[]>;
+  function resolve(hostname: string, rrtype: "AAAA"): Promise<string[]>;
+  function resolve(hostname: string, rrtype: "ANY"): Promise<AnyRecord[]>;
+  function resolve(hostname: string, rrtype: "CAA"): Promise<CaaRecord[]>;
+  function resolve(hostname: string, rrtype: "CNAME"): Promise<string[]>;
+  function resolve(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
+  function resolve(hostname: string, rrtype: "NAPTR"): Promise<NaptrRecord[]>;
+  function resolve(hostname: string, rrtype: "NS"): Promise<string[]>;
+  function resolve(hostname: string, rrtype: "PTR"): Promise<string[]>;
+  function resolve(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
   function resolveSrv(hostname: string): Promise<SrvRecord[]>;
   function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
-  // function resolve(
-  //   hostname: string,
-  //   rrtype: string,
-  // ): Promise<
-  //   | string[]
-  //   | MxRecord[]
-  //   | NaptrRecord[]
-  //   | SoaRecord
-  //   | SrvRecord[]
-  //   | string[][]
-  //   | AnyRecord[]
-  // >;
+  function resolve(
+    hostname: string,
+    rrtype: string,
+  ): Promise<
+    | string[]
+    | MxRecord[]
+    | NaptrRecord[]
+    | SoaRecord
+    | SrvRecord[]
+    | string[][]
+    | AnyRecord[]
+  >;
   /**
    * Uses the DNS protocol to resolve IPv4 addresses (`A` records) for the`hostname`. On success, the `Promise` is resolved with an array of IPv4
    * addresses (e.g. `['74.125.79.104', '74.125.79.105', '74.125.79.106']`).

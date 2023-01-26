@@ -1532,7 +1532,6 @@ pub const DNSResolver = struct {
                 return .zero;
             };
         };
-        _ = record_type;
 
         const name_value = arguments.ptr[0];
 
@@ -1550,9 +1549,44 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        // const name = name_str.toSliceZ(globalThis).cloneZ(bun.default_allocator) catch unreachable;
-        // TODO:
-        return JSC.JSValue.jsUndefined();
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+        //TODO: ANY CASE
+        switch (record_type) {
+            RecordType.A => {
+                defer name.deinit();
+                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet };
+                return resolver.doLookup(name.slice(), 0, options, globalThis);
+            },
+            RecordType.AAAA => {
+                defer name.deinit();
+                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet6 };
+                return resolver.doLookup(name.slice(), 0, options, globalThis);
+            },
+            RecordType.CNAME => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "cname", &name, globalThis);
+            },
+            RecordType.MX => {
+                return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", &name, globalThis);
+            },
+            RecordType.NS => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+            },
+            RecordType.PTR => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", &name, globalThis);
+            },
+            RecordType.SOA => {
+                return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+            },
+            RecordType.SRV => {
+                return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
+            },
+            RecordType.TXT => {
+                return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
+            }
+        }
     }
     // pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     //     const arguments = callframe.arguments(3);
@@ -2004,6 +2038,12 @@ pub const DNSResolver = struct {
     }
 
     comptime {
+        @export(
+            resolve,
+            .{
+                .name = "Bun__DNSResolver__resolve",
+            },
+        );
         @export(
             lookup,
             .{

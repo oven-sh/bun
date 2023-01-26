@@ -3618,9 +3618,9 @@ pub const PackageManager = struct {
 
                         defer {
                             dependency_list_entry.value_ptr.* = end_dependency_list;
+                            dependency_list.deinit(manager.allocator);
 
                             if (needs_flush) {
-                                dependency_list.deinit(manager.allocator);
                                 manager.flushDependencyQueue();
 
                                 if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {

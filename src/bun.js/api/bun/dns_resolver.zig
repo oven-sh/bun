@@ -625,7 +625,6 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
         cache: @This().CacheConfig = @This().CacheConfig{},
         head: CAresLookup(cares_type, type_name),
         tail: *CAresLookup(cares_type, type_name) = undefined,
-        task: bun.ThreadPool.Task = undefined,
 
         pub fn init(
             cache: DNSResolver.LookupCacheHit(@This()),
@@ -659,8 +658,6 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             }
             return request;
         }
-
-        pub const Task = bun.JSC.WorkTask(@This(), false);
 
         pub const CacheConfig = packed struct(u16) {
             pending_cache: bool = false,
@@ -971,36 +968,19 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 this.deinit();
                 return;
             }
-            if (comptime strings.eqlComptime(type_name, "soa") or strings.eqlComptime(type_name, "ns") or strings.eqlComptime(type_name, "ptr") or strings.eqlComptime(type_name, "cname")) {
-                if (result == null) {
-                    var promise = this.promise;
-                    var globalThis = this.globalThis;
-                    const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
-                    error_value.put(
-                        globalThis,
-                        JSC.ZigString.static("code"),
-                        JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-                    );
+            if (result == null) {
+                var promise = this.promise;
+                var globalThis = this.globalThis;
+                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("code"),
+                    JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
+                );
 
-                    promise.reject(globalThis, error_value);
-                    this.deinit();
-                    return;
-                }
-            } else {
-                if (result == null or result.?.next == null) {
-                    var promise = this.promise;
-                    var globalThis = this.globalThis;
-                    const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
-                    error_value.put(
-                        globalThis,
-                        JSC.ZigString.static("code"),
-                        JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-                    );
-
-                    promise.reject(globalThis, error_value);
-                    this.deinit();
-                    return;
-                }
+                promise.reject(globalThis, error_value);
+                this.deinit();
+                return;
             }
             var node = result.?;
             const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, type_name);
@@ -1585,7 +1565,7 @@ pub const DNSResolver = struct {
             },
             RecordType.TXT => {
                 return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
-            }
+            },
         }
     }
     // pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {

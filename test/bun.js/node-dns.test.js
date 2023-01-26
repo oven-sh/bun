@@ -20,28 +20,7 @@ test("it exists", () => {
   expect(dns.resolveCname).toBeDefined();
 });
 
-test("dns.lookup (localhost)", (done) => {
-  dns.lookup("localhost", (err, address, family) => {
-    expect(err).toBeNull();
-    if (family === 6) {
-      expect(address).toBe("::1");
-    } else {
-      expect(address).toBe("127.0.0.1");
-    }
-
-    done(err);
-  });
-});
-
-test("dns.lookup (example.com)", (done) => {
-  dns.lookup("example.com", (err, address, family) => {
-    expect(err).toBeNull();
-    expect(typeof address).toBe("string");
-    done(err);
-  });
-});
-
-//TODO: use a bun.sh SRV for testing
+// //TODO: use a bun.sh SRV for testing
 test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
   dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
     expect(err).toBeNull();
@@ -124,7 +103,8 @@ test("dns.resolveMx (bun.sh)", (done) => {
 });
 
 
-test("dns.resolveNs (bun.sh)", (done) => {
+
+test("dns.resolveNs (bun.sh) ", (done) => {
   dns.resolveNs("bun.sh", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -147,6 +127,28 @@ test("dns.resolveCname (cname.socketify.dev)", (done) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe('bun.sh');
+    done(err);
+  });
+});
+
+
+test("dns.lookup (example.com)", (done) => {
+  dns.lookup("example.com", (err, address, family) => {
+    expect(err).toBeNull();
+    expect(typeof address).toBe("string");
+    done(err);
+  });
+});
+
+test("dns.lookup (localhost)", (done) => {
+  dns.lookup("localhost", (err, address, family) => {
+    expect(err).toBeNull();
+    if (family === 6) {
+      expect(address).toBe("::1");
+    } else {
+      expect(address).toBe("127.0.0.1");
+    }
+
     done(err);
   });
 });

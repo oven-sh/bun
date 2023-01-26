@@ -186,12 +186,19 @@ pub const struct_hostent = extern struct {
 
         // A cname lookup always returns a single record but we follow the common API here.
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
-            const array = JSC.JSValue.createEmptyArray(globalThis, 1);
-            const h_name_len = bun.len(this.h_name);
-            const h_name_slice = this.h_name[0..h_name_len];
-            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toValueGC(globalThis));
-            return array;
+            if(this.h_name != null){
+                const array = JSC.JSValue.createEmptyArray(globalThis, 1);
+                const h_name_len = bun.len(this.h_name);
+                const h_name_slice = this.h_name[0..h_name_len];
+                array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toValueGC(globalThis));
+                return array;
+            }
+            return JSC.JSValue.createEmptyArray(globalThis, 0);
         } else {
+            if (this.h_aliases == null){
+                return JSC.JSValue.createEmptyArray(globalThis, 0);
+            }
+            
             var count: u32 = 0;
             while (this.h_aliases[count] != null) {
                 count += 1;

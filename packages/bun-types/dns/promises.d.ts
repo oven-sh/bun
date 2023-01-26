@@ -266,7 +266,7 @@ declare module "dns/promises" {
    * records available for `hostname` (e.g.`['ns1.example.com', 'ns2.example.com']`).
    * @since v10.6.0
    */
-  // function resolveNs(hostname: string): Promise<string[]>;
+  function resolveNs(hostname: string): Promise<string[]>;
   /**
    * Uses the DNS protocol to resolve pointer records (`PTR` records) for the`hostname`. On success, the `Promise` is resolved with an array of strings
    * containing the reply records.
@@ -387,7 +387,7 @@ declare module "dns/promises" {
     // resolveCname: typeof resolveCname;
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
-    // resolveNs: typeof resolveNs;
+    resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;

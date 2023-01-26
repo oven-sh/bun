@@ -15,6 +15,7 @@ test("it exists", () => {
   expect(dns.resolveNaptr).toBeDefined();
   expect(dns.resolveMx).toBeDefined();
   expect(dns.resolveCaa).toBeDefined();
+  expect(dns.resolveNs).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -116,6 +117,16 @@ test("dns.resolveMx (bun.sh)", (done) => {
     expect(results instanceof Array).toBe(true);
     expect(results[0].priority).toBe(10);
     expect(results[0].exchange).toBe('eforward1.registrar-servers.com');
+    done(err);
+  });
+});
+
+
+test("dns.resolveNs (bun.sh)", (done) => {
+  dns.resolveNs("bun.sh", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0]).toBe('hans.ns.cloudflare.com');
     done(err);
   });
 });

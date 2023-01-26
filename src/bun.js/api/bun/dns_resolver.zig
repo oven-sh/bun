@@ -971,7 +971,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 this.deinit();
                 return;
             }
-            if (comptime strings.eqlComptime(type_name, "soa")) {
+            if (comptime strings.eqlComptime(type_name, "soa") or strings.eqlComptime(type_name, "ns")) {
                 if (result == null) {
                     var promise = this.promise;
                     var globalThis = this.globalThis;
@@ -1003,7 +1003,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
                 }
             }
             var node = result.?;
-            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis);
+            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, type_name);
             this.onComplete(array);
             return;
         }
@@ -1167,6 +1167,7 @@ pub const DNSResolver = struct {
     pending_naptr_cache_cares: NaptrPendingCache = NaptrPendingCache.init(),
     pending_mx_cache_cares: MxPendingCache = MxPendingCache.init(),
     pending_caa_cache_cares: CaaPendingCache = CaaPendingCache.init(),
+    pending_ns_cache_cares: NSPendingCache = NSPendingCache.init(),
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
     const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
@@ -1175,6 +1176,7 @@ pub const DNSResolver = struct {
     const NaptrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_naptr_reply, "naptr").PendingCacheKey, 32);
     const MxPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_mx_reply, "mx").PendingCacheKey, 32);
     const CaaPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_caa_reply, "caa").PendingCacheKey, 32);
+    const NSPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ns").PendingCacheKey, 32);
 
     fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
         var cache = &@field(this, cache_name);
@@ -1208,7 +1210,7 @@ pub const DNSResolver = struct {
 
         var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSReponse(this.vm.allocator, prev_global);
+        var array = addr.toJSReponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
@@ -1219,7 +1221,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSReponse(this.vm.allocator, new_global);
+                array = addr.toJSReponse(this.vm.allocator, new_global, lookup_name);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1713,6 +1715,37 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", &name, globalThis);
     }
 
+    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveNs", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveNs", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+    }
+
     pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
@@ -1945,6 +1978,12 @@ pub const DNSResolver = struct {
             resolveCaa,
             .{
                 .name = "Bun__DNSResolver__resolveCaa",
+            },
+        );
+        @export(
+            resolveNs,
+            .{
+                .name = "Bun__DNSResolver__resolveNs",
             },
         );
     }

@@ -579,13 +579,13 @@ declare module "dns" {
    * contain an array of name server records available for `hostname`(e.g. `['ns1.example.com', 'ns2.example.com']`).
    * @since v0.1.90
    */
-  // export function resolveNs(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export namespace resolveNs {
-  //   function __promisify__(hostname: string): Promise<string[]>;
-  // }
+  export function resolveNs(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export namespace resolveNs {
+    function __promisify__(hostname: string): Promise<string[]>;
+  }
   /**
    * Uses the DNS protocol to resolve pointer records (`PTR` records) for the`hostname`. The `addresses` argument passed to the `callback` function will
    * be an array of strings containing the reply records.
@@ -864,7 +864,7 @@ declare module "dns" {
     // resolveCname: typeof resolveCname;
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
-    // resolveNs: typeof resolveNs;
+    resolveNs: typeof resolveNs;
     // resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;

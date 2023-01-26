@@ -591,13 +591,13 @@ declare module "dns" {
    * be an array of strings containing the reply records.
    * @since v6.0.0
    */
-  // export function resolvePtr(
-  //   hostname: string,
-  //   callback: (err: ErrnoException | null, addresses: string[]) => void,
-  // ): void;
-  // export namespace resolvePtr {
-  //   function __promisify__(hostname: string): Promise<string[]>;
-  // }
+  export function resolvePtr(
+    hostname: string,
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
+  ): void;
+  export namespace resolvePtr {
+    function __promisify__(hostname: string): Promise<string[]>;
+  }
   /**
    * Uses the DNS protocol to resolve a start of authority record (`SOA` record) for
    * the `hostname`. The `address` argument passed to the `callback` function will
@@ -865,7 +865,7 @@ declare module "dns" {
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
     resolveNs: typeof resolveNs;
-    // resolvePtr: typeof resolvePtr;
+    resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;
     resolveTxt: typeof resolveTxt;

@@ -1,6 +1,7 @@
 const c = @import("std").c;
 const std = @import("std");
 const bun = @import("bun");
+const strings = bun.strings;
 const iovec = @import("std").os.iovec;
 const struct_in_addr = std.os.sockaddr.in;
 const struct_sockaddr = std.os.sockaddr;
@@ -181,7 +182,7 @@ pub const struct_hostent = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_hostent, _: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var count: u32 = 0;
         while (this.h_aliases[count] != null) {
             count += 1;
@@ -205,6 +206,7 @@ pub const struct_hostent = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime lookup_name: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -217,12 +219,21 @@ pub const struct_hostent = extern struct {
                 }
 
                 var start: [*c]struct_hostent = undefined;
-                var result = ares_parse_ns_reply(buffer, buffer_length, &start);
-                if (result != ARES_SUCCESS) {
-                    function(this, Error.get(result), timeouts, null);
-                    return;
+                if (comptime strings.eqlComptime(lookup_name, "ns")) {
+                    var result = ares_parse_ns_reply(buffer, buffer_length, &start);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    function(this, null, timeouts, start);
+                } else if (comptime strings.eqlComptime(lookup_name, "ptr")) {
+                    var result = ares_parse_ptr_reply(buffer, buffer_length, null, 0, std.os.AF.INET, &start);
+                    if (result != ARES_SUCCESS) {
+                        function(this, Error.get(result), timeouts, null);
+                        return;
+                    }
+                    function(this, null, timeouts, start);
                 }
-                function(this, null, timeouts, start);
             }
         }.handle;
     }
@@ -484,7 +495,7 @@ pub const Channel = opaque {
         };
 
         const field_name = comptime std.fmt.comptimePrint("ns_t_{s}", .{lookup_name});
-        ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(Type, callback), ctx);
+        ares_query(this, name_ptr, NSClass.ns_c_in, @field(NSType, field_name), cares_type.callbackWrapper(lookup_name, Type, callback), ctx);
     }
 
     pub inline fn process(this: *Channel, fd: i32, readable: bool, writable: bool) void {
@@ -587,7 +598,7 @@ pub const struct_ares_caa_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_caa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -631,6 +642,7 @@ pub const struct_ares_caa_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -665,7 +677,7 @@ pub const struct_ares_srv_reply = extern struct {
     port: c_ushort,
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_srv_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -716,6 +728,7 @@ pub const struct_ares_srv_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -749,7 +762,7 @@ pub const struct_ares_mx_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_mx_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -791,6 +804,7 @@ pub const struct_ares_mx_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -824,7 +838,7 @@ pub const struct_ares_txt_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_txt_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -862,6 +876,7 @@ pub const struct_ares_txt_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -905,7 +920,7 @@ pub const struct_ares_naptr_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_naptr_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -961,6 +976,7 @@ pub const struct_ares_naptr_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {
@@ -998,7 +1014,7 @@ pub const struct_ares_soa_reply = extern struct {
 
     const JSC = bun.JSC;
 
-    pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, _: []const u8) JSC.JSValue {
+    pub fn toJSReponse(this: *struct_ares_soa_reply, parent_allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime _: []const u8) JSC.JSValue {
         var stack = std.heap.stackFallback(2048, parent_allocator);
         var arena = std.heap.ArenaAllocator.init(stack.get());
         defer arena.deinit();
@@ -1033,6 +1049,7 @@ pub const struct_ares_soa_reply = extern struct {
     }
 
     pub fn callbackWrapper(
+        comptime _: []const u8,
         comptime Type: type,
         comptime function: Callback(Type),
     ) ares_callback {

@@ -16,6 +16,7 @@ test("it exists", () => {
   expect(dns.resolveMx).toBeDefined();
   expect(dns.resolveCaa).toBeDefined();
   expect(dns.resolveNs).toBeDefined();
+  expect(dns.resolvePtr).toBeDefined();
 });
 
 test("dns.lookup (localhost)", (done) => {
@@ -127,6 +128,15 @@ test("dns.resolveNs (bun.sh)", (done) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0]).toBe('hans.ns.cloudflare.com');
+    done(err);
+  });
+});
+
+test("dns.resolvePtr (ptr.socketify.dev)", (done) => {
+  dns.resolveNs("ptr.socketify.dev", (err, results) => {
+    expect(err).toBeNull();
+    expect(results instanceof Array).toBe(true);
+    expect(results[0]).toBe('bun.sh');
     done(err);
   });
 });

@@ -272,7 +272,7 @@ declare module "dns/promises" {
    * containing the reply records.
    * @since v10.6.0
    */
-  // function resolvePtr(hostname: string): Promise<string[]>;
+  function resolvePtr(hostname: string): Promise<string[]>;
   /**
    * Uses the DNS protocol to resolve a start of authority record (`SOA` record) for
    * the `hostname`. On success, the `Promise` is resolved with an object with the
@@ -388,7 +388,7 @@ declare module "dns/promises" {
     resolveMx: typeof resolveMx;
     resolveNaptr: typeof resolveNaptr;
     resolveNs: typeof resolveNs;
-    // resolvePtr: typeof resolvePtr;
+    resolvePtr: typeof resolvePtr;
     resolveSoa: typeof resolveSoa;
     resolveSrv: typeof resolveSrv;
     resolveTxt: typeof resolveTxt;

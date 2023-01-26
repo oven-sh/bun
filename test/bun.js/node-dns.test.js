@@ -100,7 +100,7 @@ test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
 });
 
 test("dns.resolveCaa (caa.socketify.dev)", (done) => {
-  dns.resolveMx("caa.socketify.dev", (err, results) => {
+  dns.resolveCaa("caa.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
     expect(results[0].critical).toBe(0);

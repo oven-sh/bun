@@ -566,11 +566,9 @@ pub const struct_ares_caa_reply = extern struct {
 
         obj.put(globalThis, JSC.ZigString.static("critical"), JSC.JSValue.jsNumber(this.critical));
 
-        //TODO: check the right way to do this
         const property = this.property[0..this.plength];
         const value = this.value[0..this.length];
         const property_str = JSC.ZigString.fromUTF8(property);
-        _ = property_str.toAtomicValue(globalThis);
         obj.put(globalThis, &property_str, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
 
         return obj;

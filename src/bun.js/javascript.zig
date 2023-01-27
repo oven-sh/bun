@@ -2730,6 +2730,7 @@ pub const HotReloader = struct {
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
+        const parents = slice.items(.parent_hash);
         var file_descriptors = slice.items(.fd);
         var ctx = this.vm.bun_watcher.?;
         defer ctx.flushEvictions();
@@ -2780,9 +2781,30 @@ pub const HotReloader = struct {
                     }
                 },
                 .directory => {
-                    const affected = event.names(changed_files);
+                    var affected_buf: [128][]const u8 = undefined;
                     var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
-                    if (affected.len > 0) {
+
+                    const affected = brk: {
+                        if (comptime Environment.isMac) {
+                            entries_option = rfs.entries.get(file_path);
+                            var affected_i: usize = 0;
+
+                            if ((event.op.write or event.op.rename or event.op.delete) and entries_option != null) {
+                                for (parents) |parent_hash, entry_id| {
+                                    if (parent_hash == id) {
+                                        affected_buf[affected_i] = file_paths[entry_id][file_path.len..];
+                                        affected_i += 1;
+                                    }
+                                }
+                            }
+
+                            break :brk affected_buf[0..affected_i];
+                        }
+
+                        break :brk event.names(changed_files);
+                    };
+
+                    if (affected.len > 0 and !Environment.isMac) {
                         entries_option = rfs.entries.get(file_path);
                     }
 
@@ -2790,8 +2812,8 @@ pub const HotReloader = struct {
 
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
-                        for (affected) |changed_name_ptr| {
-                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+
+                        for (affected) |changed_name| {
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
@@ -2800,7 +2822,7 @@ pub const HotReloader = struct {
                                 var path_string: bun.PathString = undefined;
                                 var file_hash: Watcher.HashType = last_file_hash;
                                 const abs_path: string = brk: {
-                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                    if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
                                         // reset the file descriptor
                                         file_ent.entry.cache.fd = 0;
                                         file_ent.entry.need_stat = true;
@@ -2818,7 +2840,6 @@ pub const HotReloader = struct {
                                                             .file,
                                                         );
                                                     }
-                                                    file_descriptors[entry_id] = 0;
                                                 }
 
                                                 prev_entry_id = entry_id;

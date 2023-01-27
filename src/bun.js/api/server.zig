@@ -448,6 +448,7 @@ pub const ServerConfig = struct {
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
+            
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
@@ -4370,6 +4371,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn stopListening(this: *ThisServer, abrupt: bool) void {
+            httplog("stopListening", .{});
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
@@ -4434,6 +4436,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
+            httplog("onListenFailed", .{});
             this.unref();
 
             var zig_str: ZigString = ZigString.init("");
@@ -4709,6 +4712,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn listen(this: *ThisServer) void {
+            httplog("listen", .{});
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");

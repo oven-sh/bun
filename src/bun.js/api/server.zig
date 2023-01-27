@@ -340,13 +340,16 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
-                const host_str = host.toSlice(
-                    global,
-                    bun.default_allocator,
-                );
-                if (host_str.len > 0) {
-                    args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
-                    has_hostname = true;
+                // Express.js will attempt to pass the function as host or hostname
+                if (!host.jsType().isFunction()) {
+                    const host_str = host.toSlice(
+                        global,
+                        bun.default_allocator,
+                    );
+                    if (host_str.len > 0) {
+                        args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                        has_hostname = true;
+                    }
                 }
             }
 
@@ -448,6 +451,7 @@ pub const ServerConfig = struct {
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
+            
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
@@ -4370,6 +4374,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn stopListening(this: *ThisServer, abrupt: bool) void {
+            httplog("stopListening", .{});
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
@@ -4434,6 +4439,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
+            httplog("onListenFailed", .{});
             this.unref();
 
             var zig_str: ZigString = ZigString.init("");
@@ -4709,6 +4715,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn listen(this: *ThisServer) void {
+            httplog("listen", .{});
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");

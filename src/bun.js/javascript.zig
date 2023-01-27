@@ -2635,6 +2635,8 @@ pub const HotReloader = struct {
     vm: *JSC.VirtualMachine,
     verbose: bool = false,
 
+    tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+
     pub const HotReloadTask = struct {
         reloader: *HotReloader,
         count: u8 = 0,
@@ -2719,6 +2721,14 @@ pub const HotReloader = struct {
         }
     }
 
+    fn putTombstone(this: *HotReloader, key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
+        this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
+    }
+
+    fn getTombstone(this: *HotReloader, key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
+        return this.tombstones.get(key);
+    }
+
     pub fn onFileUpdate(
         this: *HotReloader,
         events: []watcher.WatchEvent,
@@ -2786,7 +2796,13 @@ pub const HotReloader = struct {
 
                     const affected = brk: {
                         if (comptime Environment.isMac) {
-                            entries_option = rfs.entries.get(file_path);
+                            if (rfs.entries.get(file_path)) |existing| {
+                                this.putTombstone(file_path, existing);
+                                entries_option = existing;
+                            } else if (this.getTombstone(file_path)) |existing| {
+                                entries_option = existing;
+                            }
+
                             var affected_i: usize = 0;
 
                             // if a file descriptor is stale, we need to close it
@@ -2814,7 +2830,12 @@ pub const HotReloader = struct {
                     };
 
                     if (affected.len > 0 and !Environment.isMac) {
-                        entries_option = rfs.entries.get(file_path);
+                        if (rfs.entries.get(file_path)) |existing| {
+                            this.putTombstone(file_path, existing);
+                            entries_option = existing;
+                        } else if (this.getTombstone(file_path)) |existing| {
+                            entries_option = existing;
+                        }
                     }
 
                     resolver.bustDirCache(file_path);

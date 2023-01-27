@@ -108,9 +108,14 @@ pub const INotify = struct {
         std.os.inotify_rm_watch(inotify_fd, wd);
     }
 
+    var coalesce_interval: usize = 100_000;
     pub fn init() !void {
         std.debug.assert(!loaded_inotify);
         loaded_inotify = true;
+
+        if (std.os.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
+            coalesce_interval = std.fmt.parseInt(usize, env, 10) catch 100_000;
+        }
 
         inotify_fd = try std.os.inotify_init1(IN_CLOEXEC);
     }
@@ -140,7 +145,7 @@ pub const INotify = struct {
                             .events = std.os.POLL.IN | std.os.POLL.ERR,
                             .revents = 0,
                         }};
-                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
+                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = coalesce_interval };
                         if ((std.os.ppoll(&fds, &timespec, null) catch 0) > 0) {
                             while (true) {
                                 const new_rc = std.os.system.read(

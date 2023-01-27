@@ -2291,6 +2291,7 @@ pub const PackageManager = struct {
             this.allocator,
             ExtractTarball{
                 .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                .alias = package.name,
                 .name = if (package.name.len() >= strings.StringOrTinyString.Max)
                     strings.StringOrTinyString.init(
                         try FileSystem.FilenameStore.instance.append(
@@ -2795,53 +2796,41 @@ pub const PackageManager = struct {
                 return;
             },
             .github => {
-                const package: Lockfile.Package = brk: {
-                    if (dependency.behavior.isPeer()) return;
-                    const dep = &dependency.version.value.github;
-                    const res = Resolution{
-                        .tag = .github,
-                        .value = .{
-                            .github = dep.*,
-                        },
-                    };
+                if (dependency.behavior.isPeer()) return;
 
-                    // First: see if we already loaded the github package in-memory
-                    if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
-                        // just because we've previously loaded it doesn't mean it was successfully installed
-                        break :brk this.lockfile.packages.get(pkg_id);
-                    }
-
-                    break :brk try this.lockfile.appendPackage(.{
-                        .name = name,
-                        .name_hash = name_hash,
-                        .resolution = res,
-                    });
+                const dep = &dependency.version.value.github;
+                const res = Resolution{
+                    .tag = .github,
+                    .value = .{
+                        .github = dep.*,
+                    },
                 };
 
-                switch (this.determinePreinstallState(package, this.lockfile)) {
-                    .extracting, .extract => {
-                        const url = this.allocGitHubURL(&package.resolution.value.github) catch unreachable;
-                        const task_id = Task.Id.forTarball(url);
-                        var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
-                        if (!entry.found_existing) {
-                            entry.value_ptr.* = TaskCallbackList{};
-                        }
-
-                        const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
-                        try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
-
-                        if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
-                            this.setPreinstallState(package.meta.id, this.lockfile, .extracting);
-                            this.enqueueNetworkTask(network_task);
-                        }
-                    },
-                    .done => {
-                        successFn(this, id, package.meta.id);
-                    },
-                    else => unreachable,
+                // First: see if we already loaded the github package in-memory
+                if (this.lockfile.getPackageID(name_hash, null, &res)) |pkg_id| {
+                    successFn(this, id, pkg_id);
+                    return;
                 }
 
-                return;
+                const package: Lockfile.Package = .{
+                    .name = name,
+                    .name_hash = name_hash,
+                    .resolution = res,
+                };
+
+                const url = this.allocGitHubURL(dep) catch unreachable;
+                const task_id = Task.Id.forTarball(url);
+                var entry = this.task_queue.getOrPutContext(this.allocator, task_id, .{}) catch unreachable;
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = TaskCallbackList{};
+                }
+
+                const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
+                try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
+
+                if (try this.generateNetworkTaskForTarball(task_id, url, package)) |network_task| {
+                    this.enqueueNetworkTask(network_task);
+                }
             },
             .symlink, .workspace => {
                 const _result = this.getOrPutResolvedPackage(
@@ -3077,20 +3066,16 @@ pub const PackageManager = struct {
     }
 
     const GitHubResolver = struct {
-        data_: ExtractData,
-        package_name: String,
-        package_name_hash: u64,
+        resolved: string,
+        resolution: Resolution,
 
-        pub fn count(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, _: JSAst.Expr) void {
-            builder.count(this.data_.resolved);
+        pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
+            builder.count(this.resolved);
         }
 
-        pub fn resolveWithPackage(this: *@This(), comptime StringBuilderType: type, builder: StringBuilderType, pkg: *Package) anyerror!Resolution {
-            pkg.name = this.package_name;
-            pkg.name_hash = this.package_name_hash;
-            var resolution = pkg.resolution;
-            resolution.value.github.resolved = builder.append(String, this.data_.resolved);
-
+        pub fn resolve(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) !Resolution {
+            var resolution = this.resolution;
+            resolution.value.github.resolved = builder.append(String, this.resolved);
             return resolution;
         }
     };
@@ -3098,26 +3083,19 @@ pub const PackageManager = struct {
     /// Returns true if we need to drain dependencies
     fn processExtractedTarballPackage(
         manager: *PackageManager,
-        package_id: PackageID,
+        package_id: *PackageID,
+        alias: String,
+        resolution: Resolution,
         data: ExtractData,
         comptime log_level: Options.LogLevel,
     ) bool {
-        switch (manager.lockfile.packages.items(.resolution)[package_id].tag) {
+        switch (resolution.tag) {
             .github => {
-                var package = manager.lockfile.packages.get(package_id);
-                const package_name = package.name;
-                const package_name_hash = package.name_hash;
                 const package_json_source = logger.Source.initPathString(
                     data.json_path,
                     data.json_buf[0..data.json_len],
                 );
-                package.resolution.value.github.resolved = String{};
-
-                var github = GitHubResolver{
-                    .data_ = data,
-                    .package_name = package_name,
-                    .package_name_hash = package_name_hash,
-                };
+                var package = Lockfile.Package{};
 
                 Lockfile.Package.parse(
                     manager.lockfile,
@@ -3125,21 +3103,30 @@ pub const PackageManager = struct {
                     manager.allocator,
                     manager.log,
                     package_json_source,
-                    *GitHubResolver,
-                    &github,
+                    GitHubResolver,
+                    GitHubResolver{
+                        .resolved = data.resolved,
+                        .resolution = resolution,
+                    },
                     Features.npm,
                 ) catch |err| {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            package.resolution.fmtURL(&manager.options, package_name.slice(string_buf), string_buf),
+                            package.resolution.fmtURL(&manager.options, alias.slice(string_buf), string_buf),
                             @errorName(err),
                         });
                     }
                     Global.crash();
                 };
 
-                manager.lockfile.packages.set(package_id, package);
+                const string_buf = manager.lockfile.buffers.string_bytes.items;
+                if (!alias.eql(package.name, string_buf, string_buf)) {
+                    package.name = alias;
+                    package.name_hash = Lockfile.stringHash(alias.slice(string_buf));
+                }
+                package = manager.lockfile.appendPackage(package) catch unreachable;
+                package_id.* = package.meta.id;
 
                 if (package.dependencies.len > 0) {
                     manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;
@@ -3599,14 +3586,14 @@ pub const PackageManager = struct {
                         }
                         continue;
                     }
-                    const package_id = task.request.extract.tarball.package_id;
                     manager.extracted_count += 1;
                     bun.Analytics.Features.extracted_packages = true;
 
-                    manager.setPreinstallState(package_id, manager.lockfile, .done);
-
+                    var package_id = task.request.extract.tarball.package_id;
+                    const alias = task.request.extract.tarball.alias;
+                    const resolution = task.request.extract.tarball.resolution;
                     // GitHub (and eventually tarball URL) dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(package_id, task.data.extract, comptime log_level)) brk: {
+                    if (manager.processExtractedTarballPackage(&package_id, alias, resolution, task.data.extract, comptime log_level)) brk: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
@@ -3642,6 +3629,8 @@ pub const PackageManager = struct {
                             }
                         }
                     }
+
+                    manager.setPreinstallState(package_id, manager.lockfile, .done);
 
                     if (comptime @TypeOf(callbacks.onExtract) != void) {
                         callbacks.onExtract(extract_ctx, package_id, task.data.extract, comptime log_level);

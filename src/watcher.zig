@@ -108,13 +108,13 @@ pub const INotify = struct {
         std.os.inotify_rm_watch(inotify_fd, wd);
     }
 
-    var coalesce_interval: usize = 100_000;
+    var coalesce_interval: isize = 100_000;
     pub fn init() !void {
         std.debug.assert(!loaded_inotify);
         loaded_inotify = true;
 
         if (std.os.getenvZ("BUN_INOTIFY_COALESCE_INTERVAL")) |env| {
-            coalesce_interval = std.fmt.parseInt(usize, env, 10) catch 100_000;
+            coalesce_interval = std.fmt.parseInt(isize, env, 10) catch 100_000;
         }
 
         inotify_fd = try std.os.inotify_init1(IN_CLOEXEC);

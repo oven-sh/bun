@@ -293,7 +293,7 @@ pub const WatchEvent = struct {
             .op = Op{
                 .delete = (kevent.fflags & std.c.NOTE_DELETE) > 0,
                 .metadata = (kevent.fflags & std.c.NOTE_ATTRIB) > 0,
-                .rename = (kevent.fflags & std.c.NOTE_RENAME) > 0,
+                .rename = (kevent.fflags & (std.c.NOTE_RENAME | std.c.NOTE_LINK)) > 0,
                 .write = (kevent.fflags & std.c.NOTE_WRITE) > 0,
             },
             .index = @truncate(WatchItemIndex, kevent.udata),
@@ -463,7 +463,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 while (true) {
                     defer Output.flush();
 
-                    const count_ = std.os.system.kevent(
+                    var count_ = std.os.system.kevent(
                         DarwinWatcher.fd,
                         @as([*]KEvent, changelist),
                         0,
@@ -473,10 +473,44 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         null,
                     );
 
+                    // Give the events more time to coallesce
+                    if (count_ < 128 / 2) {
+                        const remain = 128 - count_;
+                        var timespec = std.os.timespec{ .tv_sec = 0, .tv_nsec = 100_000 };
+                        const extra = std.os.system.kevent(
+                            DarwinWatcher.fd,
+                            @as([*]KEvent, changelist[@intCast(usize, count_)..].ptr),
+                            0,
+                            @as([*]KEvent, changelist[@intCast(usize, count_)..].ptr),
+                            remain,
+
+                            &timespec,
+                        );
+
+                        count_ += extra;
+                    }
+
                     var changes = changelist[0..@intCast(usize, @max(0, count_))];
                     var watchevents = this.watch_events[0..changes.len];
-                    for (changes) |event, i| {
-                        watchevents[i].fromKEvent(event);
+                    var out_len: usize = 0;
+                    if (changes.len > 0) {
+                        watchevents[0].fromKEvent(changes[0]);
+                        out_len = 1;
+                        var prev_event = changes[0];
+                        for (changes[1..]) |event| {
+                            if (prev_event.udata == event.udata) {
+                                var new: WatchEvent = undefined;
+                                new.fromKEvent(event);
+                                watchevents[out_len - 1].merge(new);
+                                continue;
+                            }
+
+                            watchevents[out_len].fromKEvent(event);
+                            prev_event = event;
+                            out_len += 1;
+                        }
+
+                        watchevents = watchevents[0..out_len];
                     }
 
                     this.mutex.lock();
@@ -605,7 +639,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
-            var index: PlatformWatcher.EventListIndex = undefined;
+            var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
             const watchlist_id = this.watchlist.len;
 
             const file_path_: string = if (comptime copy_file_path)
@@ -615,7 +649,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
             if (comptime Environment.isMac) {
                 const KEvent = std.c.Kevent;
-                index = DarwinWatcher.eventlist_index;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
                 var event = std.mem.zeroes(KEvent);
@@ -629,11 +662,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // id
                 event.ident = @intCast(usize, fd);
 
-                DarwinWatcher.eventlist_index += 1;
-
                 // Store the hash for fast filtering later
                 event.udata = @intCast(usize, watchlist_id);
-                DarwinWatcher.eventlist[index] = event;
+                var events: [1]KEvent = .{event};
 
                 // This took a lot of work to figure out the right permutation
                 // Basically:
@@ -641,9 +672,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
                     DarwinWatcher.fd,
-                    DarwinWatcher.eventlist[index .. index + 1].ptr,
+                    @as([]KEvent, events[0..1]).ptr,
                     1,
-                    DarwinWatcher.eventlist[index .. index + 1].ptr,
+                    @as([]KEvent, events[0..1]).ptr,
                     0,
                     null,
                 );
@@ -685,7 +716,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             };
 
             const parent_hash = Watcher.getHash(Fs.PathName.init(file_path).dirWithTrailingSlash());
-            var index: PlatformWatcher.EventListIndex = undefined;
+            var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
 
             const file_path_: string = if (comptime copy_file_path)
                 std.mem.span(try this.allocator.dupeZ(u8, file_path))
@@ -695,7 +726,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const watchlist_id = this.watchlist.len;
 
             if (Environment.isMac) {
-                index = DarwinWatcher.eventlist_index;
                 const KEvent = std.c.Kevent;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -714,10 +744,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // id
                 event.ident = @intCast(usize, fd);
 
-                DarwinWatcher.eventlist_index += 1;
                 // Store the hash for fast filtering later
                 event.udata = @intCast(usize, watchlist_id);
-                DarwinWatcher.eventlist[index] = event;
+                var events: [1]KEvent = .{event};
 
                 // This took a lot of work to figure out the right permutation
                 // Basically:
@@ -725,9 +754,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 // our while(true) loop above receives notification of changes to any of the events created here.
                 _ = std.os.system.kevent(
                     DarwinWatcher.fd,
-                    DarwinWatcher.eventlist[index .. index + 1].ptr,
+                    @as([]KEvent, events[0..1]).ptr,
                     1,
-                    DarwinWatcher.eventlist[index .. index + 1].ptr,
+                    @as([]KEvent, events[0..1]).ptr,
                     0,
                     null,
                 );

@@ -2776,8 +2776,18 @@ pub const HotReloader = struct {
                     if (this.verbose)
                         Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
 
-                    if (event.op.write) {
-                        current_task.append(id);
+                    if (comptime Environment.isMac) {
+                        // kqueue will report one of these if you rename, delete, or write to a file descriptor
+                        // since it's a file descriptor and not a file path, the
+                        // file descriptor will need to be closed for some
+                        // changes to be reflected
+                        if (event.op.write or event.op.delete or event.op.rename) {
+                            current_task.append(id);
+                        }
+                    } else {
+                        if (event.op.write) {
+                            current_task.append(id);
+                        }
                     }
                 },
                 .directory => {
@@ -2789,11 +2799,20 @@ pub const HotReloader = struct {
                             entries_option = rfs.entries.get(file_path);
                             var affected_i: usize = 0;
 
-                            if ((event.op.write or event.op.rename or event.op.delete) and entries_option != null) {
+                            // if a file descriptor is stale, we need to close it
+                            if (event.op.delete and entries_option != null) {
                                 for (parents) |parent_hash, entry_id| {
                                     if (parent_hash == id) {
-                                        affected_buf[affected_i] = file_paths[entry_id][file_path.len..];
+                                        const affected_path = file_paths[entry_id];
+                                        const was_deleted = check: {
+                                            std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                            break :check false;
+                                        };
+                                        if (!was_deleted) continue;
+
+                                        affected_buf[affected_i] = affected_path[file_path.len..];
                                         affected_i += 1;
+                                        if (affected_i >= affected_buf.len) break;
                                     }
                                 }
                             }

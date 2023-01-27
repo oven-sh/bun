@@ -933,3 +933,18 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
         return ptr[0..length];
     }
 }
+
+pub fn cstring(input: []const u8) [:0]const u8 {
+    if (input.len == 0)
+        return "";
+
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(
+            lenSliceTo(
+                @ptrCast([*:0]const u8, input.ptr),
+                0,
+            ) == input.len,
+        );
+    }
+    return @ptrCast([*:0]const u8, input.ptr)[0..input.len :0];
+}

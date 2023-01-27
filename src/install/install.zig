@@ -6463,7 +6463,7 @@ pub const PackageManager = struct {
         var result = try bun.getFdPath(manager.options.global_bin_dir.dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         var result_: [:0]u8 = out_buffer[0..result.len :0];
-        manager.options.bin_path = (try FileSystem.instance.dirname_store.append([:0]u8, result_))[0.. :0];
+        manager.options.bin_path = bun.cstring(try FileSystem.instance.dirname_store.append([:0]u8, result_));
     }
 
     pub fn startProgressBarIfNone(manager: *PackageManager) void {

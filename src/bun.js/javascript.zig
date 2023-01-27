@@ -2776,18 +2776,8 @@ pub const HotReloader = struct {
                     if (this.verbose)
                         Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
 
-                    if (comptime Environment.isMac) {
-                        // kqueue will report one of these if you rename, delete, or write to a file descriptor
-                        // since it's a file descriptor and not a file path, the
-                        // file descriptor will need to be closed for some
-                        // changes to be reflected
-                        if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(id);
-                        }
-                    } else {
-                        if (event.op.write) {
-                            current_task.append(id);
-                        }
+                    if (event.op.write or event.op.delete or event.op.rename) {
+                        current_task.append(id);
                     }
                 },
                 .directory => {
@@ -2888,19 +2878,13 @@ pub const HotReloader = struct {
                                 last_file_hash = file_hash;
 
                                 if (this.verbose)
-                                    Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                    Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
                             }
                         }
                     }
 
                     if (this.verbose) {
-                        // if (event.op.delete or event.op.rename)
-                        //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-                        if (comptime false) {
-                            Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                        } else {
-                            Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                        }
+                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
                     }
                 },
             }

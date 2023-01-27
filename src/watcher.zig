@@ -163,6 +163,16 @@ pub const INotify = struct {
                         }
                     }
 
+                    // This is what replit does as of Jaunary 2023.
+                    // 1) CREATE .http.ts.3491171321~
+                    // 2) OPEN .http.ts.3491171321~
+                    // 3) ATTRIB .http.ts.3491171321~
+                    // 4) MODIFY .http.ts.3491171321~
+                    // 5) CLOSE_WRITE,CLOSE .http.ts.3491171321~
+                    // 6) MOVED_FROM .http.ts.3491171321~
+                    // 7) MOVED_TO http.ts
+                    // We still don't correctly handle MOVED_FROM && MOVED_TO it seems.
+
                     var count: u32 = 0;
                     var i: u32 = 0;
                     while (i < len) : (i += @sizeOf(INotifyEvent)) {

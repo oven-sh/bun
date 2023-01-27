@@ -175,9 +175,34 @@ pub const Run = struct {
         }
 
         {
-            while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
-                vm.tick();
-                vm.eventLoop().autoTickActive();
+            if (this.vm.isWatcherEnabled()) {
+                var prev_promise = this.vm.pending_internal_promise;
+                if (prev_promise.status(vm.global.vm()) == .Rejected) {
+                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                }
+
+                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    vm.tick();
+
+                    // Report exceptions in hot-reloaded modules
+                    if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                        prev_promise = this.vm.pending_internal_promise;
+                        vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                        continue;
+                    }
+
+                    vm.eventLoop().autoTickActive();
+                }
+
+                if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
+                    prev_promise = this.vm.pending_internal_promise;
+                    vm.onUnhandledError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                }
+            } else {
+                while (vm.eventLoop().tasks.count > 0 or vm.active_tasks > 0 or vm.uws_event_loop.?.active > 0) {
+                    vm.tick();
+                    vm.eventLoop().autoTickActive();
+                }
             }
 
             if (vm.log.msgs.items.len > 0) {

@@ -80,6 +80,97 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("modifiers", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("class Foo { public foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { private foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { protected foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { declare foo: number }", "class Foo {\n}");
+      exp("class Foo { declare public foo: number }", "class Foo {\n}");
+      exp("class Foo { public declare foo: number }", "class Foo {\n}");
+      exp("class Foo { override foo: number }", "class Foo {\n  foo;\n}");
+      exp(
+        "class Foo { override public foo: number }",
+        "class Foo {\n  foo;\n}",
+      );
+      exp(
+        "class Foo { public override foo: number }",
+        "class Foo {\n  foo;\n}",
+      );
+      exp(
+        "class Foo { declare override public foo: number }",
+        "class Foo {\n}",
+      );
+      exp("class Foo { declare foo = 123 }", "class Foo {\n}");
+
+      exp(
+        "class Foo { public static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { private static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { protected static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp("class Foo { declare static foo: number }", "class Foo {\n}");
+      exp("class Foo { declare public static foo: number }", "class Foo {\n}");
+      exp("class Foo { public declare static foo: number }", "class Foo {\n}");
+      exp("class Foo { public static declare foo: number }", "class Foo {\n}");
+      exp(
+        "class Foo { override static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { override public static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { public override static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { public static override foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { declare override public static foo: number }",
+        "class Foo {\n}",
+      );
+      exp("class Foo { declare static foo = 123 }", "class Foo {\n}");
+      exp("class Foo { static declare foo = 123 }", "class Foo {\n}");
+
+      exp("let x: abstract new () => void = Foo", "let x = Foo");
+      exp("let x: abstract new <T>() => Foo<T>", "let x");
+    });
+
+    it("types", () => {
+      exp("x as 1 < 1", "x < 1");
+      exp("x as 1n < 1", "x < 1");
+      exp("x as -1 < 1", "x < 1");
+      exp("x as -1n < 1", "x < 1");
+      exp("x as '' < 1", "x < 1");
+      exp("x as `` < 1", "x < 1");
+      exp("x as any < 1", "x < 1");
+      exp("x as bigint < 1", "x < 1");
+      exp("x as false < 1", "x < 1");
+      exp("x as never < 1", "x < 1");
+      exp("x as null < 1", "x < 1");
+      exp("x as number < 1", "x < 1");
+      exp("x as object < 1", "x < 1");
+      exp("x as string < 1", "x < 1");
+      exp("x as symbol < 1", "x < 1");
+      exp("x as this < 1", "x < 1");
+      exp("x as true < 1", "x < 1");
+      exp("x as undefined < 1", "x < 1");
+      exp("x as unique symbol < 1", "x < 1");
+      exp("x as unknown < 1", "x < 1");
+      exp("x as void < 1", "x < 1");
+    });
+
     it("class constructor", () => {
       const fixtures = [
         [

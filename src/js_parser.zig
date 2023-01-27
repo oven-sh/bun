@@ -2184,6 +2184,7 @@ const PropertyOpts = struct {
     is_class: bool = false,
     class_has_extends: bool = false,
     allow_ts_decorators: bool = false,
+    is_ts_abstract: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
     has_argument_decorators: bool = false,
 };
@@ -10218,7 +10219,26 @@ fn NewParser_(
                                             return try p.parseProperty(kind, opts, null);
                                         }
                                     },
-                                    .p_private, .p_protected, .p_public, .p_readonly, .p_abstract, .p_declare, .p_override => {
+                                    .p_declare => {
+                                        // skip declare keyword entirely
+                                        // https://github.com/oven-sh/bun/issues/1907
+                                        if (opts.is_class and is_typescript_enabled and strings.eqlComptime(raw, "declare")) {
+                                            const scope_index = p.scopes_in_order.items.len;
+                                            _ = try p.parseProperty(kind, opts, null);
+                                            p.discardScopesUpTo(scope_index);
+                                            return null;
+                                        }
+                                    },
+                                    .p_abstract => {
+                                        if (opts.is_class and is_typescript_enabled and !opts.is_ts_abstract and strings.eqlComptime(raw, "abstract")) {
+                                            opts.is_ts_abstract = true;
+                                            const scope_index = p.scopes_in_order.items.len;
+                                            _ = try p.parseProperty(kind, opts, null);
+                                            p.discardScopesUpTo(scope_index);
+                                            return null;
+                                        }
+                                    },
+                                    .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
                                         // Skip over TypeScript keywords
                                         if (opts.is_class and is_typescript_enabled and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
                                             return try p.parseProperty(kind, opts, null);

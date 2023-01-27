@@ -168,25 +168,8 @@ describe("websocket in subprocess", () => {
   });
 
   it("should exit after killed", async () => {
-    const server = Bun.serve({
-      port: 8767,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-
-        return new Response("http response");
-      },
-      websocket: {
-        open(ws) {},
-        message(ws, message) {},
-        close(ws) {},
-      },
-      error() {},
-    });
-
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), "websocket-subprocess.ts", server.hostname, server.port],
+      cmd: [bunExe(), "websocket-subprocess.ts", TEST_WEBSOCKET_HOST],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -195,6 +178,5 @@ describe("websocket in subprocess", () => {
     subprocess.kill();
 
     expect(await subprocess.exited).toBe("SIGHUP");
-    server.stop();
   });
 });

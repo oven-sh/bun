@@ -1363,7 +1363,7 @@ pub fn NewClassWithInstanceType(
                             };
 
                             __static_functions[count] = js.JSStaticFunction{
-                                .name = std.meta.assumeSentinel(function_name_literal ++ [_]u8{0}, 0),
+                                .name = bun.sliceTo(function_name_literal ++ [_]u8{0}, 0).ptr,
                                 .callAsFunction = if (Func.calling_convention == .C) &CtxField.rfn else &To.JS.Callback(
                                     PointerType,
                                     if (@typeInfo(@TypeOf(ctxfn)) == .Pointer) ctxfn.* else ctxfn,
@@ -1396,7 +1396,7 @@ pub fn NewClassWithInstanceType(
                             };
 
                             __static_functions[count] = js.JSStaticFunction{
-                                .name = std.meta.assumeSentinel(function_name_literal ++ [_]u8{0}, 0),
+                                .name = (function_name_literal ++ [_]u8{0})[0..function_name_literal.len :0],
                                 .callAsFunction = &To.JS.Callback(
                                     ZigType,
                                     @field(staticFunctions, function_name_literal),

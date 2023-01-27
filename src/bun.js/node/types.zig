@@ -580,7 +580,7 @@ pub const PathLike = union(Tag) {
     pub inline fn sliceZAssume(
         this: PathLike,
     ) [:0]const u8 {
-        return std.meta.assumeSentinel(this.slice(), 0);
+        return this.slice()[0.. :0];
     }
 
     pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -2003,7 +2003,7 @@ pub const Process = struct {
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
                 JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.get().bundler.fs.top_level_dir, 0));
+                    _ = Syscall.chdir(@ptrCast([:0]const u8, JSC.VirtualMachine.get().bundler.fs.top_level_dir));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 

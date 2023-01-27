@@ -119,7 +119,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
-        file = std.fs.openFileAbsoluteZ(std.meta.assumeSentinel(absolute_path_to_use.ptr, 0), .{ .mode = .read_only }) catch {
+        file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0.. :0], .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
             };

@@ -325,7 +325,7 @@ pub const RunCommand = struct {
             if (err == error.AccessDenied) {
                 {
                     var stat = std.mem.zeroes(std.c.Stat);
-                    const rc = bun.C.stat(std.meta.assumeSentinel(executable, 0), &stat);
+                    const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
@@ -396,7 +396,7 @@ pub const RunCommand = struct {
         var retried = false;
 
         if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
-            var argv0 = std.meta.assumeSentinel(optional_bun_path.*, 0).ptr;
+            var argv0 = optional_bun_path.*[0.. :0].ptr;
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
@@ -408,7 +408,7 @@ pub const RunCommand = struct {
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
-                    argv0 = std.meta.assumeSentinel(self, 0).ptr;
+                    argv0 = self[0.. :0].ptr;
                     optional_bun_path.* = self;
                 }
             }

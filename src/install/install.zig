@@ -4703,7 +4703,7 @@ pub const PackageManager = struct {
                     .auto,
                 );
                 buf[lockfile_path.len] = 0;
-                var lockfile_path_z = std.meta.assumeSentinel(buf[0..lockfile_path.len], 0);
+                var lockfile_path_z = buf[0..lockfile_path.len :0];
 
                 const result = manager.lockfile.loadFromDisk(
                     allocator,
@@ -5913,7 +5913,7 @@ pub const PackageManager = struct {
                     } else {
                         @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
-                        installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
+                        installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
                     installer.cache_dir = .{ .dir = std.fs.cwd() };
                 },
@@ -5925,7 +5925,7 @@ pub const PackageManager = struct {
                     } else {
                         @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
                         this.folder_path_buf[folder.len] = 0;
-                        installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
+                        installer.cache_dir_subpath = this.folder_path_buf[0..folder.len :0];
                     }
                     installer.cache_dir = .{ .dir = std.fs.cwd() };
                 },
@@ -5974,10 +5974,7 @@ pub const PackageManager = struct {
                         remain = remain[folder.len..];
                         remain[0] = 0;
                         const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);
-                        installer.cache_dir_subpath = std.meta.assumeSentinel(
-                            this.folder_path_buf[0..len :0],
-                            0,
-                        );
+                        installer.cache_dir_subpath = this.folder_path_buf[0..len :0];
                         installer.cache_dir = directory;
                     }
                 },
@@ -6466,7 +6463,7 @@ pub const PackageManager = struct {
         var result = try bun.getFdPath(manager.options.global_bin_dir.dir.fd, &out_buffer);
         out_buffer[result.len] = 0;
         var result_: [:0]u8 = out_buffer[0..result.len :0];
-        manager.options.bin_path = std.meta.assumeSentinel(try FileSystem.instance.dirname_store.append([:0]u8, result_), 0);
+        manager.options.bin_path = (try FileSystem.instance.dirname_store.append([:0]u8, result_))[0.. :0];
     }
 
     pub fn startProgressBarIfNone(manager: *PackageManager) void {

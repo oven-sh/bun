@@ -368,7 +368,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
-            return std.meta.assumeSentinel(this.ptr[0..this.len], 0);
+            return this.ptr[0..this.len:0];
         }
 
         pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
@@ -386,7 +386,7 @@ pub const ZigString = extern struct {
 
             std.mem.copy(u8, buf[0..this.len], this.slice());
             buf[this.len] = 0;
-            return std.meta.assumeSentinel(buf[0..this.len], 0);
+            return buf[0..this.len:0];
         }
 
         pub fn mut(this: Slice) []u8 {

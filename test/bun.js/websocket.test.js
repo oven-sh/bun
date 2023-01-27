@@ -136,6 +136,7 @@ describe("WebSocket", () => {
 
 describe("websocket in subprocess", () => {
   it("should exit", async () => {
+    let messageReceived = false;
     const server = Bun.serve({
       port: 8765,
       fetch(req, server) {
@@ -149,8 +150,8 @@ describe("websocket in subprocess", () => {
         open(ws) {
           ws.send("hello websocket");
         },
-        message(ws, message) {
-          expect(message).toEqual("hello");
+        message(ws) {
+          messageReceived = true;
           ws.close();
         },
         close(ws) {},
@@ -164,6 +165,7 @@ describe("websocket in subprocess", () => {
     });
 
     expect(await subprocess.exited).toBe(0);
+    expect(messageReceived).toBe(true);
     server.stop();
   });
 

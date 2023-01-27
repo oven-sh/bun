@@ -8,7 +8,5 @@ const ws = new WebSocket(host);
 ws.onmessage = (message) => {
   if (message.data == "hello websocket") {
     ws.send("hello");
-  } else if (message.data == "close") {
-    ws.close();
   }
 };

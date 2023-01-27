@@ -194,7 +194,6 @@ WebSocket::~WebSocket()
         break;
     }
     }
-    deref();
 }
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url)

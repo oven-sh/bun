@@ -43,13 +43,12 @@ export class Server extends EventEmitter {
     const server = this;
     if (typeof host === "function") {
       onListen = host;
+      host = undefined;
     }
 
     if (typeof port === "function") {
       onListen = port;
-    }
-
-    if (typeof port === "object") {
+    } else if (typeof port === "object") {
       host = port?.host;
       port = port?.port;
       if (typeof port?.callback === "function") onListen = port?.callback;

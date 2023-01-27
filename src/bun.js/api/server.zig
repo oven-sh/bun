@@ -340,16 +340,13 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
-                // Express.js will attempt to pass the function as host or hostname
-                if (!host.jsType().isFunction()) {
-                    const host_str = host.toSlice(
-                        global,
-                        bun.default_allocator,
-                    );
-                    if (host_str.len > 0) {
-                        args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
-                        has_hostname = true;
-                    }
+                const host_str = host.toSlice(
+                    global,
+                    bun.default_allocator,
+                );
+                if (host_str.len > 0) {
+                    args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                    has_hostname = true;
                 }
             }
 

@@ -580,7 +580,8 @@ pub const PathLike = union(Tag) {
     pub inline fn sliceZAssume(
         this: PathLike,
     ) [:0]const u8 {
-        return this.slice()[0.. :0];
+        var sliced = this.slice();
+        return sliced.ptr[0..sliced.len :0];
     }
 
     pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {

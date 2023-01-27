@@ -2633,6 +2633,7 @@ pub const HotReloader = struct {
 
     onAccept: std.ArrayHashMapUnmanaged(Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     vm: *JSC.VirtualMachine,
+    verbose: bool = false,
 
     pub const HotReloadTask = struct {
         reloader: *HotReloader,
@@ -2696,6 +2697,7 @@ pub const HotReloader = struct {
         var reloader = bun.default_allocator.create(HotReloader) catch @panic("OOM");
         reloader.* = .{
             .vm = this,
+            .verbose = this.log.level.atLeast(.info),
         };
         this.bun_watcher = JSC.Watcher.init(
             reloader,
@@ -2756,7 +2758,7 @@ pub const HotReloader = struct {
             const id = hashes[event.index];
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -2770,9 +2772,8 @@ pub const HotReloader = struct {
                         );
                     }
 
-                    if (comptime bun.FeatureFlags.verbose_watcher) {
+                    if (this.verbose)
                         Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
-                    }
 
                     if (event.op.write) {
                         current_task.append(id);
@@ -2794,6 +2795,7 @@ pub const HotReloader = struct {
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                            var prev_entry_id: usize = std.math.maxInt(usize);
                             if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
                                 var path_string: bun.PathString = undefined;
                                 var file_hash: Watcher.HashType = last_file_hash;
@@ -2806,7 +2808,20 @@ pub const HotReloader = struct {
                                         file_hash = Watcher.getHash(path_string.slice());
                                         for (hashes) |hash, entry_id| {
                                             if (hash == file_hash) {
-                                                file_descriptors[entry_id] = 0;
+                                                if (file_descriptors[entry_id] != 0) {
+                                                    if (prev_entry_id != entry_id) {
+                                                        current_task.append(@truncate(u32, entry_id));
+                                                        ctx.removeAtIndex(
+                                                            @truncate(u16, entry_id),
+                                                            0,
+                                                            &.{},
+                                                            .file,
+                                                        );
+                                                    }
+                                                    file_descriptors[entry_id] = 0;
+                                                }
+
+                                                prev_entry_id = entry_id;
                                                 break;
                                             }
                                         }
@@ -2828,17 +2843,20 @@ pub const HotReloader = struct {
                                 if (last_file_hash == file_hash) continue;
                                 last_file_hash = file_hash;
 
-                                Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                if (this.verbose)
+                                    Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
                             }
                         }
                     }
 
-                    // if (event.op.delete or event.op.rename)
-                    //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-                    if (comptime false) {
-                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                    } else {
-                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    if (this.verbose) {
+                        // if (event.op.delete or event.op.rename)
+                        //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
+                        if (comptime false) {
+                            Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                        } else {
+                            Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                        }
                     }
                 },
             }

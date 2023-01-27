@@ -40,6 +40,128 @@ function resolveSrv(hostname, callback) {
   );
 }
 
+
+function resolveTxt(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveTxt(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveSoa(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveSoa(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveNaptr(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveNaptr(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveMx(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveMx(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+
+}
+
+function resolveCaa(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveCaa(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveNs(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveNs(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolvePtr(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolvePtr(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
+function resolveCname(hostname, callback) {
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolveCname(hostname, callback).then(
+    (results) => {
+      callback(null, results);
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
+
 function lookupService(address, port, callback) {
   if (typeof callback != "function") {
     throw new TypeError("callback must be a function");
@@ -49,9 +171,9 @@ function lookupService(address, port, callback) {
 }
 
 var InternalResolver = class Resolver {
-  constructor(options) {}
+  constructor(options) { }
 
-  cancel() {}
+  cancel() { }
 
   getServers() {
     return [];
@@ -66,13 +188,22 @@ var InternalResolver = class Resolver {
       throw new TypeError("callback must be a function");
     }
 
-    dns.lookup(hostname).then(
-      (addresses) => {
-        callback(
-          null,
-          hostname,
-          addresses.map(({ address }) => address),
-        );
+    dns.resolve(hostname).then(
+      (results) => {
+        switch (rrtype?.toLowerCase()) {
+          case 'a':
+          case 'aaaa':
+            callback(
+              null,
+              hostname,
+              results.map(({ address }) => address),
+            );
+            break;
+          default:
+            callback(null, results);
+            break;
+        }
+
       },
       (error) => {
         callback(error);
@@ -129,27 +260,79 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveCname(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveMx(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveMx(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
+
   }
 
   resolveNaptr(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveNaptr(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveNs(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveNs(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolvePtr(hostname, callback) {
-    callback(null, []);
-  }
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
 
-  resolveSoa(hostname, callback) {
-    callback(null, []);
+    dns.resolvePtr(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveSrv(hostname, callback) {
@@ -168,19 +351,87 @@ var InternalResolver = class Resolver {
   }
 
   resolveCaa(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveCaa(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   resolveTxt(hostname, callback) {
-    callback(null, []);
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveTxt(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
+  }
+  resolveSoa(hostname, callback) {
+    if (typeof callback != "function") {
+      throw new TypeError("callback must be a function");
+    }
+
+    dns.resolveSoa(hostname, callback).then(
+      (results) => {
+        callback(null, results);
+      },
+      (error) => {
+        callback(error);
+      },
+    );
   }
 
   reverse(ip, callback) {
     callback(null, []);
   }
 
-  setServers(servers) {}
+  setServers(servers) { }
 };
+
+function resolve(hostname, rrtype, callback) {
+  if (typeof rrtype == "function") {
+    callback = rrtype;
+  }
+
+  if (typeof callback != "function") {
+    throw new TypeError("callback must be a function");
+  }
+
+  dns.resolve(hostname).then(
+    (results) => {
+      switch (rrtype?.toLowerCase()) {
+        case 'a':
+        case 'aaaa':
+          callback(
+            null,
+            hostname,
+            results.map(({ address }) => address),
+          );
+          break;
+        default:
+          callback(null, results);
+          break;
+      }
+
+    },
+    (error) => {
+      callback(error);
+    },
+  );
+}
 
 function Resolver(options) {
   return new InternalResolver(options);
@@ -205,14 +456,29 @@ export var {
   resolveTxt,
 } = InternalResolver.prototype;
 
-function setDefaultResultOrder() {}
-function setServers() {}
+function setDefaultResultOrder() { }
+function setServers() { }
 
 const promisifyLookup = (res) => {
   res.sort((a, b) => a.family - b.family);
   const [{ address, family }] = res;
   return { address, family };
 };
+
+const promisifyResolve = (rrtype) => {
+  switch (rrtype?.toLowerCase()) {
+    case 'a':
+    case 'aaaa':
+      return (res) => {
+
+        res.sort((a, b) => a.family - b.family);
+        const [{ address, family }] = res;
+        return { address, family };
+      };
+    default:
+      return (res) => res;
+  }
+}
 
 // promisified versions
 export const promises = {
@@ -225,7 +491,7 @@ export const promises = {
   },
 
   resolve(hostname, rrtype) {
-    return dns.lookup(hostname);
+    return dns.resolve(hostname, rrtype).then(promisifyResolve);
   },
 
   resolve4(hostname, options) {
@@ -239,18 +505,43 @@ export const promises = {
   resolveSrv(hostname) {
     return dns.resolveSrv(hostname);
   },
+  resolveTxt(hostname) {
+    return dns.resolveTxt(hostname);
+  },
+  resolveSoa(hostname) {
+    return dns.resolveSoa(hostname);
+  },
+  resolveNaptr(hostname) {
+    return dns.resolveNaptr(hostname);
+  },
+
+  resolveMx(hostname) {
+    return dns.resolveMx(hostname);
+  },
+  resolveCaa(hostname) {
+    return dns.resolveCaa(hostname);
+  },
+  resolveNs(hostname) {
+    return dns.resolveNs(hostname);
+  },
+  resolvePtr(hostname) {
+    return dns.resolvePtr(hostname);
+  },
+  resolveCname(hostname) {
+    return dns.resolveCname(hostname);
+  },
 
   Resolver: class Resolver {
-    constructor(options) {}
+    constructor(options) { }
 
-    cancel() {}
+    cancel() { }
 
     getServers() {
       return [];
     }
 
     resolve(hostname, rrtype) {
-      return dns.lookup(hostname);
+      return dns.resolve(hostname, rrtype).then(promisifyResolve);
     }
 
     resolve4(hostname, options) {
@@ -266,27 +557,27 @@ export const promises = {
     }
 
     resolveCname(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveCname(hostname);
     }
 
     resolveMx(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveMx(hostname);
     }
 
     resolveNaptr(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveNaptr(hostname);
     }
 
     resolveNs(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveNs(hostname);
     }
 
     resolvePtr(hostname) {
-      return Promise.resolve([]);
+      return dns.resolvePtr(hostname);
     }
 
     resolveSoa(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveSoa(hostname);
     }
 
     resolveSrv(hostname) {
@@ -294,30 +585,22 @@ export const promises = {
     }
 
     resolveCaa(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveCaa(hostname);
     }
 
     resolveTxt(hostname) {
-      return Promise.resolve([]);
+      return dns.resolveTxt(hostname);
     }
 
     reverse(ip) {
       return Promise.resolve([]);
     }
 
-    setServers(servers) {}
+    setServers(servers) { }
   },
 };
 for (const key of [
   "resolveAny",
-  "resolveCname",
-  "resolveCaa",
-  "resolveMx",
-  "resolveNaptr",
-  "resolveNs",
-  "resolvePtr",
-  "resolveSoa",
-  "resolveTxt",
   "reverse",
 ]) {
   promises[key] = () => Promise.resolve(undefined);
@@ -369,12 +652,12 @@ const exports = {
   resolveCname,
   resolveCaa,
   resolveMx,
-  resolveNaptr,
   resolveNs,
   resolvePtr,
   resolveSoa,
   resolveSrv,
   resolveTxt,
+  resolveNaptr,
   promises,
   [Symbol.for("CommonJS")]: 0,
 };

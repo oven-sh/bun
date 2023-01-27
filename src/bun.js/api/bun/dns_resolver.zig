@@ -614,104 +614,104 @@ pub const GetAddrInfo = struct {
     };
 };
 
-pub const ResolveSrvInfoRequest = struct {
-    const log = Output.scoped(.ResolveSrvInfoRequest, false);
+pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const u8) type {
+    return struct {
+        const request_type = @This();
 
-    resolver_for_caching: ?*DNSResolver = null,
-    hash: u64 = 0,
-    cache: ResolveSrvInfoRequest.CacheConfig = ResolveSrvInfoRequest.CacheConfig{},
-    head: SrvLookup,
-    tail: *SrvLookup = undefined,
-    task: bun.ThreadPool.Task = undefined,
+        const log = Output.scoped(@This(), false);
 
-    pub fn init(
-        cache: DNSResolver.SrvCacheHit,
-        resolver: ?*DNSResolver,
-        name: []const u8,
-        globalThis: *JSC.JSGlobalObject,
-        comptime cache_field: []const u8,
-    ) !*ResolveSrvInfoRequest {
-        var request = try globalThis.allocator().create(ResolveSrvInfoRequest);
-        var hasher = std.hash.Wyhash.init(0);
-        hasher.update(name);
-        const hash = hasher.final();
-        var poll_ref = JSC.PollRef.init();
-        poll_ref.ref(globalThis.bunVM());
-        request.* = .{
-            .resolver_for_caching = resolver,
-            .hash = hash,
-            .head = .{
-                .poll_ref = poll_ref,
-                .globalThis = globalThis,
-                .promise = JSC.JSPromise.Strong.init(globalThis),
-                .allocated = false,
-            },
-        };
-        request.tail = &request.head;
-        if (cache == .new) {
-            request.resolver_for_caching = resolver;
-            request.cache = ResolveSrvInfoRequest.CacheConfig{
-                .pending_cache = true,
-                .entry_cache = false,
-                .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
-                .name_len = @truncate(u9, name.len),
-            };
-            cache.new.lookup = request;
-        }
-        return request;
-    }
+        resolver_for_caching: ?*DNSResolver = null,
+        hash: u64 = 0,
+        cache: @This().CacheConfig = @This().CacheConfig{},
+        head: CAresLookup(cares_type, type_name),
+        tail: *CAresLookup(cares_type, type_name) = undefined,
 
-    pub const Task = bun.JSC.WorkTask(ResolveSrvInfoRequest, false);
-
-    pub const CacheConfig = packed struct(u16) {
-        pending_cache: bool = false,
-        entry_cache: bool = false,
-        pos_in_pending: u5 = 0,
-        name_len: u9 = 0,
-    };
-
-    pub const PendingCacheKey = struct {
-        hash: u64,
-        len: u16,
-        lookup: *ResolveSrvInfoRequest = undefined,
-
-        pub fn append(this: *PendingCacheKey, srv_lookup: *SrvLookup) void {
-            var tail = this.lookup.tail;
-            tail.next = srv_lookup;
-            this.lookup.tail = srv_lookup;
-        }
-
-        pub fn init(name: []const u8) PendingCacheKey {
+        pub fn init(
+            cache: DNSResolver.LookupCacheHit(@This()),
+            resolver: ?*DNSResolver,
+            name_str: *const JSC.ZigString.Slice,
+            globalThis: *JSC.JSGlobalObject,
+            comptime cache_field: []const u8,
+        ) !*@This() {
+            const name = name_str.slice();
+            var request = try globalThis.allocator().create(@This());
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(name);
             const hash = hasher.final();
-            return PendingCacheKey{
+            var poll_ref = JSC.PollRef.init();
+            poll_ref.ref(globalThis.bunVM());
+            request.* = .{
+                .resolver_for_caching = resolver,
                 .hash = hash,
-                .len = @truncate(u16, name.len),
-                .lookup = undefined,
+                .head = .{ .poll_ref = poll_ref, .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .allocated = false, .name = name_str },
             };
+            request.tail = &request.head;
+            if (cache == .new) {
+                request.resolver_for_caching = resolver;
+                request.cache = @This().CacheConfig{
+                    .pending_cache = true,
+                    .entry_cache = false,
+                    .pos_in_pending = @truncate(u5, @field(resolver.?, cache_field).indexOf(cache.new).?),
+                    .name_len = @truncate(u9, name.len),
+                };
+                cache.new.lookup = request;
+            }
+            return request;
+        }
+
+        pub const CacheConfig = packed struct(u16) {
+            pending_cache: bool = false,
+            entry_cache: bool = false,
+            pos_in_pending: u5 = 0,
+            name_len: u9 = 0,
+        };
+
+        pub const PendingCacheKey = struct {
+            hash: u64,
+            len: u16,
+            lookup: *request_type = undefined,
+
+            pub fn append(this: *PendingCacheKey, cares_lookup: *CAresLookup(cares_type, type_name)) void {
+                var tail = this.lookup.tail;
+                tail.next = cares_lookup;
+                this.lookup.tail = cares_lookup;
+            }
+
+            pub fn init(name: []const u8) PendingCacheKey {
+                var hasher = std.hash.Wyhash.init(0);
+                hasher.update(name);
+                const hash = hasher.final();
+                return PendingCacheKey{
+                    .hash = hash,
+                    .len = @truncate(u16, name.len),
+                    .lookup = undefined,
+                };
+            }
+        };
+
+        pub fn onCaresComplete(this: *@This(), err_: ?c_ares.Error, timeout: i32, result: ?*cares_type) void {
+            if (this.resolver_for_caching) |resolver| {
+                if (this.cache.pending_cache) {
+                    resolver.drainPendingCares(
+                        this.cache.pos_in_pending,
+                        err_,
+                        timeout,
+                        @This(),
+                        cares_type,
+                        type_name,
+                        result,
+                    );
+                    return;
+                }
+            }
+
+            var head = this.head;
+            bun.default_allocator.destroy(this);
+
+            head.processResolve(err_, timeout, result);
         }
     };
-
-    pub fn onCaresComplete(this: *ResolveSrvInfoRequest, err_: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_ares_srv_reply) void {
-        if (this.resolver_for_caching) |resolver| {
-            if (this.cache.pending_cache) {
-                resolver.drainPendingSrvCares(
-                    this.cache.pos_in_pending,
-                    err_,
-                    timeout,
-                    result,
-                );
-                return;
-            }
-        }
-
-        var head = this.head;
-        bun.default_allocator.destroy(this);
-
-        head.processResolveSrv(err_, timeout, result);
-    }
-};
+}
 
 pub const GetAddrInfoRequest = struct {
     const log = Output.scoped(.GetAddrInfoRequest, false);
@@ -934,79 +934,78 @@ pub const GetAddrInfoRequest = struct {
     }
 };
 
-pub const SrvLookup = struct {
-    const log = Output.scoped(.SrvLookup, true);
+pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) type {
+    return struct {
+        const log = Output.scoped(@This(), true);
 
-    globalThis: *JSC.JSGlobalObject = undefined,
-    promise: JSC.JSPromise.Strong,
-    poll_ref: JSC.PollRef,
-    allocated: bool = false,
-    next: ?*SrvLookup = null,
+        globalThis: *JSC.JSGlobalObject = undefined,
+        promise: JSC.JSPromise.Strong,
+        poll_ref: JSC.PollRef,
+        allocated: bool = false,
+        next: ?*@This() = null,
+        name: *const JSC.ZigString.Slice,
 
-    pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !*SrvLookup {
-        var this = try allocator.create(SrvLookup);
-        var poll_ref = JSC.PollRef.init();
-        poll_ref.ref(globalThis.bunVM());
-        this.* = .{
-            .globalThis = globalThis,
-            .promise = JSC.JSPromise.Strong.init(globalThis),
-            .poll_ref = poll_ref,
-            .allocated = true,
-        };
-        return this;
-    }
+        pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: *const JSC.ZigString.Slice) !*@This() {
+            var this = try allocator.create(@This());
+            var poll_ref = JSC.PollRef.init();
+            poll_ref.ref(globalThis.bunVM());
+            this.* = .{ .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .poll_ref = poll_ref, .allocated = true, .name = name };
+            return this;
+        }
 
-    pub fn processResolveSrv(this: *SrvLookup, err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_ares_srv_reply) void {
-        if (err_) |err| {
-            var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("SRV lookup failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
+        pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
+            if (err_) |err| {
+                var promise = this.promise;
+                var globalThis = this.globalThis;
+                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, err.label() });
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("code"),
+                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
+                );
 
-            promise.reject(globalThis, error_value);
-            this.deinit();
+                promise.reject(globalThis, error_value);
+                this.deinit();
+                return;
+            }
+            if (result == null) {
+                var promise = this.promise;
+                var globalThis = this.globalThis;
+                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
+                error_value.put(
+                    globalThis,
+                    JSC.ZigString.static("code"),
+                    JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
+                );
+
+                promise.reject(globalThis, error_value);
+                this.deinit();
+                return;
+            }
+            var node = result.?;
+            const array = node.toJSReponse(this.globalThis.allocator(), this.globalThis, type_name);
+            this.onComplete(array);
             return;
         }
 
-        if (result == null or result.?.next == null) {
+        pub fn onComplete(this: *@This(), result: JSC.JSValue) void {
             var promise = this.promise;
             var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("SRV lookup failed: {s}", .{"No results"});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
-
-            promise.reject(globalThis, error_value);
+            this.promise = .{};
+            promise.resolve(globalThis, result);
             this.deinit();
-            return;
         }
-        var node = result.?;
-        const array = node.toJSArray(this.globalThis.allocator(), this.globalThis);
-        this.onComplete(array);
-        return;
-    }
 
-    pub fn onComplete(this: *SrvLookup, result: JSC.JSValue) void {
-        var promise = this.promise;
-        var globalThis = this.globalThis;
-        this.promise = .{};
-        promise.resolve(globalThis, result);
-        this.deinit();
-    }
+        pub fn deinit(this: *@This()) void {
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            this.name.deinit();
 
-    pub fn deinit(this: *SrvLookup) void {
-        this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
+            if (this.allocated)
+                this.globalThis.allocator().destroy(this);
+        }
+    };
+}
 
-        if (this.allocated)
-            this.globalThis.allocator().destroy(this);
-    }
-};
 pub const DNSLookup = struct {
     const log = Output.scoped(.DNSLookup, true);
 
@@ -1141,15 +1140,30 @@ pub const DNSResolver = struct {
     polls: std.AutoArrayHashMap(i32, ?*JSC.FilePoll) = undefined,
 
     pending_host_cache_cares: PendingCache = PendingCache.init(),
-    pending_srv_cache_cares: SrvPendingCache = SrvPendingCache.init(),
     pending_host_cache_native: PendingCache = PendingCache.init(),
-    // entry_host_cache: std.BoundedArray(128)
+    pending_srv_cache_cares: SrvPendingCache = SrvPendingCache.init(),
+    pending_soa_cache_cares: SoaPendingCache = SoaPendingCache.init(),
+    pending_txt_cache_cares: TxtPendingCache = TxtPendingCache.init(),
+    pending_naptr_cache_cares: NaptrPendingCache = NaptrPendingCache.init(),
+    pending_mx_cache_cares: MxPendingCache = MxPendingCache.init(),
+    pending_caa_cache_cares: CaaPendingCache = CaaPendingCache.init(),
+    pending_ns_cache_cares: NSPendingCache = NSPendingCache.init(),
+    pending_ptr_cache_cares: PtrPendingCache = PtrPendingCache.init(),
+    pending_cname_cache_cares: CnamePendingCache = CnamePendingCache.init(),
 
     const PendingCache = bun.HiveArray(GetAddrInfoRequest.PendingCacheKey, 32);
-    const SrvPendingCache = bun.HiveArray(ResolveSrvInfoRequest.PendingCacheKey, 32);
+    const SrvPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_srv_reply, "srv").PendingCacheKey, 32);
+    const SoaPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_soa_reply, "soa").PendingCacheKey, 32);
+    const TxtPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_txt_reply, "txt").PendingCacheKey, 32);
+    const NaptrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_naptr_reply, "naptr").PendingCacheKey, 32);
+    const MxPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_mx_reply, "mx").PendingCacheKey, 32);
+    const CaaPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_ares_caa_reply, "caa").PendingCacheKey, 32);
+    const NSPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ns").PendingCacheKey, 32);
+    const PtrPendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "ptr").PendingCacheKey, 32);
+    const CnamePendingCache = bun.HiveArray(ResolveInfoRequest(c_ares.struct_hostent, "cname").PendingCacheKey, 32);
 
-    fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) GetAddrInfoRequest.PendingCacheKey {
-        var cache: *PendingCache = &@field(this, cache_name);
+    fn getKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8, comptime request_type: type) request_type.PendingCacheKey {
+        var cache = &@field(this, cache_name);
         std.debug.assert(!cache.available.isSet(index));
         const entry = cache.buffer[index];
         cache.buffer[index] = undefined;
@@ -1160,37 +1174,27 @@ pub const DNSResolver = struct {
 
         return entry;
     }
-    fn getSrvKey(this: *DNSResolver, index: u8, comptime cache_name: []const u8) ResolveSrvInfoRequest.PendingCacheKey {
-        var cache: *SrvPendingCache = &@field(this, cache_name);
-        std.debug.assert(!cache.available.isSet(index));
-        const entry = cache.buffer[index];
-        cache.buffer[index] = undefined;
 
-        var available = cache.available;
-        available.set(index);
-        cache.available = available;
+    pub fn drainPendingCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, comptime request_type: type, comptime cares_type: type, comptime lookup_name: []const u8, result: ?*cares_type) void {
+        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{lookup_name});
 
-        return entry;
-    }
-
-    pub fn drainPendingSrvCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.struct_ares_srv_reply) void {
-        const key = this.getSrvKey(index, "pending_srv_cache_cares");
+        const key = this.getKey(index, cache_name, request_type);
 
         var addr = result orelse {
-            var pending: ?*SrvLookup = key.lookup.head.next;
-            key.lookup.head.processResolveSrv(err, timeout, null);
+            var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
+            key.lookup.head.processResolve(err, timeout, null);
             bun.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
                 pending = value.next;
-                value.processResolveSrv(err, timeout, null);
+                value.processResolve(err, timeout, null);
             }
             return;
         };
 
-        var pending: ?*SrvLookup = key.lookup.head.next;
+        var pending: ?*CAresLookup(cares_type, lookup_name) = key.lookup.head.next;
         var prev_global = key.lookup.head.globalThis;
-        var array = addr.toJSArray(this.vm.allocator, prev_global);
+        var array = addr.toJSReponse(this.vm.allocator, prev_global, lookup_name);
         defer addr.deinit();
         array.ensureStillAlive();
         key.lookup.head.onComplete(array);
@@ -1201,7 +1205,7 @@ pub const DNSResolver = struct {
         while (pending) |value| {
             var new_global = value.globalThis;
             if (prev_global != new_global) {
-                array = addr.toJSArray(this.vm.allocator, new_global);
+                array = addr.toJSReponse(this.vm.allocator, new_global, lookup_name);
                 prev_global = new_global;
             }
             pending = value.next;
@@ -1215,7 +1219,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn drainPendingHostCares(this: *DNSResolver, index: u8, err: ?c_ares.Error, timeout: i32, result: ?*c_ares.AddrInfo) void {
-        const key = this.getKey(index, "pending_host_cache_cares");
+        const key = this.getKey(index, "pending_host_cache_cares", GetAddrInfoRequest);
 
         var addr = result orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
@@ -1257,7 +1261,7 @@ pub const DNSResolver = struct {
     }
 
     pub fn drainPendingHostNative(this: *DNSResolver, index: u8, globalObject: *JSC.JSGlobalObject, err: i32, result: GetAddrInfo.Result.Any) void {
-        const key = this.getKey(index, "pending_host_cache_native");
+        const key = this.getKey(index, "pending_host_cache_native", GetAddrInfoRequest);
 
         var array = result.toJS(globalObject) orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
@@ -1305,18 +1309,22 @@ pub const DNSResolver = struct {
         new: *GetAddrInfoRequest.PendingCacheKey,
         disabled: void,
     };
-    pub const SrvCacheHit = union(enum) {
-        inflight: *ResolveSrvInfoRequest.PendingCacheKey,
-        new: *ResolveSrvInfoRequest.PendingCacheKey,
-        disabled: void,
-    };
 
-    pub fn getOrPutIntoSrvPendingCache(
+    pub fn LookupCacheHit(comptime request_type: type) type {
+        return union(enum) {
+            inflight: *request_type.PendingCacheKey,
+            new: *request_type.PendingCacheKey,
+            disabled: void,
+        };
+    }
+
+    pub fn getOrPutIntoResolvePendingCache(
         this: *DNSResolver,
-        key: ResolveSrvInfoRequest.PendingCacheKey,
-        comptime field: std.meta.FieldEnum(DNSResolver),
-    ) SrvCacheHit {
-        var cache: *SrvPendingCache = &@field(this, @tagName(field));
+        comptime request_type: type,
+        key: request_type.PendingCacheKey,
+        comptime field: []const u8,
+    ) LookupCacheHit(request_type) {
+        var cache = &@field(this, field);
         var inflight_iter = cache.available.iterator(
             .{
                 .kind = .unset,
@@ -1324,7 +1332,7 @@ pub const DNSResolver = struct {
         );
 
         while (inflight_iter.next()) |index| {
-            var entry: *ResolveSrvInfoRequest.PendingCacheKey = &cache.buffer[index];
+            var entry: *request_type.PendingCacheKey = &cache.buffer[index];
             if (entry.hash == key.hash and entry.len == key.len) {
                 return .{ .inflight = entry };
             }
@@ -1504,7 +1512,6 @@ pub const DNSResolver = struct {
                 return .zero;
             };
         };
-        _ = record_type;
 
         const name_value = arguments.ptr[0];
 
@@ -1522,9 +1529,44 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        // const name = name_str.toSliceZ(globalThis).cloneZ(bun.default_allocator) catch unreachable;
-        // TODO:
-        return JSC.JSValue.jsUndefined();
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+        //TODO: ANY CASE
+        switch (record_type) {
+            RecordType.A => {
+                defer name.deinit();
+                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet };
+                return resolver.doLookup(name.slice(), 0, options, globalThis);
+            },
+            RecordType.AAAA => {
+                defer name.deinit();
+                const options = GetAddrInfo.Options{ .family = GetAddrInfo.Family.inet6 };
+                return resolver.doLookup(name.slice(), 0, options, globalThis);
+            },
+            RecordType.CNAME => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "cname", &name, globalThis);
+            },
+            RecordType.MX => {
+                return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", &name, globalThis);
+            },
+            RecordType.NS => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+            },
+            RecordType.PTR => {
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", &name, globalThis);
+            },
+            RecordType.SOA => {
+                return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+            },
+            RecordType.SRV => {
+                return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
+            },
+            RecordType.TXT => {
+                return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
+            },
+        }
     }
     // pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
     //     const arguments = callframe.arguments(3);
@@ -1622,14 +1664,264 @@ pub const DNSResolver = struct {
         }
 
         const name = name_str.toSlice(globalThis, bun.default_allocator);
-        defer name.deinit();
+
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveSrv(name.slice(), globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
     }
 
-    pub fn doResolveSrv(this: *DNSResolver, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveSoa", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+    }
+
+    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveCaa", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", &name, globalThis);
+    }
+
+    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveNs", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveNs", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+    }
+
+    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolvePtr", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", &name, globalThis);
+    }
+
+    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveCname", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveCname", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_hostent, "cname", &name, globalThis);
+    }
+
+    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveMx", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveMx", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", &name, globalThis);
+    }
+
+    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveNaptr", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", &name, globalThis);
+    }
+
+    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const arguments = callframe.arguments(2);
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
+            return .zero;
+        }
+
+        const name_value = arguments.ptr[0];
+
+        if (name_value.isEmptyOrUndefinedOrNull() or !name_value.isString()) {
+            globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "string");
+            return .zero;
+        }
+
+        const name_str = name_value.toStringOrNull(globalThis) orelse {
+            return .zero;
+        };
+
+        if (name_str.length() == 0) {
+            globalThis.throwInvalidArgumentType("resolveTxt", "hostname", "non-empty string");
+            return .zero;
+        }
+
+        const name = name_str.toSlice(globalThis, bun.default_allocator);
+
+        var vm = globalThis.bunVM();
+        var resolver = vm.rareData().globalDNSResolver(vm);
+
+        return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
+    }
+
+    pub fn doResolveCAres(this: *DNSResolver, comptime cares_type: type, comptime type_name: []const u8, name_str: *const JSC.ZigString.Slice, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        var name = name_str.slice();
+
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
@@ -1644,29 +1936,34 @@ pub const DNSResolver = struct {
             },
         };
 
-        const key = ResolveSrvInfoRequest.PendingCacheKey.init(name);
+        const cache_name = comptime std.fmt.comptimePrint("pending_{s}_cache_cares", .{type_name});
 
-        var cache = this.getOrPutIntoSrvPendingCache(key, .pending_srv_cache_cares);
+        const key = ResolveInfoRequest(cares_type, type_name).PendingCacheKey.init(name);
+
+        var cache = this.getOrPutIntoResolvePendingCache(ResolveInfoRequest(cares_type, type_name), key, cache_name);
         if (cache == .inflight) {
-            var srv_lookup = SrvLookup.init(globalThis, globalThis.allocator()) catch unreachable;
-            cache.inflight.append(srv_lookup);
-            return srv_lookup.promise.value();
+            // CAresLookup will have the name ownership
+            var cares_lookup = CAresLookup(cares_type, type_name).init(globalThis, globalThis.allocator(), name_str) catch unreachable;
+            cache.inflight.append(cares_lookup);
+            return cares_lookup.promise.value();
         }
 
-        var request = ResolveSrvInfoRequest.init(
+        var request = ResolveInfoRequest(cares_type, type_name).init(
             cache,
             this,
-            name,
+            name_str, // CAresLookup will have the ownership
             globalThis,
-            "pending_srv_cache_cares",
+            cache_name,
         ) catch unreachable;
         const promise = request.tail.promise.value();
 
-        channel.resolveSrv(
+        channel.resolve(
             name,
-            ResolveSrvInfoRequest,
+            type_name,
+            ResolveInfoRequest(cares_type, type_name),
             request,
-            ResolveSrvInfoRequest.onCaresComplete,
+            cares_type,
+            ResolveInfoRequest(cares_type, type_name).onCaresComplete,
         );
 
         return promise;
@@ -1722,15 +2019,69 @@ pub const DNSResolver = struct {
 
     comptime {
         @export(
+            resolve,
+            .{
+                .name = "Bun__DNSResolver__resolve",
+            },
+        );
+        @export(
             lookup,
             .{
                 .name = "Bun__DNSResolver__lookup",
             },
         );
         @export(
+            resolveTxt,
+            .{
+                .name = "Bun__DNSResolver__resolveTxt",
+            },
+        );
+        @export(
+            resolveSoa,
+            .{
+                .name = "Bun__DNSResolver__resolveSoa",
+            },
+        );
+        @export(
+            resolveMx,
+            .{
+                .name = "Bun__DNSResolver__resolveMx",
+            },
+        );
+        @export(
+            resolveNaptr,
+            .{
+                .name = "Bun__DNSResolver__resolveNaptr",
+            },
+        );
+        @export(
             resolveSrv,
             .{
                 .name = "Bun__DNSResolver__resolveSrv",
+            },
+        );
+        @export(
+            resolveCaa,
+            .{
+                .name = "Bun__DNSResolver__resolveCaa",
+            },
+        );
+        @export(
+            resolveNs,
+            .{
+                .name = "Bun__DNSResolver__resolveNs",
+            },
+        );
+        @export(
+            resolvePtr,
+            .{
+                .name = "Bun__DNSResolver__resolvePtr",
+            },
+        );
+        @export(
+            resolveCname,
+            .{
+                .name = "Bun__DNSResolver__resolveCname",
             },
         );
     }

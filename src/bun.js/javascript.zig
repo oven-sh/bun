@@ -2832,7 +2832,11 @@ pub const HotReloader = struct {
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
 
-                        for (affected) |changed_name| {
+                        for (affected) |changed_name_| {
+                            const changed_name: []const u8 = if (comptime Environment.isMac)
+                                changed_name_
+                            else
+                                std.mem.span(changed_name_.?);
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);

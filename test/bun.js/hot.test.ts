@@ -49,6 +49,57 @@ it("should hot reload when file is overwritten", async () => {
   expect(reloadCounter).toBe(3);
 });
 
+it("should not hot reload when a random file is written", async () => {
+  const root = import.meta.dir + "/hot-runner.js";
+  const runner = spawn({
+    cmd: [bunExe(), "--hot", "run", root],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+
+  var reloadCounter = 0;
+
+  async function onReload() {
+    writeFileSync(root + ".another.yet.js", readFileSync(root, "utf-8"));
+    unlinkSync(root + ".another.yet.js");
+  }
+  var waiter = new Promise<void>((resolve, reject) => {
+    setTimeout(async () => {
+      resolve();
+    }, 10);
+  });
+  var finished = false;
+  await Promise.race([
+    waiter,
+    (async () => {
+      if (finished) {
+        return;
+      }
+      for await (const line of runner.stdout!) {
+        if (finished) {
+          return;
+        }
+
+        var str = new TextDecoder().decode(line);
+        for (let line of str.split("\n")) {
+          if (!line.includes("[#!root]")) continue;
+          await onReload();
+
+          reloadCounter++;
+          expect(str).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+        }
+      }
+    })(),
+  ]);
+  finished = true;
+  runner.kill(0);
+  runner.unref();
+
+  expect(reloadCounter).toBe(0);
+});
+
 it("should hot reload when a file is deleted and rewritten", async () => {
   const root = import.meta.dir + "/hot-runner.js";
   const runner = spawn({

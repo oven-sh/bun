@@ -158,7 +158,11 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [bunExe(), "websocket-subprocess.ts", server.hostname, server.port],
+      cmd: [
+        bunExe(),
+        "websocket-subprocess.ts",
+        `http://${server.hostname}:${server.port}`,
+      ],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -166,7 +170,7 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
-    server.stop();
+    server.stop(true);
   });
 
   it("should exit after killed", async () => {
@@ -180,5 +184,89 @@ describe("websocket in subprocess", () => {
     subprocess.kill();
 
     expect(await subprocess.exited).toBe("SIGHUP");
+  });
+
+  it("should exit with invalid url", async () => {
+    const subprocess = Bun.spawn({
+      cmd: [bunExe(), "websocket-subprocess.ts", "invalid url"],
+      stderr: "pipe",
+      stdin: "pipe",
+      stdout: "pipe",
+    });
+
+    expect(await subprocess.exited).toBe(1);
+  });
+
+  it("should exit after timeout", async () => {
+    let messageReceived = false;
+    let start = 0;
+    const server = Bun.serve({
+      port: 8765,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("http response");
+      },
+      websocket: {
+        open(ws) {
+          start = performance.now();
+          ws.send("timeout");
+        },
+        message(ws, message) {
+          messageReceived = true;
+          expect(performance.now() - start >= 300).toBe(true);
+          ws.close();
+        },
+        close(ws) {},
+      },
+    });
+    const subprocess = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "websocket-subprocess.ts",
+        `http://${server.hostname}:${server.port}`,
+      ],
+      stderr: "pipe",
+      stdin: "pipe",
+      stdout: "pipe",
+    });
+
+    expect(await subprocess.exited).toBe(0);
+    expect(messageReceived).toBe(true);
+    server.stop();
+  });
+
+  it("should exit after server stop and 0 messages", async () => {
+    const server = Bun.serve({
+      port: 8765,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("http response");
+      },
+      websocket: {
+        open(ws) {},
+        message(ws, message) {},
+        close(ws) {},
+      },
+    });
+
+    const subprocess = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "websocket-subprocess.ts",
+        `http://${server.hostname}:${server.port}`,
+      ],
+      stderr: "pipe",
+      stdin: "pipe",
+      stdout: "pipe",
+    });
+
+    server.stop();
+    expect(await subprocess.exited).toBe(0);
   });
 });

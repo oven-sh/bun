@@ -747,18 +747,17 @@ pub const bit_set = @import("./install/bit_set.zig");
 
 pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     const Map = struct {
-        pub fn get(input: T) []const u8 {
-            // https://github.com/ziglang/zig/issues/14145
-            // https://github.com/ziglang/zig/issues/12765
-            const labels = comptime brk: {
-                var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
-                @setEvalBranchQuota(99999);
-                inline for (args) |field| {
-                    vabels_.set(field.@"0", field.@"1");
-                }
-                break :brk vabels_;
-            };
+        const vargs = args;
+        const labels = brk: {
+            var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
+            @setEvalBranchQuota(99999);
+            inline for (vargs) |field| {
+                vabels_.set(field.@"0", field.@"1");
+            }
+            break :brk vabels_;
+        };
 
+        pub fn get(input: T) []const u8 {
             return labels.get(input);
         }
     };
@@ -940,10 +939,7 @@ pub fn cstring(input: []const u8) [:0]const u8 {
 
     if (comptime Environment.allow_assert) {
         std.debug.assert(
-            lenSliceTo(
-                @ptrCast([*:0]const u8, input.ptr),
-                0,
-            ) == input.len,
+            input.ptr[input.len] == 0,
         );
     }
     return @ptrCast([*:0]const u8, input.ptr)[0..input.len :0];

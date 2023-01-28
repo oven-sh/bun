@@ -88,8 +88,8 @@ jobs:
         name: Push to Docker
         uses: docker/build-push-action@v3
         with:
-          context: dockerhub
-          file: Dockerfile-debian
+          context: ./dockerhub
+          file: ./dockerhub/Dockerfile-debian
           platforms: linux/amd64,linux/arm64
           builder: ${{ steps.buildx.outputs.name }}
           push: true

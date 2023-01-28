@@ -106,14 +106,16 @@ jobs:
       - name: Publish to npm
         if: github.ref != 'refs/heads/main'
         env:
-          NPM_TOKEN: ${{secrets.NPM_BUN_TYPES_TOKEN}}
+          NPM_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{runner.temp}}/dependencies
           npm publish --tag canary --access=public
       - name: Publish to npm
         if: github.ref == 'refs/heads/main'
         env:
-          NPM_TOKEN: ${{secrets.NPM_BUN_TYPES_TOKEN}}
+          NPM_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{runner.temp}}/dependencies
           npm publish --tag next --access=public

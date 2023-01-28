@@ -38,7 +38,7 @@ jobs:
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubuntu-latest
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -46,7 +46,7 @@ jobs:
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubuntu-latest
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -314,14 +314,10 @@ jobs:
           platforms: linux/arm64
           target: build_release_cpp
           outputs: type=local,dest=${{runner.temp}}/cpp
-      - name: Compress artifacts
-        run: |
-          cd ${{runner.temp}}/cpp
-          tar -czf ${{runner.temp}}/cpp.tar.gz *
       - uses: actions/upload-artifact@v3
         with:
           name: bun-cpp-${{ matrix.tag }}
-          path: ${{runner.temp}}/cpp.tar.gz
+          path: ${{runner.temp}}/cpp
   linux-link-build:
     name: Link ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
@@ -335,7 +331,7 @@ jobs:
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubuntu-latest
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -344,7 +340,7 @@ jobs:
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: big-ubuntu
+            runner: ubuntu-latest
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -385,7 +381,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: bun-cpp-${{ matrix.tag }}
-          path: ${{runner.temp}}/cpp.tar.gz
+          path: src/bun.js/bindings-obj
       - name: Download from cache
         uses: actions/download-artifact@v3
         with:
@@ -408,11 +404,6 @@ jobs:
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
-          rm -rf src/bun.js/bindings-obj
-          mkdir -p src/bun.js/bindings-obj
-          mkdir ${{runner.temp}}/cpp
-          tar -xf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
-          mv ${{runner.temp}}/cpp/* src/bun.js/bindings-obj
           mv ${{runner.temp}}/obj/* .
 
       - name: Build and push

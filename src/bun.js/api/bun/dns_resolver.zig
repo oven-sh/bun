@@ -629,11 +629,10 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
         pub fn init(
             cache: DNSResolver.LookupCacheHit(@This()),
             resolver: ?*DNSResolver,
-            name_str: *const JSC.ZigString.Slice,
+            name: []const u8,
             globalThis: *JSC.JSGlobalObject,
             comptime cache_field: []const u8,
         ) !*@This() {
-            const name = name_str.slice();
             var request = try globalThis.allocator().create(@This());
             var hasher = std.hash.Wyhash.init(0);
             hasher.update(name);
@@ -643,7 +642,7 @@ pub fn ResolveInfoRequest(comptime cares_type: type, comptime type_name: []const
             request.* = .{
                 .resolver_for_caching = resolver,
                 .hash = hash,
-                .head = .{ .poll_ref = poll_ref, .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .allocated = false, .name = name_str },
+                .head = .{ .poll_ref = poll_ref, .globalThis = globalThis, .promise = JSC.JSPromise.Strong.init(globalThis), .allocated = false, .name = name },
             };
             request.tail = &request.head;
             if (cache == .new) {
@@ -943,9 +942,9 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         poll_ref: JSC.PollRef,
         allocated: bool = false,
         next: ?*@This() = null,
-        name: *const JSC.ZigString.Slice,
+        name: []const u8,
 
-        pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: *const JSC.ZigString.Slice) !*@This() {
+        pub fn init(globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator, name: []const u8) !*@This() {
             var this = try allocator.create(@This());
             var poll_ref = JSC.PollRef.init();
             poll_ref.ref(globalThis.bunVM());
@@ -998,7 +997,7 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
 
         pub fn deinit(this: *@This()) void {
             this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
-            this.name.deinit();
+            bun.default_allocator.free(this.name);
 
             if (this.allocated)
                 this.globalThis.allocator().destroy(this);
@@ -1529,7 +1528,7 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
@@ -1546,25 +1545,25 @@ pub const DNSResolver = struct {
                 return resolver.doLookup(name.slice(), 0, options, globalThis);
             },
             RecordType.CNAME => {
-                return resolver.doResolveCAres(c_ares.struct_hostent, "cname", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
             },
             RecordType.MX => {
-                return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
             },
             RecordType.NS => {
-                return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
             },
             RecordType.PTR => {
-                return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
             },
             RecordType.SOA => {
-                return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
             },
             RecordType.SRV => {
-                return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
             },
             RecordType.TXT => {
-                return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
+                return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
             },
         }
     }
@@ -1663,12 +1662,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
     pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1694,12 +1693,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
     pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1725,12 +1724,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
     pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1756,12 +1755,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_hostent, "ns", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
     pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1787,12 +1786,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
     pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1818,12 +1817,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_hostent, "cname", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
     pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1849,12 +1848,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
     pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1880,12 +1879,12 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
     pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -1911,17 +1910,15 @@ pub const DNSResolver = struct {
             return .zero;
         }
 
-        const name = name_str.toSlice(globalThis, bun.default_allocator);
+        const name = name_str.toSliceClone(globalThis, bun.default_allocator);
 
         var vm = globalThis.bunVM();
         var resolver = vm.rareData().globalDNSResolver(vm);
 
-        return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", &name, globalThis);
+        return resolver.doResolveCAres(c_ares.struct_ares_txt_reply, "txt", name.slice(), globalThis);
     }
 
-    pub fn doResolveCAres(this: *DNSResolver, comptime cares_type: type, comptime type_name: []const u8, name_str: *const JSC.ZigString.Slice, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        var name = name_str.slice();
-
+    pub fn doResolveCAres(this: *DNSResolver, comptime cares_type: type, comptime type_name: []const u8, name: []const u8, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
@@ -1943,7 +1940,7 @@ pub const DNSResolver = struct {
         var cache = this.getOrPutIntoResolvePendingCache(ResolveInfoRequest(cares_type, type_name), key, cache_name);
         if (cache == .inflight) {
             // CAresLookup will have the name ownership
-            var cares_lookup = CAresLookup(cares_type, type_name).init(globalThis, globalThis.allocator(), name_str) catch unreachable;
+            var cares_lookup = CAresLookup(cares_type, type_name).init(globalThis, globalThis.allocator(), name) catch unreachable;
             cache.inflight.append(cares_lookup);
             return cares_lookup.promise.value();
         }
@@ -1951,7 +1948,7 @@ pub const DNSResolver = struct {
         var request = ResolveInfoRequest(cares_type, type_name).init(
             cache,
             this,
-            name_str, // CAresLookup will have the ownership
+            name, // CAresLookup will have the ownership
             globalThis,
             cache_name,
         ) catch unreachable;

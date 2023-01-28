@@ -49,7 +49,7 @@ async function getWithName(name) {
     } catch (exception) {
       throw exception;
     }
-  } else if ("babel") {
+  } else if (name === "babel") {
     try {
       transformSync = babel_.transformSync;
       transform = babel_.transform;

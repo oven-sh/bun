@@ -758,6 +758,18 @@ const char* const s_jsBufferPrototypeParentCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeOffsetCodeLength = 60;
+static const JSC::Intrinsic s_jsBufferPrototypeOffsetCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeOffsetCode =
+    "(function () {\n" \
+    "  \"use strict\";\n" \
+    "  return this.byteOffset;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;

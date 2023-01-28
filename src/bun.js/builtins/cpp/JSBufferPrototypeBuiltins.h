@@ -327,6 +327,11 @@ extern const int s_jsBufferPrototypeParentCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeOffsetCode;
+extern const int s_jsBufferPrototypeOffsetCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility;
 extern const char* const s_jsBufferPrototypeInitializeBunBufferCode;
 extern const int s_jsBufferPrototypeInitializeBunBufferCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility;
@@ -390,6 +395,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(toJSON, jsBufferPrototypeToJSON, 0) \
     macro(slice, jsBufferPrototypeSlice, 2) \
     macro(parent, jsBufferPrototypeParent, 0) \
+    macro(offset, jsBufferPrototypeOffset, 0) \
     macro(initializeBunBuffer, jsBufferPrototypeInitializeBunBuffer, 1) \
 
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
@@ -448,6 +454,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_TOJSON 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_PARENT 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_OFFSET 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
@@ -507,6 +514,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(jsBufferPrototypeToJSONCode, toJSON, ASCIILiteral(), s_jsBufferPrototypeToJSONCodeLength) \
     macro(jsBufferPrototypeSliceCode, slice, ASCIILiteral(), s_jsBufferPrototypeSliceCodeLength) \
     macro(jsBufferPrototypeParentCode, parent, "get parent"_s, s_jsBufferPrototypeParentCodeLength) \
+    macro(jsBufferPrototypeOffsetCode, offset, "get offset"_s, s_jsBufferPrototypeOffsetCodeLength) \
     macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, ASCIILiteral(), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
@@ -521,6 +529,7 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(initializeBunBuffer) \
     macro(latin1Slice) \
     macro(latin1Write) \
+    macro(offset) \
     macro(parent) \
     macro(readBigInt64BE) \
     macro(readBigInt64LE) \

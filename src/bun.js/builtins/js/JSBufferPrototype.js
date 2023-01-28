@@ -303,9 +303,14 @@ function slice(start, end) {
 @getter
 function parent() {
   "use strict";
-  return this.buffer;
+  return this?.buffer;
 }
 
+@getter
+function offset() {
+  "use strict";
+  return this?.byteOffset;
+}
 
 function initializeBunBuffer(parameters)
 {

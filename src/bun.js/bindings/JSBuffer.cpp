@@ -153,7 +153,7 @@ public:
             return JSC::JSValue::encode(JSC::jsUndefined());
         }
 
-        auto thisObject = JSC::jsCast<JSC::JSUint8Array*>(thisValue);
+        auto thisObject = JSC::jsDynamicCast<JSC::JSUint8Array*>(thisValue);
         if (UNLIKELY(!thisObject))
             return throwThisTypeError(lexicalGlobalObject, throwScope, "Buffer", operationName);
 

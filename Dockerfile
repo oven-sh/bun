@@ -676,7 +676,7 @@ COPY ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY ${BUN_RELEASE_DIR}/bun.o ${BUN_DEPLOY_DIR}/
 COPY src/bun.js/bindings-obj/* ${BUN_DIR}/src/bun.js/bindings-obj/
 
-RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir
+RUN cd ${BUN_DIR} && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir
 
 FROM bun-base-with-zig-and-webkit as link_release
 

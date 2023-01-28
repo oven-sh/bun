@@ -368,7 +368,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
-            return this.ptr[0..this.len:0];
+            return this.ptr[0..this.len :0];
         }
 
         pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
@@ -386,7 +386,7 @@ pub const ZigString = extern struct {
 
             std.mem.copy(u8, buf[0..this.len], this.slice());
             buf[this.len] = 0;
-            return buf[0..this.len:0];
+            return buf[0..this.len :0];
         }
 
         pub fn mut(this: Slice) []u8 {
@@ -624,6 +624,35 @@ pub const ZigString = extern struct {
         return Slice{
             .ptr = untagged(this.ptr),
             .len = @truncate(u32, this.len),
+        };
+    }
+
+    pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) Slice {
+        if (this.len == 0)
+            return Slice.empty;
+        if (is16Bit(&this)) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .allocator = NullableAllocator.init(allocator),
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+            };
+        }
+
+        if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            return Slice{
+                .allocator = NullableAllocator.init(allocator),
+                .ptr = buffer.ptr,
+                .len = @truncate(u32, buffer.len),
+            };
+        }
+
+        var buffer = this.toOwnedSlice(allocator) catch unreachable;
+        return Slice{
+            .allocator = NullableAllocator.init(allocator),
+            .ptr = buffer.ptr,
+            .len = @truncate(u32, buffer.len),
         };
     }
 
@@ -1305,6 +1334,7 @@ pub const JSString = extern struct {
         return out;
     }
 
+    // doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -1313,6 +1343,16 @@ pub const JSString = extern struct {
         var str = ZigString.init("");
         this.toZigString(global, &str);
         return str.toSlice(allocator);
+    }
+
+    pub fn toSliceClone(
+        this: *JSString,
+        global: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) ZigString.Slice {
+        var str = ZigString.init("");
+        this.toZigString(global, &str);
+        return str.toSliceClone(allocator);
     }
 
     pub fn toSliceZ(

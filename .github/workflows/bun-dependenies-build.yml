@@ -106,7 +106,7 @@ jobs:
       - name: Publish to npm
         if: github.ref != 'refs/heads/main'
         env:
-          NPM_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
+          NODE_AUTH_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{runner.temp}}/dependencies
@@ -114,7 +114,7 @@ jobs:
       - name: Publish to npm
         if: github.ref == 'refs/heads/main'
         env:
-          NPM_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
+          NODE_AUTH_TOKEN: ${{secrets.BUN_DEPENDENCIES_NPM_TOKEN}}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd ${{runner.temp}}/dependencies

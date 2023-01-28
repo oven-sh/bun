@@ -73,6 +73,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/bun
+          flavor: latest=${{ env.TAG != "canary" }}
           tags: |
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
@@ -87,7 +88,7 @@ jobs:
         name: Push to Docker
         uses: docker/build-push-action@v3
         with:
-          context: ./dockerhub
+          context: dockerhub
           file: Dockerfile-debian
           platforms: linux/amd64,linux/arm64
           builder: ${{ steps.buildx.outputs.name }}

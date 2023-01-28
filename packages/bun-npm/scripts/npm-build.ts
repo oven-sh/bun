@@ -196,9 +196,8 @@ async function getCanaryVersion(): Promise<string> {
     const { canary }: { canary: string } = await response.json();
     if (canary.startsWith(semver)) {
       const match = /canary.[0-9]{8}\.([0-9]+)+?/.exec(canary);
-      if (match && isFinite(parseInt(match[1]))) {
-        return `${semver}.${match[1]}+${sha}`;
-      }
+      const build = 1 + (match ? parseInt(match[1]) : 0);
+      return `${semver}.${build}+${sha}`;
     }
     return `${semver}.1+${sha}`;
   } catch (error) {

@@ -105,11 +105,15 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Publish to npm
         if: github.ref != 'refs/heads/main'
+        env:
+          NPM_TOKEN: ${{secrets.NPM_BUN_TYPES_TOKEN}}
         run: |
           cd ${{runner.temp}}/dependencies
           npm publish --tag canary --access=public
       - name: Publish to npm
         if: github.ref == 'refs/heads/main'
+        env:
+          NPM_TOKEN: ${{secrets.NPM_BUN_TYPES_TOKEN}}
         run: |
           cd ${{runner.temp}}/dependencies
           npm publish --tag next --access=public

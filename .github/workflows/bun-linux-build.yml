@@ -317,7 +317,7 @@ jobs:
       - name: Compress artifacts
         run: |
           cd ${{runner.temp}}/cpp
-          tar -czf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
+          tar -czf ${{runner.temp}}/cpp.tar.gz *
       - uses: actions/upload-artifact@v3
         with:
           name: bun-cpp-${{ matrix.tag }}

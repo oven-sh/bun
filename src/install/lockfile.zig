@@ -689,19 +689,25 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
 
     // Don't allow invalid memory to happen
     if (updates.len > 0) {
-        const dep_list = new.packages.items(.dependencies)[0];
-        const res_list = new.packages.items(.resolutions)[0];
+        const slice = new.packages.slice();
+        const names = slice.items(.name);
+        const resolutions = slice.items(.resolution);
+        const dep_list = slice.items(.dependencies)[0];
+        const res_list = slice.items(.resolutions)[0];
         const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
-        const new_resolutions: []const PackageID = res_list.get(new.buffers.resolutions.items);
+        const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
         for (updates) |update, update_i| {
-            if (update.version.tag == .uninitialized) {
+            if (update.resolution.tag == .uninitialized) {
+                const name_hash = String.Builder.stringHash(update.name);
                 for (root_deps) |dep, i| {
-                    if (dep.name_hash == String.Builder.stringHash(update.name)) {
-                        if (new_resolutions[i] > new.packages.len) continue;
+                    if (dep.name_hash == name_hash) {
+                        const package_id = resolved_ids[i];
+                        if (package_id > new.packages.len) continue;
                         updates[update_i].version_buf = new.buffers.string_bytes.items;
                         updates[update_i].version = dep.version;
-                        updates[update_i].resolved_version_buf = new.buffers.string_bytes.items;
+                        updates[update_i].resolution = resolutions[package_id];
+                        updates[update_i].resolved_name = names[package_id];
                         updates[update_i].missing_version = true;
                     }
                 }
@@ -2367,7 +2373,7 @@ pub const Package = extern struct {
                     continue;
                 };
 
-                if (to_deps[to_i].eql(from_dep, from_lockfile.buffers.string_bytes.items, to_lockfile.buffers.string_bytes.items)) {
+                if (to_deps[to_i].eql(from_dep, to_lockfile.buffers.string_bytes.items, from_lockfile.buffers.string_bytes.items)) {
                     mapping[to_i] = @truncate(PackageID, i);
                     continue;
                 }

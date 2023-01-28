@@ -4261,7 +4261,8 @@ pub const PackageManager = struct {
         ) !void {
             const G = JSAst.G;
 
-            var remaining: usize = updates.len;
+            var remaining = updates.len;
+            var replacing: usize = 0;
 
             // There are three possible scenarios here
             // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -4275,8 +4276,12 @@ pub const PackageManager = struct {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(update.name)) |value| {
                                     if (value.expr.data == .e_string) {
-                                        updates[i].e_string = value.expr.data.e_string;
-                                        remaining -= 1;
+                                        if (update.resolved_name.isEmpty()) {
+                                            updates[i].e_string = value.expr.data.e_string;
+                                            remaining -= 1;
+                                        } else {
+                                            replacing += 1;
+                                        }
                                     }
                                     break :outer;
                                 }
@@ -4295,7 +4300,7 @@ pub const PackageManager = struct {
                     }
                 }
 
-                var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining);
+                var new_dependencies = try allocator.alloc(G.Property, dependencies.len + remaining - replacing);
                 std.mem.copy(G.Property, new_dependencies, dependencies);
                 std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
 
@@ -4305,11 +4310,32 @@ pub const PackageManager = struct {
                     var k: usize = 0;
 
                     while (k < new_dependencies.len) : (k += 1) {
+                        if (new_dependencies[k].key) |key| {
+                            if (key.data.e_string.eql(string, update.name)) {
+                                if (update.resolved_name.isEmpty()) {
+                                    // This actually is a duplicate
+                                    // like "react" appearing in both "dependencies" and "optionalDependencies"
+                                    // For this case, we'll just swap remove it
+                                    if (new_dependencies.len > 1) {
+                                        new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
+                                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
+                                    } else {
+                                        new_dependencies = &[_]G.Property{};
+                                    }
+                                    continue;
+                                }
+                                new_dependencies[k].key = null;
+                            }
+                        }
+
                         if (new_dependencies[k].key == null) {
                             new_dependencies[k].key = JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
-                                    .data = update.name,
+                                    .data = if (update.resolved_name.isEmpty())
+                                        update.name
+                                    else
+                                        try allocator.dupe(u8, update.resolved_name.slice(update.version_buf)),
                                 },
                                 logger.Loc.Empty,
                             );
@@ -4324,18 +4350,6 @@ pub const PackageManager = struct {
                             );
                             updates[j].e_string = new_dependencies[k].value.?.data.e_string;
                             continue :outer;
-                        }
-
-                        // This actually is a duplicate
-                        // like "react" appearing in both "dependencies" and "optionalDependencies"
-                        // For this case, we'll just swap remove it
-                        if (new_dependencies[k].key.?.data.e_string.eql(string, update.name)) {
-                            if (new_dependencies.len > 1) {
-                                new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                            } else {
-                                new_dependencies = &[_]G.Property{};
-                            }
                         }
                     }
                 }
@@ -4400,13 +4414,19 @@ pub const PackageManager = struct {
             }
 
             for (updates) |*update| {
-                var str = update.e_string.?;
-
-                if (update.version.tag == .uninitialized) {
-                    str.data = latest;
-                } else {
-                    str.data = update.version.literal.slice(update.version_buf);
-                }
+                update.e_string.?.data = switch (update.resolution.tag) {
+                    .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
+                        std.fmt.allocPrint(allocator, "^{}", .{
+                            update.resolution.value.npm.version.fmt(update.version_buf),
+                        }) catch unreachable
+                    else
+                        null,
+                    .uninitialized => switch (update.version.tag) {
+                        .uninitialized => latest,
+                        else => null,
+                    },
+                    else => null,
+                } orelse update.version.literal.slice(update.version_buf);
             }
         }
     };
@@ -5241,9 +5261,10 @@ pub const PackageManager = struct {
     pub const UpdateRequest = struct {
         name: string = "",
         name_hash: PackageNameHash = 0,
-        resolved_version_buf: string = "",
-        version: Dependency.Version = Dependency.Version{},
+        version: Dependency.Version = .{},
         version_buf: []const u8 = "",
+        resolution: Resolution = .{},
+        resolved_name: String = .{},
         missing_version: bool = false,
         failed: bool = false,
         // This must be cloned to handle when the AST store resets
@@ -5262,7 +5283,8 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var value = std.mem.trim(u8, positional, " \n\r\t");
+                var input = std.mem.trim(u8, positional, " \n\r\t");
+                var value = input;
                 switch (op) {
                     .link, .unlink => if (!strings.hasPrefixComptime(value, "link:")) {
                         value = std.fmt.allocPrint(allocator, "link:{s}", .{value}) catch unreachable;
@@ -5297,23 +5319,31 @@ pub const PackageManager = struct {
                     });
                     Global.exit(1);
                 };
+                if (switch (version.tag) {
+                    .dist_tag => version.value.dist_tag.name.eql(placeholder, value, value),
+                    .npm => version.value.npm.name.eql(placeholder, value, value),
+                    else => false,
+                }) {
+                    value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
+                    version = Dependency.parseWithOptionalTag(
+                        allocator,
+                        placeholder,
+                        value,
+                        null,
+                        &SlicedString.init(value, value),
+                        log,
+                    ) orelse {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
+                            positional,
+                        });
+                        Global.exit(1);
+                    };
+                }
                 switch (version.tag) {
-                    .dist_tag => if (version.value.dist_tag.name.eql(placeholder, value, value)) {
-                        value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
-                        version = Dependency.parseWithOptionalTag(
-                            allocator,
-                            placeholder,
-                            value,
-                            null,
-                            &SlicedString.init(value, value),
-                            log,
-                        ) orelse {
-                            Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
-                                positional,
-                            });
-                            Global.exit(1);
-                        };
-                    },
+                    .dist_tag, .npm => version.literal = if (strings.lastIndexOfChar(value, '@')) |at|
+                        String.init(value, value[at + 1 ..])
+                    else
+                        String.from(""),
                     else => {},
                 }
 

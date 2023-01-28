@@ -604,7 +604,7 @@ pub const ZigString = extern struct {
         if (this.len == 0)
             return Slice.empty;
         if (is16Bit(&this)) {
-            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -613,7 +613,7 @@ pub const ZigString = extern struct {
         }
 
         if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
-            var buffer = this.toOwnedSlice(allocator) catch unreachable;
+            const buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .allocator = NullableAllocator.init(allocator),
                 .ptr = buffer.ptr,
@@ -630,25 +630,7 @@ pub const ZigString = extern struct {
     pub fn toSliceClone(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice.empty;
-        if (is16Bit(&this)) {
-            var buffer = this.toOwnedSlice(allocator) catch unreachable;
-            return Slice{
-                .allocator = NullableAllocator.init(allocator),
-                .ptr = buffer.ptr,
-                .len = @truncate(u32, buffer.len),
-            };
-        }
-
-        if (!this.isUTF8() and !strings.isAllASCII(untagged(this.ptr)[0..this.len])) {
-            var buffer = this.toOwnedSlice(allocator) catch unreachable;
-            return Slice{
-                .allocator = NullableAllocator.init(allocator),
-                .ptr = buffer.ptr,
-                .len = @truncate(u32, buffer.len),
-            };
-        }
-
-        var buffer = this.toOwnedSlice(allocator) catch unreachable;
+        const buffer = this.toOwnedSlice(allocator) catch unreachable;
         return Slice{
             .allocator = NullableAllocator.init(allocator),
             .ptr = buffer.ptr,

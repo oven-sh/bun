@@ -18,18 +18,18 @@ import {
   rm,
   writeFile,
 } from "fs/promises";
-import { join } from "path";
+import { basename, join } from "path";
 import { tmpdir } from "os";
 import { realpathSync } from "fs";
 
 let handler, package_dir, requested, server;
 
-function dummyRegistry(urls, version = "0.0.2") {
+function dummyRegistry(urls, version = "0.0.2", props = {}) {
   return async (request) => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, "tarball.tgz")));
+      return new Response(file(join(import.meta.dir, basename(request.url))));
     }
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -47,6 +47,7 @@ function dummyRegistry(urls, version = "0.0.2") {
             dist: {
               tarball: `${request.url}.tgz`,
             },
+            ...props,
           },
         },
         "dist-tags": {
@@ -231,7 +232,7 @@ it("should handle empty string in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -645,7 +646,7 @@ it("should handle ^0 in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -737,7 +738,7 @@ it("should handle ^0.0 in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -868,7 +869,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -921,7 +922,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -974,7 +975,7 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   expect(
     await file(join(package_dir, "node_modules", "bar", "package.json")).json(),
   ).toEqual({
-    name: "baz",
+    name: "bar",
     version: "0.0.2",
   });
   await access(join(package_dir, "bun.lockb"));
@@ -982,7 +983,11 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
 
 it("should handle dependency aliasing", async () => {
   const urls = [];
-  handler = dummyRegistry(urls);
+  handler = dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1007,7 +1012,7 @@ it("should handle dependency aliasing", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + baz@0.0.2",
+    " + Bar@0.0.3",
     "",
     " 1 packages installed",
   ]);
@@ -1018,31 +1023,42 @@ it("should handle dependency aliasing", async () => {
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
     ".cache",
     "Bar",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(
-    ["package.json"],
-  );
-  expect(
-    await file(join(package_dir, "node_modules", "Bar", "package.json")).json(),
-  ).toEqual({
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "Bar", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.2",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
   });
   await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle dependency aliasing (versioned)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  handler = dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
       name: "Foo",
       version: "0.0.1",
       dependencies: {
-        Bar: "npm:baz@0.0.2",
+        Bar: "npm:baz@0.0.3",
       },
     }),
   );
@@ -1060,7 +1076,7 @@ it("should handle dependency aliasing (versioned)", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + baz@0.0.2",
+    " + Bar@0.0.3",
     "",
     " 1 packages installed",
   ]);
@@ -1071,24 +1087,35 @@ it("should handle dependency aliasing (versioned)", async () => {
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
     ".cache",
     "Bar",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(
-    ["package.json"],
-  );
-  expect(
-    await file(join(package_dir, "node_modules", "Bar", "package.json")).json(),
-  ).toEqual({
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "Bar", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.2",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
   });
   await access(join(package_dir, "bun.lockb"));
 });
 
 it("should handle dependency aliasing (dist-tagged)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  handler = dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1113,7 +1140,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + baz@0.0.2",
+    " + Bar@0.0.3",
     "",
     " 1 packages installed",
   ]);
@@ -1124,24 +1151,35 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
     ".cache",
     "Bar",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(
-    ["package.json"],
-  );
-  expect(
-    await file(join(package_dir, "node_modules", "Bar", "package.json")).json(),
-  ).toEqual({
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "Bar", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.2",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
   });
   await access(join(package_dir, "bun.lockb"));
 });
 
 it("should not reinstall aliased dependencies", async () => {
   const urls = [];
-  handler = dummyRegistry(urls);
+  handler = dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1170,7 +1208,7 @@ it("should not reinstall aliased dependencies", async () => {
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + baz@0.0.2",
+    " + Bar@0.0.3",
     "",
     " 1 packages installed",
   ]);
@@ -1181,17 +1219,24 @@ it("should not reinstall aliased dependencies", async () => {
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
     ".cache",
     "Bar",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(
-    ["package.json"],
-  );
-  expect(
-    await file(join(package_dir, "node_modules", "Bar", "package.json")).json(),
-  ).toEqual({
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "Bar", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.2",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
   });
   await access(join(package_dir, "bun.lockb"));
   // Performs `bun install` again, expects no-op
@@ -1221,17 +1266,24 @@ it("should not reinstall aliased dependencies", async () => {
   expect(urls).toEqual([]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
     ".cache",
     "Bar",
   ]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual(
-    ["package.json"],
-  );
-  expect(
-    await file(join(package_dir, "node_modules", "Bar", "package.json")).json(),
-  ).toEqual({
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "Bar", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "Bar"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "Bar", "package.json")).json()).toEqual({
     name: "baz",
-    version: "0.0.2",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
   });
   await access(join(package_dir, "bun.lockb"));
 });
@@ -1515,25 +1567,25 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
   expect(
     await readdirSorted(join(package_dir, "node_modules", ".bin")),
   ).toEqual(["uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(join(
+    "..",
+    "uglify",
+    "bin",
+    "uglifyjs",
+  ));
   expect(
     await readdirSorted(join(package_dir, "node_modules", ".cache")),
   ).toEqual(["@GH@mishoo-UglifyJS-e219a9a", "uglify"]);
-  expect(
-    await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify")),
-  ).toEqual(["mishoo-UglifyJS-e219a9a"]);
-  expect(
-    await readlink(
-      join(
-        package_dir,
-        "node_modules",
-        ".cache",
-        "uglify",
-        "mishoo-UglifyJS-e219a9a",
-      ),
-    ),
-  ).toBe(
-    join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"),
-  );
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache", "uglify"))).toEqual([
+    "mishoo-UglifyJS-e219a9a",
+  ]);
+  expect(await readlink(join(
+    package_dir,
+    "node_modules",
+    ".cache",
+    "uglify",
+    "mishoo-UglifyJS-e219a9a",
+  ))).toBe(join(package_dir, "node_modules", ".cache", "@GH@mishoo-UglifyJS-e219a9a"));
   expect(
     await readdirSorted(join(package_dir, "node_modules", "uglify")),
   ).toEqual([
@@ -1599,12 +1651,8 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
     ".cache",
     "uglify",
   ]);
-  expect(
-    await readdirSorted(join(package_dir, "node_modules", ".bin")),
-  ).toEqual(["uglifyjs"]);
-  expect(
-    await readdirSorted(join(package_dir, "node_modules", "uglify")),
-  ).toEqual([
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
     ".bun-tag",
     ".gitattributes",
     ".github",

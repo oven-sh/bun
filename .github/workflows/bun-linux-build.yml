@@ -50,14 +50,14 @@ jobs:
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
-          - cpu: native
-            tag: linux-aarch64
-            arch: aarch64
-            build_arch: arm64
-            runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
-            build_machine_arch: aarch64
+          # - cpu: native
+          #   tag: linux-aarch64
+          #   arch: aarch64
+          #   build_arch: arm64
+          #   runner: linux-arm64
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+          #   webkit_basename: "bun-webkit-linux-arm64-lto"
+          #   build_machine_arch: aarch64
 
     steps:
       - uses: actions/checkout@v3
@@ -139,14 +139,14 @@ jobs:
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
-          - cpu: native
-            tag: linux-aarch64
-            arch: aarch64
-            build_arch: arm64
-            runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
-            build_machine_arch: aarch64
+          # - cpu: native
+          #   tag: linux-aarch64
+          #   arch: aarch64
+          #   build_arch: arm64
+          #   runner: linux-arm64
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+          #   webkit_basename: "bun-webkit-linux-arm64-lto"
+          #   build_machine_arch: aarch64
 
     steps:
       - uses: actions/checkout@v3
@@ -240,15 +240,15 @@ jobs:
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
             package: bun-linux-x64
-          - cpu: native
-            tag: linux-aarch64
-            arch: aarch64
-            build_arch: arm64
-            runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
-            build_machine_arch: aarch64
-            package: bun-linux-arm64
+          # - cpu: native
+          #   tag: linux-aarch64
+          #   arch: aarch64
+          #   build_arch: arm64
+          #   runner: linux-arm64
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+          #   webkit_basename: "bun-webkit-linux-arm64-lto"
+          #   build_machine_arch: aarch64
+          #   package: bun-linux-arm64
 
     steps:
       - uses: actions/checkout@v3

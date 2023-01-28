@@ -50,9 +50,6 @@ jobs:
     id: docker
     name: Release to Dockerhub
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: packages/bun-npm
     steps:
       - id: checkout
         name: Checkout
@@ -94,6 +91,8 @@ jobs:
         with:
           context: ./dockerhub
           file: Dockerfile-debian
+          platforms: linux/amd64,linux/arm64
+          builder: ${{ steps.buildx.outputs.name }}
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}

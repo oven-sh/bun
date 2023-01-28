@@ -22,6 +22,7 @@ using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
+    macro(Buffer) \
     macro(Bun) \
     macro(Loader) \
     macro(ReadableByteStreamController) \

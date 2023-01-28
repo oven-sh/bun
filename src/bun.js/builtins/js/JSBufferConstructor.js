@@ -28,9 +28,6 @@
 function from(items) {
   "use strict";
 
-  if (!@isConstructor(this))
-    @throwTypeError("Buffer.from requires |this| to be a constructor");
-
   if (@isUndefinedOrNull(items)) {
     @throwTypeError(
       "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.",
@@ -49,13 +46,13 @@ function from(items) {
   ) {
     switch (@argumentCount()) {
       case 1: {
-        return new this(items);
+        return new @Buffer(items);
       }
       case 2: {
-        return new this(items, @argument(1));
+        return new @Buffer(items, @argument(1));
       }
       default: {
-        return new this(items, @argument(1), @argument(2));
+        return new @Buffer(items, @argument(1), @argument(2));
       }
     }
   }
@@ -74,13 +71,13 @@ function from(items) {
       if (typeof primitive === "string") {
         switch (@argumentCount()) {
           case 1: {
-            return new this(primitive);
+            return new @Buffer(primitive);
           }
           case 2: {
-            return new this(primitive, @argument(1));
+            return new @Buffer(primitive, @argument(1));
           }
           default: {
-            return new this(primitive, @argument(1), @argument(2));
+            return new @Buffer(primitive, @argument(1), @argument(2));
           }
         }
       }
@@ -96,5 +93,5 @@ function from(items) {
   // Don't pass the second argument because Node's Buffer.from doesn't accept
   // a function and Uint8Array.from requires it if it exists
   // That means we cannot use @tailCallFowrardArguments here, sadly
-  return new this(@Uint8Array.from(arrayLike).buffer);
+  return new @Buffer(@Uint8Array.from(arrayLike).buffer);
 }

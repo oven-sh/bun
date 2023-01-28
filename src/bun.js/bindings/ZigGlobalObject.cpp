@@ -3172,7 +3172,11 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),
+    auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr);
+
+    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPublicName(), bufferAccessor,
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), bufferAccessor,
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);

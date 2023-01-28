@@ -51,14 +51,11 @@ namespace WebCore {
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1843;
+const int s_jsBufferConstructorFromCodeLength = 1762;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
     "  \"use strict\";\n" \
-    "\n" \
-    "  if (!@isConstructor(this))\n" \
-    "    @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
     "\n" \
     "  if (@isUndefinedOrNull(items)) {\n" \
     "    @throwTypeError(\n" \
@@ -78,13 +75,13 @@ const char* const s_jsBufferConstructorFromCode =
     "  ) {\n" \
     "    switch (@argumentCount()) {\n" \
     "      case 1: {\n" \
-    "        return new this(items);\n" \
+    "        return new @Buffer(items);\n" \
     "      }\n" \
     "      case 2: {\n" \
-    "        return new this(items, @argument(1));\n" \
+    "        return new @Buffer(items, @argument(1));\n" \
     "      }\n" \
     "      default: {\n" \
-    "        return new this(items, @argument(1), @argument(2));\n" \
+    "        return new @Buffer(items, @argument(1), @argument(2));\n" \
     "      }\n" \
     "    }\n" \
     "  }\n" \
@@ -103,13 +100,13 @@ const char* const s_jsBufferConstructorFromCode =
     "      if (typeof primitive === \"string\") {\n" \
     "        switch (@argumentCount()) {\n" \
     "          case 1: {\n" \
-    "            return new this(primitive);\n" \
+    "            return new @Buffer(primitive);\n" \
     "          }\n" \
     "          case 2: {\n" \
-    "            return new this(primitive, @argument(1));\n" \
+    "            return new @Buffer(primitive, @argument(1));\n" \
     "          }\n" \
     "          default: {\n" \
-    "            return new this(primitive, @argument(1), @argument(2));\n" \
+    "            return new @Buffer(primitive, @argument(1), @argument(2));\n" \
     "          }\n" \
     "        }\n" \
     "      }\n" \
@@ -125,7 +122,7 @@ const char* const s_jsBufferConstructorFromCode =
     "  //\n" \
     "  //\n" \
     "  //\n" \
-    "  return new this(@Uint8Array.from(arrayLike).buffer);\n" \
+    "  return new @Buffer(@Uint8Array.from(arrayLike).buffer);\n" \
     "})\n" \
 ;
 

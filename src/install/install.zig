@@ -5873,8 +5873,8 @@ pub const PackageManager = struct {
         ) void {
             const buf = this.lockfile.buffers.string_bytes.items;
 
+            const alias = if (this.lockfile.alias_map.get(package_id)) |str| str.slice(buf) else name;
             const destination_dir_subpath: [:0]u8 = brk: {
-                const alias = if (this.lockfile.alias_map.get(package_id)) |str| str.slice(buf) else name;
                 std.mem.copy(u8, &this.destination_dir_subpath_buf, alias);
                 this.destination_dir_subpath_buf[alias.len] = 0;
                 break :brk this.destination_dir_subpath_buf[0..alias.len :0];
@@ -6031,7 +6031,7 @@ pub const PackageManager = struct {
 
                                         // .destination_dir_subpath = destination_dir_subpath,
                                         .root_node_modules_folder = this.root_node_modules_folder.dir.fd,
-                                        .package_name = strings.StringOrTinyString.init(name),
+                                        .package_name = strings.StringOrTinyString.init(alias),
                                         .string_buf = buf,
                                         .extern_string_buf = extern_string_buf,
                                     };
@@ -6040,7 +6040,7 @@ pub const PackageManager = struct {
                                     if (bin_linker.err) |err| {
                                         if (comptime log_level != .silent) {
                                             const fmt = "\n<r><red>error:<r> linking <b>{s}<r>: {s}\n";
-                                            const args = .{ name, @errorName(err) };
+                                            const args = .{ alias, @errorName(err) };
 
                                             if (comptime log_level.showProgress()) {
                                                 if (Output.enable_ansi_colors) {
@@ -6390,7 +6390,10 @@ pub const PackageManager = struct {
                     // Don't attempt to link incompatible binaries
                     if (meta.isDisabled()) continue;
 
-                    const name: string = lockfile.str(&installer.names[resolved_id]);
+                    const name: string = brk: {
+                        const alias = this.lockfile.alias_map.get(package_id) orelse installer.names[resolved_id];
+                        break :brk lockfile.str(&alias);
+                    };
 
                     if (!installer.has_created_bin) {
                         if (!this.options.global) {

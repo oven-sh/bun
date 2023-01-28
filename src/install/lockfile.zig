@@ -1039,7 +1039,10 @@ pub const Printer = struct {
                     if (package_id > end) continue;
                     const is_new = installed.isSet(package_id);
 
-                    const package_name = names[package_id].slice(string_buf);
+                    const package_name = brk: {
+                        const alias = this.lockfile.alias_map.get(package_id) orelse names[package_id];
+                        break :brk alias.slice(string_buf);
+                    };
 
                     if (this.updates.len > 0) {
                         const name_hash = names_hashes[package_id];
@@ -1109,7 +1112,7 @@ pub const Printer = struct {
             for (this.updates) |_, update_id| {
                 const package_id = id_map[update_id];
                 if (package_id == std.math.maxInt(PackageID)) continue;
-                const name = names[package_id];
+                const name = this.lockfile.alias_map.get(package_id) orelse names[package_id];
                 const bin = bins[package_id];
 
                 const package_name = name.slice(string_buf);

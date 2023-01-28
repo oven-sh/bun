@@ -72,7 +72,7 @@ jobs:
         name: Setup Docker metadata
         uses: docker/metadata-action@v4
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/bun
+          images: oven/bun
           flavor: latest=false # TODO
           tags: |
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}

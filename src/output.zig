@@ -305,7 +305,7 @@ pub fn printErrorable(comptime fmt: string, args: anytype) !void {
 }
 
 pub fn println(comptime fmt: string, args: anytype) void {
-    if (fmt[fmt.len - 1] != '\n') {
+    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
     }
 
@@ -320,7 +320,7 @@ pub inline fn debug(comptime fmt: string, args: anytype) void {
 
 pub fn _debug(comptime fmt: string, args: anytype) void {
     std.debug.assert(source_set);
-    if (fmt[fmt.len - 1] != '\n') {
+    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
     }
 
@@ -396,7 +396,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 out_set = true;
             }
 
-            if (comptime fmt[fmt.len - 1] != '\n') {
+            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
                 return log(fmt ++ "\n", args);
             }
 
@@ -556,7 +556,7 @@ pub fn prettyln(comptime fmt: string, args: anytype) void {
 }
 
 pub fn printErrorln(comptime fmt: string, args: anytype) void {
-    if (fmt[fmt.len - 1] != '\n') {
+    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return printError(fmt ++ "\n", args);
     }
 
@@ -568,7 +568,7 @@ pub fn prettyError(comptime fmt: string, args: anytype) void {
 }
 
 pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    if (fmt[fmt.len - 1] != '\n') {
+    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return prettyWithPrinter(
             fmt ++ "\n",
             args,
@@ -598,7 +598,7 @@ pub fn prettyWarn(comptime fmt: string, args: anytype) void {
 }
 
 pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
-    if (fmt[fmt.len - 1] != '\n') {
+    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return prettyWithPrinter(fmt ++ "\n", args, printError, .Warn);
     }
 

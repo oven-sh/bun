@@ -327,16 +327,6 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     needs: [linux-zig-build, linux-dependencies-build, linux-cpp-build]
-    env:
-      CPU_TARGET: ${{ matrix.cpu }}
-      JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
-      JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
-      BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
-      OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
-      BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
-      BUN_RELEASE_DIR: ${{ runner.temp }}/release
-      WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
-      WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
     strategy:
       fail-fast: false
       matrix:
@@ -407,6 +397,16 @@ jobs:
           name: bun-dependencies-${{ matrix.tag }}
           path: ${{env.BUN_DEPS_OUT_DIR}}
       - name: Extract
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+          OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+          BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           rm -rf src/bun.js/bindings-obj
           mkdir -p src/bun.js/bindings-obj
@@ -418,6 +418,16 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v3
         if: runner.arch == 'X64'
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+          OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+          BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         with:
           context: .
           push: false
@@ -437,6 +447,16 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v3
         if: runner.arch == 'ARM64'
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+          OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+          BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         with:
           context: .
           push: false

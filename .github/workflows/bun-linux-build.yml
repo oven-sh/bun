@@ -33,6 +33,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
+        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64
@@ -122,6 +123,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
+        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64
@@ -185,6 +187,9 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-linux-gnu
             GIT_SHA=${{github.sha}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/amd64
           target: build_release_cpp
           outputs: type=local,dest=${{runner.temp}}/cpp
@@ -203,6 +208,9 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-linux-gnu
             GIT_SHA=${{github.sha}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/arm64
           target: build_release_cpp
           outputs: type=local,dest=${{runner.temp}}/cpp
@@ -219,8 +227,10 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     needs: [linux-zig-build, linux-cpp-build]
+
     strategy:
       matrix:
+        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64
@@ -284,11 +294,11 @@ jobs:
           path: ${{runner.temp}}/obj
       - name: Extract
         run: |
-          rm -rf src/bindings-obj
-          mkdir -p src/bindings-obj
+          rm -rf src/bun.js/bindings-obj
+          mkdir -p src/bun.js/bindings-obj
           mkdir ${{runner.temp}}/cpp
           tar -xf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
-          mv ${{runner.temp}}/cpp/* src/bindings-obj
+          mv ${{runner.temp}}/cpp/* src/bun.js/bindings-obj
           mv ${{runner.temp}}/obj/* packages/${{matrix.package}}
 
       - name: Build and push
@@ -324,6 +334,8 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-linux-gnu
             GIT_SHA=${{github.sha}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/arm64
           target: link_release
           outputs: type=local,dest=${{runner.temp}}/release

@@ -21,6 +21,7 @@ ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.5
+ARG CPU_COUNT=10
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -441,6 +442,8 @@ ARG GIT_SHA
 ARG TRIPLET
 ARG BUN_DIR
 ARG CPU_TARGET
+ARG CPU_COUNT
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY --from=compile_release_obj /tmp/bun-${TRIPLET}-${GIT_SHA}/*.o /
@@ -457,6 +460,7 @@ ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
+ARG CPU_COUNT
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -471,7 +475,7 @@ COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 ENV CCACHE_DIR=/ccache
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
-    make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
+    make release-bindings -j$CPU_COUNT && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
 FROM bun-base as sqlite
 
@@ -499,7 +503,7 @@ RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 FROM scratch as build_release_cpp
 
 COPY --from=compile_cpp /tmp/*.o /
-COPY --from=compile_cpp /tmp/libwebcrypto.a /
+COPY --from=compile_cpp /tmp/*.a /
 
 FROM prepare_release as build_release
 
@@ -586,43 +590,27 @@ CMD make headers \
 
 
 
-# FROM bun-test-base as test_base
+FROM scratch as compile-dependencies
 
-# ARG DEBIAN_FRONTEND=noninteractive
-# ARG GITHUB_WORKSPACE=/build
-# ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# # Directory extracts to "bun-webkit"
-# ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-# ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-# ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-# ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
 
-# ARG BUILDARCH=amd64
-# RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \
-#     && mkdir -p /home/chromium/Downloads && chown -R chromium:chromium /home/chromium
+ENV CPU_TARGET=${CPU_TARGET}
 
-# USER chromium
-# WORKDIR $BUN_DIR
-
-# ENV NPM_CLIENT bun
-# ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
-# ENV CI 1
-# ENV BROWSER_EXECUTABLE /usr/bin/chromium
-
-# COPY ./test ${BUN_DIR}/test
-# COPY Makefile ${BUN_DIR}/Makefile
-# COPY package.json ${BUN_DIR}/package.json
-# COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh
-# COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
-
-# # # We don't want to worry about architecture differences in this image
-# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
-
-# USER root
-# RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
-# USER chromium
-
-# CMD [ "bash", "run-test.sh" ]
-
-# FROM release
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=sqlite ${BUN_DEPS_OUT_DIR}/*.o  /
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a /
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o /
+COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/*.a /

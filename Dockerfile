@@ -649,7 +649,7 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o /
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/*.a /
 
 
-FROM  bun-base-with-zig-and-webkit as link_release
+FROM  bun-base-with-zig-and-webkit as run-link-step
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
@@ -676,5 +676,20 @@ COPY ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY bun.o ${BUN_DEPLOY_DIR}/
 COPY src/bun.js/bindings-obj/* ${BUN_DIR}/src/bun.js/bindings-obj/
 
-RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir && \
-    rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages
+RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir
+
+FROM bun-base-with-zig-and-webkit as link_release
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DEPLOY_DIR
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+
+COPY --from=run-link-step ${BUN_RELEASE_DIR} /

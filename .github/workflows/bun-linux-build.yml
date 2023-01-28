@@ -27,8 +27,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  linux:
-    name: ${{matrix.tag}}
+  linux-zig-build:
+    name: Zig ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     strategy:
@@ -38,7 +38,7 @@ jobs:
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
+            runner: big-ubuntu
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -46,7 +46,7 @@ jobs:
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
+            runner: big-ubuntu
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
@@ -76,78 +76,259 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
         uses: docker/build-push-action@v3
+        if: runner.arch == 'X64'
         with:
           context: .
           push: false
-          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.tag}}
-          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.tag}}
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
           build-args: |
-            ARCH=${{matrix.arch}}
-            BUILDARCH=${{matrix.build_arch}}
-            BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
-            CPU_TARGET=${{matrix.cpu}}
-            WEBKIT_URL=${{matrix.webkit_url}}
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENAME=${{matrix.webkit_basename}}
-          platforms: linux/${{matrix.build_arch}}
-          target: artifact
+          platforms: linux/amd64
+          target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
-      - name: Zip
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+          platforms: linux/arm64
+          target: build_release_obj
+          outputs: type=local,dest=${{runner.temp}}/release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-obj-${{ matrix.tag }}
+          path: ${{runner.temp}}/release/bun.o
+  linux-cpp-build:
+    name: C++ ${{matrix.tag}}
+    runs-on: ${{matrix.runner}}
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          - cpu: nehalem
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64-lto"
+            build_machine_arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
         run: |
-          # if zip is not found
-          if [ ! -x "$(command -v zip)" ]; then
-            sudo apt-get update && sudo apt-get install -y zip --no-install-recommends
-          fi
-
-          if [ ! -x "$(command -v strip)" ]; then
-            sudo apt-get update && sudo apt-get install -y binutils --no-install-recommends
-          fi
-
-          cd ${{runner.temp}}/release
-          chmod +x bun-profile bun
-
-          mkdir bun-${{matrix.tag}}-profile
-          mkdir bun-${{matrix.tag}}
-
-          strip bun
-
-          mv bun-profile bun-${{matrix.tag}}-profile/bun-profile
-          mv bun bun-${{matrix.tag}}/bun
-
-          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
-          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
+          rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'X64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+          platforms: linux/amd64
+          target: build_release_cpp
+          outputs: type=local,dest=${{runner.temp}}/cpp
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+          platforms: linux/arm64
+          target: build_release_cpp
+          outputs: type=local,dest=${{runner.temp}}/cpp
+      - name: Compress artifacts
+        run: |
+          cd ${{runner.temp}}/cpp
+          tar -czf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-${{matrix.tag}}-profile
-          path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
-      - uses: actions/upload-artifact@v3
+          name: bun-cpp-${{ matrix.tag }}
+          path: ${{runner.temp}}/cpp.tar.gz
+  linux-link-build:
+    name: Link ${{matrix.tag}}
+    runs-on: ${{matrix.runner}}
+    timeout-minutes: 90
+    needs: [linux-zig-build, linux-cpp-build]
+    strategy:
+      matrix:
+        include:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+            package: bun-linux-x64
+          - cpu: nehalem
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+            package: bun-linux-x64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64-lto"
+            build_machine_arch: aarch64
+            package: bun-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v3
         with:
-          name: bun-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - name: Release
-        id: release
-        uses: ncipollo/release-action@v1
-        if: github.ref == 'refs/heads/main'
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
         with:
-          prerelease: true
-          body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
-          allowUpdates: true
-          replacesArtifacts: true
-          generateReleaseNotes: true
-          artifactErrorsFailBuild: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Canary (${{github.sha}})"
-          tag: "canary"
-          artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"
-      - uses: actions/upload-artifact@v3
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
         with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
         with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}
+      - name: Download from cache
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-cpp-${{ matrix.tag }}
+          path: ${{runner.temp}}/cpp.tar.gz
+      - name: Download from cache
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-obj-${{ matrix.tag }}
+          path: ${{runner.temp}}/obj
+      - name: Extract
+        run: |
+          rm -rf src/bindings-obj
+          mkdir -p src/bindings-obj
+          mkdir ${{runner.temp}}/cpp
+          tar -xf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
+          mv ${{runner.temp}}/cpp/* src/bindings-obj
+          mv ${{runner.temp}}/obj/* packages/${{matrix.package}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'X64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+          platforms: linux/amd64
+          target: link_release
+          outputs: type=local,dest=${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+          platforms: linux/arm64
+          target: link_release
+          outputs: type=local,dest=${{runner.temp}}/release
+      - name: Upload
+        uses: actions/upload-artifact@v3
+        with:
+          name: bun-${{ matrix.tag }}
+          path: ${{runner.temp}}/release

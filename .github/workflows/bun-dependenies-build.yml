@@ -49,7 +49,7 @@ jobs:
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
           - cpu: native
-            tag: linux-aarch64
+            tag: linux-arm64
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64

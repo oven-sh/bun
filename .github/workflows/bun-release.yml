@@ -13,7 +13,6 @@ on:
         default: canary
 jobs:
   npm:
-    id: npm
     name: Release to NPM
     runs-on: ubuntu-latest
     defaults:
@@ -47,7 +46,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
   docker:
-    id: docker
     name: Release to Dockerhub
     runs-on: ubuntu-latest
     steps:

@@ -16,7 +16,7 @@ const os = struct {
     pub const ESPIPE = 29;
 };
 
-const SystemErrno = @import("../darwin_c.zig").SystemErrno;
+const SystemErrno = @import("bun").C.SystemErrno;
 pub const Errno = error{
     EPERM,
     ENOENT,

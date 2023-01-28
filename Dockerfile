@@ -21,6 +21,7 @@ ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/
 ARG ZIG_URL="https://ziglang.org/builds/${ZIG_FILENAME}"
 ARG GIT_SHA=""
 ARG BUN_BASE_VERSION=0.5
+ARG CPU_COUNT=10
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -441,6 +442,8 @@ ARG GIT_SHA
 ARG TRIPLET
 ARG BUN_DIR
 ARG CPU_TARGET
+ARG CPU_COUNT
+
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY --from=compile_release_obj /tmp/bun-${TRIPLET}-${GIT_SHA}/*.o /
@@ -457,6 +460,7 @@ ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
+ARG CPU_COUNT
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -471,7 +475,7 @@ COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
 ENV CCACHE_DIR=/ccache
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && make webcrypto && \
-    make release-bindings -j10 && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
+    make release-bindings -j$CPU_COUNT && mv ${BUN_DEPS_OUT_DIR}/libwebcrypto.a /tmp && mv src/bun.js/bindings-obj/* /tmp
 
 FROM bun-base as sqlite
 
@@ -499,7 +503,7 @@ RUN --mount=type=cache,target=/ccache cd $BUN_DIR && make sqlite
 FROM scratch as build_release_cpp
 
 COPY --from=compile_cpp /tmp/*.o /
-COPY --from=compile_cpp /tmp/libwebcrypto.a /
+COPY --from=compile_cpp /tmp/*.a /
 
 FROM prepare_release as build_release
 

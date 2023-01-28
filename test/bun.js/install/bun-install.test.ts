@@ -1,4 +1,4 @@
-import { file, spawn } from "bun";
+import { file, resolveSync, spawn } from "bun";
 import {
   afterAll,
   afterEach,
@@ -12,6 +12,7 @@ import { bunEnv as env } from "bunEnv";
 import { access, mkdir, mkdtemp, readdir, readlink, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
+import { realpathSync } from "fs";
 
 let handler, package_dir, requested, server;
 
@@ -71,7 +72,7 @@ afterAll(() => {
 beforeEach(async () => {
   resetHanlder();
   requested = 0;
-  package_dir = await mkdtemp(join(tmpdir(), "bun-install.test"));
+  package_dir = realpathSync(await mkdtemp(join(tmpdir(), "bun-install.test")));
 });
 afterEach(async () => {
   resetHanlder();

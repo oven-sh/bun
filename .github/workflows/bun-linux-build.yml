@@ -116,6 +116,107 @@ jobs:
         with:
           name: bun-obj-${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun.o
+  linux-dependencies-build:
+    name: Dependencies ${{matrix.tag}}
+    runs-on: ${{matrix.runner}}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          - cpu: nehalem
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-lto"
+            build_machine_arch: x86_64
+          # - cpu: native
+          #   tag: linux-aarch64
+          #   arch: aarch64
+          #   build_arch: arm64
+          #   runner: linux-arm64
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+          #   webkit_basename: "bun-webkit-linux-arm64-lto"
+          #   build_machine_arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'X64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
+          platforms: linux/amd64
+          target: compile-dependencies
+          outputs: type=local,dest=${{runner.temp}}/dependencies
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-linux-gnu
+            GIT_SHA=${{github.sha}}
+            WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
+            CPU_COUNT=${{runner.cores}}
+          platforms: linux/arm64
+          target: compile-dependencies
+          outputs: type=local,dest=${{runner.temp}}/dependencies
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-dependencies-${{ matrix.tag }}
+          path: ${{runner.temp}}/dependencies
   linux-cpp-build:
     name: C++ ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
@@ -209,6 +310,7 @@ jobs:
             WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
             WEBKIT_BASENAME=${{matrix.webkit_basename}}
+            CPU_COUNT=${{runner.cores}}
           platforms: linux/arm64
           target: build_release_cpp
           outputs: type=local,dest=${{runner.temp}}/cpp
@@ -224,7 +326,17 @@ jobs:
     name: Link ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
-    needs: [linux-zig-build, linux-cpp-build]
+    needs: [linux-zig-build, linux-dependencies-build, linux-cpp-build]
+    env:
+      CPU_TARGET: ${{ matrix.cpu }}
+      JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+      JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+      BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+      OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+      BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      BUN_RELEASE_DIR: ${{ runner.temp }}/release
+      WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+      WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
     strategy:
       fail-fast: false
       matrix:
@@ -289,6 +401,11 @@ jobs:
         with:
           name: bun-obj-${{ matrix.tag }}
           path: ${{runner.temp}}/obj
+      - name: Download from cache
+        uses: actions/download-artifact@v3
+        with:
+          name: bun-dependencies-${{ matrix.tag }}
+          path: ${{env.BUN_DEPS_OUT_DIR}}
       - name: Extract
         run: |
           rm -rf src/bun.js/bindings-obj
@@ -296,7 +413,7 @@ jobs:
           mkdir ${{runner.temp}}/cpp
           tar -xf ${{runner.temp}}/cpp.tar.gz -C ${{runner.temp}}/cpp
           mv ${{runner.temp}}/cpp/* src/bun.js/bindings-obj
-          mv ${{runner.temp}}/obj/* packages/${{matrix.package}}
+          mv ${{runner.temp}}/obj/* .
 
       - name: Build and push
         uses: docker/build-push-action@v3
@@ -313,6 +430,7 @@ jobs:
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-linux-gnu
             GIT_SHA=${{github.sha}}
+            BUN_DEPS_OUT_DIR=${{runner.temp}}/bun-deps
           platforms: linux/amd64
           target: link_release
           outputs: type=local,dest=${{runner.temp}}/release
@@ -333,6 +451,7 @@ jobs:
             GIT_SHA=${{github.sha}}
             WEBKIT_URL=${{matrix.webkit_url}}
             WEBKIT_BASENAME=${{matrix.webkit_basename}}
+            BUN_DEPS_OUT_DIR=${{runner.temp}}/bun-deps
           platforms: linux/arm64
           target: link_release
           outputs: type=local,dest=${{runner.temp}}/release

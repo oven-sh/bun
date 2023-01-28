@@ -25,10 +25,5 @@
     "@typescript-eslint/parser": "^5.31.0",
     "bun-webkit": "latest"
   },
-  "optionalDependencies": {
-    "bun-dependencies-linux-x64": "next",
-    "bun-dependencies-linux-arm64": "next",
-    "bun-dependencies-linux-x64-baseline": "next"
-  },
   "version": "0.0.0"
 }

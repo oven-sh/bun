@@ -27,7 +27,7 @@ on:
 jobs:
   macos-object-files:
     name: macOS Object
-    runs-on: zig-object
+    runs-on: med-ubuntu
     strategy:
       matrix:
         include:

@@ -30,10 +30,9 @@ jobs:
   linux-zig-build:
     name: Zig ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
-    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
-        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64
@@ -120,10 +119,9 @@ jobs:
   linux-cpp-build:
     name: C++ ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
-    timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
-        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64
@@ -227,10 +225,9 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     needs: [linux-zig-build, linux-cpp-build]
-
     strategy:
+      fail-fast: false
       matrix:
-        fail-fast: false
         include:
           - cpu: haswell
             tag: linux-x64

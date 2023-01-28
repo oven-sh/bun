@@ -73,7 +73,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/bun
-          flavor: latest=${{ env.TAG != "canary" }}
+          flavor: latest=${{ contains(env.TAG, "canary") }}
           tags: |
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}

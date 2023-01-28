@@ -19,7 +19,6 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const ExtractTarball = @This();
 
-alias: Semver.String,
 name: strings.StringOrTinyString,
 resolution: Resolution,
 registry: string,

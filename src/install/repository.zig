@@ -12,12 +12,14 @@ pub const Repository = extern struct {
     repo: String = String{},
     committish: GitSHA = GitSHA{},
     resolved: String = String{},
+    package_name: String = String{},
 
     pub fn verify(this: *const Repository) void {
         this.owner.assertDefined();
         this.repo.assertDefined();
         this.committish.assertDefined();
         this.resolved.assertDefined();
+        this.package_name.assertDefined();
     }
 
     pub fn order(lhs: *const Repository, rhs: *const Repository, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
@@ -34,6 +36,7 @@ pub const Repository = extern struct {
         builder.count(this.repo.slice(buf));
         builder.count(this.committish.slice(buf));
         builder.count(this.resolved.slice(buf));
+        builder.count(this.package_name.slice(buf));
     }
 
     pub fn clone(this: *const Repository, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Repository {
@@ -41,7 +44,8 @@ pub const Repository = extern struct {
             .owner = builder.append(String, this.owner.slice(buf)),
             .repo = builder.append(String, this.repo.slice(buf)),
             .committish = builder.append(GitSHA, this.committish.slice(buf)),
-            .resolved = builder.append(GitSHA, this.resolved.slice(buf)),
+            .resolved = builder.append(String, this.resolved.slice(buf)),
+            .package_name = builder.append(String, this.package_name.slice(buf)),
         };
     }
 

@@ -2291,7 +2291,6 @@ pub const PackageManager = struct {
             this.allocator,
             ExtractTarball{
                 .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
-                .alias = package.name,
                 .name = if (package.name.len() >= strings.StringOrTinyString.Max)
                     strings.StringOrTinyString.init(
                         try FileSystem.FilenameStore.instance.append(
@@ -2592,7 +2591,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .npm => Lockfile.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .npm, .github => Lockfile.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -2812,9 +2811,9 @@ pub const PackageManager = struct {
                     return;
                 }
 
-                const package: Lockfile.Package = .{
-                    .name = name,
-                    .name_hash = name_hash,
+                const package = Lockfile.Package{
+                    .name = dependency.name,
+                    .name_hash = dependency.name_hash,
                     .resolution = res,
                 };
 
@@ -3066,14 +3065,18 @@ pub const PackageManager = struct {
     }
 
     const GitHubResolver = struct {
+        alias: string,
+        alias_ptr: *String,
         resolved: string,
         resolution: Resolution,
 
         pub fn count(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) void {
+            builder.count(this.alias);
             builder.count(this.resolved);
         }
 
         pub fn resolve(this: @This(), comptime Builder: type, builder: Builder, _: JSAst.Expr) !Resolution {
+            this.alias_ptr.* = builder.append(String, this.alias);
             var resolution = this.resolution;
             resolution.value.github.resolved = builder.append(String, this.resolved);
             return resolution;
@@ -3084,11 +3087,11 @@ pub const PackageManager = struct {
     fn processExtractedTarballPackage(
         manager: *PackageManager,
         package_id: *PackageID,
-        alias: String,
+        name: string,
         resolution: Resolution,
         data: ExtractData,
         comptime log_level: Options.LogLevel,
-    ) bool {
+    ) ?String {
         switch (resolution.tag) {
             .github => {
                 const package_json_source = logger.Source.initPathString(
@@ -3096,6 +3099,7 @@ pub const PackageManager = struct {
                     data.json_buf[0..data.json_len],
                 );
                 var package = Lockfile.Package{};
+                var alias = String{};
 
                 Lockfile.Package.parse(
                     manager.lockfile,
@@ -3105,6 +3109,8 @@ pub const PackageManager = struct {
                     package_json_source,
                     GitHubResolver,
                     GitHubResolver{
+                        .alias = name,
+                        .alias_ptr = &alias,
                         .resolved = data.resolved,
                         .resolution = resolution,
                     },
@@ -3120,24 +3126,22 @@ pub const PackageManager = struct {
                     Global.crash();
                 };
 
-                const string_buf = manager.lockfile.buffers.string_bytes.items;
-                if (!alias.eql(package.name, string_buf, string_buf)) {
-                    package.name = alias;
-                    package.name_hash = Lockfile.stringHash(alias.slice(string_buf));
-                }
                 package = manager.lockfile.appendPackage(package) catch unreachable;
                 package_id.* = package.meta.id;
+                if (!strings.eql(name, manager.lockfile.str(&package.name))) {
+                    manager.lockfile.alias_map.put(manager.allocator, package.meta.id, alias) catch unreachable;
+                }
 
                 if (package.dependencies.len > 0) {
                     manager.lockfile.scratch.dependency_list_queue.writeItem(package.dependencies) catch unreachable;
                 }
 
-                return true;
+                return package.name;
             },
             else => {},
         }
 
-        return false;
+        return null;
     }
 
     const CacheDir = struct { path: string, is_node_modules: bool };
@@ -3590,10 +3594,10 @@ pub const PackageManager = struct {
                     bun.Analytics.Features.extracted_packages = true;
 
                     var package_id = task.request.extract.tarball.package_id;
-                    const alias = task.request.extract.tarball.alias;
+                    const alias = task.request.extract.tarball.name.slice();
                     const resolution = task.request.extract.tarball.resolution;
                     // GitHub (and eventually tarball URL) dependencies are not fully resolved until after the tarball is downloaded & extracted.
-                    if (manager.processExtractedTarballPackage(&package_id, alias, resolution, task.data.extract, comptime log_level)) brk: {
+                    if (manager.processExtractedTarballPackage(&package_id, alias, resolution, task.data.extract, comptime log_level)) |name| brk: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
                         // TODO: move this into a separate function
@@ -3619,13 +3623,21 @@ pub const PackageManager = struct {
                         }
 
                         for (dependency_list.items) |dep| {
-                            try manager.processDependencyListItem(dep, &any_root);
-
-                            if (dep != .dependency and dep != .root_dependency) {
-                                // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
-                                end_dependency_list.append(manager.allocator, dep) catch unreachable;
-                            } else {
-                                needs_flush = true;
+                            switch (dep) {
+                                .dependency => |id| {
+                                    manager.lockfile.buffers.dependencies.items[id].version.value.github.package_name = name;
+                                    try manager.processDependencyListItem(dep, &any_root);
+                                    needs_flush = true;
+                                },
+                                .root_dependency => |id| {
+                                    manager.dynamicRootDependencies().items[id].dependency.version.value.github.package_name = name;
+                                    try manager.processDependencyListItem(dep, &any_root);
+                                    needs_flush = true;
+                                },
+                                else => {
+                                    // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
+                                    end_dependency_list.append(manager.allocator, dep) catch unreachable;
+                                },
                             }
                         }
                     }

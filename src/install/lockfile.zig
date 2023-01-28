@@ -445,10 +445,20 @@ pub const Tree = struct {
         const dependencies: []const Dependency = builder.dependencies[resolution_list.off..][0..resolution_list.len];
 
         for (resolutions) |pid, j| {
-            // Do not download/install "peerDependencies"
-            if (pid >= max_package_id or dependencies[j].behavior.isPeer()) continue;
+            if (pid >= max_package_id) continue;
 
-            const destination = next.addDependency(true, pid, name_hashes, package_lists, trees, builder.allocator);
+            const dependency = dependencies[j];
+
+            // Do not download/install "peerDependencies"
+            if (dependency.behavior.isPeer()) continue;
+
+            // Do not hoist aliased packages
+            const destination = if (dependency.name_hash != name_hashes[pid]) brk: {
+                package_lists[next.id].append(builder.allocator, pid) catch unreachable;
+                next.packages.len += 1;
+                break :brk next.id;
+            } else next.addDependency(true, pid, name_hashes, package_lists, trees, builder.allocator);
+
             switch (destination) {
                 Tree.dependency_loop => return error.DependencyLoop,
                 Tree.hoisted => continue,

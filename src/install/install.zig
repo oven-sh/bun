@@ -2177,7 +2177,6 @@ pub const PackageManager = struct {
 
     fn getOrPutResolvedPackageWithFindResult(
         this: *PackageManager,
-        alias: String,
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
@@ -2220,11 +2219,6 @@ pub const PackageManager = struct {
             manifest.string_buf,
             Features.npm,
         ));
-
-        const buf = this.lockfile.buffers.string_bytes.items;
-        if (!alias.eql(name, buf, buf)) {
-            try this.lockfile.alias_map.put(this.allocator, package.meta.id, alias);
-        }
 
         if (!behavior.isEnabled(if (this.isRootDependency(dependency_id))
             this.options.local_package_features
@@ -2344,7 +2338,6 @@ pub const PackageManager = struct {
 
     fn getOrPutResolvedPackage(
         this: *PackageManager,
-        alias: String,
         name_hash: PackageNameHash,
         name: String,
         version: Dependency.Version,
@@ -2354,7 +2347,6 @@ pub const PackageManager = struct {
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
         name.assertDefined();
-        alias.assertDefined();
 
         if (resolution < this.lockfile.packages.len) {
             return ResolvedPackageResult{ .package = this.lockfile.packages.get(resolution) };
@@ -2374,9 +2366,7 @@ pub const PackageManager = struct {
                     else => unreachable,
                 };
 
-                return try getOrPutResolvedPackageWithFindResult(
-                    this,
-                    alias,
+                return try this.getOrPutResolvedPackageWithFindResult(
                     name_hash,
                     name,
                     version,
@@ -2611,7 +2601,6 @@ pub const PackageManager = struct {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
                     var resolve_result_ = this.getOrPutResolvedPackage(
-                        alias,
                         name_hash,
                         name,
                         version,
@@ -2690,6 +2679,11 @@ pub const PackageManager = struct {
                         };
 
                         if (resolve_result) |result| {
+                            const buf = this.lockfile.buffers.string_bytes.items;
+
+                            if (!alias.eql(name, buf, buf)) {
+                                try this.lockfile.alias_map.put(this.allocator, result.package.meta.id, alias);
+                            }
 
                             // First time?
                             if (result.is_first_time) {
@@ -2700,7 +2694,7 @@ pub const PackageManager = struct {
                                         this.lockfile.str(&result.package.name),
                                         label,
                                         this.lockfile.str(&result.package.name),
-                                        result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                                        result.package.resolution.fmt(buf),
                                     });
                                 }
                                 // Resolve dependencies first
@@ -2734,7 +2728,6 @@ pub const PackageManager = struct {
                                         if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
                                             if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
                                                 if (this.getOrPutResolvedPackageWithFindResult(
-                                                    alias,
                                                     name_hash,
                                                     name,
                                                     version,
@@ -2833,7 +2826,6 @@ pub const PackageManager = struct {
             },
             .symlink, .workspace => {
                 const _result = this.getOrPutResolvedPackage(
-                    alias,
                     name_hash,
                     name,
                     version,

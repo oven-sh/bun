@@ -2439,6 +2439,36 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_dnsObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            JSC::VM& vm = init.vm;
+            JSC::JSGlobalObject* globalObject = init.owner;
+            JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolve"_s), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNSResolver__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNSResolver__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNSResolver__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNSResolver__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNSResolver__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNSResolver__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNSResolver__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+            init.set(dnsObject);
+        });
+
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
@@ -2869,6 +2899,11 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
 JSC_DEFINE_CUSTOM_GETTER(JSModuleLoader_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     return JSValue::encode(globalObject->moduleLoader());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(bunDns_getter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    return JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->dnsObject());
 }
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
@@ -3331,30 +3366,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "dns"_s);
-            JSC::JSObject* dnsObject = JSC::constructEmptyObject(this);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun__DNSResolver__lookup, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolve"_s), 2, Bun__DNSResolver__resolve, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun__DNSResolver__resolveSrv, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun__DNSResolver__resolveTxt, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun__DNSResolver__resolveSoa, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun__DNSResolver__resolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun__DNSResolver__resolveMx, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun__DNSResolver__resolveCaa, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun__DNSResolver__resolveNs, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun__DNSResolver__resolvePtr, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            dnsObject->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun__DNSResolver__resolveCname, ImplementationVisibility::Public, NoIntrinsic,
-                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
-            object->putDirect(vm, PropertyName(identifier), dnsObject, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+            object->putDirectCustomAccessor(vm, PropertyName(identifier), JSC::CustomGetterSetter::create(vm, bunDns_getter, nullptr), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         {
@@ -3509,6 +3521,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_requireResolveFunctionStructure.visit(visitor);
     thisObject->m_resolveFunctionPrototype.visit(visitor);
+    thisObject->m_dnsObject.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

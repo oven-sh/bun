@@ -5550,6 +5550,11 @@ pub const PackageManager = struct {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
 
+            if (err == error.ParserError and ctx.log.errors > 0) {
+                Output.prettyErrorln("error: Failed to parse package.json", .{});
+                Global.crash();
+            }
+
             Output.panic("<r><red>{s}<r> parsing package.json<r>", .{
                 @errorName(err),
             });

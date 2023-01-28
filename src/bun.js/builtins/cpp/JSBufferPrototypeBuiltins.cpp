@@ -749,24 +749,24 @@ const char* const s_jsBufferPrototypeSliceCode =
 const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeParentCodeLength = 56;
+const int s_jsBufferPrototypeParentCodeLength = 57;
 static const JSC::Intrinsic s_jsBufferPrototypeParentCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeParentCode =
     "(function () {\n" \
     "  \"use strict\";\n" \
-    "  return this.buffer;\n" \
+    "  return this?.buffer;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeOffsetCodeLength = 60;
+const int s_jsBufferPrototypeOffsetCodeLength = 61;
 static const JSC::Intrinsic s_jsBufferPrototypeOffsetCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeOffsetCode =
     "(function () {\n" \
     "  \"use strict\";\n" \
-    "  return this.byteOffset;\n" \
+    "  return this?.byteOffset;\n" \
     "})\n" \
 ;
 

@@ -1882,8 +1882,6 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
             return constructBufferFromStringAndEncoding(lexicalGlobalObject, distinguishingArg, encodingArg);
         }
 
-        case Uint8ArrayType:
-        case Uint8ClampedArrayType:
         case Uint16ArrayType:
         case Uint32ArrayType:
         case Int8ArrayType:
@@ -1892,8 +1890,36 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
         case Float32ArrayType:
         case Float64ArrayType:
         case BigInt64ArrayType:
-        case BigUint64ArrayType:
-        case DataViewType: {
+        case BigUint64ArrayType: {
+            // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
+            JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(distinguishingArg.asCell());
+
+            void* data = view->vector();
+            size_t byteLength = view->length();
+
+            if (UNLIKELY(!data)) {
+                throwException(globalObject, throwScope, createRangeError(globalObject, "Buffer is detached"_s));
+                return JSValue::encode({});
+            }
+
+            auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+            auto* uint8Array = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, byteLength);
+            if (UNLIKELY(!uint8Array)) {
+                throwOutOfMemoryError(globalObject, throwScope);
+                return JSValue::encode({});
+            }
+
+            if (byteLength) {
+                uint8Array->setFromTypedArray(lexicalGlobalObject, 0, view, 0, byteLength, CopyType::LeftToRight);
+            }
+
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+            break;
+        }
+
+        case DataViewType:
+        case Uint8ArrayType:
+        case Uint8ClampedArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
             JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(distinguishingArg.asCell());
 

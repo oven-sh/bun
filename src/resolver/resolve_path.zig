@@ -788,7 +788,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
 
     if (comptime is_sentinel) {
-        buf.ptr[result.len + leading_separator.len + 1] = 0;
+        buf.ptr[result.len + leading_separator.len] = 0;
         return buf[0 .. result.len + leading_separator.len :0];
     } else {
         return buf[0 .. result.len + leading_separator.len];

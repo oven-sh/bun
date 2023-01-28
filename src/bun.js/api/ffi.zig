@@ -290,7 +290,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
-        const name = name_slice.sliceZ();
+        const name = name_slice.slice();
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
         if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols

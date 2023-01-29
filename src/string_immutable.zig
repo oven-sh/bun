@@ -91,34 +91,28 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
 pub inline fn isNPMPackageName(target: string) bool {
-    if (target.len >= 215) return false;
-    switch (target[0]) {
-        'a'...'z',
-        '0'...'9',
-        '$',
-        '@',
-        '-',
-        => {},
+    if (target.len == 0) return false;
+    if (target.len > 214) return false;
+
+    const scoped = switch (target[0]) {
+        'a'...'z', '0'...'9', '$', '-' => false,
+        '@' => true,
         else => return false,
-    }
-    if (target.len == 1) return true;
-
-    var slash_count: usize = 0;
-
-    for (target[1..]) |c| {
+    };
+    var slash_index: usize = 0;
+    for (target[1..]) |c, i| {
         switch (c) {
             'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
             '/' => {
-                if (slash_count > 0) {
-                    return false;
-                }
-                slash_count += 1;
+                if (!scoped) return false;
+                if (slash_index > 0) return false;
+                slash_index = i + 1;
             },
             else => return false,
         }
     }
 
-    return true;
+    return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
 pub inline fn indexAny(in: anytype, target: string) ?usize {

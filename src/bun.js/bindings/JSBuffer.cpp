@@ -430,6 +430,75 @@ EncodedJSValue constructSlowBuffer(JSGlobalObject* lexicalGlobalObject, CallFram
     return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
 }
 
+static inline JSC::EncodedJSValue jsBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+{
+    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    if (!str) {
+        throwTypeError(lexicalGlobalObject, scope, "byteLength() expects a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (str->length() == 0)
+        return JSC::JSValue::encode(JSC::jsNumber(0));
+
+    int64_t written = 0;
+
+    switch (encoding) {
+
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
+        return JSC::JSValue::encode(JSC::jsNumber(str->length() * 2));
+    }
+
+    case WebCore::BufferEncodingType::latin1:
+    case WebCore::BufferEncodingType::ascii: {
+        // https: // github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
+        return JSC::JSValue::encode(JSC::jsNumber(str->length()));
+    }
+
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url: {
+        int64_t length = str->length();
+        auto view = str->tryGetValue(lexicalGlobalObject);
+
+        if (view.is8Bit()) {
+            if (view.characters8()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && view.characters8()[length - 1] == '=')
+                    length--;
+            }
+        } else {
+            if (view.characters16()[length - 1] == 0x3D) {
+                length--;
+
+                if (length > 1 && view.characters16()[length - 1] == '=')
+                    length--;
+            }
+        }
+
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L579
+        return JSValue::encode(jsNumber(static_cast<double>((length * 3) >> 2)));
+    }
+
+    case WebCore::BufferEncodingType::hex: {
+        return JSValue::encode(jsNumber(str->length() >> 1));
+    }
+
+    case WebCore::BufferEncodingType::utf8: {
+        auto view = str->tryGetValue(lexicalGlobalObject);
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1(view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+        } else {
+            written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+        }
+        break;
+    }
+    }
+
+    return JSC::JSValue::encode(JSC::jsNumber(written));
+}
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -446,56 +515,33 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
 
     EnsureStillAliveScope arg0 = callFrame->argument(0);
     auto input = arg0.value();
-    if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(input)) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNumber(view->byteLength())));
-    }
-    auto* str = arg0.value().toStringOrNull(lexicalGlobalObject);
-
-    if (!str) {
-        throwTypeError(lexicalGlobalObject, scope, "byteLength() expects a string"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
 
     EnsureStillAliveScope arg1 = callFrame->argument(1);
-
-    if (str->length() == 0)
-        return JSC::JSValue::encode(JSC::jsNumber(0));
-
     if (callFrame->argumentCount() > 1) {
 
         if (arg1.value().isString()) {
             std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
-            if (!encoded) {
-                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-                return JSC::JSValue::encode(jsUndefined());
+
+            // this one doesn't fail
+            if (encoded) {
+                encoding = encoded.value();
             }
-
-            encoding = encoded.value();
         }
     }
 
-    auto view = str->tryGetValue(lexicalGlobalObject);
-    int64_t written = 0;
+    if (LIKELY(input.isString()))
+        return jsBufferFromStringAndEncoding(lexicalGlobalObject, asString(input), encoding);
 
-    switch (encoding) {
-    case WebCore::BufferEncodingType::utf8:
-    case WebCore::BufferEncodingType::latin1:
-    case WebCore::BufferEncodingType::ascii:
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le:
-    case WebCore::BufferEncodingType::base64:
-    case WebCore::BufferEncodingType::base64url:
-    case WebCore::BufferEncodingType::hex: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1(view.characters8(), view.length(), static_cast<uint8_t>(encoding));
-        } else {
-            written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
-        }
-        break;
-    }
+    if (auto* arrayBufferView = jsDynamicCast<JSC::JSArrayBufferView*>(input)) {
+        return JSValue::encode(jsNumber(arrayBufferView->byteLength()));
     }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
+    if (auto* arrayBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(input)) {
+        return JSValue::encode(jsNumber(arrayBuffer->impl()->byteLength()));
+    }
+
+    throwTypeError(lexicalGlobalObject, scope, "Invalid input, must be a string, Buffer, or ArrayBuffer"_s);
+    return JSC::JSValue::encode(jsUndefined());
 }
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

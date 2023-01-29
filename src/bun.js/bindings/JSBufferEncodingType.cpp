@@ -61,8 +61,17 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
         return std::nullopt;
 
     auto encoding = str->value(&lexicalGlobalObject);
-    if (encoding.length() < 3)
+    switch (encoding.length()) {
+    case 0: {
+        return BufferEncodingType::utf8;
+    }
+    case 1:
+    case 2: {
         return std::nullopt;
+    }
+    default: {
+    }
+    }
 
     switch (encoding[0]) {
     case 'u':

@@ -982,6 +982,25 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 };
 
+                if (parse_result.loader == .wasm) {
+                    const wasm_result = transpileSourceCode(
+                        jsc_vm,
+                        specifier,
+                        display_specifier,
+                        referrer,
+                        path,
+                        .wasm,
+                        log,
+                        &parse_result.source,
+                        ret,
+                        promise_ptr,
+                        source_code_printer,
+                        globalObject,
+                        flags,
+                    );
+                    return wasm_result;
+                }
+
                 if (jsc_vm.bundler.log.errors > 0) {
                     return error.ParseError;
                 }
@@ -1180,6 +1199,55 @@ pub const ModuleLoader = struct {
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
             // },
+            .wasm => {
+                if (strings.eqlComptime(referrer, "undefined") and strings.eqlLong(jsc_vm.main, path.text, true)) {
+                    if (virtual_source) |source| {
+                        if (globalObject) |globalThis| {
+                            // attempt to avoid reading the WASM file twice.
+                            var encoded = JSC.EncodedJSValue{
+                                .asPtr = globalThis,
+                            };
+                            const globalValue = @intToEnum(JSC.JSValue, encoded.asInt64);
+                            globalValue.put(
+                                globalThis,
+                                JSC.ZigString.static("wasmSourceBytes"),
+                                JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            );
+                        }
+                    }
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            strings.append3(
+                                bun.default_allocator,
+                                JSC.Node.fs.constants_string,
+                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./wasi.exports.js")),
+                                jsModuleFromFile(jsc_vm.load_builtins_from_path, "wasi-runner.js"),
+                            ) catch unreachable,
+                        ),
+                        .specifier = ZigString.init(display_specifier),
+                        .source_url = ZigString.init(path.text),
+                        .hash = 0,
+                    };
+                }
+
+                return transpileSourceCode(
+                    jsc_vm,
+                    specifier,
+                    display_specifier,
+                    referrer,
+                    path,
+                    .file,
+                    log,
+                    virtual_source,
+                    ret,
+                    promise_ptr,
+                    source_code_printer,
+                    globalObject,
+                    flags,
+                );
+            },
+
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 var allocator = stack_buf.get();
@@ -1910,6 +1978,21 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:wasi" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            strings.append(
+                                bun.default_allocator,
+                                JSC.Node.fs.constants_string,
+                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./wasi.exports.js")),
+                            ) catch unreachable,
+                        ),
+                        .specifier = ZigString.init("node:wasi"),
+                        .source_url = ZigString.init("node:wasi"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:http" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2084,6 +2167,7 @@ pub const HardcodedModule = enum {
     depd,
     undici,
     ws,
+    @"node:wasi",
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2130,6 +2214,7 @@ pub const HardcodedModule = enum {
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
+            .{ "node:wasi", HardcodedModule.@"node:wasi" },
             .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2192,6 +2277,7 @@ pub const HardcodedModule = enum {
             .{ "node:url", "node:url" },
             .{ "node:util", "node:util" },
             .{ "node:util/types", "node:util/types" },
+            .{ "node:wasi", "node:wasi" },
             .{ "node:zlib", "node:zlib" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
@@ -2216,6 +2302,7 @@ pub const HardcodedModule = enum {
             .{ "url", "node:url" },
             .{ "util", "node:util" },
             .{ "util/types", "node:util/types" },
+            .{ "wasi", "node:wasi" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
             .{ "zlib", "node:zlib" },

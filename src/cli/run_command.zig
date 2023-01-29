@@ -857,7 +857,7 @@ pub const RunCommand = struct {
                 possibly_open_with_bun_js: {
                     if (!force_using_bun) {
                         if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |load| {
-                            if (!load.isJavaScriptLike())
+                            if (!(load.isJavaScriptLike() or load == .wasm))
                                 break :possibly_open_with_bun_js;
                         } else {
                             break :possibly_open_with_bun_js;
@@ -898,9 +898,9 @@ pub const RunCommand = struct {
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
+
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
-
                         if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
                             const filename = std.fs.path.basename(first_arg);

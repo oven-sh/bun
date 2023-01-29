@@ -4332,10 +4332,10 @@ pub const PackageManager = struct {
                             new_dependencies[k].key = JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
-                                    .data = if (update.resolved_name.isEmpty())
+                                    .data = try allocator.dupe(u8, if (update.is_aliased or update.resolved_name.isEmpty())
                                         update.name
                                     else
-                                        try allocator.dupe(u8, update.resolved_name.slice(update.version_buf)),
+                                        update.resolved_name.slice(update.version_buf)),
                                 },
                                 logger.Loc.Empty,
                             );
@@ -4422,11 +4422,11 @@ pub const PackageManager = struct {
                     else
                         null,
                     .uninitialized => switch (update.version.tag) {
-                        .uninitialized => latest,
+                        .uninitialized => try allocator.dupe(u8, latest),
                         else => null,
                     },
                     else => null,
-                } orelse update.version.literal.slice(update.version_buf);
+                } orelse try allocator.dupe(u8, update.version.literal.slice(update.version_buf));
             }
         }
     };
@@ -5265,6 +5265,7 @@ pub const PackageManager = struct {
         version_buf: []const u8 = "",
         resolution: Resolution = .{},
         resolved_name: String = .{},
+        is_aliased: bool = false,
         missing_version: bool = false,
         failed: bool = false,
         // This must be cloned to handle when the AST store resets
@@ -5284,81 +5285,64 @@ pub const PackageManager = struct {
             // remove
             outer: for (positionals) |positional| {
                 var input = std.mem.trim(u8, positional, " \n\r\t");
-                var value = input;
                 switch (op) {
-                    .link, .unlink => if (!strings.hasPrefixComptime(value, "link:")) {
-                        value = std.fmt.allocPrint(allocator, "link:{s}", .{value}) catch unreachable;
+                    .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
+                        input = std.fmt.allocPrint(allocator, "link:{s}", .{input}) catch unreachable;
                     },
                     else => {},
+                }
+
+                var value = input;
+                var alias: ?string = null;
+                if (strings.isNPMPackageName(input)) {
+                    alias = input;
+                    value = input[input.len..];
+                } else if (input.len > 1) {
+                    if (strings.indexOfChar(input[1..], '@')) |at| {
+                        const name = input[0 .. at + 1];
+                        if (strings.isNPMPackageName(name)) {
+                            alias = name;
+                            value = input[at + 2 ..];
+                        }
+                    }
                 }
 
                 const placeholder = String.from("@@@");
                 var version = Dependency.parseWithOptionalTag(
                     allocator,
-                    placeholder,
+                    if (alias) |name| String.init(input, name) else placeholder,
                     value,
                     null,
-                    &SlicedString.init(value, value),
+                    &SlicedString.init(input, value),
                     log,
-                ) orelse switch (op) {
-                    .link, .unlink => null,
-                    else => brk: {
-                        value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
-                        break :brk Dependency.parseWithOptionalTag(
-                            allocator,
-                            placeholder,
-                            value,
-                            null,
-                            &SlicedString.init(value, value),
-                            log,
-                        );
-                    },
-                } orelse {
+                ) orelse {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
                         positional,
                     });
                     Global.exit(1);
                 };
                 if (switch (version.tag) {
-                    .dist_tag => version.value.dist_tag.name.eql(placeholder, value, value),
-                    .npm => version.value.npm.name.eql(placeholder, value, value),
+                    .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
+                    .npm => version.value.npm.name.eql(placeholder, input, input),
                     else => false,
                 }) {
-                    value = std.fmt.allocPrint(allocator, "npm:{s}", .{value}) catch unreachable;
-                    version = Dependency.parseWithOptionalTag(
-                        allocator,
-                        placeholder,
-                        value,
-                        null,
-                        &SlicedString.init(value, value),
-                        log,
-                    ) orelse {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
-                            positional,
-                        });
-                        Global.exit(1);
-                    };
-                }
-                switch (version.tag) {
-                    .dist_tag, .npm => version.literal = brk: {
-                        if (strings.lastIndexOfChar(value, '@')) |at| {
-                            if (at >= "npm:@".len) break :brk String.init(value, value[at + 1 ..]);
-                        }
-                        break :brk String.from("");
-                    },
-                    else => {},
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
+                        positional,
+                    });
+                    Global.exit(1);
                 }
 
                 var request = UpdateRequest{
-                    .name = allocator.dupe(u8, switch (version.tag) {
+                    .name = allocator.dupe(u8, alias orelse switch (version.tag) {
                         .dist_tag => version.value.dist_tag.name,
                         .github => version.value.github.repo,
                         .npm => version.value.npm.name,
                         .symlink => version.value.symlink,
                         else => version.literal,
-                    }.slice(value)) catch unreachable,
+                    }.slice(input)) catch unreachable,
+                    .is_aliased = alias != null,
                     .version = version,
-                    .version_buf = value,
+                    .version_buf = input,
                 };
                 request.name_hash = String.Builder.stringHash(request.name);
 

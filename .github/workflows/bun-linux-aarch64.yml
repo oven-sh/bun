@@ -14,15 +14,6 @@ on:
       - "build.zig"
       - "Makefile"
       - "Dockerfile"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - "src/**/*"
-      - "test/**/*"
-      - "build.zig"
-      - "Makefile"
-      - "Dockerfile"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -32,25 +23,16 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - cpu: haswell
-            tag: linux-x64
-            arch: x86_64
-            build_arch: amd64
-            runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
-            build_machine_arch: x86_64
-          - cpu: nehalem
-            tag: linux-x64-baseline
-            arch: x86_64
-            build_arch: amd64
-            runner: big-ubuntu
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
-            build_machine_arch: x86_64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec30/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64-lto"
+            build_machine_arch: aarch64
 
     steps:
       - uses: actions/checkout@v3

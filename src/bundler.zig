@@ -1404,6 +1404,17 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
+                // wasm magic number
+                if (source.isWebAssembly()) {
+                    return ParseResult{
+                        .source = source,
+                        .input_fd = input_fd,
+                        .loader = .wasm,
+                        .empty = true,
+                        .ast = js_ast.Ast.empty,
+                    };
+                }
+
                 const platform = bundler.options.platform;
 
                 var jsx = this_parse.jsx;
@@ -1518,7 +1529,7 @@ pub const Bundler = struct {
             },
             .wasm => {
                 if (bundler.options.platform.isBun()) {
-                    if (source.contents.len < 4 or @bitCast(u32, source.contents[0..4].*) != @bitCast(u32, [4]u8{ 0, 'a', 's', 'm' })) {
+                    if (!source.isWebAssembly()) {
                         bundler.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,

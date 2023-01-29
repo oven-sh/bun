@@ -422,6 +422,21 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
+## Using bun as a WebAssembly runner
+
+Bun v0.5.2 added experimental support for the [WebAssembly System Interface](https://github.com/WebAssembly/WASI) (WASI). This means you can run WebAssembly binaries in Bun.
+
+To run a WASI binary, use `bun run`:
+
+```bash
+bun run ./my-wasm-app.wasm
+
+# you can omit "run" if the filename ends with .wasm
+bun ./my-wasm-app.wasm
+```
+
+WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not optimized for performance, but if this feature gets popular, we'll definitely invest time in making it faster.
+
 ## Creating a Discord bot with Bun
 
 ### Application Commands
@@ -1281,7 +1296,7 @@ bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but m
 
 ### `bun run`
 
-`bun run` is a fast `package.json` script runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
+`bun run` is a fast `package.json` script runner and executable runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
 
 By default, `bun run` prints the script that will be invoked:
 
@@ -1296,7 +1311,7 @@ You can disable that with `--silent`
 bun run --silent clean
 ```
 
-`bun run ${script-name}` runs the equivalent of `npm run script-name`. For example, `bun run dev` runs the `dev` script in `package.json`, which may sometimes spin up non-bun processes.
+`bun run ${script-name}` runs the equivalent of `npm run script-name`, `npx bin-name`, and `node file-name` all in one command. For example, `bun run dev` runs the `dev` script in `package.json`, which may sometimes spin up non-bun processes.
 
 `bun run ${javascript-file.js}` will run it with bun, as long as the file doesn't have a node shebang.
 
@@ -4992,6 +5007,7 @@ bun also statically links these libraries:
 - [`c-ares`](https://github.com/c-ares/c-ares), which is MIT licensed
 - `libicu` 72, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
+- WASI implementation from [`wasi-js`](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js), which is BSD 3 clause licensed
 
 For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 

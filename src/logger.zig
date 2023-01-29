@@ -1144,6 +1144,13 @@ pub const Source = struct {
     contents: string,
     contents_is_recycled: bool = false,
 
+    pub fn isWebAssembly(this: *const Source) bool {
+        if (this.contents.len < 4) return false;
+
+        const bytes = @bitCast(u32, this.contents[0..4].*);
+        return bytes == 0x6d736100; // "\0asm"
+    }
+
     pub const ErrorPosition = struct {
         line_start: usize,
         line_end: usize,

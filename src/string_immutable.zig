@@ -838,6 +838,17 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
+pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string, third: string) ![]u8 {
+    var buf = try allocator.alloc(u8, self.len + other.len + third.len);
+    if (self.len > 0)
+        @memcpy(buf.ptr, self.ptr, self.len);
+    if (other.len > 0)
+        @memcpy(buf.ptr + self.len, other.ptr, other.len);
+    if (third.len > 0)
+        @memcpy(buf.ptr + self.len + other.len, third.ptr, third.len);
+    return buf;
+}
+
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
     var remain = out;
     var count: usize = 0;

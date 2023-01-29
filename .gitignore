@@ -1,7 +1,6 @@
 .DS_Store
 zig-cache
-*.wasm
-
+packages/*/*.wasm
 *.o
 *.a
 profile.json

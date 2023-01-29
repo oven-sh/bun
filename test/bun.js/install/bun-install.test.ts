@@ -1,4 +1,4 @@
-import { file, resolveSync, spawn } from "bun";
+import { file, spawn } from "bun";
 import {
   afterAll,
   afterEach,
@@ -12,87 +12,31 @@ import { bunEnv as env } from "bunEnv";
 import {
   access,
   mkdir,
-  mkdtemp,
-  readdir,
   readlink,
-  rm,
   writeFile,
 } from "fs/promises";
-import { basename, join } from "path";
-import { tmpdir } from "os";
-import { realpathSync } from "fs";
+import { join } from "path";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  package_dir,
+  readdirSorted,
+  requested,
+  root_url,
+  setHandler,
+} from "./dummy.registry";
 
-let handler, package_dir, requested, server;
-
-function dummyRegistry(urls, version = "0.0.2", props = {}) {
-  return async (request) => {
-    urls.push(request.url);
-    expect(request.method).toBe("GET");
-    if (request.url.endsWith(".tgz")) {
-      return new Response(file(join(import.meta.dir, basename(request.url))));
-    }
-    expect(request.headers.get("accept")).toBe(
-      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-    );
-    expect(request.headers.get("npm-auth-type")).toBe(null);
-    expect(await request.text()).toBe("");
-    const name = request.url.slice(request.url.lastIndexOf("/") + 1);
-    return new Response(
-      JSON.stringify({
-        name,
-        versions: {
-          [version]: {
-            name,
-            version,
-            dist: {
-              tarball: `${request.url}.tgz`,
-            },
-            ...props,
-          },
-        },
-        "dist-tags": {
-          latest: version,
-        },
-      }),
-    );
-  };
-}
-
-async function readdirSorted(path: PathLike): Promise<string[]> {
-  const results = await readdir(path);
-  results.sort();
-  return results;
-}
-
-function resetHanlder() {
-  handler = () => new Response("Tea Break~", { status: 418 });
-}
-
-beforeAll(() => {
-  server = Bun.serve({
-    async fetch(request) {
-      requested++;
-      return await handler(request);
-    },
-    port: 54321,
-  });
-});
-afterAll(() => {
-  server.stop();
-});
-beforeEach(async () => {
-  resetHanlder();
-  requested = 0;
-  package_dir = realpathSync(await mkdtemp(join(tmpdir(), "bun-install.test")));
-});
-afterEach(async () => {
-  resetHanlder();
-  await rm(package_dir, { force: true, recursive: true });
-});
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+beforeEach(dummyBeforeEach);
+afterEach(dummyAfterEach);
 
 it("should handle missing package", async () => {
   const urls: string[] = [];
-  handler = async (request) => {
+  setHandler(async (request) => {
     expect(request.method).toBe("GET");
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -101,7 +45,7 @@ it("should handle missing package", async () => {
     expect(await request.text()).toBe("");
     urls.push(request.url);
     return new Response("bar", { status: 404 });
-  };
+  });
   const { stdout, stderr, exited } = spawn({
     cmd: [
       bunExe(),
@@ -124,7 +68,7 @@ it("should handle missing package", async () => {
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls).toEqual(["http://localhost:54321/foo"]);
+  expect(urls).toEqual([`${root_url}/foo`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
@@ -136,9 +80,9 @@ it("should handle missing package", async () => {
 
 it("should handle @scoped authentication", async () => {
   let seen_token = false;
-  const url = "http://localhost:54321/@foo/bar";
+  const url = `${root_url}/@foo/bar`;
   const urls: string[] = [];
-  handler = async (request) => {
+  setHandler(async (request) => {
     expect(request.method).toBe("GET");
     expect(request.headers.get("accept")).toBe(
       "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
@@ -153,7 +97,7 @@ it("should handle @scoped authentication", async () => {
     expect(await request.text()).toBe("");
     urls.push(request.url);
     return new Response("Feeling lucky?", { status: 555 });
-  };
+  });
   const { stdout, stderr, exited } = spawn({
     cmd: [
       bunExe(),
@@ -187,7 +131,7 @@ it("should handle @scoped authentication", async () => {
 
 it("should handle empty string in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -218,8 +162,8 @@ it("should handle empty string in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -601,7 +545,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
 
 it("should handle ^0 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -632,8 +576,8 @@ it("should handle ^0 in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -654,7 +598,7 @@ it("should handle ^0 in dependencies", async () => {
 
 it("should handle ^1 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -681,7 +625,7 @@ it("should handle ^1 in dependencies", async () => {
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls).toEqual(["http://localhost:54321/bar"]);
+  expect(urls).toEqual([`${root_url}/bar`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
@@ -693,7 +637,7 @@ it("should handle ^1 in dependencies", async () => {
 
 it("should handle ^0.0 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -724,8 +668,8 @@ it("should handle ^0.0 in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -746,7 +690,7 @@ it("should handle ^0.0 in dependencies", async () => {
 
 it("should handle ^0.1 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -773,7 +717,7 @@ it("should handle ^0.1 in dependencies", async () => {
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls).toEqual(["http://localhost:54321/bar"]);
+  expect(urls).toEqual([`${root_url}/bar`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
@@ -785,7 +729,7 @@ it("should handle ^0.1 in dependencies", async () => {
 
 it("should handle ^0.0.0 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -812,7 +756,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
-  expect(urls).toEqual(["http://localhost:54321/bar"]);
+  expect(urls).toEqual([`${root_url}/bar`]);
   expect(requested).toBe(1);
   try {
     await access(join(package_dir, "bun.lockb"));
@@ -824,7 +768,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
 
 it("should handle ^0.0.2 in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -855,8 +799,8 @@ it("should handle ^0.0.2 in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -877,7 +821,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
 
 it("should handle ^0.0.2-rc in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls, "0.0.2-rc");
+  setHandler(dummyRegistry(urls, "0.0.2-rc"));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -908,8 +852,8 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -930,7 +874,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
 
 it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls, "0.0.2-alpha.3");
+  setHandler(dummyRegistry(urls, "0.0.2-alpha.3"));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -961,8 +905,8 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/bar",
-    "http://localhost:54321/bar.tgz",
+    `${root_url}/bar`,
+    `${root_url}/bar.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -983,11 +927,11 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
 
 it("should handle dependency aliasing", async () => {
   const urls = [];
-  handler = dummyRegistry(urls, "0.0.3", {
+  setHandler(dummyRegistry(urls, "0.0.3", {
     bin: {
       "baz-run": "index.js",
     },
-  });
+  }));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1018,8 +962,8 @@ it("should handle dependency aliasing", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/baz",
-    "http://localhost:54321/baz.tgz",
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -1047,11 +991,11 @@ it("should handle dependency aliasing", async () => {
 
 it("should handle dependency aliasing (versioned)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls, "0.0.3", {
+  setHandler(dummyRegistry(urls, "0.0.3", {
     bin: {
       "baz-run": "index.js",
     },
-  });
+  }));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1082,8 +1026,8 @@ it("should handle dependency aliasing (versioned)", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/baz",
-    "http://localhost:54321/baz.tgz",
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -1111,11 +1055,11 @@ it("should handle dependency aliasing (versioned)", async () => {
 
 it("should handle dependency aliasing (dist-tagged)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls, "0.0.3", {
+  setHandler(dummyRegistry(urls, "0.0.3", {
     bin: {
       "baz-run": "index.js",
     },
-  });
+  }));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1146,8 +1090,8 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
   ]);
   expect(await exited).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/baz",
-    "http://localhost:54321/baz.tgz",
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -1175,11 +1119,11 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
 
 it("should not reinstall aliased dependencies", async () => {
   const urls = [];
-  handler = dummyRegistry(urls, "0.0.3", {
+  setHandler(dummyRegistry(urls, "0.0.3", {
     bin: {
       "baz-run": "index.js",
     },
-  });
+  }));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1214,8 +1158,8 @@ it("should not reinstall aliased dependencies", async () => {
   ]);
   expect(await exited1).toBe(0);
   expect(urls).toEqual([
-    "http://localhost:54321/baz",
-    "http://localhost:54321/baz.tgz",
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
   ]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
@@ -1290,7 +1234,7 @@ it("should not reinstall aliased dependencies", async () => {
 
 it("should handle GitHub URL in dependencies (user/repo)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1357,7 +1301,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
 
 it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1442,7 +1386,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
 
 it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1527,7 +1471,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
 
 it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -1612,7 +1556,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
 
 it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)", async () => {
   const urls: string[] = [];
-  handler = dummyRegistry(urls);
+  setHandler(dummyRegistry(urls));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

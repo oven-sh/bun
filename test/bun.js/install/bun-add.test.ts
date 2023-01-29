@@ -1,25 +1,49 @@
-import { spawn } from "bun";
+import { file, spawn } from "bun";
 import {
+  afterAll,
   afterEach,
+  beforeAll,
   beforeEach,
   expect,
   it,
 } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
-import { mkdtemp, rm, writeFile } from "fs/promises";
-import { basename, join, relative } from "path";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  writeFile,
+} from "fs/promises";
+import { join, relative } from "path";
 import { tmpdir } from "os";
+import {
+  dummyAfterAll,
+  dummyAfterEach,
+  dummyBeforeAll,
+  dummyBeforeEach,
+  dummyRegistry,
+  package_dir,
+  readdirSorted,
+  requested,
+  root_url,
+  setHandler,
+} from "./dummy.registry";
 
-let package_dir, add_dir;
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
+
+let add_dir;
 
 beforeEach(async () => {
   add_dir = await mkdtemp(join(tmpdir(), "bun-add.test"));
-  package_dir = await mkdtemp(join(tmpdir(), "bun-add.pkg"));
+  await dummyBeforeEach();
 });
 afterEach(async () => {
   await rm(add_dir, { force: true, recursive: true });
-  await rm(package_dir, { force: true, recursive: true });
+  await dummyAfterEach();
 });
 
 it("should add existing package", async () => {
@@ -33,7 +57,7 @@ it("should add existing package", async () => {
   }));
   const add_path = relative(package_dir, add_dir);
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add",`file:${add_path}`],
+    cmd: [bunExe(), "add", `file:${add_path}`],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -57,6 +81,13 @@ it("should add existing package", async () => {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+    dependencies: {
+      foo: `file:${add_path}`,
+    },
+  });
 });
 
 it("should reject missing package", async () => {
@@ -66,7 +97,7 @@ it("should reject missing package", async () => {
   }));
   const add_path = relative(package_dir, add_dir);
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add",`file:${add_path}`],
+    cmd: [bunExe(), "add", `file:${add_path}`],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -84,6 +115,10 @@ it("should reject missing package", async () => {
   const out = await new Response(stdout).text();
   expect(out).toBe("");
   expect(await exited).toBe(1);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
 });
 
 it("should reject invalid path without segfault", async () => {
@@ -97,7 +132,7 @@ it("should reject invalid path without segfault", async () => {
   }));
   const add_path = relative(package_dir, add_dir);
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add",`file://${add_path}`],
+    cmd: [bunExe(), "add", `file://${add_path}`],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -115,4 +150,169 @@ it("should reject invalid path without segfault", async () => {
   const out = await new Response(stdout).text();
   expect(out).toBe("");
   expect(await exited).toBe(1);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+});
+
+it("should add dependency with specified semver", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz@~0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed baz@0.0.3 with binaries:",
+    "  - baz-run",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
+  ]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "baz",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(
+    join("..", "baz", "index.js"),
+  );
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: "~0.0.2",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should add dependency alongside workspaces", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, "0.0.3", {
+    bin: {
+      "baz-run": "index.js",
+    },
+  }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: ["packages/bar"],
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "bar"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "bar", "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "baz", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@workspace:packages/bar",
+    "",
+    " installed baz@0.0.3 with binaries:",
+    "  - baz-run",
+    "",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls).toEqual([
+    `${root_url}/baz`,
+    `${root_url}/baz.tgz`,
+  ]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "bar",
+    "baz",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual([
+    "baz-run",
+  ]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(
+    join("..", "baz", "index.js"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(
+    join("..", "packages", "bar"),
+  );
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    workspaces: [ "packages/bar" ],
+    dependencies: {
+      baz: "^0.0.3",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
 });

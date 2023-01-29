@@ -1275,7 +1275,7 @@ bun install --backend copyfile
 
 **`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has it's own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash
 rm -rf node_modules
@@ -4646,7 +4646,7 @@ It will check the lockfile for the version. If the lockfile doesn't have a versi
 
 Lowlights:
 
-- TypeScript type support isn't implmented yet
+- TypeScript type support isn't implemented yet
 - patch package support isn't implemented yet
 
 #### Resolving packages

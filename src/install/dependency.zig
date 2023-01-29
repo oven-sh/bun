@@ -377,19 +377,42 @@ pub const Version = struct {
                 // git://user@example.com/repo.git
                 'g' => {
                     if (strings.hasPrefixComptime(dependency, "git")) {
-                        const url = dependency["git".len..];
+                        var url = dependency["git".len..];
                         if (url.len > 2) {
                             switch (url[0]) {
                                 ':' => {
                                     if (strings.hasPrefixComptime(url, "://")) return .git;
                                 },
                                 '+' => {
-                                    if (strings.hasPrefixComptime(url, "+ssh") or
-                                        strings.hasPrefixComptime(url, "+file") or
-                                        strings.hasPrefixComptime(url, "+http") or
-                                        strings.hasPrefixComptime(url, "+https"))
+                                    if (strings.hasPrefixComptime(url, "+ssh:") or
+                                        strings.hasPrefixComptime(url, "+file:"))
                                     {
                                         return .git;
+                                    }
+                                    if (strings.hasPrefixComptime(url, "+http")) {
+                                        url = url["+http".len..];
+                                        if (url.len > 2 and switch (url[0]) {
+                                            ':' => brk: {
+                                                if (strings.hasPrefixComptime(url, "://")) {
+                                                    url = url["://".len..];
+                                                    break :brk true;
+                                                }
+                                                break :brk false;
+                                            },
+                                            's' => brk: {
+                                                if (strings.hasPrefixComptime(url, "s://")) {
+                                                    url = url["s://".len..];
+                                                    break :brk true;
+                                                }
+                                                break :brk false;
+                                            },
+                                            else => false,
+                                        }) {
+                                            if (strings.hasPrefixComptime(url, "github.com/")) {
+                                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                            }
+                                            return .git;
+                                        }
                                     }
                                 },
                                 'h' => {
@@ -666,25 +689,30 @@ pub fn parseWithTag(
             var input = dependency;
             if (strings.hasPrefixComptime(input, "github:")) {
                 input = input["github:".len..];
-            } else if (strings.hasPrefixComptime(input, "http")) {
-                var url = input["http".len..];
-                if (url.len > 2) {
-                    switch (url[0]) {
-                        ':' => {
-                            if (strings.hasPrefixComptime(url, "://")) {
-                                url = url["://".len..];
-                            }
-                        },
-                        's' => {
-                            if (strings.hasPrefixComptime(url, "s://")) {
-                                url = url["s://".len..];
-                            }
-                        },
-                        else => {},
-                    }
-                    if (strings.hasPrefixComptime(url, "github.com/")) {
-                        input = url["github.com/".len..];
-                        from_url = true;
+            } else {
+                if (strings.hasPrefixComptime(input, "git+")) {
+                    input = input["git+".len..];
+                }
+                if (strings.hasPrefixComptime(input, "http")) {
+                    var url = input["http".len..];
+                    if (url.len > 2) {
+                        switch (url[0]) {
+                            ':' => {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            },
+                            's' => {
+                                if (strings.hasPrefixComptime(url, "s://")) {
+                                    url = url["s://".len..];
+                                }
+                            },
+                            else => {},
+                        }
+                        if (strings.hasPrefixComptime(url, "github.com/")) {
+                            input = url["github.com/".len..];
+                            from_url = true;
+                        }
                     }
                 }
             }

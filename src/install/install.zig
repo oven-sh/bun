@@ -5340,10 +5340,12 @@ pub const PackageManager = struct {
                     };
                 }
                 switch (version.tag) {
-                    .dist_tag, .npm => version.literal = if (strings.lastIndexOfChar(value, '@')) |at|
-                        String.init(value, value[at + 1 ..])
-                    else
-                        String.from(""),
+                    .dist_tag, .npm => version.literal = brk: {
+                        if (strings.lastIndexOfChar(value, '@')) |at| {
+                            if (at >= "npm:@".len) break :brk String.init(value, value[at + 1 ..]);
+                        }
+                        break :brk String.from("");
+                    },
                     else => {},
                 }
 

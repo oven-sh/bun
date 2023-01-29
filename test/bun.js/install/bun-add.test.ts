@@ -156,6 +156,102 @@ it("should reject invalid path without segfault", async () => {
   });
 });
 
+it("should handle semver-like names", async() => {
+  const urls: string[] = [];
+  setHandler(async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({
+    name: "foo",
+    version: "0.0.1",
+  }));
+  const { stdout, stderr, exited } = spawn({
+    cmd: [
+      bunExe(),
+      "add",
+      "1.2.3",
+      "--config",
+      import.meta.dir + "/basic.toml",
+    ],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(
+    'error: package "1.2.3" not found localhost/1.2.3 404',
+  );
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBe("");
+  expect(await exited).toBe(1);
+  expect(urls).toEqual([`${root_url}/1.2.3`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
+it("should handle @scoped names", async() => {
+  const urls: string[] = [];
+  setHandler(async (request) => {
+    expect(request.method).toBe("GET");
+    expect(request.headers.get("accept")).toBe(
+      "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+    );
+    expect(request.headers.get("npm-auth-type")).toBe(null);
+    expect(await request.text()).toBe("");
+    urls.push(request.url);
+    return new Response("not to be found", { status: 404 });
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({
+    name: "foo",
+    version: "0.0.1",
+  }));
+  const { stdout, stderr, exited } = spawn({
+    cmd: [
+      bunExe(),
+      "add",
+      "@bar/baz",
+      "--config",
+      import.meta.dir + "/basic.toml",
+    ],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(
+    'error: package "@bar/baz" not found localhost/@bar/baz 404',
+  );
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBe("");
+  expect(await exited).toBe(1);
+  expect(urls).toEqual([`${root_url}/@bar/baz`]);
+  expect(requested).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should add dependency with specified semver", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls, "0.0.3", {

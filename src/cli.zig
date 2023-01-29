@@ -1243,7 +1243,7 @@ pub const Command = struct {
                 const force_using_bun = ctx.debug.run_in_bun;
                 var did_check = false;
                 if (default_loader) |loader| {
-                    if (loader.isJavaScriptLike() or loader == .wasm) {
+                    if (loader.canBeRunByBun()) {
                         was_js_like = true;
                         if (maybeOpenWithBunJS(&ctx)) {
                             return;

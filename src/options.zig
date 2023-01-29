@@ -636,6 +636,13 @@ pub const Loader = enum(u4) {
     wasm,
     napi,
 
+    pub fn canBeRunByBun(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            else => false,
+        };
+    }
+
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");

@@ -731,7 +731,7 @@ pub const RunCommand = struct {
                     while (iter.next()) |entry| {
                         const value = entry.value_ptr.*;
                         const name = value.base();
-                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
+                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
@@ -857,7 +857,7 @@ pub const RunCommand = struct {
                 possibly_open_with_bun_js: {
                     if (!force_using_bun) {
                         if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |load| {
-                            if (!(load.isJavaScriptLike() or load == .wasm))
+                            if (!load.canBeRunByBun())
                                 break :possibly_open_with_bun_js;
                         } else {
                             break :possibly_open_with_bun_js;

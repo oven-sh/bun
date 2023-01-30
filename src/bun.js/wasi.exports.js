@@ -1,5 +1,8 @@
-// HUGE thanks to @williamstein and https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js
-// This code is mostly a copy of wasi-js
+// HUGE thanks to:
+// - @williamstein and https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js
+// - @syrusakbary for wasmer-js https://github.com/wasmerio/wasmer-js
+// - Gus Caplan for node-wasi https://github.com/devsnek/node-wasi
+//
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
 /** **/

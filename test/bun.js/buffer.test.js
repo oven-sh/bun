@@ -2694,15 +2694,13 @@ it("Buffer.fill (Node.js tests)", () => {
 });
 
 test("Buffer.byteLength", () => {
-  "use strict";
-
   const SlowBuffer = require("buffer").SlowBuffer;
 
-  // [[32, "latin1"], [NaN, "utf8"], [{}, "latin1"], []].forEach((args) => {
-  //   assert.throws(() => Buffer.byteLength(...args));
-  // });
+  [[32, "latin1"], [NaN, "utf8"], [{}, "latin1"], []].forEach((args) => {
+    assert.throws(() => Buffer.byteLength(...args));
+  });
 
-  // assert.strictEqual(Buffer.byteLength("", undefined, true), -1);
+  assert.strictEqual(Buffer.byteLength("", undefined, true), 0);
 
   assert(ArrayBuffer.isView(new Buffer(10)));
   assert(ArrayBuffer.isView(new SlowBuffer(10)));
@@ -2785,9 +2783,8 @@ test("Buffer.byteLength", () => {
   assert.strictEqual(Buffer.byteLength("aaaa==", "base64"), 3);
   assert.strictEqual(Buffer.byteLength("aaa=", "base64url"), 2);
   assert.strictEqual(Buffer.byteLength("aaaa==", "base64url"), 3);
-
-  assert.strictEqual(Buffer.byteLength("Il était tué"), 14);
   assert.strictEqual(Buffer.byteLength("Il était tué", "utf8"), 14);
+  assert.strictEqual(Buffer.byteLength("Il était tué"), 14);
 
   ["ascii", "latin1", "binary"]
     .reduce((es, e) => es.concat(e, e.toUpperCase()), [])

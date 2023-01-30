@@ -657,7 +657,7 @@ pub const ModuleLoader = struct {
             error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
-            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
@@ -751,9 +751,9 @@ pub const ModuleLoader = struct {
                 error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
             }
 
-            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records[import_record_id].range, "").location.?;
+            const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
-                this.parse_result.ast.import_records[import_record_id].path.text,
+                this.parse_result.ast.import_records.at(import_record_id).path.text,
             ).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
@@ -1311,10 +1311,10 @@ pub const ModuleLoader = struct {
         if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = !prev;
 
         // this is a bad idea, but it should work for now.
-        const original_name = parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name;
-        parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = "globalThis.Bun.plugin";
+        const original_name = parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name;
+        parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = "globalThis.Bun.plugin";
         defer {
-            parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = original_name;
+            parse_result.ast.symbols.mut(parse_result.ast.bun_plugin.ref.innerIndex()).original_name = original_name;
         }
         const hoisted_stmts = parse_result.ast.bun_plugin.hoisted_stmts.items;
 
@@ -1324,9 +1324,9 @@ pub const ModuleLoader = struct {
             },
         };
         var ast_copy = parse_result.ast;
-        ast_copy.import_records = try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records);
-        defer jsc_vm.allocator.free(ast_copy.import_records);
-        ast_copy.parts = &parts;
+        ast_copy.import_records.set(try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records.slice()));
+        defer ast_copy.import_records.deinitWithAllocator(jsc_vm.allocator);
+        ast_copy.parts.set(&parts);
         ast_copy.prepend_part = null;
         var temporary_source = parse_result.source;
         var source_name = try std.fmt.allocPrint(jsc_vm.allocator, "{s}.plugin.{s}", .{ temporary_source.path.text, temporary_source.path.name.ext[1..] });

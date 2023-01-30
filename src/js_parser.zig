@@ -37,6 +37,7 @@ pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
+const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 const JSC = @import("bun").JSC;
 
@@ -2483,47 +2484,47 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        // const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        // const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        if (uses_dirname or uses_filename) {
-            const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, count);
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        // TODO: test UTF-8 file paths
-                        E.String.init(p.source.path.name.dir),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
-            }
-            if (uses_filename) {
-                decls[@as(usize, @boolToInt(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.String.init(p.source.path.text),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
-            }
+        // if (uses_dirname or uses_filename) {
+        //     const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
+        //     var declared_symbols = try p.allocator.alloc(DeclaredSymbol, count);
+        //     var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+        //     if (uses_dirname) {
+        //         decls[0] = .{
+        //             .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+        //             .value = p.newExpr(
+        //                 // TODO: test UTF-8 file paths
+        //                 E.String.init(p.source.path.name.dir),
+        //                 logger.Loc.Empty,
+        //             ),
+        //         };
+        //         declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
+        //     }
+        //     if (uses_filename) {
+        //         decls[@as(usize, @boolToInt(uses_dirname))] = .{
+        //             .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+        //             .value = p.newExpr(
+        //                 E.String.init(p.source.path.text),
+        //                 logger.Loc.Empty,
+        //             ),
+        //         };
+        //         declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
+        //     }
 
-            // TODO: DeclaredSymbol
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = decls,
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
-        }
+        //     // TODO: DeclaredSymbol
+        //     var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+        //     part_stmts[0] = p.s(S.Local{
+        //         .kind = .k_var,
+        //         .decls = decls,
+        //     }, logger.Loc.Empty);
+        //     before.append(js_ast.Part{
+        //         .stmts = part_stmts,
+        //         .declared_symbols = declared_symbols,
+        //         .tag = .dirname_filename,
+        //     }) catch unreachable;
+        // }
 
         var did_import_fast_refresh = false;
 
@@ -2660,7 +2661,8 @@ pub const Parser = struct {
                         const loc = logger.Loc{ .start = 0 };
 
                         // Preallocate everything we'll need here
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, symbols_count);
+                        var declared_symbols = DeclaredSymbol.List{};
+                        try declared_symbols.ensureTotalCapacity(p.allocator, symbols_count);
                         var decls = try p.allocator.alloc(G.Decl, decls_count);
                         var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
                         // Use the same array for storing the require call target of potentially both JSX runtimes
@@ -2668,14 +2670,12 @@ pub const Parser = struct {
                         var import_records = try p.allocator.alloc(u32, imports_count);
 
                         var decl_i: usize = 0;
-                        var declared_symbols_i: usize = 0;
                         var import_record_i: usize = 0;
                         var require_call_args_i: usize = 0;
                         var stmt_i: usize = 0;
 
                         if (react_element_symbol.use_count_estimate > 0) {
-                            declared_symbols[declared_symbols_i] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
-                            declared_symbols_i += 1;
+                            declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
                             p.recordUsage(p.es6_symbol_global.ref);
                             var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
                             call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
@@ -2718,8 +2718,7 @@ pub const Parser = struct {
                         }
 
                         if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
-                            declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
-                            declared_symbols_i += 1;
+                            declared_symbols.appendAssumeCapacity(.{ .ref = automatic_namespace_ref, .is_top_level = true });
 
                             const automatic_identifier = p.newExpr(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
 
@@ -2742,8 +2741,7 @@ pub const Parser = struct {
                             };
 
                             if (jsx_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_runtime.ref, .is_top_level = true });
 
                                 decls[decl_i] = G.Decl{
                                     .binding = p.b(
@@ -2767,8 +2765,7 @@ pub const Parser = struct {
 
                             if (FeatureFlags.support_jsxs_in_jsx_transform) {
                                 if (jsx_static_symbol.use_count_estimate > 0) {
-                                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime.ref, .is_top_level = true };
-                                    declared_symbols_i += 1;
+                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsxs_runtime.ref, .is_top_level = true });
 
                                     decls[decl_i] = G.Decl{
                                         .binding = p.b(
@@ -2792,8 +2789,7 @@ pub const Parser = struct {
                                 }
                             }
                             // if (jsx_filename_symbol.use_count_estimate > 0) {
-                            //     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
-                            //     declared_symbols_i += 1;
+                            //     declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_filename.ref, .is_top_level = true });
                             //     decls[decl_i] = G.Decl{
                             //         .binding = p.b(
                             //             B.Identifier{
@@ -2855,8 +2851,7 @@ pub const Parser = struct {
                             };
 
                             if (jsx_factory_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
                                 decls[decl_i] = G.Decl{
                                     .binding = p.b(
                                         B.Identifier{
@@ -2874,8 +2869,7 @@ pub const Parser = struct {
                             }
 
                             if (jsx_fragment_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_fragment.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
                                 decls[decl_i] = G.Decl{
                                     .binding = p.b(
                                         B.Identifier{
@@ -2916,8 +2910,7 @@ pub const Parser = struct {
                             ) catch unreachable;
                             p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
                             import_records[import_record_i] = import_record_id;
-                            declared_symbols[declared_symbols_i] = .{ .ref = classic_namespace_ref, .is_top_level = true };
-                            declared_symbols_i += 1;
+                            declared_symbols.appendAssumeCapacity(.{ .ref = classic_namespace_ref, .is_top_level = true });
                         }
 
                         if (p.options.features.react_fast_refresh) {
@@ -2926,8 +2919,7 @@ pub const Parser = struct {
                             if (!p.options.jsx.use_embedded_refresh_runtime) {
                                 const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
 
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
 
                                 const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
                                 p.import_records.items[import_record_id].tag = .react_refresh;
@@ -2961,7 +2953,7 @@ pub const Parser = struct {
                         before.append(js_ast.Part{
                             .stmts = jsx_part_stmts[0..stmt_i],
                             .declared_symbols = declared_symbols,
-                            .import_record_indices = import_records,
+                            .import_record_indices = bun.BabyList(u32).init(import_records),
                             .tag = .jsx_import,
                         }) catch unreachable;
                     }
@@ -2969,11 +2961,12 @@ pub const Parser = struct {
                     const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
 
                     if (react_element_symbol.use_count_estimate > 0) {
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+                        var declared_symbols = DeclaredSymbol.List{};
+                        try declared_symbols.ensureTotalCapacity(p.allocator, 1);
                         var decls = try p.allocator.alloc(G.Decl, 1);
                         var part_stmts = try p.allocator.alloc(Stmt, 1);
 
-                        declared_symbols[0] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
+                        declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
                         p.recordUsage(p.es6_symbol_global.ref);
                         var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
                         call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
@@ -3027,7 +3020,8 @@ pub const Parser = struct {
                     //   var jsxFrag =
                     if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
                         const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
-                        var declared_symbols = try std.ArrayList(js_ast.DeclaredSymbol).initCapacity(p.allocator, total);
+                        var declared_symbols = DeclaredSymbol.List{};
+                        try declared_symbols.ensureTotalCapacity(p.allocator, total);
                         var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
                         var part_stmts = try p.allocator.alloc(Stmt, 1);
 
@@ -3058,7 +3052,7 @@ pub const Parser = struct {
                         part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
-                            .declared_symbols = declared_symbols.items,
+                            .declared_symbols = declared_symbols,
                             .tag = .jsx_import,
                         }) catch unreachable;
                     }
@@ -3071,7 +3065,8 @@ pub const Parser = struct {
                     if (!p.options.jsx.use_embedded_refresh_runtime) {
                         if (comptime Environment.allow_assert)
                             assert(!p.options.enable_bundling);
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+                        var declared_symbols = DeclaredSymbol.List{};
+                        try declared_symbols.ensureTotalCapacity(p.allocator, 1);
                         const loc = logger.Loc.Empty;
                         const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
                         p.import_records.items[import_record_id].tag = .react_refresh;
@@ -3098,14 +3093,14 @@ pub const Parser = struct {
                         p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
                         var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
                         import_records[0] = import_record_id;
-                        declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
+                        declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
                         var part_stmts = try p.allocator.alloc(Stmt, 1);
                         part_stmts[0] = import_stmt;
 
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
                             .declared_symbols = declared_symbols,
-                            .import_record_indices = import_records,
+                            .import_record_indices = bun.BabyList(u32).init(import_records),
                             .tag = .react_fast_refresh,
                         }) catch unreachable;
                     }
@@ -3212,16 +3207,17 @@ pub const Parser = struct {
         }
 
         if (has_cjs_imports) {
-            var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
+            var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.cjs_import_stmts.items.len);
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(p.allocator, p.cjs_import_stmts.items.len);
 
-            for (p.cjs_import_stmts.items) |entry, i| {
+            for (p.cjs_import_stmts.items) |entry| {
                 const import_statement: *S.Import = entry.data.s_import;
-                import_records[i] = import_statement.import_record_index;
-                declared_symbols[i] = .{
+                import_records.appendAssumeCapacity(import_statement.import_record_index);
+                declared_symbols.appendAssumeCapacity(.{
                     .ref = import_statement.namespace_ref,
                     .is_top_level = true,
-                };
+                });
             }
 
             before.append(js_ast.Part{
@@ -3602,8 +3598,8 @@ fn NewParser_(
 
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: js_ast.Part.SymbolUseMap = .{},
-        declared_symbols: List(js_ast.DeclaredSymbol) = .{},
-        declared_symbols_for_reuse: List(js_ast.DeclaredSymbol) = .{},
+        declared_symbols: List(DeclaredSymbol) = .{},
+        declared_symbols_for_reuse: List(DeclaredSymbol) = .{},
         runtime_imports: RuntimeImports = RuntimeImports{},
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
@@ -4139,9 +4135,9 @@ fn NewParser_(
             for (symbol_use_refs) |ref, i| {
                 symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
             }
-
-            for (part.declared_symbols) |declared| {
-                symbols[declared.ref.innerIndex()].use_count_estimate = 0;
+            const declared_refs = part.declared_symbols.items(.ref);
+            for (declared_refs) |declared| {
+                symbols[declared.innerIndex()].use_count_estimate = 0;
                 // }
             }
         }
@@ -4504,7 +4500,8 @@ fn NewParser_(
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
-            var declared_symbols = try allocator.alloc(js_ast.DeclaredSymbol, imports.len);
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(allocator, imports.len);
             std.mem.copy(u8, namespace_identifier[0..suffix.len], suffix);
             std.mem.copy(
                 u8,
@@ -4513,7 +4510,7 @@ fn NewParser_(
             );
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
-            try p.module_scope.generated.append(allocator, namespace_ref);
+            try p.module_scope.generated.push(allocator, namespace_ref);
             for (imports) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
@@ -4523,7 +4520,7 @@ fn NewParser_(
                     .alias_loc = logger.Loc{},
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
-                declared_symbols[i] = js_ast.DeclaredSymbol{ .ref = ref, .is_top_level = true };
+                declared_symbols.appendAssumeCapacity(DeclaredSymbol{ .ref = ref, .is_top_level = true });
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(ref, js_ast.NamedImport{
                     .alias = alias_name,
@@ -4550,7 +4547,7 @@ fn NewParser_(
             parts.append(js_ast.Part{
                 .stmts = stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = import_records,
+                .import_record_indices = bun.BabyList(u32).init(import_records),
                 .tag = .runtime,
             }) catch unreachable;
         }
@@ -5367,8 +5364,8 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.items) |_, i| {
-                p.hoistSymbols(scope.children.items[i]);
+            for (scope.children.slice()) |_, i| {
+                p.hoistSymbols(scope.children.mut(i).*);
             }
         }
 
@@ -5409,7 +5406,7 @@ fn NewParser_(
                 .generated = .{},
             };
 
-            try parent.children.append(allocator, scope);
+            try parent.children.push(allocator, scope);
             scope.strict_mode = parent.strict_mode;
 
             p.current_scope = scope;
@@ -5750,8 +5747,8 @@ fn NewParser_(
 
             var children = parent.children;
             // Remove the last child from the parent scope
-            var last = children.items.len - 1;
-            if (children.items[last] != to_discard) {
+            var last = children.len - 1;
+            if (children.slice()[last] != to_discard) {
                 p.panic("Internal error", .{});
             }
 
@@ -6590,7 +6587,7 @@ fn NewParser_(
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
-                try scope.generated.append(p.allocator, stmt.namespace_ref);
+                try scope.generated.push(p.allocator, stmt.namespace_ref);
             }
 
             var item_refs = ImportItemForNamespaceMap.init(p.allocator);
@@ -6754,7 +6751,7 @@ fn NewParser_(
 
             var scope = p.current_scope;
 
-            try scope.generated.append(p.allocator, name.ref.?);
+            try scope.generated.push(p.allocator, name.ref.?);
 
             return name;
         }
@@ -8169,10 +8166,12 @@ fn NewParser_(
                 const child = _child orelse continue;
 
                 if (child.scope.parent == p.current_scope) {
-                    var i: usize = children.items.len - 1;
+                    var i: usize = children.len - 1;
                     while (i >= 0) {
-                        if (children.items[i] == child.scope) {
-                            _ = children.orderedRemove(i);
+                        if (children.mut(i).* == child.scope) {
+                            var list = children.listManaged(p.allocator);
+                            _ = list.orderedRemove(i);
+                            children.update(list);
                             break;
                         }
                         i -= 1;
@@ -8306,7 +8305,7 @@ fn NewParser_(
                     // run the renamer. For external-facing things the renamer will avoid
                     // collisions automatically so this isn't important for correctness.
                     arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
-                    p.current_scope.generated.append(p.allocator, arg_ref.?) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, arg_ref.?) catch unreachable;
                 } else {
                     arg_ref = p.newSymbol(.hoisted, name_text) catch unreachable;
                 }
@@ -9041,7 +9040,7 @@ fn NewParser_(
                     // run the renamer. For external-facing things the renamer will avoid
                     // collisions automatically so this isn't important for correctness.
                     arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
-                    p.current_scope.generated.append(p.allocator, arg_ref) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, arg_ref) catch unreachable;
                 } else {
                     arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
                 }
@@ -9478,7 +9477,7 @@ fn NewParser_(
             // this module will be unable to reference this symbol. However, we must
             // still add the symbol to the scope so it gets minified (automatically-
             // generated code may still reference the symbol).
-            try p.module_scope.generated.append(p.allocator, ref);
+            try p.module_scope.generated.push(p.allocator, ref);
             return ref;
         }
 
@@ -9571,7 +9570,7 @@ fn NewParser_(
             entry.key_ptr.* = name;
             entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
             if (comptime is_generated) {
-                try p.module_scope.generated.append(p.allocator, ref);
+                try p.module_scope.generated.push(p.allocator, ref);
             }
             return ref;
         }
@@ -12762,16 +12761,18 @@ fn NewParser_(
                         for (previous_parts) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
-                            const declared_symbols = previous_part.declared_symbols;
+                            const declared_symbols = previous_part.declared_symbols.slice();
+                            var refs = declared_symbols.items(.ref);
 
-                            for (declared_symbols) |decl| {
-                                if (p.symbol_uses.contains(decl.ref)) {
+                            for (refs) |ref| {
+                                if (p.symbol_uses.contains(ref)) {
                                     // we move this part to our other file
                                     for (previous_parts[0..j]) |*this_part| {
                                         if (this_part.stmts.len == 0) continue;
                                         const this_declared_symbols = this_part.declared_symbols;
-                                        for (this_declared_symbols) |this_decl| {
-                                            if (previous_part.symbol_uses.contains(this_decl.ref)) {
+                                        var other_refs = this_declared_symbols.items(.ref);
+                                        for (other_refs) |other_ref| {
+                                            if (previous_part.symbol_uses.contains(other_ref)) {
                                                 try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
                                                 this_part.stmts = &.{};
                                                 break;
@@ -12789,29 +12790,46 @@ fn NewParser_(
                         // Single-statement part which uses Bun.plugin()
                         // It's effectively an unrelated file
                         if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
-                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                            var decls = DeclaredSymbol.List{};
+                            try decls.ensureTotalCapacity(p.allocator, p.declared_symbols.items.len);
+                            for (p.declared_symbols.items) |decl| {
+                                decls.appendAssumeCapacity(decl);
+                            }
+                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = decls, .symbol_uses = p.symbol_uses });
                         }
                         return;
                     }
                 }
                 // -- hoist_bun_plugin --
 
+                var part_decls = DeclaredSymbol.List{};
+                try part_decls.ensureTotalCapacity(p.allocator, p.declared_symbols.items.len);
+                for (p.declared_symbols.items) |decl| {
+                    part_decls.appendAssumeCapacity(decl);
+                }
+
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
                     .symbol_uses = p.symbol_uses,
-                    .declared_symbols = try p.declared_symbols.toOwnedSlice(
-                        p.allocator,
-                    ),
-                    .import_record_indices = try p.import_records_for_current_part.toOwnedSlice(
-                        p.allocator,
+                    .declared_symbols = part_decls,
+                    .import_record_indices = bun.BabyList(u32).init(
+                        p.import_records_for_current_part.toOwnedSlice(
+                            p.allocator,
+                        ) catch unreachable,
                     ),
                     .scopes = try p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
                 p.symbol_uses = .{};
             } else if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
+                var decls = DeclaredSymbol.List{};
+                try decls.ensureTotalCapacity(p.allocator, p.declared_symbols.items.len);
+                for (p.declared_symbols.items) |decl| {
+                    decls.appendAssumeCapacity(decl);
+                }
+
                 // if the part is dead, invalidate all the usage counts
-                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = decls, .symbol_uses = p.symbol_uses });
             }
         }
 
@@ -12966,7 +12984,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
-            try p.declared_symbols.append(p.allocator, js_ast.DeclaredSymbol{
+            try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
             });
@@ -15584,7 +15602,7 @@ fn NewParser_(
                     const name = p.loadNameFromRef(data.namespace_ref);
 
                     data.namespace_ref = try p.newSymbol(.other, name);
-                    try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                    try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
                     if (p.options.features.replace_exports.count() > 0) {
@@ -15604,7 +15622,7 @@ fn NewParser_(
                             const _name = p.loadNameFromRef(old_ref);
 
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                             try p.recordDeclaredSymbol(data.namespace_ref);
                             data.items[j] = item;
                             data.items[j].name.ref = ref;
@@ -15622,7 +15640,7 @@ fn NewParser_(
                         for (data.items) |*item| {
                             const _name = p.loadNameFromRef(item.name.ref.?);
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                             try p.recordDeclaredSymbol(data.namespace_ref);
                             item.name.ref = ref;
                         }
@@ -15633,7 +15651,7 @@ fn NewParser_(
                     // "export * from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
                     data.namespace_ref = try p.newSymbol(.other, name);
-                    try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                    try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
                     // "export * as ns from 'path'"
@@ -17079,7 +17097,7 @@ fn NewParser_(
                             if (class.extends != null) {
                                 const target = p.newExpr(E.Super{}, stmt.loc);
                                 const arguments_ref = p.newSymbol(.unbound, "arguments") catch unreachable;
-                                p.current_scope.generated.append(p.allocator, arguments_ref) catch unreachable;
+                                p.current_scope.generated.push(p.allocator, arguments_ref) catch unreachable;
 
                                 const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
                                 const args = ExprNodeList.one(p.allocator, super) catch unreachable;
@@ -17665,7 +17683,7 @@ fn NewParser_(
                     // (e.g. there was a static property initializer that referenced "this"),
                     // store our generated name so the class expression ends up with a name.
                     class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
-                    p.current_scope.generated.append(p.allocator, class_name_ref) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, class_name_ref) catch unreachable;
                     p.recordDeclaredSymbol(class_name_ref) catch unreachable;
                 }
             }
@@ -17707,7 +17725,7 @@ fn NewParser_(
                     break :brk generated_symbol.ref;
                 };
 
-                p.module_scope.generated.append(p.allocator, ref) catch unreachable;
+                p.module_scope.generated.push(p.allocator, ref) catch unreachable;
             } else {
                 ref = p.runtime_imports.at(name).?;
             }
@@ -18197,13 +18215,12 @@ fn NewParser_(
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
             // Remove the last child from the parent scope
-            const last = parent.children.items.len - 1;
-            if (comptime Environment.allow_assert) assert(parent.children.items[last] == to_flatten);
-            _ = parent.children.popOrNull();
+            _ = parent.children.popOrNull().?;
+            if (comptime Environment.allow_assert) assert(parent.children.last().?.* == to_flatten);
 
-            for (to_flatten.children.items) |item| {
+            for (to_flatten.children.slice()) |item| {
                 item.parent = parent;
-                parent.children.append(p.allocator, item) catch unreachable;
+                parent.children.push(p.allocator, item) catch unreachable;
             }
         }
 
@@ -18243,7 +18260,12 @@ fn NewParser_(
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
                     part.import_record_indices = part.import_record_indices;
-                    part.declared_symbols = try p.declared_symbols.toOwnedSlice(allocator);
+                    try part.declared_symbols.ensureTotalCapacity(p.allocator, p.declared_symbols.items.len);
+
+                    for (p.declared_symbols.items) |sym| {
+                        part.declared_symbols.appendAssumeCapacity(sym);
+                    }
+
                     part.stmts = result.stmts;
                     if (part.stmts.len > 0) {
                         if (p.module_scope.contains_direct_eval and part.declared_symbols.len > 0) {
@@ -18815,14 +18837,15 @@ fn NewParser_(
             }
 
             return js_ast.Ast{
+                .allocator = p.allocator,
                 .runtime_imports = p.runtime_imports,
-                .parts = parts,
+                .parts = bun.BabyList(js_ast.Part).init(parts),
                 .module_scope = p.module_scope.*,
-                .symbols = p.symbols.items,
+                .symbols = js_ast.Symbol.List.init(p.symbols.items),
                 .exports_ref = p.exports_ref,
                 .wrapper_ref = null,
                 .module_ref = p.module_ref,
-                .import_records = p.import_records.items,
+                .import_records = ImportRecord.List.init(p.import_records.items),
                 .export_star_import_records = p.export_star_import_records.items,
                 .approximate_newline_count = p.lexer.approximate_newline_count,
                 .exports_kind = exports_kind,

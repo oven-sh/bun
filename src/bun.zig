@@ -944,3 +944,6 @@ pub fn cstring(input: []const u8) [:0]const u8 {
     }
     return @ptrCast([*:0]const u8, input.ptr)[0..input.len :0];
 }
+
+pub const ImportRecord = @import("./import_record.zig").ImportRecord;
+pub const ImportKind = @import("./import_record.zig").ImportKind;

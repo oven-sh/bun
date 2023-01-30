@@ -125,12 +125,55 @@ pub inline fn getBits(comptime TargetType: type, target: anytype, comptime start
 
     return @truncate(TargetType, target >> start_bit);
 }
+pub const Index = packed struct(u32) {
+    value: u32 = std.math.maxInt(u32),
+
+    pub fn set(this: *Index, val: u32) void {
+        this.value = val;
+    }
+
+    pub inline fn isRuntime(this: Index) bool {
+        return this.value == runtime.value;
+    }
+
+    pub const invalid = Index{ .value = std.math.maxInt(u32) };
+    pub const runtime = Index{ .value = std.math.maxInt(u32) - 1 };
+
+    pub const Int = u32;
+
+    pub fn init(num: anytype) Index {
+        const NumType = @TypeOf(num);
+        if (comptime @typeInfo(NumType) == .Pointer) {
+            return init(num.*);
+        }
+
+        return @bitCast(Index, @intCast(Int, num));
+    }
+
+    pub inline fn isValid(this: Index) bool {
+        return this.value != std.math.maxInt(u32);
+    }
+
+    pub inline fn isInvalid(this: Index) bool {
+        return !this.isValid();
+    }
+
+    pub inline fn get(this: Index) u32 {
+        return @bitCast(u32, this);
+    }
+};
 
 pub const Ref = enum(TotalSize) {
     default = std.math.maxInt(TotalSize),
     _,
 
     pub const TotalSize = u62;
+
+    pub const ArrayHashCtx = RefHashCtx;
+
+    pub fn isSourceIndexNull(this: u32) bool {
+        return this == std.math.maxInt(u32);
+    }
 
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(
@@ -148,13 +191,17 @@ pub const Ref = enum(TotalSize) {
     pub const BitInt = std.meta.Int(.unsigned, @bitSizeOf(Ref));
 
     pub inline fn asBitInt(this: Ref) BitInt {
-        return @bitCast(BitInt, this);
+        return @bitCast(BitInt, @enumToInt(this));
+    }
+
+    pub fn isValid(this: Ref) bool {
+        return this.asBitInt() < None.asBitInt();
     }
 
     // 2 bits of padding for whatever is the parent
     pub const Int = u30;
     pub const None = Ref.init(std.math.maxInt(u30), std.math.maxInt(u30), false);
-    pub const RuntimeRef = Ref.init(std.math.maxInt(u30), std.math.maxInt(u30) - 1, false);
+    pub const RuntimeRef = Ref.init(std.math.maxInt(u30), 0, false);
 
     const source_index_offset = 1;
     const inner_index_offset = 1 + 30;
@@ -213,6 +260,14 @@ pub const Ref = enum(TotalSize) {
     }
 
     pub fn toInt(int: anytype) Int {
+        if (comptime @typeInfo(@TypeOf(int)) == .Pointer) {
+            return toInt(int.*);
+        }
+
+        if (comptime @TypeOf(int) == Index) {
+            return @bitCast(Int, @truncate(u30, @bitCast(u32, int)));
+        }
+
         return @intCast(Int, int);
     }
 
@@ -241,7 +296,7 @@ pub const Ref = enum(TotalSize) {
         return self.eql(Ref.None);
     }
 
-    pub fn isSourceIndexNull(int: anytype) bool {
+    pub fn isIndexNull(int: anytype) bool {
         return int == max_ref_int;
     }
 

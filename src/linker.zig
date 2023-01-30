@@ -223,18 +223,18 @@ pub const Linker = struct {
 
         const is_deferred = result.pending_imports.len > 0;
 
-        var import_records = result.ast.import_records;
+        var import_records = result.ast.import_records.listManaged(linker.allocator);
         defer {
-            result.ast.import_records = import_records;
+            result.ast.import_records = ImportRecord.List.fromList(import_records);
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 var record_i: u32 = 0;
-                const record_count = @truncate(u32, import_records.len);
+                const record_count = @truncate(u32, import_records.items.len);
 
                 outer: while (record_i < record_count) : (record_i += 1) {
-                    var import_record = &import_records[record_i];
+                    var import_record = &import_records.items[record_i];
                     if (import_record.is_unused or
                         (is_bun and is_deferred and !result.isPendingImport(record_i))) continue;
 
@@ -371,7 +371,6 @@ pub const Linker = struct {
                                     if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                         const import_path = text[@min(text.len, package_name.len + 1)..];
                                         if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
 
@@ -399,7 +398,6 @@ pub const Linker = struct {
                                         if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                             const import_path = runtime[@min(runtime.len, package_name.len + 1)..];
                                             if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
-                                                import_record.is_bundled = true;
                                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                     linker.nodeModuleBundleImportPath(origin);
 
@@ -529,7 +527,6 @@ pub const Linker = struct {
                                                 );
                                             }
 
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
                                             import_record.path.text = node_module_bundle_import_path.?;
@@ -798,9 +795,9 @@ pub const Linker = struct {
         if (had_resolve_errors) return error.ResolveError;
         result.ast.externals = try externals.toOwnedSlice();
 
-        if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.len == 0)) {
-            var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
-            std.mem.copy(ImportRecord, new_import_records, import_records);
+        if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.items.len == 0)) {
+            var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.items.len + 1);
+            std.mem.copy(ImportRecord, new_import_records, import_records.items);
 
             new_import_records[new_import_records.len - 1] = ImportRecord{
                 .kind = .stmt,
@@ -813,8 +810,7 @@ pub const Linker = struct {
 
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
-            result.ast.runtime_import_record_id = @truncate(u32, new_import_records.len - 1);
-            import_records = new_import_records;
+            result.ast.runtime_import_record_id = @truncate(u32, import_records.items.len - 1);
         }
 
         // We _assume_ you're importing ESM.

@@ -4,7 +4,7 @@ const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
 const js_ast = bun.JSAst;
 const options = @import("options.zig");
-
+const BabyList = @import("./baby_list.zig").BabyList;
 const fs = @import("fs.zig");
 const bun = @import("bun");
 const string = bun.string;
@@ -614,7 +614,7 @@ pub fn toAST(
             return Expr.init(
                 js_ast.E.Object,
                 js_ast.E.Object{
-                    .properties = js_ast.BabyList(G.Property).init(properties[0..property_i]),
+                    .properties = BabyList(G.Property).init(properties[0..property_i]),
                     .is_single_line = property_i <= 1,
                 },
                 logger.Loc.Empty,

@@ -1,8 +1,9 @@
-struct Export {
-    uint32 part_id;
-    StringPointer name;
-}
+package BundleV2;
 
+struct StringPointer {
+  uint32 offset;
+  uint32 length;
+}
 
 struct JavascriptBundledPart {
     StringPointer code;
@@ -14,9 +15,6 @@ struct JavascriptBundledPart {
     uint32 exports_length;
 
     uint32 from_module;
-
-    // The ESM export is this id ("$" + number.toString(16))
-    uint32 id;
 }
 
 struct JavascriptBundledModule {
@@ -46,9 +44,11 @@ struct JavascriptBundledPackage {
 }
 
 struct JavascriptBundle {
-  // These are sorted alphabetically so you can do binary search
   JavascriptBundledModule[] modules;
   JavascriptBundledPackage[] packages;
+  JavascriptBundledPart[] parts;
+  StringPointer[] export_names;
+  uint32[] export_parts;
   
   // This is ASCII-encoded so you can send it directly over HTTP
   byte[] etag;
@@ -65,11 +65,11 @@ message JavascriptBundleContainer {
   uint32 bundle_format_version = 1;
 
   // These go first so if we change JavaScriptBundle we can still read these
-  LoadedRouteConfig routes = 3;
-  LoadedFramework framework = 2;
+  //LoadedRouteConfig routes = 3;
+  //LoadedFramework framework = 2;
 
-  JavascriptBundle bundle = 4;
+  JavascriptBundle bundle = 2;
 
   // Don't technically need to store this, but it may be helpful as a sanity check
-  uint32 code_length = 5;
+  uint32 code_length = 3;
 }

@@ -783,6 +783,10 @@ api:
 	$(ZIG) fmt src/api/schema.zig
 	$(PRETTIER) --write src/api/schema.js
 	$(PRETTIER) --write src/api/schema.d.ts
+	./node_modules/.bin/peechy --schema src/api/bundle_v2.peechy --esm src/api/bundle_v2.js --ts src/api/bundle_v2.d.ts --zig src/api/bundle_v2.zig
+	$(ZIG) fmt src/api/bundle_v2.zig
+	$(PRETTIER) --write src/api/bundle_v2.js
+	$(PRETTIER) --write src/api/bundle_v2.d.ts
 
 .PHONY: node-fallbacks
 node-fallbacks:

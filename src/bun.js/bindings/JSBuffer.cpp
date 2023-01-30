@@ -466,7 +466,7 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
     }
 
     if (str->length() == 0)
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(-1)));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
 
     int64_t written = 0;
 

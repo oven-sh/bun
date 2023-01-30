@@ -2545,6 +2545,54 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         const width: usize = replacement.utf8Width();
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
+            switch (width) {
+                2 => {
+                    if (remaining.len > 0) {
+                        //only first will be written
+                        remaining[0] = @truncate(u8, 0xC0 | (replacement.code_point >> 6));
+                        remaining = remaining[remaining.len..];
+                    }
+                },
+                3 => {
+                    //only first to second written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 6) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                    
+                },
+                4 => {
+                    //only 1 to 3 written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        3 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
+                            remaining[3] = @truncate(u8, 0x80 | (replacement.code_point >> 0) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                },
+
+                else => {},
+            }
             break;
         }
 

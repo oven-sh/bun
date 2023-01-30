@@ -28,37 +28,37 @@ pub const BufferVectorized = struct {
 
         const written = switch (encoding) {
             JSC.Node.Encoding.utf8 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8),
             JSC.Node.Encoding.ascii => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii),
             JSC.Node.Encoding.latin1 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1),
             JSC.Node.Encoding.buffer => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer),
             JSC.Node.Encoding.utf16le,
             JSC.Node.Encoding.ucs2,
             => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le),
             JSC.Node.Encoding.base64 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.base64),
             JSC.Node.Encoding.base64url => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url),
             JSC.Node.Encoding.hex => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.hex)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.hex, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.hex),
         };

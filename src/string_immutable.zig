@@ -1723,7 +1723,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
-        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
+        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, @min(latin1.len, buf.len));
         if (comptime std.meta.alignment(Buffer) != @alignOf(u16)) {
             strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
         } else {

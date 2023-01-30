@@ -963,8 +963,9 @@ pub const Encoder = struct {
                 return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written);
             },
             .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
-                strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
-                return @intCast(i64, @min(len, to_len));
+                const out = @min(len, to_len);
+                strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..out]);
+                return @intCast(i64, out);
             },
             // string is already encoded, just need to copy the data
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
@@ -975,7 +976,7 @@ pub const Encoder = struct {
                 const fixed_len = (written / 2) * 2;
                 const input_u8 = @ptrCast([*]const u8, input);
                 strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
-                return @intCast(i64, written);
+                return @intCast(i64, fixed_len);
             },
 
             JSC.Node.Encoding.hex => {
@@ -1093,7 +1094,7 @@ pub const Encoder = struct {
 
                 var to = allocator.alloc(u8, outlen) catch return &[_]u8{};
                 const written = bun.base64.decode(to[0..outlen], slice).written;
-                return to[0..written];
+                return to[0..@min(written, outlen)];
             },
             // else => return 0,
         }

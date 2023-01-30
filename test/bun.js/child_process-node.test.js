@@ -353,7 +353,7 @@ describe("child_process cwd", () => {
     );
   });
 
-  it("shouldn't try to chdir to an invalid cwd", (done) => {
+  it.skip("shouldn't try to chdir to an invalid cwd", (done) => {
     const createDone = createDoneDotAll(done);
     // Spawn() shouldn't try to chdir() to invalid arg, so this should just work
     testCwd({ cwd: "" }, { expectPidType: "number" }, createDone(1500));

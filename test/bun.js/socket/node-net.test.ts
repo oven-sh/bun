@@ -185,6 +185,10 @@ describe("net.Socket write", () => {
           close,
           data(socket, buffer) {
             leaky = socket;
+            if (!Buffer.isBuffer(buffer)) {
+              done(new Error("buffer is not a Buffer"));
+            }
+
             socket.data.push(buffer);
           },
           end: close,
@@ -197,7 +201,7 @@ describe("net.Socket write", () => {
             socket.data = [];
           },
         },
-        data: [],
+        data: [] as Buffer[],
       });
 
       function onDone(err) {

@@ -86,14 +86,14 @@ export const Socket = (function (InternalSocket) {
 
         self.emit("error", error);
       },
-      data({ data: self }, { length, buffer }) {
-        self.bytesRead += length;
+      data({ data: self }, buffer) {
+        self.bytesRead += buffer.length;
         const queue = self.#readQueue;
-        const ret = new Buffer(buffer);
+
         if (queue.isEmpty()) {
-          if (self.push(ret)) return;
+          if (self.push(buffer)) return;
         }
-        queue.push(ret);
+        queue.push(buffer);
       },
       drain: Socket.#Drain,
       end: Socket.#Close,
@@ -120,6 +120,7 @@ export const Socket = (function (InternalSocket) {
         const self = socket.data;
         self.emit("timeout");
       },
+      binaryType: "buffer",
     };
 
     static #Close(socket) {

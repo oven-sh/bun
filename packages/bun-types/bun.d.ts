@@ -2623,7 +2623,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<typeof options["setup"]>;
+    }): ReturnType<(typeof options)["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2761,11 +2761,26 @@ declare module "bun" {
   interface TCPSocket extends Socket {}
   interface TLSSocket extends Socket {}
 
-  interface SocketHandler<Data = unknown> {
+  type BinaryTypeList = {
+    arraybuffer: ArrayBuffer;
+    buffer: Buffer;
+    uint8array: Uint8Array;
+    // TODO: DataView
+    // dataview: DataView;
+  };
+  type BinaryType = keyof BinaryTypeList;
+
+  interface SocketHandler<
+    Data = unknown,
+    DataBinaryType extends BinaryType = "buffer",
+  > {
     open(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
-    data?(socket: Socket<Data>, data: BufferSource): void | Promise<void>;
+    data?(
+      socket: Socket<Data>,
+      data: BinaryTypeList[DataBinaryType],
+    ): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
@@ -2788,6 +2803,23 @@ declare module "bun" {
      * to the promise rejection queue.
      */
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
+
+    /**
+     * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
+     *
+     * @default "buffer"
+     *
+     * @remarks
+     * This lets you select the desired binary type for the `data` callback.
+     * It's a small performance optimization to let you avoid creating extra
+     * ArrayBufferView objects when possible.
+     *
+     * Bun originally defaulted to `Uint8Array` but when dealing with network
+     * data, it's more useful to be able to directly read from the bytes which
+     * `Buffer` allows.
+     *
+     */
+    binaryType?: BinaryType;
   }
 
   interface SocketOptions<Data = unknown> {

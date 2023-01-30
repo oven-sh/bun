@@ -1715,13 +1715,18 @@ pub const ArrayBuffer = extern struct {
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSValue {
         JSC.markBinding(@src());
         return switch (comptime kind) {
-            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len),
+            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false),
             .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
             else => @compileError("Not implemented yet"),
         };
     }
 
-    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
+    pub fn createBuffer(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
+        JSC.markBinding(@src());
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
+    }
+
+    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
     extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
@@ -3992,5 +3997,95 @@ pub const Strong = extern struct {
         var ref: *JSC.napi.Ref = this.ref orelse return;
         this.ref = null;
         ref.destroy();
+    }
+};
+
+pub const BinaryType = enum {
+    Buffer,
+    ArrayBuffer,
+    Uint8Array,
+    Uint16Array,
+    Uint32Array,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    Float32Array,
+    Float64Array,
+    // DataView,
+
+    pub fn toJSType(this: BinaryType) JSC.JSValue.JSType {
+        return switch (this) {
+            .ArrayBuffer => .ArrayBuffer,
+            .Buffer => .Uint8Array,
+            // .DataView => .DataView,
+            .Float32Array => .Float32Array,
+            .Float64Array => .Float64Array,
+            .Int16Array => .Int16Array,
+            .Int32Array => .Int32Array,
+            .Int8Array => .Int8Array,
+            .Uint16Array => .Uint16Array,
+            .Uint32Array => .Uint32Array,
+            .Uint8Array => .Uint8Array,
+        };
+    }
+
+    pub fn toTypedArrayType(this: BinaryType) JSC.C.JSTypedArrayType {
+        return this.toJSType().toC();
+    }
+
+    const Map = bun.ComptimeStringMap(
+        BinaryType,
+        .{
+            .{ "ArrayBuffer", .ArrayBuffer },
+            .{ "Buffer", .Buffer },
+            // .{ "DataView", .DataView },
+            .{ "Float32Array", .Float32Array },
+            .{ "Float64Array", .Float64Array },
+            .{ "Int16Array", .Int16Array },
+            .{ "Int32Array", .Int32Array },
+            .{ "Int8Array", .Int8Array },
+            .{ "Uint16Array", .Uint16Array },
+            .{ "Uint32Array", .Uint32Array },
+            .{ "Uint8Array", .Uint8Array },
+            .{ "arraybuffer", .ArrayBuffer },
+            .{ "buffer", .Buffer },
+            // .{ "dataview", .DataView },
+            .{ "float32array", .Float32Array },
+            .{ "float64array", .Float64Array },
+            .{ "int16array", .Int16Array },
+            .{ "int32array", .Int32Array },
+            .{ "int8array", .Int8Array },
+            .{ "nodebuffer", .Buffer },
+            .{ "uint16array", .Uint16Array },
+            .{ "uint32array", .Uint32Array },
+            .{ "uint8array", .Uint8Array },
+        },
+    );
+
+    pub fn fromString(input: []const u8) ?BinaryType {
+        return Map.get(input);
+    }
+
+    pub fn fromJSValue(globalThis: *JSC.JSGlobalObject, input: JSValue) ?BinaryType {
+        if (input.isString()) {
+            return Map.getWithEql(input.getZigString(globalThis), ZigString.eqlComptime);
+        }
+
+        return null;
+    }
+
+    /// This clones bytes
+    pub fn toJS(this: BinaryType, bytes: []const u8, globalThis: *JSC.JSGlobalObject) JSValue {
+        switch (this) {
+            .Buffer => return JSC.ArrayBuffer.createBuffer(globalThis, bytes),
+            .ArrayBuffer => return JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer),
+            .Uint8Array => return JSC.ArrayBuffer.create(globalThis, bytes, .Uint8Array),
+
+            // These aren't documented, but they are supported
+            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float32Array, .Float64Array => {
+                const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
+                return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
+            },
+        }
     }
 };

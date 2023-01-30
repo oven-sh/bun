@@ -65,6 +65,9 @@ fn normalizeHost(input: anytype) @TypeOf(input) {
 
     return input;
 }
+
+const BinaryType = JSC.BinaryType;
+
 const Handlers = struct {
     onOpen: JSC.JSValue = .zero,
     onClose: JSC.JSValue = .zero,
@@ -75,7 +78,7 @@ const Handlers = struct {
     onEnd: JSC.JSValue = .zero,
     onError: JSC.JSValue = .zero,
 
-    encoding: JSC.Node.Encoding = .utf8,
+    binary_type: BinaryType = .Buffer,
 
     vm: *JSC.VirtualMachine,
     globalObject: *JSC.JSGlobalObject,
@@ -150,7 +153,6 @@ const Handlers = struct {
             .{ "onWritable", "drain" },
             .{ "onOpen", "open" },
             .{ "onClose", "close" },
-            .{ "onData", "data" },
             .{ "onTimeout", "timeout" },
             .{ "onConnectError", "connectError" },
             .{ "onEnd", "end" },
@@ -170,6 +172,18 @@ const Handlers = struct {
         if (handlers.onData == .zero and handlers.onWritable == .zero) {
             exception.* = JSC.toInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{}, globalObject).asObjectRef();
             return null;
+        }
+
+        if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
+            if (!binary_type_value.isString()) {
+                exception.* = JSC.toInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject).asObjectRef();
+                return null;
+            }
+
+            handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
+                exception.* = JSC.toInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject).asObjectRef();
+                return null;
+            };
         }
 
         return handlers;
@@ -1144,7 +1158,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const output_value = JSC.ArrayBuffer.create(globalObject, data, .Uint8Array);
+            const output_value = handlers.binary_type.toJS(data, globalObject);
             // const encoding = handlers.encoding;
             const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
                 this_value,
@@ -1288,7 +1302,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             // we don't cork yet but we might later
             const res = this.socket.write(buffer, is_end);
-            log("write({d}, {any})", .{ buffer.len, is_end });
+            log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
             return res;
         }
 

@@ -2582,6 +2582,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Float32Array => .kJSTypedArrayTypeFloat32Array,
                 .Float64Array => .kJSTypedArrayTypeFloat64Array,
                 .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
+                // .DataView => .kJSTypedArrayTypeDataView,
                 else => .kJSTypedArrayTypeNone,
             };
         }

@@ -430,7 +430,7 @@ EncodedJSValue constructSlowBuffer(JSGlobalObject* lexicalGlobalObject, CallFram
     return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
 }
 
-static inline JSC::EncodedJSValue jsBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     if (!str) {
@@ -439,7 +439,7 @@ static inline JSC::EncodedJSValue jsBufferFromStringAndEncoding(JSC::JSGlobalObj
     }
 
     if (str->length() == 0)
-        return JSC::JSValue::encode(JSC::jsNumber(0));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
 
     int64_t written = 0;
 
@@ -448,13 +448,13 @@ static inline JSC::EncodedJSValue jsBufferFromStringAndEncoding(JSC::JSGlobalObj
     case WebCore::BufferEncodingType::ucs2:
     case WebCore::BufferEncodingType::utf16le: {
         // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L600
-        return JSC::JSValue::encode(JSC::jsNumber(str->length() * 2));
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length() * 2)));
     }
 
     case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
-        // https: // github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
-        return JSC::JSValue::encode(JSC::jsNumber(str->length()));
+        // https://github.com/nodejs/node/blob/e676942f814915b2d24fc899bb42dc71ae6c8226/lib/buffer.js#L627
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(str->length())));
     }
 
     case WebCore::BufferEncodingType::base64:
@@ -497,7 +497,7 @@ static inline JSC::EncodedJSValue jsBufferFromStringAndEncoding(JSC::JSGlobalObj
     }
     }
 
-    return JSC::JSValue::encode(JSC::jsNumber(written));
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {

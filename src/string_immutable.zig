@@ -1419,7 +1419,7 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
     switch (len) {
         2 => {
             if (Environment.allow_assert)
-                assert(sequence[0] >= 0xC2);
+                assert(sequence[0] >= 0xC0);
             if (Environment.allow_assert)
                 assert(sequence[0] <= 0xDF);
             if (sequence[1] < 0x80 or sequence[1] > 0xBF) {

@@ -2813,3 +2813,11 @@ test("Buffer.byteLength", () => {
     );
   }
 });
+
+it("should not crash on invalid UTF-8 byte sequence", () => {
+  const buf = Buffer.from([0xC0, 0xFD]).toString();
+  expect(buf.length).toBe(2);
+  const str = buf.toString();
+  expect(str.length).toBe(2);
+  expect(str).toBe("\uFFFD\uFFFD");
+});

@@ -340,7 +340,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1, false);
         if (wrote < 0) {
             return .generic_failure;
         }
@@ -404,7 +404,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8, false);
         if (wrote < 0) {
             return .generic_failure;
         }

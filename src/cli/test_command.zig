@@ -567,6 +567,7 @@ pub const TestCommand = struct {
             .Rejected => {
                 var result = promise.result(vm.global.vm());
                 vm.runErrorHandler(result, null);
+                reporter.summary.fail += 1;
                 return;
             },
             else => {},

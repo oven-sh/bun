@@ -1656,39 +1656,60 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     var total_non_ascii_count: usize = 0;
 
     const latin1_last = latin1.ptr + latin1.len;
-    while (latin1.ptr != latin1_last) {
+    if (latin1.ptr != latin1_last) {
         const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
-        const latin1_end = latin1.ptr + wrapped_len;
-        while (latin1.ptr != latin1_end) {
-            const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+        // reference the pointer directly because it improves codegen
+        var ptr = latin1.ptr;
+        const latin1_vec_end = ptr + wrapped_len;
+
+        while (ptr != latin1_vec_end) {
+            const vec: AsciiVector = ptr[0..ascii_vector_size].*;
 
             if (@reduce(.Max, vec) > 127) {
                 const Int = u64;
                 const size = @sizeOf(Int);
 
                 const bytes = [2]Int{
-                    @bitCast(Int, latin1[0..size].*) & 0x8080808080808080,
-                    @bitCast(Int, latin1[size .. 2 * size].*) & 0x8080808080808080,
+                    @bitCast(Int, ptr[0..size].*) & 0x8080808080808080,
+                    @bitCast(Int, ptr[size .. 2 * size].*) & 0x8080808080808080,
                 };
 
-                const non_ascii_count = ((@popCount(bytes[0]) / 8) + (@popCount(bytes[1]) / 8));
-                total_non_ascii_count += non_ascii_count;
+                total_non_ascii_count += @popCount(bytes[0]) + @popCount(bytes[1]);
             }
 
-            latin1.ptr += ascii_vector_size;
-        }
-        latin1.len -= wrapped_len;
-
-        if (latin1.len >= 8) {
-            const bytes = @bitCast(u64, latin1[0..8].*) & 0x8080808080808080;
-            total_non_ascii_count += @popCount(bytes) / 8;
-            latin1 = latin1[8..];
+            ptr += ascii_vector_size;
         }
 
-        while (latin1.ptr != latin1_last) {
-            total_non_ascii_count += @as(usize, @boolToInt(latin1.ptr[0] > 127));
-            latin1.ptr += 1;
+        if (@ptrToInt(ptr + 8) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 8;
         }
+
+        if (@ptrToInt(ptr + 4) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 4;
+        }
+
+        if (@ptrToInt(ptr + 2) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 2;
+        }
+
+        while (ptr != latin1_last) {
+            assert(@ptrToInt(ptr) < @ptrToInt(latin1_last));
+
+            total_non_ascii_count += @as(usize, @boolToInt(ptr[0] > 127));
+            ptr += 1;
+        }
+
+        // assert we never go out of bounds
+        assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
     }
 
     // each non-ascii latin1 character becomes 2 UTF8 characters

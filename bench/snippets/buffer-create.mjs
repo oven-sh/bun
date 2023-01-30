@@ -22,6 +22,11 @@ bench("Buffer.from('short string')", () => {
   return Buffer.from("short string");
 });
 
+const loooong = "long string".repeat(9999).split("").join(" ");
+bench("Buffer.byteLength('long string'.repeat(9999))", () => {
+  return Buffer.byteLength(loooong);
+});
+
 var hundred = new ArrayBuffer(100);
 bench("Buffer.from(ArrayBuffer(100))", () => {
   return Buffer.from(hundred);

@@ -708,7 +708,6 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
                         updates[update_i].version = dep.version;
                         updates[update_i].resolution = resolutions[package_id];
                         updates[update_i].resolved_name = names[package_id];
-                        updates[update_i].missing_version = true;
                     }
                 }
             }

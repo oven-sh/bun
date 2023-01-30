@@ -5266,7 +5266,6 @@ pub const PackageManager = struct {
         resolution: Resolution = .{},
         resolved_name: String = .{},
         is_aliased: bool = false,
-        missing_version: bool = false,
         failed: bool = false,
         // This must be cloned to handle when the AST store resets
         e_string: ?*JSAst.E.String = null,

@@ -3311,12 +3311,12 @@ const LinkerContext = struct {
             const import_records = this.import_records_list[id].slice();
 
             for (this.export_star_records[id]) |import_id| {
-                const other_source_index = import_records[import_id].source_index.get();
+                const other_source_index = import_records[import_id].source_index;
                 if (other_source_index >= this.asts.len)
                     // This will be resolved at run time instead
                     continue;
 
-                const other_id = this.asts[other_source_index].get();
+                const other_id = this.asts[other_source_index];
                 if (other_id >= this.named_exports.len)
                     // this AST was empty or it wasn't a JS AST
                     continue;

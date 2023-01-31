@@ -971,15 +971,6 @@ pub const FileSystemFlags = enum(Mode) {
 
         if (val.isNumber()) {
             const number = val.toInt32();
-            if (!(number >= 0o000 and number <= 0o777)) {
-                JSC.throwInvalidArguments(
-                    "Invalid integer mode: must be a number between 0o000 and 0o777",
-                    .{},
-                    ctx,
-                    exception,
-                );
-                return null;
-            }
             return @intToEnum(FileSystemFlags, number);
         }
 

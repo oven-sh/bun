@@ -688,14 +688,14 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__writeUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, encoding: u8) i64 {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
-            .utf8 => writeU16(input, len, to, to_len, .utf8),
-            .latin1 => writeU16(input, len, to, to_len, .ascii),
-            .ascii => writeU16(input, len, to, to_len, .ascii),
-            .ucs2 => writeU16(input, len, to, to_len, .utf16le),
-            .utf16le => writeU16(input, len, to, to_len, .utf16le),
-            .base64 => writeU16(input, len, to, to_len, .base64),
-            .base64url => writeU16(input, len, to, to_len, .base64url),
-            .hex => writeU16(input, len, to, to_len, .hex),
+            .utf8 => writeU16(input, len, to, to_len, .utf8, false),
+            .latin1 => writeU16(input, len, to, to_len, .ascii, false),
+            .ascii => writeU16(input, len, to, to_len, .ascii, false),
+            .ucs2 => writeU16(input, len, to, to_len, .utf16le, false),
+            .utf16le => writeU16(input, len, to, to_len, .utf16le, false),
+            .base64 => writeU16(input, len, to, to_len, .base64, false),
+            .base64url => writeU16(input, len, to, to_len, .base64url, false),
+            .hex => writeU16(input, len, to, to_len, .hex, false),
             else => unreachable,
         };
     }
@@ -882,6 +882,9 @@ pub const Encoder = struct {
             },
             // encode latin1 into UTF16
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+                Output.println("writeU8 ucs2/utf16  {any} {any}", .{ len, to_len});
+                Output.flush();
+
                 if (to_len < 2)
                     return 0;
 
@@ -954,7 +957,7 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
+    pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding, comptime allow_partial_write: bool) i64 {
         if (len == 0)
             return 0;
 
@@ -969,14 +972,23 @@ pub const Encoder = struct {
             },
             // string is already encoded, just need to copy the data
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
-                const bytes_input_len = len * 2;
-                const written = @min(bytes_input_len, to_len);
-                if (written < 2) return 0;
+                if(allow_partial_write) {
+                    const bytes_input_len = len * 2;
+                    const written = @min(bytes_input_len, to_len);
+                    const input_u8 = @ptrCast([*]const u8, input);
+                    strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..written]);
+                    return @intCast(i64, written);
+                } else {
+                    const bytes_input_len = len * 2;
+                    const written = @min(bytes_input_len, to_len);
+                    if (written < 2) return 0;
 
-                const fixed_len = (written / 2) * 2;
-                const input_u8 = @ptrCast([*]const u8, input);
-                strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
-                return @intCast(i64, fixed_len);
+                    const fixed_len = (written / 2) * 2;
+                    const input_u8 = @ptrCast([*]const u8, input);
+                    strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
+                    return @intCast(i64, fixed_len);
+                }
+                
             },
 
             JSC.Node.Encoding.hex => {

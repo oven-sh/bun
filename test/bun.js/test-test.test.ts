@@ -1,8 +1,11 @@
-import { spawnSync } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv } from "bunEnv";
 import { bunExe } from "bunExe";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { mkdtemp, rm, writeFile } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
 test("toStrictEqual() vs toEqual()", () => {
   expect([1, , 3]).toEqual([1, , 3]);
@@ -2036,7 +2039,7 @@ test("test async exceptions fail tests", () => {
   });
 
   test('test throwing inside a process.nextTick callback fails', async () => {
-    
+
     process.nextTick(() => {
       throw new Error('test throwing inside an EventEmitter #FAIL003');
     });
@@ -2106,4 +2109,29 @@ test("test async exceptions fail tests", () => {
   expect(str).toContain("0 pass");
 
   expect(exitCode).toBe(1);
+});
+
+it("should return non-zero exit code for invalid syntax", async() => {
+  const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
+  try {
+    await writeFile(join(test_dir, "bad.test.js"), "!!!");
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "wiptest", "bad.test.js"],
+      cwd: test_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      bunEnv,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("error: Unexpected end of file");
+    expect(err).toContain(" 0 pass");
+    expect(err).toContain(" 1 fail");
+    expect(err).toContain("Ran 1 tests across 1 files");
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).toBe("");
+    expect(await exited).toBe(1);
+  } finally {
+    await rm(test_dir, { force: true, recursive: true });
+  }
 });

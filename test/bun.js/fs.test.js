@@ -439,6 +439,24 @@ describe("stat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
+    expect(typeof fileStats.dev).toBe("number");
+    expect(typeof fileStats.ino).toBe("number");
+    expect(typeof fileStats.mode).toBe("number");
+    expect(typeof fileStats.nlink).toBe("number");
+    expect(typeof fileStats.uid).toBe("number");
+    expect(typeof fileStats.gid).toBe("number");
+    expect(typeof fileStats.rdev).toBe("number");
+    expect(typeof fileStats.size).toBe("number");
+    expect(typeof fileStats.blksize).toBe("number");
+    expect(typeof fileStats.blocks).toBe("number");
+    expect(typeof fileStats.atimeMs).toBe("number");
+    expect(typeof fileStats.mtimeMs).toBe("number");
+    expect(typeof fileStats.ctimeMs).toBe("number");
+    expect(typeof fileStats.birthtimeMs).toBe("number");
+    expect(typeof fileStats.atime).toBe("object");
+    expect(typeof fileStats.mtime).toBe("object");
+    expect(typeof fileStats.ctime).toBe("object");
+    expect(typeof fileStats.birthtime).toBe("object");
   });
 
   it("stat returns ENOENT", () => {

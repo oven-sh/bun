@@ -543,7 +543,6 @@ export default class {
 
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
-
     define: {
       "process.env.NODE_ENV": JSON.stringify("development"),
       user_undefined: "undefined",
@@ -552,6 +551,7 @@ export default class {
     macro: {
       inline: {
         whatDidIPass: `${import.meta.dir}/inline.macro.js`,
+        promiseReturningFunction: `${import.meta.dir}/inline.macro.js`,
         promiseReturningCtx: `${import.meta.dir}/inline.macro.js`,
       },
       react: {

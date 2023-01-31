@@ -1201,6 +1201,66 @@ it("should handle dependency aliasing", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should let you add the same package twice", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, "0.0.3", {}));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {},
+    }),
+  );
+  rmSync(`${root_url}/baz`, { recursive: true, force: true });
+  for (let i = 0; i < 2; i++) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [
+        bunExe(),
+        "install",
+        "baz@0.0.3",
+        "--config",
+        import.meta.dir + "/basic.toml",
+      ],
+      cwd: package_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(stderr).toBeDefined();
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Saved lockfile");
+    expect(stdout).toBeDefined();
+    const out = await new Response(stdout).text();
+    expect(out).toContain("installed baz@0.0.3");
+    if (i === 0) {
+      expect(out).toContain("1 packages installed");
+    } else {
+      expect(out).not.toContain("1 packages installed");
+    }
+    expect(await exited).toBe(0);
+    expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz.tgz`]);
+    expect(requested).toBe(2);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+      ".cache",
+      "baz",
+    ]);
+    expect(
+      await file(
+        join(package_dir, "node_modules", "baz", "package.json"),
+      ).json(),
+    ).toEqual({
+      name: "baz",
+      version: "0.0.3",
+      bin: {
+        "baz-run": "index.js",
+      },
+    });
+    await access(join(package_dir, "bun.lockb"));
+  }
+});
+
 it("should handle dependency aliasing (dist-tagged)", async () => {
   const urls: string[] = [];
   setHandler(

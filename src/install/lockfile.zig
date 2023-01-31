@@ -697,17 +697,17 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
-        for (updates) |update, update_i| {
+        for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
                 const name_hash = String.Builder.stringHash(update.name);
                 for (root_deps) |dep, i| {
                     if (dep.name_hash == name_hash) {
                         const package_id = resolved_ids[i];
                         if (package_id > new.packages.len) continue;
-                        updates[update_i].version_buf = new.buffers.string_bytes.items;
-                        updates[update_i].version = dep.version;
-                        updates[update_i].resolution = resolutions[package_id];
-                        updates[update_i].resolved_name = names[package_id];
+                        update.version_buf = new.buffers.string_bytes.items;
+                        update.version = dep.version;
+                        update.resolution = resolutions[package_id];
+                        update.resolved_name = names[package_id];
                     }
                 }
             }

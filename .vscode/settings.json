@@ -7,6 +7,9 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
+  "zig.buildArgs": ["obj", "-Dfor-editor"],
+  "zig.buildOption": "build",
+  "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
@@ -54,6 +57,8 @@
     "src/deps/uws": true,
     "src/deps/zlib": true,
     "src/deps/lol-html": true,
+    "src/deps/c-ares": true,
+    "src/deps/tinycc": true,
     "test/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {

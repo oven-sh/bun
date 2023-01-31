@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "build-gen": "esbuild --bundle *.js --outdir=bun --format=cjs --platform=browser --external:buffer --external:stream --external:util --external:util/ --external:assert",
     "build": "esbuild --bundle *.js --outdir=out --format=cjs --minify --platform=browser"
   },
   "author": "",

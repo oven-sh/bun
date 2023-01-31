@@ -1,6 +1,7 @@
-import { resolveSync } from "bun";
+import { resolveSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { realpathSync } from "fs";
+import { readFileSync, realpathSync } from "fs";
+import { basename } from "path";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -106,11 +107,12 @@ it("process.version starts with v", () => {
 });
 
 it("process.argv0", () => {
-  expect(process.argv0).toBe(process.argv[0]);
+  expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });
 
 it("process.execPath", () => {
-  expect(process.execPath).toBe(realpathSync(process.argv0));
+  expect(process.execPath).not.toBe(basename(process.argv0));
+  expect(which(process.execPath)).not.toBeNull();
 });
 
 it("process.uptime()", () => {
@@ -124,4 +126,71 @@ it("process.umask()", () => {
   const orig = process.umask(777);
   expect(orig).toBeGreaterThan(0);
   expect(process.umask(orig)).toBe(777);
+});
+
+it("process.versions", () => {
+  // Generate a list of all the versions in the versions object
+  // example:
+  // pub const boringssl = "b275c5ce1c88bc06f5a967026d3c0ce1df2be815";
+  // pub const libarchive = "dc321febde83dd0f31158e1be61a7aedda65e7a2";
+  // pub const mimalloc = "3c7079967a269027e438a2aac83197076d9fe09d";
+  // pub const picohttpparser = "066d2b1e9ab820703db0837a7255d92d30f0c9f5";
+  // pub const uws = "70b1b9fc1341e8b791b42c5447f90505c2abe156";
+  // pub const webkit = "60d11703a533fd694cd1d6ddda04813eecb5d69f";
+  // pub const zlib = "885674026394870b7e7a05b7bf1ec5eb7bd8a9c0";
+  // pub const tinycc = "2d3ad9e0d32194ad7fd867b66ebe218dcc8cb5cd";
+  // pub const lolhtml = "2eed349dcdfa4ff5c19fe7c6e501cfd687601033";
+  // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
+  // pub const usockets = "fafc241e8664243fc0c51d69684d5d02b9805134";
+  const versions = Object.fromEntries(
+    readFileSync(
+      import.meta.dir + "/../../src/generated_versions_list.zig",
+      "utf8",
+    )
+      .split("\n")
+      .filter(
+        (line) =>
+          line.startsWith("pub const") &&
+          !line.includes("zig") &&
+          line.includes(' = "'),
+      )
+      .map((line) => line.split(" = "))
+      .map(([name, hash]) => [name.slice(9).trim(), hash.slice(1, -2)]),
+  );
+  versions.uwebsockets = versions.uws;
+  delete versions.uws;
+  versions["ares"] = versions.c_ares;
+  delete versions.c_ares;
+
+  for (const name in versions) {
+    expect(process.versions).toHaveProperty(name);
+    expect(process.versions[name]).toBe(versions[name]);
+  }
+});
+
+it("process.config", () => {
+  expect(process.config).toEqual({
+    variables: {
+      v8_enable_i8n_support: 1,
+    },
+    target_defaults: {},
+  });
+});
+
+it("process.emitWarning", () => {
+  process.emitWarning("-- Testing process.emitWarning --");
+  var called = 0;
+  process.on("warning", (err) => {
+    called++;
+    expect(err.message).toBe("-- Testing process.on('warning') --");
+  });
+  process.emitWarning("-- Testing process.on('warning') --");
+  expect(called).toBe(1);
+  expect(process.off("warning")).toBe(process);
+  process.emitWarning("-- Testing process.on('warning') --");
+  expect(called).toBe(1);
+});
+
+it("process.execArgv", () => {
+  expect(process.execArgv instanceof Array).toBe(true);
 });

@@ -1,15 +1,16 @@
-name: TypeScript Types
+name: Test bun-types
 on:
   push:
     paths:
-      - packages/bun-types/**/*
+      - 'packages/bun-types/**'
+    branches: [main]
   pull_request:
     paths:
-      - packages/bun-types/**/*
+      - 'packages/bun-types/**'
 
 jobs:
   tests:
-    name: Build and Test
+    name: Build and test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -17,10 +18,10 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install bun
-        uses: xhyrom/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v0.1.8
         with:
           bun-version: canary
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -35,9 +36,6 @@ jobs:
 
       - name: Generate package
         run: bun run build
-
-      - name: ESLint
-        run: bun run lint
 
       - name: Tests
         run: bun run test

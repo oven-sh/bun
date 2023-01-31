@@ -1,10 +1,10 @@
 pub const std = @import("std");
 pub const logger = @import("bun").logger;
-pub const js_lexer = @import("./js_lexer.zig");
+pub const js_lexer = bun.js_lexer;
 pub const importRecord = @import("./import_record.zig");
-pub const js_ast = @import("./js_ast.zig");
+pub const js_ast = bun.JSAst;
 pub const options = @import("./options.zig");
-pub const js_printer = @import("./js_printer.zig");
+pub const js_printer = bun.js_printer;
 pub const renamer = @import("./renamer.zig");
 const _runtime = @import("./runtime.zig");
 pub const RuntimeImports = _runtime.Runtime.Imports;
@@ -117,8 +117,11 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
     switch (lhs.data) {
         .e_string => |left| {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
-                lhs.data.e_string.push(rhs.data.e_string);
-                return lhs;
+                var orig = lhs.data.e_string.*;
+                const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
+                orig.push(rhs_clone.data.e_string);
+
+                return Expr.init(E.String, orig, lhs.loc);
             }
         },
         .e_binary => |bin| {
@@ -2181,6 +2184,7 @@ const PropertyOpts = struct {
     is_class: bool = false,
     class_has_extends: bool = false,
     allow_ts_decorators: bool = false,
+    is_ts_abstract: bool = false,
     ts_decorators: []Expr = &[_]Expr{},
     has_argument_decorators: bool = false,
 };
@@ -6781,7 +6785,7 @@ fn NewParser_(
 
         fn parseClassStmt(p: *P, loc: logger.Loc, opts: *ParseStatementOptions) !Stmt {
             var name: ?js_ast.LocRef = null;
-            var class_keyword = p.lexer.range();
+            const class_keyword = p.lexer.range();
             if (p.lexer.token == .t_class) {
                 //marksyntaxfeature
                 try p.lexer.next();
@@ -6789,11 +6793,11 @@ fn NewParser_(
                 try p.lexer.expected(.t_class);
             }
 
-            var is_identifier = p.lexer.token == .t_identifier;
+            const is_identifier = p.lexer.token == .t_identifier;
 
-            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "interface")))) {
-                var name_loc = p.lexer.loc();
-                var name_text = p.lexer.identifier;
+            if (!opts.is_name_optional or (is_identifier and (!is_typescript_enabled or !strings.eqlComptime(p.lexer.identifier, "implements")))) {
+                const name_loc = p.lexer.loc();
+                const name_text = p.lexer.identifier;
                 try p.lexer.expect(.t_identifier);
 
                 // We must return here
@@ -10215,7 +10219,26 @@ fn NewParser_(
                                             return try p.parseProperty(kind, opts, null);
                                         }
                                     },
-                                    .p_private, .p_protected, .p_public, .p_readonly, .p_abstract, .p_declare, .p_override => {
+                                    .p_declare => {
+                                        // skip declare keyword entirely
+                                        // https://github.com/oven-sh/bun/issues/1907
+                                        if (opts.is_class and is_typescript_enabled and strings.eqlComptime(raw, "declare")) {
+                                            const scope_index = p.scopes_in_order.items.len;
+                                            _ = try p.parseProperty(kind, opts, null);
+                                            p.discardScopesUpTo(scope_index);
+                                            return null;
+                                        }
+                                    },
+                                    .p_abstract => {
+                                        if (opts.is_class and is_typescript_enabled and !opts.is_ts_abstract and strings.eqlComptime(raw, "abstract")) {
+                                            opts.is_ts_abstract = true;
+                                            const scope_index = p.scopes_in_order.items.len;
+                                            _ = try p.parseProperty(kind, opts, null);
+                                            p.discardScopesUpTo(scope_index);
+                                            return null;
+                                        }
+                                    },
+                                    .p_private, .p_protected, .p_public, .p_readonly, .p_override => {
                                         // Skip over TypeScript keywords
                                         if (opts.is_class and is_typescript_enabled and (js_lexer.PropertyModifierKeyword.List.get(raw) orelse .p_static) == keyword) {
                                             return try p.parseProperty(kind, opts, null);
@@ -15770,7 +15793,6 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    // TODO: https://github.com/oven-sh/bun/issues/51
                                     _ = p.visitClass(s2.loc, &class.class);
 
                                     if (p.is_control_flow_dead)
@@ -16275,7 +16297,7 @@ fn NewParser_(
                         }
                     }
 
-                    const shadow_ref = p.visitClass(stmt.loc, &data.class);
+                    _ = p.visitClass(stmt.loc, &data.class);
 
                     // Remove the export flag inside a namespace
                     const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
@@ -16283,7 +16305,7 @@ fn NewParser_(
                         data.is_export = false;
                     }
 
-                    const lowered = p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref);
+                    const lowered = p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* });
 
                     if (!mark_as_dead or was_export_inside_namespace)
                         // Lower class field syntax for browsers that don't support it
@@ -16923,21 +16945,19 @@ fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
-        // TODO: https://github.com/oven-sh/bun/issues/51
         fn lowerClass(
             p: *P,
             stmtorexpr: js_ast.StmtOrExpr,
-            // ref
-            _: Ref,
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    if (!stmt.data.s_class.class.has_decorators) {
-                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                        stmts[0] = stmt;
-                        return stmts;
+                    if (comptime !is_typescript_enabled) {
+                        if (!stmt.data.s_class.class.has_decorators) {
+                            var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                            stmts[0] = stmt;
+                            return stmts;
+                        }
                     }
-
                     var class = &stmt.data.s_class.class;
                     var constructor_function: ?*E.Function = null;
 
@@ -16954,6 +16974,9 @@ fn NewParser_(
                                 switch (prop_value.data) {
                                     .e_function => |func| {
                                         const is_constructor = (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"));
+
+                                        if (is_constructor) constructor_function = func;
+
                                         for (func.func.args) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
@@ -16970,19 +16993,6 @@ fn NewParser_(
                                         }
                                     },
                                     else => unreachable,
-                                }
-                            }
-                        }
-
-                        if (prop.flags.contains(.is_method)) {
-                            if (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor")) {
-                                if (prop.value) |prop_value| {
-                                    switch (prop_value.data) {
-                                        .e_function => |func| {
-                                            constructor_function = func;
-                                        },
-                                        else => unreachable,
-                                    }
                                 }
                             }
                         }
@@ -17095,15 +17105,15 @@ fn NewParser_(
                         } else {
                             var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
                             // statements coming from class body inserted after super call or beginning of constructor.
-                            var has_super = false;
+                            var super_index: ?usize = null;
                             for (constructor_stmts.items) |item, index| {
                                 if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
-                                has_super = true;
-                                constructor_stmts.insertSlice(index + 1, instance_members.items) catch unreachable;
+                                super_index = index;
+                                break;
                             }
-                            if (!has_super) {
-                                constructor_stmts.insertSlice(0, instance_members.items) catch unreachable;
-                            }
+
+                            const i = if (super_index) |j| j + 1 else 0;
+                            constructor_stmts.insertSlice(i, instance_members.items) catch unreachable;
 
                             constructor_function.?.func.body.stmts = constructor_stmts.items;
                         }
@@ -17594,6 +17604,16 @@ fn NewParser_(
                             to_add += @boolToInt(arg.is_typescript_ctor_field and arg.binding.data == .b_identifier);
                         }
 
+                        // if this is an expression, we can move statements after super() because there will be 0 decorators
+                        var super_index: ?usize = null;
+                        if (class.extends != null) {
+                            for (constructor.func.body.stmts) |stmt, index| {
+                                if (stmt.data != .s_expr or stmt.data.s_expr.value.data != .e_call or stmt.data.s_expr.value.data.e_call.target.data != .e_super) continue;
+                                super_index = index;
+                                break;
+                            }
+                        }
+
                         if (to_add > 0) {
                             // to match typescript behavior, we also must prepend to the class body
                             var stmts = std.ArrayList(Stmt).fromOwnedSlice(p.allocator, constructor.func.body.stmts);
@@ -17608,17 +17628,16 @@ fn NewParser_(
                                         .b_identifier => |id| {
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
-                                            stmts.appendAssumeCapacity(
-                                                Expr.assignStmt(
-                                                    p.newExpr(E.Dot{
-                                                        .target = p.newExpr(E.This{}, arg.binding.loc),
-                                                        .name = name,
-                                                        .name_loc = arg.binding.loc,
-                                                    }, arg.binding.loc),
-                                                    ident,
-                                                    p.allocator,
-                                                ),
-                                            );
+
+                                            stmts.insert(if (super_index) |k| j + k + 1 else j, Expr.assignStmt(
+                                                p.newExpr(E.Dot{
+                                                    .target = p.newExpr(E.This{}, arg.binding.loc),
+                                                    .name = name,
+                                                    .name_loc = arg.binding.loc,
+                                                }, arg.binding.loc),
+                                                ident,
+                                                p.allocator,
+                                            )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
                                             std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);

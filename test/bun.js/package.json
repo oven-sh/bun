@@ -3,6 +3,7 @@
   "dependencies": {
     "esbuild": "0.15.13",
     "uuid": "^9.0.0",
-    "tiny-typed-emitter": "^1.0.0"
+    "tiny-typed-emitter": "^1.0.0",
+    "svelte": "^3.52.0"
   }
 }

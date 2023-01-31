@@ -430,6 +430,10 @@ pub const Resolver = struct {
     care_about_bin_folder: bool = false,
     care_about_scripts: bool = false,
 
+    /// Read the "browser" field in package.json files?
+    /// For Bun's runtime, we don't.
+    care_about_browser_field: bool = true,
+
     debug_logs: ?DebugLogs = null,
     elapsed: u64 = 0, // tracing
 
@@ -528,6 +532,7 @@ pub const Resolver = struct {
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
             .extension_order = opts.extension_order,
+            .care_about_browser_field = opts.platform.isWebLike(),
         };
     }
 
@@ -890,7 +895,7 @@ pub const Resolver = struct {
                             var file = try std.fs.openFileAbsoluteZ(span, .{ .mode = .read_only });
 
                             if (comptime !FeatureFlags.store_file_descriptors) {
-                                out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                                out = try bun.getFdPath(query.entry.cache.fd, &buf);
                                 file.close();
                             } else {
                                 query.entry.cache.fd = file.handle;
@@ -909,7 +914,7 @@ pub const Resolver = struct {
                         }
 
                         if (comptime FeatureFlags.store_file_descriptors) {
-                            out = try std.os.getFdPath(query.entry.cache.fd, &buf);
+                            out = try bun.getFdPath(query.entry.cache.fd, &buf);
                         }
 
                         const symlink = try Fs.FileSystem.FilenameStore.instance.append(@TypeOf(out), out);
@@ -1051,41 +1056,43 @@ pub const Resolver = struct {
             }
 
             // Check the "browser" map
-            if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
-                if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
-                    const pkg = import_dir_info.package_json.?;
-                    if (r.checkBrowserMap(
-                        import_dir_info,
-                        abs_path,
-                        .AbsolutePath,
-                    )) |remap| {
+            if (r.care_about_browser_field) {
+                if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
+                    if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
+                        const pkg = import_dir_info.package_json.?;
+                        if (r.checkBrowserMap(
+                            import_dir_info,
+                            abs_path,
+                            .AbsolutePath,
+                        )) |remap| {
 
-                        // Is the path disabled?
-                        if (remap.len == 0) {
-                            var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
-                            _path.is_disabled = true;
-                            return .{
-                                .success = Result{
-                                    .path_pair = PathPair{
-                                        .primary = _path,
+                            // Is the path disabled?
+                            if (remap.len == 0) {
+                                var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
+                                _path.is_disabled = true;
+                                return .{
+                                    .success = Result{
+                                        .path_pair = PathPair{
+                                            .primary = _path,
+                                        },
                                     },
-                                },
-                            };
-                        }
-
-                        switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
-                            .success => |_result| {
-                                result = Result{
-                                    .path_pair = _result.path_pair,
-                                    .diff_case = _result.diff_case,
-                                    .dirname_fd = _result.dirname_fd,
-                                    .package_json = pkg,
-                                    .jsx = r.opts.jsx,
                                 };
-                                check_relative = false;
-                                check_package = false;
-                            },
-                            else => {},
+                            }
+
+                            switch (r.resolveWithoutRemapping(import_dir_info, remap, kind, global_cache)) {
+                                .success => |_result| {
+                                    result = Result{
+                                        .path_pair = _result.path_pair,
+                                        .diff_case = _result.diff_case,
+                                        .dirname_fd = _result.dirname_fd,
+                                        .package_json = pkg,
+                                        .jsx = r.opts.jsx,
+                                    };
+                                    check_relative = false;
+                                    check_package = false;
+                                },
+                                else => {},
+                            }
                         }
                     }
                 }
@@ -1129,7 +1136,7 @@ pub const Resolver = struct {
                     // "fs/*"
                     // These are disabled!
                 } else if (had_node_prefix or
-                    (import_path_without_node_prefix.len >= 2 and strings.eqlComptimeIgnoreLen(import_path_without_node_prefix[0..2], "fs") and
+                    (strings.hasPrefixComptime(import_path_without_node_prefix, "fs") and
                     (import_path_without_node_prefix.len == 2 or
                     import_path_without_node_prefix[3] == '/')))
                 {
@@ -1168,53 +1175,55 @@ pub const Resolver = struct {
 
             var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return .{ .not_found = {} };
 
-            // Support remapping one package path to another via the "browser" field
-            if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
-                if (browser_scope.package_json) |package_json| {
-                    if (r.checkBrowserMap(
-                        browser_scope,
-                        import_path,
-                        .PackagePath,
-                    )) |remapped| {
-                        if (remapped.len == 0) {
-                            // "browser": {"module": false}
-                            // does the module exist in the filesystem?
-                            switch (r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false)) {
-                                .success => |node_module| {
-                                    var pair = node_module.path_pair;
-                                    pair.primary.is_disabled = true;
-                                    if (pair.secondary != null) {
-                                        pair.secondary.?.is_disabled = true;
-                                    }
-                                    return .{
-                                        .success = Result{
-                                            .path_pair = pair,
-                                            .dirname_fd = node_module.dirname_fd,
-                                            .diff_case = node_module.diff_case,
-                                            .package_json = package_json,
-                                            .jsx = r.opts.jsx,
-                                        },
-                                    };
-                                },
-                                else => {
-                                    // "browser": {"module": false}
-                                    // the module doesn't exist and it's disabled
-                                    // so we should just not try to load it
-                                    var primary = Path.init(import_path);
-                                    primary.is_disabled = true;
-                                    return .{
-                                        .success = Result{
-                                            .path_pair = PathPair{ .primary = primary },
-                                            .diff_case = null,
-                                            .jsx = r.opts.jsx,
-                                        },
-                                    };
-                                },
+            if (r.care_about_browser_field) {
+                // Support remapping one package path to another via the "browser" field
+                if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                    if (browser_scope.package_json) |package_json| {
+                        if (r.checkBrowserMap(
+                            browser_scope,
+                            import_path,
+                            .PackagePath,
+                        )) |remapped| {
+                            if (remapped.len == 0) {
+                                // "browser": {"module": false}
+                                // does the module exist in the filesystem?
+                                switch (r.loadNodeModules(import_path, kind, source_dir_info, global_cache, false)) {
+                                    .success => |node_module| {
+                                        var pair = node_module.path_pair;
+                                        pair.primary.is_disabled = true;
+                                        if (pair.secondary != null) {
+                                            pair.secondary.?.is_disabled = true;
+                                        }
+                                        return .{
+                                            .success = Result{
+                                                .path_pair = pair,
+                                                .dirname_fd = node_module.dirname_fd,
+                                                .diff_case = node_module.diff_case,
+                                                .package_json = package_json,
+                                                .jsx = r.opts.jsx,
+                                            },
+                                        };
+                                    },
+                                    else => {
+                                        // "browser": {"module": false}
+                                        // the module doesn't exist and it's disabled
+                                        // so we should just not try to load it
+                                        var primary = Path.init(import_path);
+                                        primary.is_disabled = true;
+                                        return .{
+                                            .success = Result{
+                                                .path_pair = PathPair{ .primary = primary },
+                                                .diff_case = null,
+                                                .jsx = r.opts.jsx,
+                                            },
+                                        };
+                                    },
+                                }
                             }
-                        }
 
-                        import_path = remapped;
-                        source_dir_info = browser_scope;
+                            import_path = remapped;
+                            source_dir_info = browser_scope;
+                        }
                     }
                 }
             }
@@ -1233,7 +1242,7 @@ pub const Resolver = struct {
                         return .{ .success = result };
                     }
 
-                    if (res.package_json != null) {
+                    if (res.package_json != null and r.care_about_browser_field) {
                         var base_dir_info = res.dir_info orelse (r.readDirInfo(res.path_pair.primary.name.dir) catch null) orelse return .{ .success = result };
                         if (base_dir_info.getEnclosingBrowserScope()) |browser_scope| {
                             if (r.checkBrowserMap(
@@ -1364,6 +1373,14 @@ pub const Resolver = struct {
         }
     }
 
+    const dev = Output.scoped(.Resolver, false);
+
+    pub fn bustDirCache(r: *ThisResolver, path: string) void {
+        dev("Bust {s}", .{path});
+        r.fs.fs.bustEntriesCache(path);
+        r.dir_cache.remove(path);
+    }
+
     threadlocal var esm_subpath_buf: [512]u8 = undefined;
     threadlocal var esm_absolute_package_path: [bun.MAX_PATH_BYTES]u8 = undefined;
     threadlocal var esm_absolute_package_path_joined: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -1464,10 +1481,52 @@ pub const Resolver = struct {
                                 // want problems due to Windows paths, which are very unlike URL
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
-                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
-                                    return .{ .success = result };
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
+
+                                // Some popular packages forget to include the extension in their
+                                // exports map, so we try again without the extension.
+                                //
+                                // This is useful for browser-like environments
+                                // where you want a file extension in the URL
+                                // pathname by convention. Vite does this.
+                                //
+                                // React is an example of a package that doesn't include file extensions.
+                                // {
+                                //     "exports": {
+                                //         ".": "./index.js",
+                                //         "./jsx-runtime": "./jsx-runtime.js",
+                                //     }
+                                // }
+                                //
+                                // We limit this behavior just to ".js" files.
+                                const extname = std.fs.path.extension(esm.subpath);
+                                if (strings.eqlComptime(extname, ".js") and esm.subpath.len > 3) {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath[0 .. esm.subpath.len - 3], exports_map.root);
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        return .{ .success = result };
+                                    }
+                                }
+
+                                // if they hid "package.json" from "exports", still allow importing it.
+                                if (strings.eqlComptime(esm.subpath, "./package.json")) {
+                                    return .{
+                                        .success = .{
+                                            .path_pair = .{ .primary = package_json.source.path },
+                                            .dirname_fd = pkg_dir_info.getFileDescriptor(),
+                                            .file_fd = 0,
+                                            .is_node_module = package_json.source.path.isNodeModule(),
+                                            .package_json = package_json,
+                                            .dir_info = dir_info,
+                                        },
+                                    };
                                 }
 
                                 return .{ .not_found = {} };
@@ -1519,8 +1578,7 @@ pub const Resolver = struct {
                         }
 
                         for (dependencies_list) |dependency, dependency_id| {
-                            const dep_name_ = &dependency.name;
-                            const dep_name = dep_name_.slice(string_buf);
+                            const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
                                     continue;
@@ -1569,6 +1627,7 @@ pub const Resolver = struct {
                             }
                             dependency_version = Dependency.parse(
                                 r.allocator,
+                                Semver.String.init(esm.name, esm.name),
                                 esm.version,
                                 &sliced_string,
                                 r.log,
@@ -1630,7 +1689,7 @@ pub const Resolver = struct {
                                         esm.name,
                                         resolved_package_id,
                                         resolution.value.npm.version,
-                                        manager.lockfile.str(resolution.value.npm.url),
+                                        manager.lockfile.str(&resolution.value.npm.url),
                                         .{
                                             .root_request_id = 0,
                                         },
@@ -1681,12 +1740,54 @@ pub const Resolver = struct {
                                 // want problems due to Windows paths, which are very unlike URL
                                 // paths. We also want to avoid any "%" characters in the absolute
                                 // directory path accidentally being interpreted as URL escapes.
-                                const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
+                                {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
-                                    var result_copy = result;
-                                    result_copy.is_node_module = true;
-                                    return .{ .success = result_copy };
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
+
+                                // Some popular packages forget to include the extension in their
+                                // exports map, so we try again without the extension.
+                                //
+                                // This is useful for browser-like environments
+                                // where you want a file extension in the URL
+                                // pathname by convention. Vite does this.
+                                //
+                                // React is an example of a package that doesn't include file extensions.
+                                // {
+                                //     "exports": {
+                                //         ".": "./index.js",
+                                //         "./jsx-runtime": "./jsx-runtime.js",
+                                //     }
+                                // }
+                                //
+                                // We limit this behavior just to ".js" files.
+                                const extname = std.fs.path.extension(esm.subpath);
+                                if (strings.eqlComptime(extname, ".js") and esm.subpath.len > 3) {
+                                    const esm_resolution = esmodule.resolve("/", esm.subpath[0 .. esm.subpath.len - 3], exports_map.root);
+                                    if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
+                                        var result_copy = result;
+                                        result_copy.is_node_module = true;
+                                        return .{ .success = result_copy };
+                                    }
+                                }
+
+                                // if they hid "package.json" from "exports", still allow importing it.
+                                if (strings.eqlComptime(esm.subpath, "./package.json")) {
+                                    return .{
+                                        .success = .{
+                                            .path_pair = .{ .primary = package_json.source.path },
+                                            .dirname_fd = pkg_dir_info.getFileDescriptor(),
+                                            .file_fd = 0,
+                                            .is_node_module = package_json.source.path.isNodeModule(),
+                                            .package_json = package_json,
+                                            .dir_info = dir_info,
+                                        },
+                                    };
                                 }
 
                                 return .{ .not_found = {} };
@@ -1820,9 +1921,7 @@ pub const Resolver = struct {
         if (is_main) {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
-                    pm.allocator,
                     pm.lockfile,
-                    r.log,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,
@@ -1833,12 +1932,6 @@ pub const Resolver = struct {
                 ) catch |err| {
                     return .{ .failure = err };
                 };
-
-                package.resolution = .{
-                    .tag = .root,
-                    .value = .{ .root = {} },
-                };
-
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
                 };
@@ -1847,11 +1940,11 @@ pub const Resolver = struct {
                 // we're resolving an unknown package
                 // the unknown package is the root package
                 package = Package{
-                    .name = Semver.String.init("", ""),
-                };
-                package.resolution = .{
-                    .tag = .root,
-                    .value = .{ .root = {} },
+                    .name = Semver.String.from(""),
+                    .resolution = .{
+                        .tag = .root,
+                        .value = .{ .root = {} },
+                    },
                 };
                 package = pm.lockfile.appendPackage(package) catch |err| {
                     return .{ .failure = err };
@@ -1870,7 +1963,7 @@ pub const Resolver = struct {
 
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, version, behavior, is_main)) {
+            switch (pm.enqueueDependencyToRoot(esm.name, esm.version, &version, behavior, is_main)) {
                 .resolution => |result| {
                     input_package_id_.* = result.package_id;
                     return .{ .resolution = result.resolution };
@@ -2757,29 +2850,31 @@ pub const Resolver = struct {
             }
         }
 
-        // Potentially remap using the "browser" field
-        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
-            if (browser_scope.package_json) |browser_json| {
-                if (r.checkBrowserMap(
-                    browser_scope,
-                    field_rel_path,
-                    .AbsolutePath,
-                )) |remap| {
-                    // Is the path disabled?
-                    if (remap.len == 0) {
-                        const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
-                        var _path = Path.init(new_path);
-                        _path.is_disabled = true;
-                        return MatchResult{
-                            .path_pair = PathPair{
-                                .primary = _path,
-                            },
-                            .package_json = browser_json,
-                        };
-                    }
+        if (r.care_about_browser_field) {
+            // Potentially remap using the "browser" field
+            if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                if (browser_scope.package_json) |browser_json| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
+                        // Is the path disabled?
+                        if (remap.len == 0) {
+                            const paths = [_]string{ path, field_rel_path };
+                            const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
+                            var _path = Path.init(new_path);
+                            _path.is_disabled = true;
+                            return MatchResult{
+                                .path_pair = PathPair{
+                                    .primary = _path,
+                                },
+                                .package_json = browser_json,
+                            };
+                        }
 
-                    field_rel_path = remap;
+                        field_rel_path = remap;
+                    }
                 }
             }
         }
@@ -2875,46 +2970,48 @@ pub const Resolver = struct {
             path = remap_path_trailing_slash[0 .. path.len + 1];
         }
 
-        if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
-            const field_rel_path = comptime "index";
+        if (r.care_about_browser_field) {
+            if (dir_info.getEnclosingBrowserScope()) |browser_scope| {
+                const field_rel_path = comptime "index";
 
-            if (browser_scope.package_json) |browser_json| {
-                if (r.checkBrowserMap(
-                    browser_scope,
-                    field_rel_path,
-                    .AbsolutePath,
-                )) |remap| {
+                if (browser_scope.package_json) |browser_json| {
+                    if (r.checkBrowserMap(
+                        browser_scope,
+                        field_rel_path,
+                        .AbsolutePath,
+                    )) |remap| {
 
-                    // Is the path disabled?
-                    if (remap.len == 0) {
-                        const paths = [_]string{ path, field_rel_path };
-                        const new_path = r.fs.absBuf(&paths, &remap_path_buf);
-                        var _path = Path.init(new_path);
-                        _path.is_disabled = true;
-                        return MatchResult{
-                            .path_pair = PathPair{
-                                .primary = _path,
-                            },
-                            .package_json = browser_json,
-                        };
-                    }
-
-                    const new_paths = [_]string{ path, remap };
-                    const remapped_abs = r.fs.absBuf(&new_paths, &remap_path_buf);
-
-                    // Is this a file
-                    if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
-                        return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
-                    }
-
-                    // Is it a directory with an index?
-                    if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
-                        if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
-                            return absolute;
+                        // Is the path disabled?
+                        if (remap.len == 0) {
+                            const paths = [_]string{ path, field_rel_path };
+                            const new_path = r.fs.absBuf(&paths, &remap_path_buf);
+                            var _path = Path.init(new_path);
+                            _path.is_disabled = true;
+                            return MatchResult{
+                                .path_pair = PathPair{
+                                    .primary = _path,
+                                },
+                                .package_json = browser_json,
+                            };
                         }
-                    }
 
-                    return null;
+                        const new_paths = [_]string{ path, remap };
+                        const remapped_abs = r.fs.absBuf(&new_paths, &remap_path_buf);
+
+                        // Is this a file
+                        if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
+                            return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
+                        }
+
+                        // Is it a directory with an index?
+                        if (r.dirInfoCached(remapped_abs) catch null) |new_dir| {
+                            if (r.loadAsIndex(new_dir, extension_order)) |absolute| {
+                                return absolute;
+                            }
+                        }
+
+                        return null;
+                    }
                 }
             }
         }
@@ -3303,7 +3400,7 @@ pub const Resolver = struct {
                         const this_dir = std.fs.Dir{ .fd = fd };
                         var file = this_dir.openDirZ("node_modules/.bin", .{}, true) catch break :append_bin_dir;
                         defer file.close();
-                        var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                        var bin_path = bun.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                         bin_folders_lock.lock();
                         defer bin_folders_lock.unlock();
 
@@ -3328,7 +3425,7 @@ pub const Resolver = struct {
                             const this_dir = std.fs.Dir{ .fd = fd };
                             var file = this_dir.openDirZ(".bin", .{}, false) catch break :append_bin_dir;
                             defer file.close();
-                            var bin_path = std.os.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
+                            var bin_path = bun.getFdPath(file.fd, &node_bin_path) catch break :append_bin_dir;
                             bin_folders_lock.lock();
                             defer bin_folders_lock.unlock();
 

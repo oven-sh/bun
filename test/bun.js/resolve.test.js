@@ -97,6 +97,16 @@ it("import.meta.resolve", async () => {
     join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
   );
 
+  // if they never exported /package.json, allow reading from it too
+  expect(await import.meta.resolve("package-json-exports/package.json")).toBe(
+    join(import.meta.path, "../node_modules/package-json-exports/package.json"),
+  );
+
+  // if an unnecessary ".js" extension was added, try against /baz
+  expect(await import.meta.resolve("package-json-exports/baz.js")).toBe(
+    join(import.meta.path, "../node_modules/package-json-exports/foo/bar.js"),
+  );
+
   // works with TypeScript compiler edgecases like:
   // - If the file ends with .js and it doesn't exist, try again with .ts and .tsx
   expect(await import.meta.resolve("./resolve-typescript-file.js")).toBe(

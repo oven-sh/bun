@@ -1,5 +1,7 @@
 #include "root.h"
 
+#include "headers.h"
+
 #include "BunClientData.h"
 #include "GCDefferalContext.h"
 
@@ -1131,13 +1133,13 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject* glob
 JSC__JSInternalPromise* JSC__JSValue__asInternalPromise(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::jsCast<JSC::JSInternalPromise*>(value);
+    return JSC::jsDynamicCast<JSC::JSInternalPromise*>(value);
 }
 
 JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return JSC::jsCast<JSC::JSPromise*>(value);
+    return JSC::jsDynamicCast<JSC::JSPromise*>(value);
 }
 JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject* globalObject)
 {
@@ -1460,14 +1462,74 @@ JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject*
 //     arg2->depen
 // }
 
+class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
+public:
+    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
+    {
+        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
+    }
+
+    void call(JSC::JSGlobalObject* globalObject)
+    {
+
+        JSC::VM& vm = globalObject->vm();
+        auto task = &m_task.leakRef();
+        task->run(globalObject);
+
+        delete this;
+    }
+
+private:
+    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
+        : m_task { WTFMove(task) }
+    {
+    }
+
+    Ref<JSC::Microtask> m_task;
+};
+
+class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
+public:
+    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
+        Ref<JSC::Microtask>&& task)
+    {
+        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
+    }
+
+    void call()
+    {
+        auto* globalObject = m_globalObject.get();
+        if (UNLIKELY(!globalObject)) {
+            delete this;
+            return;
+        }
+
+        JSC::VM& vm = m_globalObject->vm();
+        auto task = &m_task.leakRef();
+        task->run(globalObject);
+
+        delete this;
+    }
+
+private:
+    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
+        : m_globalObject { &globalObject }
+        , m_task { WTFMove(task) }
+    {
+    }
+
+    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
+    Ref<JSC::Microtask> m_task;
+};
+
 void Microtask__run(void* microtask, void* global)
 {
-    reinterpret_cast<Zig::JSMicrotaskCallback*>(microtask)->call();
+    reinterpret_cast<JSMicrotaskCallback*>(microtask)->call();
 }
 
 void Microtask__run_default(void* microtask, void* global)
 {
-    reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
+    reinterpret_cast<JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
 }
 
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
@@ -1688,7 +1750,21 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
     return false;
 }
-JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, ZigString* arg1,
+
+CPP_DECL JSC__JSValue JSC__JSValue__createEmptyArray(JSC__JSGlobalObject* arg0, size_t length)
+{
+    JSC::VM& vm = arg0->vm();
+    return JSC::JSValue::encode(JSC::constructEmptyArray(arg0, nullptr, length));
+}
+CPP_DECL void JSC__JSValue__putIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2, JSC__JSValue JSValue3)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value2 = JSC::JSValue::decode(JSValue3);
+    JSC::JSArray* array = JSC::jsCast<JSC::JSArray*>(value);
+    array->putDirectIndex(arg1, arg2, value2);
+}
+
+JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     size_t arg2, bool clone)
 {
     JSC::VM& vm = globalObject->vm();
@@ -1792,6 +1868,10 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
 
 JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSGlobalObject* global)
 {
+    if (len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(global->vm()));
+    }
+
     auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
@@ -1800,7 +1880,12 @@ JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSG
 // This must be a globally allocated string
 JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
+
     ZigString str = *arg0;
+    if (str.len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, Zig::untagVoid(str.ptr), free_global_string));
 
@@ -1967,6 +2052,53 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
     JSC__JSValue JSValue2)
 {
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
+}
+
+// This implementation closely mimicks the one in JSC::JSPromise::resolve
+void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encoedValue)
+{
+    return JSC__JSPromise__resolve(promise, lexicalGlobalObject, encoedValue);
+}
+
+bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
+
+    if (type == JSC::CellType) {
+        return cell->inherits<JSC::Exception>();
+    }
+
+    return type == JSC::ErrorInstanceType;
+}
+
+// This implementation closely mimicks the one in JSC::JSPromise::reject
+void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__JSGlobalObject* lexicalGlobalObject,
+    JSC__JSValue encoedValue, bool handled)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encoedValue);
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t flags = promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32();
+    if (!(flags & JSC::JSPromise::isFirstResolvingFunctionCalledFlag)) {
+        if (handled) {
+            flags |= JSC::JSPromise::isHandledFlag;
+        }
+
+        promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
+        auto* globalObject = jsCast<Zig::GlobalObject*>(promise->globalObject());
+
+        globalObject->queueMicrotask(
+            globalObject->performMicrotaskFunction(),
+            globalObject->rejectPromiseFunction(),
+            promise,
+            value,
+            JSValue {});
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
@@ -3106,18 +3238,28 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     arg2->len = 0;
 }
 
-JSC__JSValue JSC__JSValue__toError(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
-        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            return JSC::JSValue::encode(JSC::JSValue(error));
+    if (value.isEmpty() || !value.isCell())
+        return JSC::JSValue::encode({});
+
+    JSC::JSCell* cell = value.asCell();
+
+    switch (cell->type()) {
+    case JSC::ErrorInstanceType:
+        return JSC::JSValue::encode(value);
+
+    case JSC::CellType:
+        if (cell->inherits<JSC::Exception>()) {
+            JSC::Exception* exception = jsCast<JSC::Exception*>(cell);
+            return JSC::JSValue::encode(exception->value());
         }
+    default: {
     }
-    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        return JSC::JSValue::encode(JSC::JSValue(error));
     }
-    return JSC::JSValue::encode(JSC::jsUndefined());
+
+    return JSC::JSValue::encode({});
 }
 
 void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
@@ -3395,6 +3537,8 @@ void JSC__JSValue__forEachProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     }
 
     auto* clientData = WebCore::clientData(vm);
+    WTF::Vector<Identifier, 6> visitedProperties;
+
 restart:
     if (fast) {
         bool anyHits = false;
@@ -3407,24 +3551,30 @@ restart:
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
             }
+            auto* prop = entry.key();
 
-            if (entry.key() == vm.propertyNames->constructor
-                || entry.key() == vm.propertyNames->length
-                || entry.key() == vm.propertyNames->underscoreProto
-                || entry.key() == vm.propertyNames->toStringTagSymbol)
+            if (prop == vm.propertyNames->constructor
+                || prop == vm.propertyNames->length
+                || prop == vm.propertyNames->underscoreProto
+                || prop == vm.propertyNames->toStringTagSymbol)
                 return true;
 
-            if (clientData->builtinNames().bunNativePtrPrivateName() == entry.key())
+            if (clientData->builtinNames().bunNativePtrPrivateName() == prop)
                 return true;
 
-            ZigString key = toZigString(entry.key());
+            if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
+                return true;
+            }
+            visitedProperties.append(Identifier::fromUid(vm, prop));
+
+            ZigString key = toZigString(prop);
 
             if (key.len == 0)
                 return true;
 
             JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
             if (!propertyValue || propertyValue.isGetterSetter()) {
-                propertyValue = objectToUse->get(globalObject, entry.key());
+                propertyValue = objectToUse->get(globalObject, prop);
             }
 
             if (scope.exception())
@@ -3435,7 +3585,7 @@ restart:
 
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
-            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), entry.key()->isSymbol());
+            iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), prop->isSymbol());
             return true;
         });
         if (scope.exception()) {
@@ -3492,6 +3642,10 @@ restart:
                         || property == vm.propertyNames->toStringTagSymbol)
                         continue;
                 }
+
+                if (visitedProperties.contains(property))
+                    continue;
+                visitedProperties.append(property);
 
                 ZigString key = toZigString(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 
@@ -3560,4 +3714,16 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC__VM* vm)
 #else
     return 0;
 #endif
+}
+
+extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue JSValue2, JSC__JSValue JSValue3, JSC__JSValue JSValue4)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    JSC::VM& vm = globalObject->vm();
+    globalObject->queueMicrotask(
+        JSValue(globalObject->performMicrotaskFunction()),
+        JSC::JSValue::decode(JSValue1),
+        JSC::JSValue::decode(JSValue2),
+        JSC::JSValue::decode(JSValue3),
+        JSC::JSValue::decode(JSValue4));
 }

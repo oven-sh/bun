@@ -10,14 +10,14 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const json_parser = @import("../json_parser.zig");
-const js_printer = @import("../js_printer.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
 const sync = @import("../sync.zig");
@@ -25,7 +25,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
@@ -106,44 +106,42 @@ pub const RunCommand = struct {
             switch (script[entry_i]) {
                 'y' => {
                     if (delimiter > 0) {
-                        if (entry_i + "arn".len < script.len) {
-                            var remainder = script[start..];
-                            if (remainder.len > "yarn ".len and strings.eqlComptimeIgnoreLen(remainder[0.."yarn ".len], "yarn ")) {
-                                const next = remainder["yarn ".len..];
-                                // We have yarn
-                                // Find the next space
-                                if (strings.indexOfChar(next, ' ')) |space| {
-                                    const yarn_cmd = next[0..space];
-                                    if (strings.eqlComptime(yarn_cmd, "run")) {
-                                        try copy_script.appendSlice(BUN_RUN);
-                                        entry_i += "yarn run".len;
-                                        continue;
-                                    }
+                        const remainder = script[start..];
+                        if (strings.hasPrefixComptime(remainder, "yarn ")) {
+                            const next = remainder["yarn ".len..];
+                            // We have yarn
+                            // Find the next space
+                            if (strings.indexOfChar(next, ' ')) |space| {
+                                const yarn_cmd = next[0..space];
+                                if (strings.eqlComptime(yarn_cmd, "run")) {
+                                    try copy_script.appendSlice(BUN_RUN);
+                                    entry_i += "yarn run".len;
+                                    continue;
+                                }
 
-                                    // yarn npm is a yarn 2 subcommand
-                                    if (strings.eqlComptime(yarn_cmd, "npm")) {
-                                        entry_i += "yarn npm ".len;
-                                        try copy_script.appendSlice("yarn npm ");
-                                        continue;
-                                    }
+                                // yarn npm is a yarn 2 subcommand
+                                if (strings.eqlComptime(yarn_cmd, "npm")) {
+                                    entry_i += "yarn npm ".len;
+                                    try copy_script.appendSlice("yarn npm ");
+                                    continue;
+                                }
 
-                                    if (strings.startsWith(yarn_cmd, "-")) {
-                                        // Skip the rest of the command
-                                        entry_i += "yarn ".len + yarn_cmd.len;
-                                        try copy_script.appendSlice("yarn ");
-                                        try copy_script.appendSlice(yarn_cmd);
-                                        continue;
-                                    }
+                                if (strings.startsWith(yarn_cmd, "-")) {
+                                    // Skip the rest of the command
+                                    entry_i += "yarn ".len + yarn_cmd.len;
+                                    try copy_script.appendSlice("yarn ");
+                                    try copy_script.appendSlice(yarn_cmd);
+                                    continue;
+                                }
 
-                                    // implicit yarn commands
-                                    if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
-                                        try copy_script.appendSlice(BUN_RUN);
-                                        try copy_script.append(' ');
-                                        try copy_script.appendSlice(yarn_cmd);
-                                        entry_i += "yarn ".len + yarn_cmd.len;
-                                        delimiter = 0;
-                                        continue;
-                                    }
+                                // implicit yarn commands
+                                if (std.mem.indexOfScalar(u64, yarn_commands, std.hash.Wyhash.hash(0, yarn_cmd)) == null) {
+                                    try copy_script.appendSlice(BUN_RUN);
+                                    try copy_script.append(' ');
+                                    try copy_script.appendSlice(yarn_cmd);
+                                    entry_i += "yarn ".len + yarn_cmd.len;
+                                    delimiter = 0;
+                                    continue;
                                 }
                             }
                         }
@@ -165,32 +163,18 @@ pub const RunCommand = struct {
 
                 'n' => {
                     if (delimiter > 0) {
-                        const npm_i = entry_i + "pm run ".len;
-                        if (npm_i < script.len) {
-                            const base = script[start..];
-                            if (base.len > "npm run ".len) {
-                                const remainder = base[0.."npm run ".len];
-                                if (strings.eqlComptimeIgnoreLen(remainder, "npm run ")) {
-                                    try copy_script.appendSlice(BUN_RUN ++ " ");
-                                    entry_i += remainder.len;
-                                    delimiter = 0;
-                                    continue;
-                                }
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "npm run ")) {
+                            try copy_script.appendSlice(BUN_RUN ++ " ");
+                            entry_i += "npm run ".len;
+                            delimiter = 0;
+                            continue;
                         }
 
-                        const npx_i = entry_i + "px ".len;
-                        if (npx_i < script.len) {
-                            const base = script[start..];
-                            if (base.len > "px ".len) {
-                                const remainder = base[0.."px ".len];
-                                if (strings.eqlComptimeIgnoreLen(remainder, "px ")) {
-                                    try copy_script.appendSlice("bunx" ++ " ");
-                                    entry_i += remainder.len;
-                                    delimiter = 0;
-                                    continue;
-                                }
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "npx ")) {
+                            try copy_script.appendSlice("bunx" ++ " ");
+                            entry_i += "npx ".len;
+                            delimiter = 0;
+                            continue;
                         }
                     }
 
@@ -198,15 +182,11 @@ pub const RunCommand = struct {
                 },
                 'p' => {
                     if (delimiter > 0) {
-                        const npm_i = entry_i + "npm run ".len;
-                        if (npm_i < script.len) {
-                            const remainder = script[start .. npm_i + 1];
-                            if (remainder.len > npm_i and strings.eqlComptimeIgnoreLen(remainder, "pnpm run") and remainder[remainder.len - 1] == delimiter) {
-                                try copy_script.appendSlice(BUN_RUN ++ " ");
-                                entry_i += remainder.len;
-                                delimiter = 0;
-                                continue;
-                            }
+                        if (strings.hasPrefixComptime(script[start..], "pnpm run ")) {
+                            try copy_script.appendSlice(BUN_RUN ++ " ");
+                            entry_i += "pnpm run ".len;
+                            delimiter = 0;
+                            continue;
                         }
                     }
 
@@ -345,7 +325,7 @@ pub const RunCommand = struct {
             if (err == error.AccessDenied) {
                 {
                     var stat = std.mem.zeroes(std.c.Stat);
-                    const rc = bun.C.stat(std.meta.assumeSentinel(executable, 0), &stat);
+                    const rc = bun.C.stat(executable[0.. :0].ptr, &stat);
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
@@ -416,7 +396,7 @@ pub const RunCommand = struct {
         var retried = false;
 
         if (!strings.endsWithComptime(std.mem.span(std.os.argv[0]), "node")) {
-            var argv0 = std.meta.assumeSentinel(optional_bun_path.*, 0).ptr;
+            var argv0 = @ptrCast([*:0]const u8, optional_bun_path.ptr);
 
             // if we are already an absolute path, use that
             // if the user started the application via a shebang, it's likely that the path is absolute already
@@ -428,7 +408,7 @@ pub const RunCommand = struct {
                 var self = std.fs.selfExePath(&self_exe_bin_path_buf) catch unreachable;
                 if (self.len > 0) {
                     self.ptr[self.len] = 0;
-                    argv0 = std.meta.assumeSentinel(self, 0).ptr;
+                    argv0 = @ptrCast([*:0]const u8, self.ptr);
                     optional_bun_path.* = self;
                 }
             }
@@ -553,81 +533,67 @@ pub const RunCommand = struct {
         var needs_to_force_bun = force_using_bun or !found_node;
         var optional_bun_self_path: string = "";
 
-        if (bin_dirs.len > 0 or package_json_dir.len > 0) {
-            var new_path_len: usize = PATH.len + 2;
-            for (bin_dirs) |bin| {
-                new_path_len += bin.len + 1;
-            }
-
-            if (package_json_dir.len > 0) {
-                new_path_len += package_json_dir.len + 1;
-            }
-
-            new_path_len += if (needs_to_force_bun) bun_node_dir.len + 1 else 0;
-
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
-
-            if (needs_to_force_bun) {
-                createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-                if (!force_using_bun) {
-                    this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
-                    this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
-                    this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
-                }
-
-                needs_to_force_bun = false;
-            }
-
-            {
-                var needs_colon = false;
-                if (package_json_dir.len > 0) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(package_json_dir);
-                }
-
-                var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
-                // Iterate in reverse order
-                // Directories are added to bin_dirs in top-down order
-                // That means the parent-most node_modules/.bin will be first
-                while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
-                }
-
-                if (needs_colon) {
-                    try new_path.append(':');
-                }
-                try new_path.appendSlice(PATH);
-            }
-
-            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-            PATH = new_path.items;
+        var new_path_len: usize = PATH.len + 2;
+        for (bin_dirs) |bin| {
+            new_path_len += bin.len + 1;
         }
 
+        if (package_json_dir.len > 0) {
+            new_path_len += package_json_dir.len + 1;
+        }
+
+        new_path_len += root_dir_info.abs_path.len + "node_modules/.bin".len + 1;
+
         if (needs_to_force_bun) {
-            needs_to_force_bun = false;
+            new_path_len += bun_node_dir.len + 1;
+        }
 
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, PATH.len);
+        var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+
+        if (needs_to_force_bun) {
             createFakeTemporaryNodeExecutable(&new_path, &optional_bun_self_path) catch unreachable;
-            if (new_path.items.len > 0)
-                try new_path.append(':');
-            try new_path.appendSlice(PATH);
-
-            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-
             if (!force_using_bun) {
                 this_bundler.env.map.put("NODE", bun_node_dir ++ "/node") catch unreachable;
                 this_bundler.env.map.put("npm_node_execpath", bun_node_dir ++ "/node") catch unreachable;
                 this_bundler.env.map.put("npm_execpath", optional_bun_self_path) catch unreachable;
             }
-            PATH = new_path.items;
+
+            needs_to_force_bun = false;
         }
+
+        {
+            var needs_colon = false;
+            if (package_json_dir.len > 0) {
+                defer needs_colon = true;
+                if (needs_colon) {
+                    try new_path.append(':');
+                }
+                try new_path.appendSlice(package_json_dir);
+            }
+
+            var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
+            // Iterate in reverse order
+            // Directories are added to bin_dirs in top-down order
+            // That means the parent-most node_modules/.bin will be first
+            while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
+                defer needs_colon = true;
+                if (needs_colon) {
+                    try new_path.append(':');
+                }
+                try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
+            }
+
+            if (needs_colon) {
+                try new_path.append(':');
+            }
+            try new_path.appendSlice(root_dir_info.abs_path);
+            try new_path.appendSlice("node_modules/.bin");
+            try new_path.append(':');
+            try new_path.appendSlice(PATH);
+        }
+
+        this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
+        PATH = new_path.items;
 
         this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
 
@@ -765,7 +731,7 @@ pub const RunCommand = struct {
                     while (iter.next()) |entry| {
                         const value = entry.value_ptr.*;
                         const name = value.base();
-                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).isJavaScriptLike() and
+                        if (name[0] != '.' and this_bundler.options.loader(std.fs.path.extension(name)).canBeRunByBun() and
                             !strings.contains(name, ".config") and
                             !strings.contains(name, ".d.ts") and
                             !strings.contains(name, ".d.mts") and
@@ -891,7 +857,7 @@ pub const RunCommand = struct {
                 possibly_open_with_bun_js: {
                     if (!force_using_bun) {
                         if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |load| {
-                            if (!load.isJavaScriptLike())
+                            if (!load.canBeRunByBun())
                                 break :possibly_open_with_bun_js;
                         } else {
                             break :possibly_open_with_bun_js;
@@ -932,10 +898,10 @@ pub const RunCommand = struct {
                         };
 
                         var shebang: string = shebang_buf[0..shebang_size];
+
                         shebang = std.mem.trim(u8, shebang, " \r\n\t");
                         if (shebang.len == 0) break :possibly_open_with_bun_js;
-
-                        if (shebang.len > 2 and strings.eqlComptimeIgnoreLen(shebang[0..2], "#!")) {
+                        if (strings.hasPrefixComptime(shebang, "#!")) {
                             const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
                             const filename = std.fs.path.basename(first_arg);
                             // are we attempting to run the script with bun?
@@ -1086,7 +1052,7 @@ pub const RunCommand = struct {
                 //     Output.flush();
                 //     return err;
                 // };
-                // // var outbuf = std.os.getFdPath(file.handle, &path_buf2) catch |err| {
+                // // var outbuf = bun.getFdPath(file.handle, &path_buf2) catch |err| {
                 // //     if (!log_errors) return false;
                 // //     Output.prettyErrorln("<r>error: <red>{s}<r> resolving file: \"{s}\"", .{ err, std.mem.span(destination) });
                 // //     Output.flush();

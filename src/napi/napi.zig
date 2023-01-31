@@ -47,7 +47,7 @@ pub const Ref = opaque {
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const napi_handle_scope = napi_env;
-pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
+pub const napi_escapable_handle_scope = napi_env;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
 
@@ -249,7 +249,7 @@ pub export fn napi_create_int64(_: napi_env, value: i64, result: *napi_value) na
 pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
+        len = bun.len(@ptrCast([*:0]const u8, str));
     }
     result.* = JSC.ZigString.init(str[0..len]).toValueGC(env);
     return .ok;
@@ -257,7 +257,7 @@ pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length:
 pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
+        len = bun.len(@ptrCast([*:0]const u8, str));
     }
     result.* = JSC.ZigString.init(str[0..len]).withEncoding().toValueGC(env);
     return .ok;
@@ -265,17 +265,12 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
+        len = bun.len(@ptrCast([*:0]const char16_t, str));
     }
     result.* = JSC.ZigString.from16(str, len).toValueGC(env);
     return .ok;
 }
-pub export fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status {
-    var string_ref = JSC.C.JSValueToStringCopy(env.ref(), description.asObjectRef(), null);
-    defer JSC.C.JSStringRelease(string_ref);
-    result.* = JSValue.c(JSC.C.JSValueMakeSymbol(env.ref(), string_ref));
-    return .ok;
-}
+pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
 pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status {
     const system_error = JSC.SystemError{
         .code = if (!code.isEmptyOrUndefinedOrNull()) code.getZigString(env) else ZigString.Empty,
@@ -284,65 +279,10 @@ pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
     result.* = system_error.toErrorInstance(env);
     return .ok;
 }
+
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
-pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status {
-    if (value.isEmpty()) {
-        result.* = .undefined;
-        return .ok;
-    }
-
-    if (value.isUndefined()) {
-        result.* = .undefined;
-        return .ok;
-    }
-
-    if (value.isNull()) {
-        result.* = .null;
-        return .ok;
-    }
-
-    if (value.isBoolean()) {
-        result.* = .boolean;
-        return .ok;
-    }
-
-    if (value.isNumber()) {
-        result.* = .number;
-        return .ok;
-    }
-
-    if (value.isString()) {
-        result.* = .string;
-        return .ok;
-    }
-
-    if (value.isSymbol()) {
-        result.* = .symbol;
-        return .ok;
-    }
-
-    if (value.isBigInt()) {
-        result.* = .bigint;
-        return .ok;
-    }
-
-    if (value.isObject()) {
-        if (value.isCallable(env.vm())) {
-            result.* = .function;
-            return .ok;
-        }
-        result.* = .object;
-        return .ok;
-    }
-
-    if (value.isCell() and value.isCallable(env.vm())) {
-        result.* = .function;
-        return .ok;
-    }
-
-    return .invalid_arg;
-}
+pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
 pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
     result.* = value.asNumber();
     return .ok;
@@ -391,7 +331,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             result.* = 0;
             return .ok;
@@ -400,7 +340,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1, false);
         if (wrote < 0) {
             return .generic_failure;
         }
@@ -453,7 +393,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -464,7 +404,7 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8, false);
         if (wrote < 0) {
             return .generic_failure;
         }
@@ -511,7 +451,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
     var buf_ = buf[0..bufsize];
 
     if (bufsize == 0) {
-        buf_ = bun.span(std.meta.assumeSentinel(buf_, 0));
+        buf_ = bun.sliceTo(buf_ptr, 0);
         if (buf_.len == 0) {
             if (result_ptr) |result| {
                 result.* = 0;
@@ -612,31 +552,7 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     result.* = lhs.isSameValue(rhs, env);
     return .ok;
 }
-pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
-    JSC.markBinding(@src());
-
-    if (argc > 0 and argv == null) {
-        return .invalid_arg;
-    }
-
-    var exception = [_]JSC.C.JSValueRef{null};
-    result.* =
-        JSC.C.JSObjectCallAsFunctionReturnValue(
-        env.ref(),
-        func.asObjectRef(),
-        recv.asObjectRef(),
-        argc,
-        if (argv != null)
-            @ptrCast([*]const JSC.C.JSValueRef, argv)
-        else
-            null,
-    );
-    if (exception[0] != null) {
-        return .generic_failure;
-    }
-
-    return .ok;
-}
+pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
     JSC.markBinding(@src());
 
@@ -703,15 +619,97 @@ pub export fn napi_open_handle_scope(env: napi_env, result: *napi_handle_scope) 
 pub export fn napi_close_handle_scope(_: napi_env, _: napi_handle_scope) napi_status {
     return .ok;
 }
-pub extern fn napi_open_escapable_handle_scope(env: napi_env, result: [*c]napi_escapable_handle_scope) napi_status;
-pub extern fn napi_close_escapable_handle_scope(env: napi_env, scope: napi_escapable_handle_scope) napi_status;
-pub extern fn napi_escape_handle(env: napi_env, scope: napi_escapable_handle_scope, escapee: napi_value, result: *napi_value) napi_status;
+
+// we don't support async contexts
+pub export fn napi_async_init(env: napi_env, _: napi_value, _: napi_value, async_ctx: **anyopaque) napi_status {
+    async_ctx.* = env;
+    return .ok;
+}
+
+// we don't support async contexts
+pub export fn napi_async_destroy(_: napi_env, _: *anyopaque) napi_status {
+    return .ok;
+}
+
+// this is just a regular function call
+pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value, func: napi_value, arg_count: usize, args: ?[*]const napi_value, result: *napi_value) napi_status {
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
+        return .function_expected;
+    }
+
+    const res = func.callWithThis(
+        env,
+        if (recv != .zero)
+            recv
+        else
+            JSC.JSValue.jsUndefined(),
+        if (arg_count > 0 and args != null)
+            @ptrCast([*]const JSC.JSValue, args.?)[0..arg_count]
+        else
+            &.{},
+    );
+    result.* = res;
+
+    // TODO: this is likely incorrect
+    if (res.isAnyError()) {
+        return .pending_exception;
+    }
+
+    return .ok;
+}
+
+// Sometimes shared libraries reference symbols which are not used
+// We don't want to fail to load the library because of that
+// so we instead return an error and warn the user
+fn notImplementedYet(comptime name: []const u8) void {
+    bun.once(
+        struct {
+            pub fn warn() void {
+                if (JSC.VirtualMachine.get().log.level.atLeast(.warn)) {
+                    bun.Output.prettyErrorln("<r><yellow>warning<r><d>:<r> Node-API function <b>\"{s}\"<r> is not implemented yet.\n Track the status of Node-API in Bun: https://github.com/oven-sh/bun/issues/158", .{name});
+                    bun.Output.flush();
+                }
+            }
+        }.warn,
+        void,
+    );
+}
+
+// JSC stack scanning will handle this
+pub export fn napi_open_escapable_handle_scope(env: napi_env, handle: *napi_escapable_handle_scope) napi_status {
+    handle.* = env;
+    return .ok;
+}
+pub export fn napi_close_escapable_handle_scope(_: napi_env, _: napi_escapable_handle_scope) napi_status {
+    return .ok;
+}
+pub export fn napi_escape_handle(_: napi_env, _: napi_escapable_handle_scope, value: napi_value, result: *napi_value) napi_status {
+    value.ensureStillAlive();
+    result.* = value;
+    return .ok;
+}
+pub export fn napi_type_tag_object(_: napi_env, _: napi_value, _: [*c]const napi_type_tag) napi_status {
+    notImplementedYet("napi_type_tag_object");
+    return .generic_failure;
+}
+pub export fn napi_check_object_type_tag(_: napi_env, _: napi_value, _: [*c]const napi_type_tag, _: *bool) napi_status {
+    notImplementedYet("napi_check_object_type_tag");
+    return .generic_failure;
+}
+
+// do nothing for both of these
+pub export fn napi_open_callback_scope(_: napi_env, _: napi_value, _: *anyopaque, _: *anyopaque) napi_status {
+    return .ok;
+}
+pub export fn napi_close_callback_scope(_: napi_env, _: *anyopaque) napi_status {
+    return .ok;
+}
 pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_range_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
-pub export fn napi_is_error(env: napi_env, value: napi_value, result: *bool) napi_status {
-    result.* = value.isAnyError(env);
+pub export fn napi_is_error(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.isAnyError();
     return .ok;
 }
 pub extern fn napi_is_exception_pending(env: napi_env, result: *bool) napi_status;
@@ -741,16 +739,19 @@ pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
     result.* = external.toArrayBuffer(env);
     return .ok;
 }
-pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: *[*]u8, byte_length: *usize) napi_status {
+pub export fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: ?*[*]u8, byte_length: ?*usize) napi_status {
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .arraybuffer_expected;
     var slice = array_buffer.slice();
-    data.* = slice.ptr;
-    byte_length.* = slice.len;
+    if (data) |dat|
+        dat.* = slice.ptr;
+    if (byte_length) |len|
+        len.* = slice.len;
     return .ok;
 }
-pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: *bool) napi_status {
-    result.* = value.jsTypeLoose().isTypedArray();
-    return .ok;
+pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: ?*bool) napi_status {
+    if (result != null)
+        result.?.* = value.jsTypeLoose().isTypedArray();
+    return if (result != null) .ok else .invalid_arg;
 }
 pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status {
     result.* = JSValue.c(
@@ -781,13 +782,13 @@ pub export fn napi_get_typedarray_info(
     const array_buffer = typedarray.asArrayBuffer(env) orelse return .invalid_arg;
     if (@"type" != null)
         @"type".?.* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
-    var slice = array_buffer.slice();
 
+    // TODO: handle detached
     if (data != null)
-        data.?.* = slice.ptr;
+        data.?.* = array_buffer.ptr;
 
     if (length != null)
-        length.?.* = slice.len;
+        length.?.* = array_buffer.len;
 
     if (arraybuffer != null)
         arraybuffer.?.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), typedarray.asObjectRef(), null));
@@ -833,7 +834,7 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
         return .ok;
     }
 
-    is_promise.* = value.asPromise() != null or value.asInternalPromise() != null;
+    is_promise.* = value.asAnyPromise() != null;
     return .ok;
 }
 pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
@@ -890,14 +891,14 @@ pub export fn napi_get_value_bigint_uint64(_: napi_env, value: napi_value, resul
     result.* = value.toUInt64NoTruncate();
     return .ok;
 }
+
 pub extern fn napi_get_value_bigint_words(env: napi_env, value: napi_value, sign_bit: [*c]c_int, word_count: [*c]usize, words: [*c]u64) napi_status;
 pub extern fn napi_get_all_property_names(env: napi_env, object: napi_value, key_mode: napi_key_collection_mode, key_filter: napi_key_filter, key_conversion: napi_key_conversion, result: *napi_value) napi_status;
 pub extern fn napi_set_instance_data(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque) napi_status;
 pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_status;
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
-pub extern fn napi_type_tag_object(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag) napi_status;
-pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: *bool) napi_status;
+
 pub const struct_napi_async_work__ = opaque {};
 const WorkPool = @import("../work_pool.zig").WorkPool;
 const WorkPoolTask = @import("../work_pool.zig").Task;
@@ -1034,7 +1035,7 @@ fn napiSpan(ptr: anytype, len: usize) []const u8 {
         return &[_]u8{};
 
     if (len == NAPI_AUTO_LENGTH) {
-        return std.mem.sliceTo(ptr.?, 0);
+        return bun.sliceTo(ptr.?, 0);
     }
 
     return ptr.?[0..len];
@@ -1052,12 +1053,14 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     bun.Global.panic("napi: {s}", .{message});
 }
-pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
-    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, env.bunVM().allocator) catch {
-        return .generic_failure;
-    };
-
-    result.* = buf.toJS(env);
+pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
+    var buffer = JSC.JSValue.createBufferFromLength(env, length);
+    if (length > 0) {
+        if (data) |ptr| {
+            ptr.* = buffer.asArrayBuffer(env).?.ptr;
+        }
+    }
+    result.* = buffer;
     return .ok;
 }
 pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
@@ -1069,15 +1072,17 @@ pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*
     return .ok;
 }
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
-    var duped = env.bunVM().allocator.alloc(u8, length) catch {
-        return .generic_failure;
-    };
-    @memcpy(duped.ptr, data, length);
-    if (result_data) |res| {
-        res.* = duped.ptr;
+    var buffer = JSC.JSValue.createBufferFromLength(env, length);
+    if (buffer.asArrayBuffer(env)) |array_buf| {
+        if (length > 0) {
+            @memcpy(array_buf.slice().ptr, data, length);
+        }
+        if (result_data) |ptr| {
+            ptr.* = if (length > 0) array_buf.ptr else null;
+        }
     }
 
-    result.* = JSC.JSValue.createBuffer(env, duped, env.bunVM().allocator);
+    result.* = buffer;
 
     return .ok;
 }
@@ -1528,6 +1533,15 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_get_instance_data);
     std.mem.doNotOptimizeAway(&napi_set_instance_data);
     std.mem.doNotOptimizeAway(&napi_create_bigint_words);
+    std.mem.doNotOptimizeAway(&napi_async_init);
+    std.mem.doNotOptimizeAway(&napi_async_destroy);
+    std.mem.doNotOptimizeAway(&napi_make_callback);
+    std.mem.doNotOptimizeAway(&napi_open_escapable_handle_scope);
+    std.mem.doNotOptimizeAway(&napi_close_escapable_handle_scope);
+    std.mem.doNotOptimizeAway(&napi_escape_handle);
+    std.mem.doNotOptimizeAway(&napi_type_tag_object);
+    std.mem.doNotOptimizeAway(&napi_check_object_type_tag);
+    std.mem.doNotOptimizeAway(&napi_open_callback_scope);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }

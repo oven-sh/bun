@@ -1,0 +1,97 @@
+name: bun-release
+concurrency: release
+on:
+  release:
+    types:
+      - published
+      - edited # canary only
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        description: The tag to publish
+        default: canary
+jobs:
+  npm:
+    name: Release to NPM
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/bun-npm
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          TAG="${TAG:-"canary"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        with:
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - id: bun-install
+        name: Install Dependencies
+        run: bun install
+      - id: bun-run
+        name: Release
+        run: bun run npm -- "${{ env.TAG }}" publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+  docker:
+    name: Release to Dockerhub
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: environment
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          TAG="${TAG:-"canary"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: qemu
+        name: Setup Docker QEMU
+        uses: docker/setup-qemu-action@v2
+      - id: buildx
+        name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          platforms: linux/amd64,linux/arm64
+      - id: metadata
+        name: Setup Docker metadata
+        uses: docker/metadata-action@v4
+        with:
+          images: oven/bun
+          flavor: latest=false # TODO
+          tags: |
+            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
+            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
+            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
+      - id: login
+        name: Login to Docker
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - id: push
+        name: Push to Docker
+        uses: docker/build-push-action@v3
+        with:
+          context: ./dockerhub
+          file: ./dockerhub/Dockerfile-debian
+          platforms: linux/amd64,linux/arm64
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}

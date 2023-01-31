@@ -1,8 +1,8 @@
 const std = @import("std");
 const logger = @import("bun").logger;
-const js_lexer = @import("js_lexer.zig");
+const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
@@ -2069,22 +2069,30 @@ pub fn NewPrinter(
                     }
                     p.addSourceMapping(expr.loc);
                     p.print("{");
-                    const props = e.properties.slice();
+                    const props = expr.data.e_object.properties.slice();
                     if (props.len > 0) {
                         p.options.indent += @as(usize, @boolToInt(!e.is_single_line));
 
-                        for (props) |property, i| {
-                            if (i != 0) {
-                                p.print(",");
-                            }
+                        if (e.is_single_line) {
+                            p.printSpace();
+                        } else {
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                        p.printProperty(props[0]);
 
-                            if (e.is_single_line) {
-                                p.printSpace();
-                            } else {
-                                p.printNewline();
-                                p.printIndent();
+                        if (props.len > 1) {
+                            for (props[1..]) |property| {
+                                p.print(",");
+
+                                if (e.is_single_line) {
+                                    p.printSpace();
+                                } else {
+                                    p.printNewline();
+                                    p.printIndent();
+                                }
+                                p.printProperty(property);
                             }
-                            p.printProperty(property);
                         }
 
                         if (!e.is_single_line) {
@@ -2621,44 +2629,48 @@ pub fn NewPrinter(
                     },
                     else => {},
                 }
-            }
 
-            if (item.value) |val| {
-                switch (val.data) {
-                    .e_function => |func| {
-                        if (item.flags.contains(.is_method)) {
-                            if (func.func.flags.contains(.is_async)) {
-                                p.printSpaceBeforeIdentifier();
-                                p.print("async");
+                if (item.value) |val| {
+                    switch (val.data) {
+                        .e_function => |func| {
+                            if (item.flags.contains(.is_method)) {
+                                if (func.func.flags.contains(.is_async)) {
+                                    p.printSpaceBeforeIdentifier();
+                                    p.print("async");
+                                }
+
+                                if (func.func.flags.contains(.is_generator)) {
+                                    p.print("*");
+                                }
+
+                                if (func.func.flags.contains(.is_generator) and func.func.flags.contains(.is_async)) {
+                                    p.printSpace();
+                                }
                             }
+                        },
+                        else => {},
+                    }
 
-                            if (func.func.flags.contains(.is_generator)) {
-                                p.print("*");
-                            }
-
-                            if (func.func.flags.contains(.is_generator) and func.func.flags.contains(.is_async)) {
-                                p.printSpace();
-                            }
-                        }
-                    },
-                    else => {},
-                }
-
-                // If var is declared in a parent scope and var is then written via destructuring pattern, key is null
-                // example:
-                //  var foo = 1;
-                //  if (true) {
-                //      var { foo } = { foo: 2 };
-                //  }
-                if (item.key == null) {
-                    p.printExpr(val, .comma, ExprFlag.None());
-                    return;
+                    // If var is declared in a parent scope and var is then written via destructuring pattern, key is null
+                    // example:
+                    //  var foo = 1;
+                    //  if (true) {
+                    //      var { foo } = { foo: 2 };
+                    //  }
+                    if (item.key == null) {
+                        p.printExpr(val, .comma, ExprFlag.None());
+                        return;
+                    }
                 }
             }
 
             const _key = item.key.?;
 
             if (item.flags.contains(.is_computed)) {
+                if (comptime is_json) {
+                    unreachable;
+                }
+
                 p.print("[");
                 p.printExpr(_key, .comma, ExprFlag.None());
                 p.print("]");
@@ -2687,6 +2699,10 @@ pub fn NewPrinter(
 
             switch (_key.data) {
                 .e_private_identifier => |priv| {
+                    if (comptime is_json) {
+                        unreachable;
+                    }
+
                     p.addSourceMapping(_key.loc);
                     p.printSymbol(priv.ref);
                 },
@@ -2792,11 +2808,19 @@ pub fn NewPrinter(
                     }
                 },
                 else => {
+                    if (comptime is_json) {
+                        unreachable;
+                    }
+
                     p.printExpr(_key, .lowest, ExprFlag.Set{});
                 },
             }
 
             if (item.kind != .normal) {
+                if (comptime is_json) {
+                    bun.unreachablePanic("item.kind must be normal in json, received: {any}", .{item.kind});
+                }
+
                 switch (item.value.?.data) {
                     .e_function => |func| {
                         p.printFunc(func.func);
@@ -2821,6 +2845,10 @@ pub fn NewPrinter(
                 p.print(":");
                 p.printSpace();
                 p.printExpr(val, .comma, ExprFlag.Set{});
+            }
+
+            if (comptime is_json) {
+                std.debug.assert(item.initializer == null);
             }
 
             if (item.initializer) |initial| {
@@ -3510,7 +3538,7 @@ pub fn NewPrinter(
                                 // we need to handle symbol collisions for this
                                 p.print("$eXp0rT_");
                                 var buf: [16]u8 = undefined;
-                                p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
+                                p.print(std.fmt.bufPrint(&buf, "{}", .{bun.fmt.hexIntLower(symbol_counter)}) catch unreachable);
                                 symbol_counter +|= 1;
                                 p.printWhitespacer(ws(" as "));
                                 p.print(item.alias);
@@ -5211,6 +5239,9 @@ pub fn printJSON(
     var stmts = &[_]js_ast.Stmt{stmt};
     var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
     const ast = Ast.initTest(parts);
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    var allocator = arena.allocator();
     var printer = try PrinterType.init(
         writer,
         &ast,
@@ -5218,7 +5249,7 @@ pub fn printJSON(
         std.mem.zeroes(Symbol.Map),
         .{},
         null,
-        undefined,
+        allocator,
     );
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
@@ -5312,7 +5343,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, true, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, ascii_only, true, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

@@ -44,6 +44,7 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/buffer.js)
  */
 declare module "buffer" {
+  import { ArrayBufferView } from "bun";
   export const INSPECT_MAX_BYTES: number;
   export const kMaxLength: number;
   export type TranscodeEncoding =
@@ -244,7 +245,7 @@ declare module "buffer" {
        * @return The number of bytes contained within `string`.
        */
       byteLength(
-        string: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+        string: string | ArrayBufferView | ArrayBufferLike,
         encoding?: BufferEncoding,
       ): number;
       /**

@@ -472,7 +472,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4391;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4415;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd_, rawRequire, Bun) {\n" \
@@ -552,6 +552,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      }\n" \
     "    }\n" \
     "\n" \
+    "    setRawMode(mode) {}\n" \
     "    on(name, callback) {\n" \
     "      //\n" \
     "      //\n" \

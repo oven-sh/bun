@@ -4,15 +4,16 @@ pub const VLQ_BASE_MASK: u32 = VLQ_BASE - 1;
 pub const VLQ_CONTINUATION_BIT: u32 = VLQ_BASE;
 pub const VLQ_CONTINUATION_MASK: u32 = 1 << VLQ_CONTINUATION_BIT;
 const std = @import("std");
-const JSAst = @import("../js_ast.zig");
+const bun = @import("bun");
+const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
 const Logger = @import("bun").logger;
-const strings = @import("../string_immutable.zig");
-const MutableString = @import("../string_mutable.zig").MutableString;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
 const Joiner = @import("../string_joiner.zig");
-const JSPrinter = @import("../js_printer.zig");
-const URL = @import("../url.zig").URL;
-const FileSystem = @import("../fs.zig").FileSystem;
+const JSPrinter = bun.js_printer;
+const URL = bun.URL;
+const FileSystem = bun.fs.FileSystem;
 
 const SourceMap = @This();
 
@@ -118,8 +119,8 @@ pub const Mapping = struct {
             if (remain[0] == ';') {
                 generated.columns = 0;
 
-                while (remain.len > @sizeOf(usize) / 2 and strings.eqlComptimeIgnoreLen(
-                    remain[0 .. @sizeOf(usize) / 2],
+                while (strings.hasPrefixComptime(
+                    remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
                     generated.lines += (@sizeOf(usize) / 2);
@@ -210,7 +211,7 @@ pub const Mapping = struct {
             remain = remain[source_index_delta.start..];
 
             // // "AAAA" is extremely common
-            // if (remain.len > 5 and remain[4] == ';' and strings.eqlComptimeIgnoreLen(remain[0..4], "AAAA")) {
+            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
 
             // }
 

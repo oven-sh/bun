@@ -32,32 +32,25 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         include:
           - cpu: haswell
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-amd64-lto.tar.gz"
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
-          - cpu: westmere
+          - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-amd64-lto.tar.gz"
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
             build_machine_arch: x86_64
-          - cpu: native
-            tag: linux-aarch64
-            arch: aarch64
-            build_arch: arm64
-            runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
-            build_machine_arch: aarch64
 
     steps:
       - uses: actions/checkout@v3
@@ -128,10 +121,20 @@ jobs:
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-obj-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-obj
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{matrix.tag}}-dependencies
+          path: ${{runner.temp}}/release/bun-dependencies
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
-        if: github.ref == 'refs/heads/main'
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
         with:
           prerelease: true
           body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
@@ -143,11 +146,38 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"
-      - uses: actions/upload-artifact@v3
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
         with:
-          name: bun-obj-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
-        with:
-          name: ${{matrix.tag}}-dependencies
-          path: ${{runner.temp}}/release/bun-dependencies
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Sign Release
+      #   id: sign-release
+      #   if: |
+      #     github.repository_owner == 'oven-sh'
+      #     && github.ref == 'refs/heads/main'
+      #   env:
+      #     GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      #   run: |
+      #     echo "$GPG_PASSPHRASE" | bun run .scripts/sign-release.ts
+      # - name: Release Checksum
+      #   id: release-checksum
+      #   uses: ncipollo/release-action@v1
+      #   if: |
+      #     github.repository_owner == 'oven-sh'
+      #     && github.ref == 'refs/heads/main'
+      #   with:
+      #     prerelease: true
+      #     body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+      #     allowUpdates: true
+      #     replacesArtifacts: true
+      #     generateReleaseNotes: true
+      #     artifactErrorsFailBuild: true
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     name: "Canary (${{github.sha}})"
+      #     tag: "canary"
+      #     artifacts: "SHASUMS256.txt,SHASUMS256.txt.asc"

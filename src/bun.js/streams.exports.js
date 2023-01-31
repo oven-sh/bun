@@ -2949,7 +2949,9 @@ var require_readable = __commonJS({
         } else if (chunk instanceof Buffer) {
           encoding = "";
         } else if (Stream._isUint8Array(chunk)) {
-          chunk = Stream._uint8ArrayToBuffer(chunk);
+          if (addToFront || !state.decoder) {
+            chunk = Stream._uint8ArrayToBuffer(chunk);
+          }
           encoding = "";
         } else if (chunk != null) {
           err = new ERR_INVALID_ARG_TYPE(
@@ -5012,7 +5014,7 @@ var require_transform = __commonJS({
         if (typeof options.flush === "function") this._flush = options.flush;
       }
 
-      this.on("prefinish", prefinish);
+      this.on("prefinish", prefinish.bind(this));
     }
     ObjectSetPrototypeOf(Transform.prototype, Duplex.prototype);
     ObjectSetPrototypeOf(Transform, Duplex);
@@ -5812,7 +5814,7 @@ var require_ours = __commonJS({
     const CustomStream = require_stream();
     const promises = require_promises();
     const originalDestroy = CustomStream.Readable.destroy;
-    module.exports = CustomStream.Readable;
+    module.exports = CustomStream;
     module.exports._uint8ArrayToBuffer = CustomStream._uint8ArrayToBuffer;
     module.exports._isUint8Array = CustomStream._isUint8Array;
     module.exports.isDisturbed = CustomStream.isDisturbed;
@@ -6249,16 +6251,9 @@ var NativeWritable = class NativeWritable extends Writable {
   }
 };
 
-var stream_exports, wrapper;
-stream_exports = require_ours();
-wrapper =
-  (0,
-  function () {
-    return stream_exports;
-  });
-
-wrapper[Symbol.for("CommonJS")] = true;
-export default wrapper;
+const stream_exports = require_ours();
+stream_exports[Symbol.for("CommonJS")] = 0;
+export default stream_exports;
 export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
 export var _isUint8Array = stream_exports._isUint8Array;
 export var isDisturbed = stream_exports.isDisturbed;

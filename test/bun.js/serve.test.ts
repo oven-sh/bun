@@ -1,13 +1,13 @@
 import { file, gc, serve } from "bun";
-import { afterEach, describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { readFile, readFileSync, writeFileSync } from "fs";
+import { afterEach, describe, it, expect, afterAll } from "bun:test";
+import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
-afterEach(() => Bun.gc(true));
+afterEach(() => gc(true));
 
-var port = 10000;
-var count = 200;
-var server;
+const count = 200;
+let port = 10000;
+let server;
 
 async function runTest(serverOptions, test) {
   if (server) {
@@ -34,9 +34,58 @@ async function runTest(serverOptions, test) {
 
 afterAll(() => {
   if (server) {
-    server.stop();
+    server.stop(true);
     server = undefined;
   }
+});
+
+[ 100, 101, 418, 999 ].forEach((statusCode) => {
+  it(`should response with HTTP status code (${statusCode})`, async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response("Foo Bar", { status: statusCode });
+        },
+      },
+      async (server) => {
+        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        expect(response.status).toBe(statusCode);
+        expect(await response.text()).toBe("Foo Bar");
+      },
+    );
+  });
+});
+
+[ -200, 42, 12345, Math.PI ].forEach((statusCode) => {
+  it(`should ignore invalid HTTP status code (${statusCode})`, async () => {
+    await runTest(
+      {
+        fetch() {
+          return new Response("Foo Bar", { status: statusCode });
+        },
+      },
+      async (server) => {
+        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Foo Bar");
+      }
+    );
+  });
+});
+
+it("should display a welcome message when the response value type is incorrect", async () => {
+  await runTest(
+    {
+      fetch(req) {
+        return Symbol("invalid response type");
+      },
+    },
+    async (server) => {
+      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const text = await response.text();
+      expect(text).toContain("Welcome to Bun!");
+    },
+  );
 });
 
 it("should work for a file", async () => {
@@ -104,7 +153,6 @@ describe("streaming", () => {
       var pass = false;
       await runTest(
         {
-          development: false,
           error(e) {
             pass = true;
             return new Response("PASS", { status: 555 });
@@ -136,16 +184,16 @@ describe("streaming", () => {
       var pass = true;
       await runTest(
         {
-          development: false,
           error(e) {
-            pass = true;
+            pass = false;
             return new Response("FAIL", { status: 555 });
           },
           fetch(req) {
             return new Response(
               new ReadableStream({
-                pull(controller) {
+                async pull(controller) {
                   controller.enqueue("PASS");
+                  controller.close();
                   throw new Error("error");
                 },
               }),
@@ -157,7 +205,7 @@ describe("streaming", () => {
             `http://${server.hostname}:${server.port}`,
           );
           // connection terminated
-          expect(response.status).toBe(500);
+          expect(response.status).toBe(200);
           expect(await response.text()).toBe("PASS");
           expect(pass).toBe(true);
         },
@@ -217,11 +265,13 @@ describe("streaming", () => {
     );
   });
 
-  it("text from JS throws on start no error handler", async () => {
+  it("Error handler is called when a throwing stream hasn't written anything", async () => {
     await runTest(
       {
-        port: port++,
-        development: false,
+        error(e) {
+          return new Response("Test Passed", { status: 200 });
+        },
+
         fetch(req) {
           return new Response(
             new ReadableStream({
@@ -229,6 +279,41 @@ describe("streaming", () => {
                 throw new Error("Test Passed");
               },
             }),
+            {
+              status: 404,
+            },
+          );
+        },
+      },
+      async (server) => {
+        const response = await fetch(
+          `http://${server.hostname}:${server.port}`,
+        );
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe("Test Passed");
+      },
+    );
+  });
+
+  // Also verifies error handler reset in `.reload()` due to test above
+  it("text from JS throws on start with no error handler", async () => {
+    await runTest(
+      {
+        error: undefined,
+
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new Error("Test Passed");
+              },
+            }),
+            {
+              status: 420,
+              headers: {
+                "x-what": "123",
+              },
+            },
           );
         },
       },
@@ -246,7 +331,6 @@ describe("streaming", () => {
     var err;
     await runTest(
       {
-        development: false,
         error(e) {
           pass = true;
           err = e;
@@ -355,6 +439,47 @@ describe("streaming", () => {
         expect(await response.text()).toBe(textToExpect);
       },
     );
+  });
+
+  it("text from JS, 3 chunks, 1 empty, with delay in pull", async () => {
+    const textToExpect = "hello world";
+    const groups = [
+      ["hello", "", " world"],
+      ["", "hello ", "world"],
+      ["hello ", "world", ""],
+      ["hello world", "", ""],
+      ["", "", "hello world"],
+    ];
+    var count = 0;
+
+    for (const chunks of groups) {
+      await runTest(
+        {
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  for (let chunk of chunks) {
+                    controller.enqueue(Buffer.from(chunk));
+                    await 1;
+                  }
+                  await 1;
+                  controller.close();
+                },
+              }),
+            );
+          },
+        },
+        async (server) => {
+          const response = await fetch(
+            `http://${server.hostname}:${server.port}`,
+          );
+          expect(await response.text()).toBe(textToExpect);
+          count++;
+        },
+      );
+    }
+    expect(count).toBe(groups.length);
   });
 
   it("text from JS, 2 chunks, with async pull", async () => {
@@ -739,7 +864,6 @@ it("should support multiple Set-Cookie headers", async () => {
 });
 
 describe("should support Content-Range with Bun.file()", () => {
-  var server;
   // this must be a big file so we can test potentially multiple chunks
   // more than 65 KB
   const full = (function () {
@@ -781,7 +905,6 @@ describe("should support Content-Range with Bun.file()", () => {
       await getServer(async (server) => {
         const response = await fetch(
           `http://${server.hostname}:${server.port}/?start=${start}&end=${end}`,
-          {},
           { verbose: true },
         );
         expect(await response.arrayBuffer()).toEqual(

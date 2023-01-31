@@ -1,4 +1,5 @@
 #include "helpers.h"
+#include "headers.h"
 
 #include "JavaScriptCore/ConsoleClient.h"
 #include "JavaScriptCore/ConsoleMessage.h"
@@ -17,7 +18,6 @@ using JSGlobalObject = JSC__JSGlobalObject;
 using String = WTF::String;
 
 extern "C" {
-
 }
 
 void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level,

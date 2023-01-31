@@ -268,7 +268,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            this.poll_ref.unref(JSC.VirtualMachine.get());
+            this.poll_ref.unrefOnNextTick(JSC.VirtualMachine.get());
 
             this.clearInput();
             if (this.body_buf) |buf| {
@@ -346,9 +346,9 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var body = this.getBody();
             var remain = body[this.body_written..];
             const is_first = this.body_written == 0;
-            if (is_first and data.len >= "HTTP/1.1 101 ".len) {
+            if (is_first) {
                 // fail early if we receive a non-101 status code
-                if (!strings.eqlComptimeIgnoreLen(data[0.."HTTP/1.1 101 ".len], "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(data, "HTTP/1.1 101 ")) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
@@ -866,7 +866,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn clearData(this: *WebSocket) void {
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_len = 0;
@@ -986,7 +986,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             @memcpy(writable.ptr, data_.ptr, data_.len);
             this.receive_buffer.update(data_.len);
 
-            if (left_in_fragment > data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
+            if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                 this.receive_pending_chunk_len = 0;
                 this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                 this.clearReceiveBuffers(false);
@@ -1453,7 +1453,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         fn dispatchClose(this: *WebSocket) void {
             var out = this.outgoing_websocket orelse return;
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }

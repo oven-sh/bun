@@ -1,8 +1,17 @@
 import { it, expect, describe } from "bun:test";
 
+it("when prototype defines the same property, don't print the same property twice", () => {
+  var base = {
+    foo: "123",
+  };
+  var obj = Object.create(base);
+  obj.foo = "456";
+  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
+});
+
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
-  expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (3 KB)`);
+  expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
   expect(Bun.inspect(Bun.file("/tmp/file.txt")))
     .toBe(`FileRef ("/tmp/file.txt") {
   type: "text/plain;charset=utf-8"
@@ -30,26 +39,25 @@ it("Blob inspect", () => {
 }`);
 });
 
-// this test is currently failing!
-// it("utf16 property name", () => {
-//   var { Database } = require("bun:sqlite");
-//   const db = Database.open(":memory:");
-//   expect("笑".codePointAt(0)).toBe(31505);
+it.skip("utf16 property name", () => {
+  var { Database } = require("bun:sqlite");
+  const db = Database.open(":memory:");
+  expect("笑".codePointAt(0)).toBe(31505);
 
-//   // latin1 escaping identifier issue
-//   expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
+  // latin1 escaping identifier issue
+  expect(Object.keys({ 笑: "hey" })[0].codePointAt(0)).toBe(31505);
 
-//   const output = JSON.stringify(
-//     [
-//       {
-//         笑: "😀",
-//       },
-//     ],
-//     null,
-//     2,
-//   );
-//   expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
-// });
+  const output = JSON.stringify(
+    [
+      {
+        笑: "😀",
+      },
+    ],
+    null,
+    2,
+  );
+  expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(output);
+});
 
 it("latin1", () => {
   expect(Bun.inspect("English")).toBe("English");

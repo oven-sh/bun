@@ -1,4 +1,5 @@
 import { it, expect } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import * as Module from "node:module";
 import sync from "./require-json.json";
 
@@ -22,10 +23,50 @@ it("import.meta.resolveSync", () => {
   ).toBe(import.meta.path);
 });
 
+it("require with a query string works on dynamically created content", () => {
+  rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+    recursive: true,
+    force: true,
+  });
+  try {
+    const require = Module.createRequire(
+      "/tmp/bun-test-import-meta-dynamic-dir/foo.js",
+    );
+    try {
+      require("./bar.js?query=123");
+    } catch (e) {
+      expect(e.name).toBe("ResolveError");
+    }
+
+    mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
+
+    writeFileSync(
+      "/tmp/bun-test-import-meta-dynamic-dir/bar.js",
+      "export default 'hello';",
+      "utf8",
+    );
+
+    expect(require("./bar.js?query=123").default).toBe("hello");
+  } catch (e) {
+    throw e;
+  } finally {
+    rmSync("/tmp/bun-test-import-meta-dynamic-dir", {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
 it("import.meta.require (json)", () => {
   expect(import.meta.require("./require-json.json").hello).toBe(sync.hello);
   const require = Module.createRequire(import.meta.path);
   expect(require("./require-json.json").hello).toBe(sync.hello);
+});
+
+it("const f = require;require(json)", () => {
+  const f = require;
+  console.log(f);
+  expect(f("./require-json.json").hello).toBe(sync.hello);
 });
 
 it("Module.createRequire().resolve", () => {

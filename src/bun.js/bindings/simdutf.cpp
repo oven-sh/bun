@@ -1,8 +1,8 @@
-/* auto-generated on 2022-11-22 11:39:54 -0500. Do not edit! */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf.cpp
+/* auto-generated on 2023-01-02 15:43:33 -0500. Do not edit! */
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf.cpp
 /* begin file src/simdutf.cpp */
 #include "simdutf.h"
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=implementation.cpp
 /* begin file src/implementation.cpp */
 #include <initializer_list>
 #include <climits>
@@ -25,7 +25,8 @@ std::string toBinaryString(T b) {
 }
 
 // Implementations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64.h
+// The best choice should always come first!
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64.h
 /* begin file src/simdutf/arm64.h */
 #ifndef SIMDUTF_ARM64_H
 #define SIMDUTF_ARM64_H
@@ -52,7 +53,7 @@ namespace arm64 {
 } // namespace arm64
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/implementation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/implementation.h
 /* begin file src/simdutf/arm64/implementation.h */
 #ifndef SIMDUTF_ARM64_IMPLEMENTATION_H
 #define SIMDUTF_ARM64_IMPLEMENTATION_H
@@ -129,14 +130,14 @@ public:
 #endif // SIMDUTF_ARM64_IMPLEMENTATION_H
 /* end file src/simdutf/arm64/implementation.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/begin.h
 /* begin file src/simdutf/arm64/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "arm64"
 // #define SIMDUTF_IMPLEMENTATION arm64
 /* end file src/simdutf/arm64/begin.h */
 
 // Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/intrinsics.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/intrinsics.h
 /* begin file src/simdutf/arm64/intrinsics.h */
 #ifndef SIMDUTF_ARM64_INTRINSICS_H
 #define SIMDUTF_ARM64_INTRINSICS_H
@@ -148,7 +149,7 @@ public:
 
 #endif //  SIMDUTF_ARM64_INTRINSICS_H
 /* end file src/simdutf/arm64/intrinsics.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/bitmanipulation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/bitmanipulation.h
 /* begin file src/simdutf/arm64/bitmanipulation.h */
 #ifndef SIMDUTF_ARM64_BITMANIPULATION_H
 #define SIMDUTF_ARM64_BITMANIPULATION_H
@@ -168,7 +169,7 @@ simdutf_really_inline int count_ones(uint64_t input_num) {
 
 #endif // SIMDUTF_ARM64_BITMANIPULATION_H
 /* end file src/simdutf/arm64/bitmanipulation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/simd.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/simd.h
 /* begin file src/simdutf/arm64/simd.h */
 #ifndef SIMDUTF_ARM64_SIMD_H
 #define SIMDUTF_ARM64_SIMD_H
@@ -781,7 +782,7 @@ simdutf_really_inline int16x8_t make_int16x8_t(int16_t x1,  int16_t x2,  int16_t
       ).to_bitmask();
     }
   }; // struct simd8x64<T>
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/simd16-inl.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/simd16-inl.h
 /* begin file src/simdutf/arm64/simd16-inl.h */
 template<typename T>
 struct simd16;
@@ -1096,7 +1097,7 @@ simdutf_really_inline simd16<int16_t>::operator simd16<uint16_t>() const { retur
 #endif // SIMDUTF_ARM64_SIMD_H
 /* end file src/simdutf/arm64/simd.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/end.h
 /* begin file src/simdutf/arm64/end.h */
 /* end file src/simdutf/arm64/end.h */
 
@@ -1104,7 +1105,314 @@ simdutf_really_inline simd16<int16_t>::operator simd16<uint16_t>() const { retur
 
 #endif // SIMDUTF_ARM64_H
 /* end file src/simdutf/arm64.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake.h
+/* begin file src/simdutf/icelake.h */
+#ifndef SIMDUTF_ICELAKE_H
+#define SIMDUTF_ICELAKE_H
+
+
+
+#ifdef __has_include
+// How do we detect that a compiler supports vbmi2?
+// For sure if the following header is found, we are ok?
+#if __has_include(<avx512vbmi2intrin.h>)
+#define SIMDUTF_COMPILER_SUPPORTS_VBMI2 1
+#endif
+#endif
+
+#ifdef _MSC_VER
+#if _MSC_VER >= 1920
+// Visual Studio 2019 and up support VBMI2 under x64 even if the header
+// avx512vbmi2intrin.h is not found.
+#define SIMDUTF_COMPILER_SUPPORTS_VBMI2 1
+#endif
+#endif
+
+// We allow icelake on x64 as long as the compiler is known to support VBMI2.
+#ifndef SIMDUTF_IMPLEMENTATION_ICELAKE
+#define SIMDUTF_IMPLEMENTATION_ICELAKE ((SIMDUTF_IS_X86_64) && (SIMDUTF_COMPILER_SUPPORTS_VBMI2))
+#endif
+
+// To see why  (__BMI__) && (__PCLMUL__) && (__LZCNT__) are not part of this next line, see
+// https://github.com/simdutf/simdutf/issues/1247
+#define SIMDUTF_CAN_ALWAYS_RUN_ICELAKE ((SIMDUTF_IMPLEMENTATION_ICELAKE) && (SIMDUTF_IS_X86_64) && (__AVX2__) && (SIMDUTF_HAS_AVX512F && \
+                                         SIMDUTF_HAS_AVX512DQ && \
+                                         SIMDUTF_HAS_AVX512VL && \
+                                           SIMDUTF_HAS_AVX512VBMI2) && (!SIMDUTF_IS_32BITS))
+
+#if SIMDUTF_IMPLEMENTATION_ICELAKE
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+#define SIMDUTF_TARGET_ICELAKE
+#else
+#define SIMDUTF_TARGET_ICELAKE SIMDUTF_TARGET_REGION("avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt")
+#endif
+
+namespace simdutf {
+namespace icelake {
+} // namespace icelake
+} // namespace simdutf
+
+
+
+//
+// These two need to be included outside SIMDUTF_TARGET_REGION
+//
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/intrinsics.h
+/* begin file src/simdutf/icelake/intrinsics.h */
+#ifndef SIMDUTF_ICELAKE_INTRINSICS_H
+#define SIMDUTF_ICELAKE_INTRINSICS_H
+
+
+#ifdef SIMDUTF_VISUAL_STUDIO
+// under clang within visual studio, this will include <x86intrin.h>
+#include <intrin.h>  // visual studio or clang
+#include <immintrin.h>
+#else
+
+#if SIMDUTF_GCC11ORMORE
+// We should not get warnings while including <x86intrin.h> yet we do
+// under some versions of GCC.
+// If the x86intrin.h header has uninitialized values that are problematic,
+// it is a GCC issue, we want to ignore these warnigns.
+SIMDUTF_DISABLE_GCC_WARNING(-Wuninitialized)
+#endif
+
+#include <x86intrin.h> // elsewhere
+
+
+#if SIMDUTF_GCC11ORMORE
+// cancels the suppression of the -Wuninitialized
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif
+
+#ifndef _tzcnt_u64
+#define _tzcnt_u64(x) __tzcnt_u64(x)
+#endif // _tzcnt_u64
+#endif // SIMDUTF_VISUAL_STUDIO
+
+#ifdef SIMDUTF_CLANG_VISUAL_STUDIO
+/**
+ * You are not supposed, normally, to include these
+ * headers directly. Instead you should either include intrin.h
+ * or x86intrin.h. However, when compiling with clang
+ * under Windows (i.e., when _MSC_VER is set), these headers
+ * only get included *if* the corresponding features are detected
+ * from macros:
+ * e.g., if __AVX2__ is set... in turn,  we normally set these
+ * macros by compiling against the corresponding architecture
+ * (e.g., arch:AVX2, -mavx2, etc.) which compiles the whole
+ * software with these advanced instructions. In simdutf, we
+ * want to compile the whole program for a generic target,
+ * and only target our specific kernels. As a workaround,
+ * we directly include the needed headers. These headers would
+ * normally guard against such usage, but we carefully included
+ * <x86intrin.h>  (or <intrin.h>) before, so the headers
+ * are fooled.
+ */
+#include <bmiintrin.h>   // for _blsr_u64
+#include <bmi2intrin.h>  // for _pext_u64, _pdep_u64
+#include <lzcntintrin.h> // for  __lzcnt64
+#include <immintrin.h>   // for most things (AVX2, AVX512, _popcnt64)
+#include <smmintrin.h>
+#include <tmmintrin.h>
+#include <avxintrin.h>
+#include <avx2intrin.h>
+#include <wmmintrin.h>   // for  _mm_clmulepi64_si128
+// Important: we need the AVX-512 headers:
+#include <avx512fintrin.h>
+#include <avx512dqintrin.h>
+#include <avx512cdintrin.h>
+#include <avx512bwintrin.h>
+#include <avx512vlintrin.h>
+#include <avx512vlbwintrin.h>
+#include <avx512vbmiintrin.h>
+#include <avx512vbmi2intrin.h>
+// unfortunately, we may not get _blsr_u64, but, thankfully, clang
+// has it as a macro.
+#ifndef _blsr_u64
+// we roll our own
+#define _blsr_u64(n) ((n - 1) & n)
+#endif //  _blsr_u64
+#endif // SIMDUTF_CLANG_VISUAL_STUDIO
+
+
+
+#if defined(__GNUC__) && !defined(__clang__)
+
+#if __GNUC__ == 8
+#define SIMDUTF_GCC8 1
+#elif __GNUC__ == 9
+#define SIMDUTF_GCC9 1
+#endif //  __GNUC__ == 8 || __GNUC__ == 9
+
+#endif // defined(__GNUC__) && !defined(__clang__)
+
+#if SIMDUTF_GCC8
+#pragma GCC push_options
+#pragma GCC target("avx512f")
+/**
+ * GCC 8 fails to provide _mm512_set_epi8. We roll our own.
+ */
+inline __m512i _mm512_set_epi8(uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5, uint8_t a6, uint8_t a7, uint8_t a8, uint8_t a9, uint8_t a10, uint8_t a11, uint8_t a12, uint8_t a13, uint8_t a14, uint8_t a15, uint8_t a16, uint8_t a17, uint8_t a18, uint8_t a19, uint8_t a20, uint8_t a21, uint8_t a22, uint8_t a23, uint8_t a24, uint8_t a25, uint8_t a26, uint8_t a27, uint8_t a28, uint8_t a29, uint8_t a30, uint8_t a31, uint8_t a32, uint8_t a33, uint8_t a34, uint8_t a35, uint8_t a36, uint8_t a37, uint8_t a38, uint8_t a39, uint8_t a40, uint8_t a41, uint8_t a42, uint8_t a43, uint8_t a44, uint8_t a45, uint8_t a46, uint8_t a47, uint8_t a48, uint8_t a49, uint8_t a50, uint8_t a51, uint8_t a52, uint8_t a53, uint8_t a54, uint8_t a55, uint8_t a56, uint8_t a57, uint8_t a58, uint8_t a59, uint8_t a60, uint8_t a61, uint8_t a62, uint8_t a63) {
+  return _mm512_set_epi64(uint64_t(a7) + (uint64_t(a6) << 8) + (uint64_t(a5) << 16) + (uint64_t(a4) << 24) + (uint64_t(a3) << 32) + (uint64_t(a2) << 40) + (uint64_t(a1) << 48) + (uint64_t(a0) << 56),
+                          uint64_t(a15) + (uint64_t(a14) << 8) + (uint64_t(a13) << 16) + (uint64_t(a12) << 24) + (uint64_t(a11) << 32) + (uint64_t(a10) << 40) + (uint64_t(a9) << 48) + (uint64_t(a8) << 56),
+                          uint64_t(a23) + (uint64_t(a22) << 8) + (uint64_t(a21) << 16) + (uint64_t(a20) << 24) + (uint64_t(a19) << 32) + (uint64_t(a18) << 40) + (uint64_t(a17) << 48) + (uint64_t(a16) << 56),
+                          uint64_t(a31) + (uint64_t(a30) << 8) + (uint64_t(a29) << 16) + (uint64_t(a28) << 24) + (uint64_t(a27) << 32) + (uint64_t(a26) << 40) + (uint64_t(a25) << 48) + (uint64_t(a24) << 56),
+                          uint64_t(a39) + (uint64_t(a38) << 8) + (uint64_t(a37) << 16) + (uint64_t(a36) << 24) + (uint64_t(a35) << 32) + (uint64_t(a34) << 40) + (uint64_t(a33) << 48) + (uint64_t(a32) << 56),
+                          uint64_t(a47) + (uint64_t(a46) << 8) + (uint64_t(a45) << 16) + (uint64_t(a44) << 24) + (uint64_t(a43) << 32) + (uint64_t(a42) << 40) + (uint64_t(a41) << 48) + (uint64_t(a40) << 56),
+                          uint64_t(a55) + (uint64_t(a54) << 8) + (uint64_t(a53) << 16) + (uint64_t(a52) << 24) + (uint64_t(a51) << 32) + (uint64_t(a50) << 40) + (uint64_t(a49) << 48) + (uint64_t(a48) << 56),
+                          uint64_t(a63) + (uint64_t(a62) << 8) + (uint64_t(a61) << 16) + (uint64_t(a60) << 24) + (uint64_t(a59) << 32) + (uint64_t(a58) << 40) + (uint64_t(a57) << 48) + (uint64_t(a56) << 56));
+}
+#pragma GCC pop_options
+#endif // SIMDUTF_GCC8
+
+#endif // SIMDUTF_HASWELL_INTRINSICS_H
+/* end file src/simdutf/icelake/intrinsics.h */
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/implementation.h
+/* begin file src/simdutf/icelake/implementation.h */
+#ifndef SIMDUTF_ICELAKE_IMPLEMENTATION_H
+#define SIMDUTF_ICELAKE_IMPLEMENTATION_H
+
+
+namespace simdutf {
+namespace icelake {
+
+namespace {
+using namespace simdutf;
+}
+
+class implementation final : public simdutf::implementation {
+public:
+  simdutf_really_inline implementation() : simdutf::implementation(
+      "icelake",
+      "Intel AVX512 (AVX-512BW, AVX-512CD, AVX-512VL, AVX-512VBMI2 extensions)",
+      internal::instruction_set::AVX2 | internal::instruction_set::PCLMULQDQ | internal::instruction_set::BMI1 | internal::instruction_set::BMI2 | internal::instruction_set::AVX512BW | internal::instruction_set::AVX512CD | internal::instruction_set::AVX512VL | internal::instruction_set::AVX512VBMI2 ) {}
+  simdutf_warn_unused int detect_encodings(const char * input, size_t length) const noexcept final;
+  simdutf_warn_unused bool validate_utf8(const char *buf, size_t len) const noexcept final;
+  simdutf_warn_unused result validate_utf8_with_errors(const char *buf, size_t len) const noexcept final;
+  simdutf_warn_unused bool validate_ascii(const char *buf, size_t len) const noexcept final;
+  simdutf_warn_unused result validate_ascii_with_errors(const char *buf, size_t len) const noexcept final;
+  simdutf_warn_unused bool validate_utf16le(const char16_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused bool validate_utf16be(const char16_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused result validate_utf16le_with_errors(const char16_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused result validate_utf16be_with_errors(const char16_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused bool validate_utf32(const char32_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused result validate_utf32_with_errors(const char32_t *buf, size_t len) const noexcept final;
+  simdutf_warn_unused size_t convert_utf8_to_utf16le(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
+  simdutf_warn_unused size_t convert_utf8_to_utf16be(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
+  simdutf_warn_unused result convert_utf8_to_utf16le_with_errors(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
+  simdutf_warn_unused result convert_utf8_to_utf16be_with_errors(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf8_to_utf16le(const char * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf8_to_utf16be(const char * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf8_to_utf32(const char * buf, size_t len, char32_t* utf32_output) const noexcept final;
+  simdutf_warn_unused result convert_utf8_to_utf32_with_errors(const char * buf, size_t len, char32_t* utf32_output) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf8_to_utf32(const char * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf16le_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf16be_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf16le_to_utf8_with_errors(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf16be_to_utf8_with_errors(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf16le_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf16be_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf32_to_utf8(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf32_to_utf8_with_errors(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf32_to_utf8(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf32_to_utf16le(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf32_to_utf16be(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf32_to_utf16le_with_errors(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf32_to_utf16be_with_errors(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf32_to_utf16le(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf32_to_utf16be(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf16le_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_utf16be_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf16le_to_utf32_with_errors(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused result convert_utf16be_to_utf32_with_errors(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf16le_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  simdutf_warn_unused size_t convert_valid_utf16be_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
+  void change_endianness_utf16(const char16_t * buf, size_t length, char16_t * output) const noexcept final;
+  simdutf_warn_unused size_t count_utf16le(const char16_t * buf, size_t length) const noexcept;
+  simdutf_warn_unused size_t count_utf16be(const char16_t * buf, size_t length) const noexcept;
+  simdutf_warn_unused size_t count_utf8(const char * buf, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf8_length_from_utf16le(const char16_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf8_length_from_utf16be(const char16_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf32_length_from_utf16le(const char16_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf32_length_from_utf16be(const char16_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf16_length_from_utf8(const char * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf8_length_from_utf32(const char32_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf16_length_from_utf32(const char32_t * input, size_t length) const noexcept;
+  simdutf_warn_unused size_t utf32_length_from_utf8(const char * input, size_t length) const noexcept;
+};
+
+} // namespace icelake
+} // namespace simdutf
+
+#endif // SIMDUTF_ICELAKE_IMPLEMENTATION_H
+/* end file src/simdutf/icelake/implementation.h */
+
+//
+// The rest need to be inside the region
+//
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/begin.h
+/* begin file src/simdutf/icelake/begin.h */
+// redefining SIMDUTF_IMPLEMENTATION to "icelake"
+// #define SIMDUTF_IMPLEMENTATION icelake
+
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+// nothing needed.
+#else
+SIMDUTF_TARGET_ICELAKE
+#endif
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_DISABLE_GCC_WARNING(-Wmaybe-uninitialized)
+#endif // end of workaround
+/* end file src/simdutf/icelake/begin.h */
+// Declarations
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/bitmanipulation.h
+/* begin file src/simdutf/icelake/bitmanipulation.h */
+#ifndef SIMDUTF_ICELAKE_BITMANIPULATION_H
+#define SIMDUTF_ICELAKE_BITMANIPULATION_H
+
+namespace simdutf {
+namespace icelake {
+namespace {
+
+#ifdef SIMDUTF_REGULAR_VISUAL_STUDIO
+simdutf_really_inline unsigned __int64 count_ones(uint64_t input_num) {
+  // note: we do not support legacy 32-bit Windows
+  return __popcnt64(input_num);// Visual Studio wants two underscores
+}
+#else
+simdutf_really_inline long long int count_ones(uint64_t input_num) {
+  return _popcnt64(input_num);
+}
+#endif
+
+} // unnamed namespace
+} // namespace icelake
+} // namespace simdutf
+
+#endif // SIMDUTF_ICELAKE_BITMANIPULATION_H
+/* end file src/simdutf/icelake/bitmanipulation.h */
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/end.h
+/* begin file src/simdutf/icelake/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+// nothing needed.
+#else
+SIMDUTF_UNTARGET_REGION
+#endif
+
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif // end of workaround
+/* end file src/simdutf/icelake/end.h */
+
+
+
+#endif // SIMDUTF_IMPLEMENTATION_ICELAKE
+#endif // SIMDUTF_ICELAKE_H
+/* end file src/simdutf/icelake.h */
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell.h
 /* begin file src/simdutf/haswell.h */
 #ifndef SIMDUTF_HASWELL_H
 #define SIMDUTF_HASWELL_H
@@ -1124,7 +1432,12 @@ simdutf_really_inline simd16<int16_t>::operator simd16<uint16_t>() const { retur
 // You do not want to restrict it like so: SIMDUTF_IS_X86_64 && __AVX2__
 // because we want to rely on *runtime dispatch*.
 //
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+#define SIMDUTF_IMPLEMENTATION_HASWELL 0
+#else
 #define SIMDUTF_IMPLEMENTATION_HASWELL (SIMDUTF_IS_X86_64)
+#endif
+
 #endif
 // To see why  (__BMI__) && (__PCLMUL__) && (__LZCNT__) are not part of this next line, see
 // https://github.com/simdutf/simdutf/issues/1247
@@ -1145,7 +1458,7 @@ namespace haswell {
 //
 // These two need to be included outside SIMDUTF_TARGET_REGION
 //
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/implementation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/implementation.h
 /* begin file src/simdutf/haswell/implementation.h */
 #ifndef SIMDUTF_HASWELL_IMPLEMENTATION_H
 #define SIMDUTF_HASWELL_IMPLEMENTATION_H
@@ -1224,7 +1537,7 @@ public:
 
 #endif // SIMDUTF_HASWELL_IMPLEMENTATION_H
 /* end file src/simdutf/haswell/implementation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/intrinsics.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/intrinsics.h
 /* begin file src/simdutf/haswell/intrinsics.h */
 #ifndef SIMDUTF_HASWELL_INTRINSICS_H
 #define SIMDUTF_HASWELL_INTRINSICS_H
@@ -1234,7 +1547,23 @@ public:
 // under clang within visual studio, this will include <x86intrin.h>
 #include <intrin.h>  // visual studio or clang
 #else
+
+#if SIMDUTF_GCC11ORMORE
+// We should not get warnings while including <x86intrin.h> yet we do
+// under some versions of GCC.
+// If the x86intrin.h header has uninitialized values that are problematic,
+// it is a GCC issue, we want to ignore these warnigns.
+SIMDUTF_DISABLE_GCC_WARNING(-Wuninitialized)
+#endif
+
 #include <x86intrin.h> // elsewhere
+
+
+#if SIMDUTF_GCC11ORMORE
+// cancels the suppression of the -Wuninitialized
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif
+
 #endif // SIMDUTF_VISUAL_STUDIO
 
 #ifdef SIMDUTF_CLANG_VISUAL_STUDIO
@@ -1278,14 +1607,23 @@ public:
 //
 // The rest need to be inside the region
 //
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/begin.h
 /* begin file src/simdutf/haswell/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "haswell"
 // #define SIMDUTF_IMPLEMENTATION haswell
+
+#if SIMDUTF_CAN_ALWAYS_RUN_HASWELL
+// nothing needed.
+#else
 SIMDUTF_TARGET_HASWELL
+#endif
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_DISABLE_GCC_WARNING(-Wmaybe-uninitialized)
+#endif // end of workaround
 /* end file src/simdutf/haswell/begin.h */
 // Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/bitmanipulation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/bitmanipulation.h
 /* begin file src/simdutf/haswell/bitmanipulation.h */
 #ifndef SIMDUTF_HASWELL_BITMANIPULATION_H
 #define SIMDUTF_HASWELL_BITMANIPULATION_H
@@ -1311,7 +1649,7 @@ simdutf_really_inline long long int count_ones(uint64_t input_num) {
 
 #endif // SIMDUTF_HASWELL_BITMANIPULATION_H
 /* end file src/simdutf/haswell/bitmanipulation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/simd.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/simd.h
 /* begin file src/simdutf/haswell/simd.h */
 #ifndef SIMDUTF_HASWELL_SIMD_H
 #define SIMDUTF_HASWELL_SIMD_H
@@ -1707,7 +2045,7 @@ namespace simd {
     }
   }; // struct simd8x64<T>
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/simd16-inl.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/simd16-inl.h
 /* begin file src/simdutf/haswell/simd16-inl.h */
 #ifdef __GNUC__
 #if __GNUC__ < 8
@@ -1987,15 +2325,24 @@ struct simd16<uint16_t>: base16_numeric<uint16_t>  {
 #endif // SIMDUTF_HASWELL_SIMD_H
 /* end file src/simdutf/haswell/simd.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/end.h
 /* begin file src/simdutf/haswell/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_HASWELL
+// nothing needed.
+#else
 SIMDUTF_UNTARGET_REGION
+#endif
+
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif // end of workaround
 /* end file src/simdutf/haswell/end.h */
 
 #endif // SIMDUTF_IMPLEMENTATION_HASWELL
 #endif // SIMDUTF_HASWELL_COMMON_H
 /* end file src/simdutf/haswell.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere.h
 /* begin file src/simdutf/westmere.h */
 #ifndef SIMDUTF_WESTMERE_H
 #define SIMDUTF_WESTMERE_H
@@ -2011,8 +2358,14 @@ SIMDUTF_UNTARGET_REGION
 // You do not want to set it to (SIMDUTF_IS_X86_64 && !SIMDUTF_REQUIRES_HASWELL)
 // because you want to rely on runtime dispatch!
 //
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE || SIMDUTF_CAN_ALWAYS_RUN_HASWELL
+#define SIMDUTF_IMPLEMENTATION_WESTMERE 0
+#else
 #define SIMDUTF_IMPLEMENTATION_WESTMERE (SIMDUTF_IS_X86_64)
 #endif
+
+#endif
+
 #define SIMDUTF_CAN_ALWAYS_RUN_WESTMERE (SIMDUTF_IMPLEMENTATION_WESTMERE && SIMDUTF_IS_X86_64 && __SSE4_2__ && __PCLMUL__)
 
 #if SIMDUTF_IMPLEMENTATION_WESTMERE
@@ -2030,7 +2383,7 @@ namespace westmere {
 //
 // These two need to be included outside SIMDUTF_TARGET_REGION
 //
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/implementation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/implementation.h
 /* begin file src/simdutf/westmere/implementation.h */
 #ifndef SIMDUTF_WESTMERE_IMPLEMENTATION_H
 #define SIMDUTF_WESTMERE_IMPLEMENTATION_H
@@ -2107,7 +2460,7 @@ public:
 
 #endif // SIMDUTF_WESTMERE_IMPLEMENTATION_H
 /* end file src/simdutf/westmere/implementation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/intrinsics.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/intrinsics.h
 /* begin file src/simdutf/westmere/intrinsics.h */
 #ifndef SIMDUTF_WESTMERE_INTRINSICS_H
 #define SIMDUTF_WESTMERE_INTRINSICS_H
@@ -2116,7 +2469,23 @@ public:
 // under clang within visual studio, this will include <x86intrin.h>
 #include <intrin.h> // visual studio or clang
 #else
+
+#if SIMDUTF_GCC11ORMORE
+// We should not get warnings while including <x86intrin.h> yet we do
+// under some versions of GCC.
+// If the x86intrin.h header has uninitialized values that are problematic,
+// it is a GCC issue, we want to ignore these warnigns.
+SIMDUTF_DISABLE_GCC_WARNING(-Wuninitialized)
+#endif
+
 #include <x86intrin.h> // elsewhere
+
+
+#if SIMDUTF_GCC11ORMORE
+// cancels the suppression of the -Wuninitialized
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif
+
 #endif // SIMDUTF_VISUAL_STUDIO
 
 
@@ -2141,15 +2510,20 @@ public:
 //
 // The rest need to be inside the region
 //
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/begin.h
 /* begin file src/simdutf/westmere/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "westmere"
 // #define SIMDUTF_IMPLEMENTATION westmere
+
+#if SIMDUTF_CAN_ALWAYS_RUN_WESTMERE
+// nothing needed.
+#else
 SIMDUTF_TARGET_WESTMERE
+#endif
 /* end file src/simdutf/westmere/begin.h */
 
 // Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/bitmanipulation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/bitmanipulation.h
 /* begin file src/simdutf/westmere/bitmanipulation.h */
 #ifndef SIMDUTF_WESTMERE_BITMANIPULATION_H
 #define SIMDUTF_WESTMERE_BITMANIPULATION_H
@@ -2175,7 +2549,7 @@ simdutf_really_inline long long int count_ones(uint64_t input_num) {
 
 #endif // SIMDUTF_WESTMERE_BITMANIPULATION_H
 /* end file src/simdutf/westmere/bitmanipulation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/simd.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/simd.h
 /* begin file src/simdutf/westmere/simd.h */
 #ifndef SIMDUTF_WESTMERE_SIMD_H
 #define SIMDUTF_WESTMERE_SIMD_H
@@ -2619,7 +2993,7 @@ namespace simd {
     }
   }; // struct simd8x64<T>
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/simd16-inl.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/simd16-inl.h
 /* begin file src/simdutf/westmere/simd16-inl.h */
 template<typename T>
 struct simd16;
@@ -2896,15 +3270,20 @@ template<typename T>
 #endif // SIMDUTF_WESTMERE_SIMD_INPUT_H
 /* end file src/simdutf/westmere/simd.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/end.h
 /* begin file src/simdutf/westmere/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_WESTMERE
+// nothing needed.
+#else
 SIMDUTF_UNTARGET_REGION
+#endif
+
 /* end file src/simdutf/westmere/end.h */
 
 #endif // SIMDUTF_IMPLEMENTATION_WESTMERE
 #endif // SIMDUTF_WESTMERE_COMMON_H
 /* end file src/simdutf/westmere.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64.h
 /* begin file src/simdutf/ppc64.h */
 #ifndef SIMDUTF_PPC64_H
 #define SIMDUTF_PPC64_H
@@ -2931,7 +3310,7 @@ namespace ppc64 {
 } // namespace ppc64
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/implementation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/implementation.h
 /* begin file src/simdutf/ppc64/implementation.h */
 #ifndef SIMDUTF_PPC64_IMPLEMENTATION_H
 #define SIMDUTF_PPC64_IMPLEMENTATION_H
@@ -3010,14 +3389,14 @@ public:
 #endif // SIMDUTF_PPC64_IMPLEMENTATION_H
 /* end file src/simdutf/ppc64/implementation.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/begin.h
 /* begin file src/simdutf/ppc64/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "ppc64"
 // #define SIMDUTF_IMPLEMENTATION ppc64
 /* end file src/simdutf/ppc64/begin.h */
 
 // Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/intrinsics.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/intrinsics.h
 /* begin file src/simdutf/ppc64/intrinsics.h */
 #ifndef SIMDUTF_PPC64_INTRINSICS_H
 #define SIMDUTF_PPC64_INTRINSICS_H
@@ -3038,7 +3417,7 @@ public:
 
 #endif //  SIMDUTF_PPC64_INTRINSICS_H
 /* end file src/simdutf/ppc64/intrinsics.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/bitmanipulation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/bitmanipulation.h
 /* begin file src/simdutf/ppc64/bitmanipulation.h */
 #ifndef SIMDUTF_PPC64_BITMANIPULATION_H
 #define SIMDUTF_PPC64_BITMANIPULATION_H
@@ -3064,7 +3443,7 @@ simdutf_really_inline int count_ones(uint64_t input_num) {
 
 #endif // SIMDUTF_PPC64_BITMANIPULATION_H
 /* end file src/simdutf/ppc64/bitmanipulation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/simd.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/simd.h
 /* begin file src/simdutf/ppc64/simd.h */
 #ifndef SIMDUTF_PPC64_SIMD_H
 #define SIMDUTF_PPC64_SIMD_H
@@ -3556,7 +3935,7 @@ template <typename T> struct simd8x64 {
 #endif // SIMDUTF_PPC64_SIMD_INPUT_H
 /* end file src/simdutf/ppc64/simd.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/end.h
 /* begin file src/simdutf/ppc64/end.h */
 /* end file src/simdutf/ppc64/end.h */
 
@@ -3564,17 +3943,24 @@ template <typename T> struct simd8x64 {
 
 #endif // SIMDUTF_PPC64_H
 /* end file src/simdutf/ppc64.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback.h
 /* begin file src/simdutf/fallback.h */
 #ifndef SIMDUTF_FALLBACK_H
 #define SIMDUTF_FALLBACK_H
 
 
+// Note that fallback.h is always imported last.
+
 // Default Fallback to on unless a builtin implementation has already been selected.
 #ifndef SIMDUTF_IMPLEMENTATION_FALLBACK
-#define SIMDUTF_IMPLEMENTATION_FALLBACK 1 // (!SIMDUTF_CAN_ALWAYS_RUN_ARM64 && !SIMDUTF_CAN_ALWAYS_RUN_HASWELL && !SIMDUTF_CAN_ALWAYS_RUN_WESTMERE && !SIMDUTF_CAN_ALWAYS_RUN_PPC64)
+#if SIMDUTF_CAN_ALWAYS_RUN_ARM64 || SIMDUTF_CAN_ALWAYS_RUN_ICELAKE || SIMDUTF_CAN_ALWAYS_RUN_HASWELL || SIMDUTF_CAN_ALWAYS_RUN_WESTMERE || SIMDUTF_CAN_ALWAYS_RUN_PPC64
+#define SIMDUTF_IMPLEMENTATION_FALLBACK 0
+#else
+#define SIMDUTF_IMPLEMENTATION_FALLBACK 1
 #endif
-#define SIMDUTF_CAN_ALWAYS_RUN_FALLBACK SIMDUTF_IMPLEMENTATION_FALLBACK
+#endif
+
+#define SIMDUTF_CAN_ALWAYS_RUN_FALLBACK (SIMDUTF_IMPLEMENTATION_FALLBACK)
 
 #if SIMDUTF_IMPLEMENTATION_FALLBACK
 
@@ -3586,7 +3972,7 @@ namespace fallback {
 } // namespace fallback
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/implementation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/implementation.h
 /* begin file src/simdutf/fallback/implementation.h */
 #ifndef SIMDUTF_FALLBACK_IMPLEMENTATION_H
 #define SIMDUTF_FALLBACK_IMPLEMENTATION_H
@@ -3667,14 +4053,14 @@ public:
 #endif // SIMDUTF_FALLBACK_IMPLEMENTATION_H
 /* end file src/simdutf/fallback/implementation.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/begin.h
 /* begin file src/simdutf/fallback/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "fallback"
 // #define SIMDUTF_IMPLEMENTATION fallback
 /* end file src/simdutf/fallback/begin.h */
 
 // Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/bitmanipulation.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/bitmanipulation.h
 /* begin file src/simdutf/fallback/bitmanipulation.h */
 #ifndef SIMDUTF_FALLBACK_BITMANIPULATION_H
 #define SIMDUTF_FALLBACK_BITMANIPULATION_H
@@ -3702,21 +4088,6 @@ static unsigned char _BitScanReverse64(unsigned long* ret, uint64_t x) {
 }
 #endif
 
-/* result might be undefined when input_num is zero */
-simdutf_really_inline int leading_zeroes(uint64_t input_num) {
-#ifdef _MSC_VER
-  unsigned long leading_zero = 0;
-  // Search the mask data from most significant bit (MSB)
-  // to least significant bit (LSB) for a set bit (1).
-  if (_BitScanReverse64(&leading_zero, input_num))
-    return (int)(63 - leading_zero);
-  else
-    return 64;
-#else
-  return __builtin_clzll(input_num);
-#endif// _MSC_VER
-}
-
 } // unnamed namespace
 } // namespace fallback
 } // namespace simdutf
@@ -3724,282 +4095,13 @@ simdutf_really_inline int leading_zeroes(uint64_t input_num) {
 #endif // SIMDUTF_FALLBACK_BITMANIPULATION_H
 /* end file src/simdutf/fallback/bitmanipulation.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/end.h
 /* begin file src/simdutf/fallback/end.h */
 /* end file src/simdutf/fallback/end.h */
 
 #endif // SIMDUTF_IMPLEMENTATION_FALLBACK
 #endif // SIMDUTF_FALLBACK_H
 /* end file src/simdutf/fallback.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake.h
-/* begin file src/simdutf/icelake.h */
-#ifndef SIMDUTF_ICELAKE_H
-#define SIMDUTF_ICELAKE_H
-
-
-
-#ifdef __has_include
-// How do we detect that a compiler supports vbmi2?
-// For sure if the following header is found, we are ok?
-#if __has_include(<avx512vbmi2intrin.h>)
-#define SIMDUTF_COMPILER_SUPPORTS_VBMI2 1
-#endif
-#endif
-
-#ifdef _MSC_VER
-#if _MSC_VER >= 1920
-// Visual Studio 2019 and up support VBMI2 under x64 even if the header
-// avx512vbmi2intrin.h is not found.
-#define SIMDUTF_COMPILER_SUPPORTS_VBMI2 1
-#endif
-#endif
-
-// We allow icelake on x64 as long as the compiler is known to support VBMI2.
-#ifndef SIMDUTF_IMPLEMENTATION_ICELAKE
-#define SIMDUTF_IMPLEMENTATION_ICELAKE ((SIMDUTF_IS_X86_64) && (SIMDUTF_COMPILER_SUPPORTS_VBMI2))
-#endif
-
-// To see why  (__BMI__) && (__PCLMUL__) && (__LZCNT__) are not part of this next line, see
-// https://github.com/simdutf/simdutf/issues/1247
-#define SIMDUTF_CAN_ALWAYS_RUN_ICELAKE ((SIMDUTF_IMPLEMENTATION_ICELAKE) && (SIMDUTF_IS_X86_64) && (__AVX2__) && (SIMDUTF_HAS_AVX512F && \
-                                         SIMDUTF_HAS_AVX512DQ && \
-                                         SIMDUTF_HAS_AVX512VL && \
-                                           SIMDUTF_HAS_AVX512VBMI2))
-
-#if SIMDUTF_IMPLEMENTATION_ICELAKE
-#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
-#define SIMDUTF_TARGET_ICELAKE
-#define SIMDJSON_UNTARGET_ICELAKE
-#else
-#define SIMDUTF_TARGET_ICELAKE SIMDUTF_TARGET_REGION("avx512f,avx512dq,avx512cd,avx512bw,avx512vbmi,avx512vbmi2,avx512vl,avx2,bmi,bmi2,pclmul,lzcnt")
-#define SIMDUTF_UNTARGET_ICELAKE SIMDUTF_UNTARGET_REGION
-#endif
-
-namespace simdutf {
-namespace icelake {
-} // namespace icelake
-} // namespace simdutf
-
-
-
-//
-// These two need to be included outside SIMDUTF_TARGET_REGION
-//
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/intrinsics.h
-/* begin file src/simdutf/icelake/intrinsics.h */
-#ifndef SIMDUTF_ICELAKE_INTRINSICS_H
-#define SIMDUTF_ICELAKE_INTRINSICS_H
-
-
-#ifdef SIMDUTF_VISUAL_STUDIO
-// under clang within visual studio, this will include <x86intrin.h>
-#include <intrin.h>  // visual studio or clang
-#include <immintrin.h>
-#else
-#include <x86intrin.h> // elsewhere
-#ifndef _tzcnt_u64
-#define _tzcnt_u64(x) __tzcnt_u64(x)
-#endif // _tzcnt_u64
-#endif // SIMDUTF_VISUAL_STUDIO
-
-#ifdef SIMDUTF_CLANG_VISUAL_STUDIO
-/**
- * You are not supposed, normally, to include these
- * headers directly. Instead you should either include intrin.h
- * or x86intrin.h. However, when compiling with clang
- * under Windows (i.e., when _MSC_VER is set), these headers
- * only get included *if* the corresponding features are detected
- * from macros:
- * e.g., if __AVX2__ is set... in turn,  we normally set these
- * macros by compiling against the corresponding architecture
- * (e.g., arch:AVX2, -mavx2, etc.) which compiles the whole
- * software with these advanced instructions. In simdutf, we
- * want to compile the whole program for a generic target,
- * and only target our specific kernels. As a workaround,
- * we directly include the needed headers. These headers would
- * normally guard against such usage, but we carefully included
- * <x86intrin.h>  (or <intrin.h>) before, so the headers
- * are fooled.
- */
-#include <bmiintrin.h>   // for _blsr_u64
-#include <bmi2intrin.h>  // for _pext_u64, _pdep_u64
-#include <lzcntintrin.h> // for  __lzcnt64
-#include <immintrin.h>   // for most things (AVX2, AVX512, _popcnt64)
-#include <smmintrin.h>
-#include <tmmintrin.h>
-#include <avxintrin.h>
-#include <avx2intrin.h>
-#include <wmmintrin.h>   // for  _mm_clmulepi64_si128
-// Important: we need the AVX-512 headers:
-#include <avx512fintrin.h>
-#include <avx512dqintrin.h>
-#include <avx512cdintrin.h>
-#include <avx512bwintrin.h>
-#include <avx512vlintrin.h>
-#include <avx512vlbwintrin.h>
-#include <avx512vbmiintrin.h>
-#include <avx512vbmi2intrin.h>
-// unfortunately, we may not get _blsr_u64, but, thankfully, clang
-// has it as a macro.
-#ifndef _blsr_u64
-// we roll our own
-#define _blsr_u64(n) ((n - 1) & n)
-#endif //  _blsr_u64
-#endif // SIMDUTF_CLANG_VISUAL_STUDIO
-
-
-
-#if defined(__GNUC__) && !defined(__clang__)
-#if __GNUC__ == 8
-#define SIMDUTF_GCC8 1
-#endif //  __GNUC__ == 8
-#endif // defined(__GNUC__) && !defined(__clang__)
-
-#if SIMDUTF_GCC8
-/**
- * GCC 8 fails to provide _mm512_set_epi8. We roll our own.
- */
-inline __m512i _mm512_set_epi8(uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5, uint8_t a6, uint8_t a7, uint8_t a8, uint8_t a9, uint8_t a10, uint8_t a11, uint8_t a12, uint8_t a13, uint8_t a14, uint8_t a15, uint8_t a16, uint8_t a17, uint8_t a18, uint8_t a19, uint8_t a20, uint8_t a21, uint8_t a22, uint8_t a23, uint8_t a24, uint8_t a25, uint8_t a26, uint8_t a27, uint8_t a28, uint8_t a29, uint8_t a30, uint8_t a31, uint8_t a32, uint8_t a33, uint8_t a34, uint8_t a35, uint8_t a36, uint8_t a37, uint8_t a38, uint8_t a39, uint8_t a40, uint8_t a41, uint8_t a42, uint8_t a43, uint8_t a44, uint8_t a45, uint8_t a46, uint8_t a47, uint8_t a48, uint8_t a49, uint8_t a50, uint8_t a51, uint8_t a52, uint8_t a53, uint8_t a54, uint8_t a55, uint8_t a56, uint8_t a57, uint8_t a58, uint8_t a59, uint8_t a60, uint8_t a61, uint8_t a62, uint8_t a63) {
-  return _mm512_set_epi64(uint64_t(a7) + (uint64_t(a6) << 8) + (uint64_t(a5) << 16) + (uint64_t(a4) << 24) + (uint64_t(a3) << 32) + (uint64_t(a2) << 40) + (uint64_t(a1) << 48) + (uint64_t(a0) << 56),
-                          uint64_t(a15) + (uint64_t(a14) << 8) + (uint64_t(a13) << 16) + (uint64_t(a12) << 24) + (uint64_t(a11) << 32) + (uint64_t(a10) << 40) + (uint64_t(a9) << 48) + (uint64_t(a8) << 56),
-                          uint64_t(a23) + (uint64_t(a22) << 8) + (uint64_t(a21) << 16) + (uint64_t(a20) << 24) + (uint64_t(a19) << 32) + (uint64_t(a18) << 40) + (uint64_t(a17) << 48) + (uint64_t(a16) << 56),
-                          uint64_t(a31) + (uint64_t(a30) << 8) + (uint64_t(a29) << 16) + (uint64_t(a28) << 24) + (uint64_t(a27) << 32) + (uint64_t(a26) << 40) + (uint64_t(a25) << 48) + (uint64_t(a24) << 56),
-                          uint64_t(a39) + (uint64_t(a38) << 8) + (uint64_t(a37) << 16) + (uint64_t(a36) << 24) + (uint64_t(a35) << 32) + (uint64_t(a34) << 40) + (uint64_t(a33) << 48) + (uint64_t(a32) << 56),
-                          uint64_t(a47) + (uint64_t(a46) << 8) + (uint64_t(a45) << 16) + (uint64_t(a44) << 24) + (uint64_t(a43) << 32) + (uint64_t(a42) << 40) + (uint64_t(a41) << 48) + (uint64_t(a40) << 56),
-                          uint64_t(a55) + (uint64_t(a54) << 8) + (uint64_t(a53) << 16) + (uint64_t(a52) << 24) + (uint64_t(a51) << 32) + (uint64_t(a50) << 40) + (uint64_t(a49) << 48) + (uint64_t(a48) << 56),
-                          uint64_t(a63) + (uint64_t(a62) << 8) + (uint64_t(a61) << 16) + (uint64_t(a60) << 24) + (uint64_t(a59) << 32) + (uint64_t(a58) << 40) + (uint64_t(a57) << 48) + (uint64_t(a56) << 56));
-}
-#endif // SIMDUTF_GCC8
-
-#endif // SIMDUTF_HASWELL_INTRINSICS_H
-/* end file src/simdutf/icelake/intrinsics.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/implementation.h
-/* begin file src/simdutf/icelake/implementation.h */
-#ifndef SIMDUTF_ICELAKE_IMPLEMENTATION_H
-#define SIMDUTF_ICELAKE_IMPLEMENTATION_H
-
-
-namespace simdutf {
-namespace icelake {
-
-namespace {
-using namespace simdutf;
-}
-
-class implementation final : public simdutf::implementation {
-public:
-  simdutf_really_inline implementation() : simdutf::implementation(
-      "icelake",
-      "Intel AVX512 (AVX-512BW, AVX-512CD, AVX-512VL, AVX-512VBMI2 extensions)",
-      internal::instruction_set::AVX2 | internal::instruction_set::PCLMULQDQ | internal::instruction_set::BMI1 | internal::instruction_set::BMI2 | internal::instruction_set::AVX512BW | internal::instruction_set::AVX512CD | internal::instruction_set::AVX512VL | internal::instruction_set::AVX512VBMI2 ) {}
-  simdutf_warn_unused int detect_encodings(const char * input, size_t length) const noexcept final;
-  simdutf_warn_unused bool validate_utf8(const char *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf8_with_errors(const char *buf, size_t len) const noexcept final;
-  simdutf_warn_unused bool validate_ascii(const char *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_ascii_with_errors(const char *buf, size_t len) const noexcept final;
-  simdutf_warn_unused bool validate_utf16le(const char16_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused bool validate_utf16be(const char16_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf16le_with_errors(const char16_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf16be_with_errors(const char16_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused bool validate_utf32(const char32_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused result validate_utf32_with_errors(const char32_t *buf, size_t len) const noexcept final;
-  simdutf_warn_unused size_t convert_utf8_to_utf16le(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
-  simdutf_warn_unused size_t convert_utf8_to_utf16be(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf16le_with_errors(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf16be_with_errors(const char * buf, size_t len, char16_t* utf16_output) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf16le(const char * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf16be(const char * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf8_to_utf32(const char * buf, size_t len, char32_t* utf32_output) const noexcept final;
-  simdutf_warn_unused result convert_utf8_to_utf32_with_errors(const char * buf, size_t len, char32_t* utf32_output) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf8_to_utf32(const char * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf16le_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf16be_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16le_to_utf8_with_errors(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16be_to_utf8_with_errors(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16le_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16be_to_utf8(const char16_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf32_to_utf8(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf8_with_errors(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf32_to_utf8(const char32_t * buf, size_t len, char* utf8_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf32_to_utf16le(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf32_to_utf16be(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf16le_with_errors(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf32_to_utf16be_with_errors(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf32_to_utf16le(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf32_to_utf16be(const char32_t * buf, size_t len, char16_t* utf16_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf16le_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_utf16be_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16le_to_utf32_with_errors(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused result convert_utf16be_to_utf32_with_errors(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16le_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  simdutf_warn_unused size_t convert_valid_utf16be_to_utf32(const char16_t * buf, size_t len, char32_t* utf32_buffer) const noexcept final;
-  void change_endianness_utf16(const char16_t * buf, size_t length, char16_t * output) const noexcept final;
-  simdutf_warn_unused size_t count_utf16le(const char16_t * buf, size_t length) const noexcept;
-  simdutf_warn_unused size_t count_utf16be(const char16_t * buf, size_t length) const noexcept;
-  simdutf_warn_unused size_t count_utf8(const char * buf, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf8_length_from_utf16le(const char16_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf8_length_from_utf16be(const char16_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf32_length_from_utf16le(const char16_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf32_length_from_utf16be(const char16_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf16_length_from_utf8(const char * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf8_length_from_utf32(const char32_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf16_length_from_utf32(const char32_t * input, size_t length) const noexcept;
-  simdutf_warn_unused size_t utf32_length_from_utf8(const char * input, size_t length) const noexcept;
-};
-
-} // namespace icelake
-} // namespace simdutf
-
-#endif // SIMDUTF_ICELAKE_IMPLEMENTATION_H
-/* end file src/simdutf/icelake/implementation.h */
-
-//
-// The rest need to be inside the region
-//
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/begin.h
-/* begin file src/simdutf/icelake/begin.h */
-// redefining SIMDUTF_IMPLEMENTATION to "icelake"
-// #define SIMDUTF_IMPLEMENTATION icelake
-SIMDUTF_TARGET_ICELAKE
-
-/* end file src/simdutf/icelake/begin.h */
-// Declarations
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/bitmanipulation.h
-/* begin file src/simdutf/icelake/bitmanipulation.h */
-#ifndef SIMDUTF_ICELAKE_BITMANIPULATION_H
-#define SIMDUTF_ICELAKE_BITMANIPULATION_H
-
-namespace simdutf {
-namespace icelake {
-namespace {
-
-#ifdef SIMDUTF_REGULAR_VISUAL_STUDIO
-simdutf_really_inline unsigned __int64 count_ones(uint64_t input_num) {
-  // note: we do not support legacy 32-bit Windows
-  return __popcnt64(input_num);// Visual Studio wants two underscores
-}
-#else
-simdutf_really_inline long long int count_ones(uint64_t input_num) {
-  return _popcnt64(input_num);
-}
-#endif
-
-} // unnamed namespace
-} // namespace icelake
-} // namespace simdutf
-
-#endif // SIMDUTF_ICELAKE_BITMANIPULATION_H
-/* end file src/simdutf/icelake/bitmanipulation.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/end.h
-/* begin file src/simdutf/icelake/end.h */
-SIMDUTF_UNTARGET_REGION
-/* end file src/simdutf/icelake/end.h */
-
-
-
-#endif // SIMDUTF_IMPLEMENTATION_ICELAKE
-#endif // SIMDUTF_ICELAKE_H
-/* end file src/simdutf/icelake.h */
 
 namespace simdutf {
 bool implementation::supported_by_runtime_system() const {
@@ -4748,7 +4850,7 @@ const implementation * builtin_implementation() {
 } // namespace simdutf
 
 /* end file src/implementation.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=encoding_types.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=encoding_types.cpp
 /* begin file src/encoding_types.cpp */
 
 namespace simdutf {
@@ -4802,7 +4904,7 @@ encoding_type check_bom(const char* byte, size_t length) {
 }
 }
 /* end file src/encoding_types.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=error.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=error.cpp
 /* begin file src/error.cpp */
 namespace simdutf {
 
@@ -4814,7 +4916,7 @@ namespace simdutf {
 /* end file src/error.cpp */
 // The large tables should be included once and they
 // should not depend on a kernel.
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=tables/utf8_to_utf16_tables.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=tables/utf8_to_utf16_tables.h
 /* begin file src/tables/utf8_to_utf16_tables.h */
 #ifndef SIMDUTF_UTF8_TO_UTF16_TABLES_H
 #define SIMDUTF_UTF8_TO_UTF16_TABLES_H
@@ -9153,7 +9255,7 @@ const uint8_t utf8bigindex[4096][2] =
 
 #endif // SIMDUTF_UTF8_TO_UTF16_TABLES_H
 /* end file src/tables/utf8_to_utf16_tables.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=tables/utf16_to_utf8_tables.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=tables/utf16_to_utf8_tables.h
 /* begin file src/tables/utf16_to_utf8_tables.h */
 // file generated by scripts/sse_convert_utf16_to_utf8.py
 #ifndef SIMDUTF_UTF16_TO_UTF8_TABLES_H
@@ -9694,7 +9796,7 @@ namespace utf16_to_utf8 {
 // End of tables.
 
 // The scalar routines should be included once.
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/ascii.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/ascii.h
 /* begin file src/scalar/ascii.h */
 #ifndef SIMDUTF_ASCII_H
 #define SIMDUTF_ASCII_H
@@ -9753,7 +9855,7 @@ inline simdutf_warn_unused result validate_with_errors(const char *buf, size_t l
 
 #endif
 /* end file src/scalar/ascii.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf8.h
 /* begin file src/scalar/utf8.h */
 #ifndef SIMDUTF_UTF8_H
 #define SIMDUTF_UTF8_H
@@ -9834,7 +9936,7 @@ inline simdutf_warn_unused result validate_with_errors(const char *buf, size_t l
   uint32_t code_point = 0;
   while (pos < len) {
     // check of the next 8 bytes are ascii.
-    uint64_t next_pos = pos + 16;
+    size_t next_pos = pos + 16;
     if (next_pos <= len) { // if it is safe to read 8 more bytes, check that they are ascii
       uint64_t v1;
       std::memcpy(&v1, data + pos, sizeof(uint64_t));
@@ -9950,7 +10052,7 @@ inline size_t utf32_length_from_utf8(const char* buf, size_t len) {
 
 #endif
 /* end file src/scalar/utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf16.h
 /* begin file src/scalar/utf16.h */
 #ifndef SIMDUTF_UTF16_H
 #define SIMDUTF_UTF16_H
@@ -10064,7 +10166,7 @@ simdutf_really_inline void change_endianness_utf16(const char16_t* in, size_t si
 
 #endif
 /* end file src/scalar/utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf32.h
 /* begin file src/scalar/utf32.h */
 #ifndef SIMDUTF_UTF32_H
 #define SIMDUTF_UTF32_H
@@ -10139,7 +10241,7 @@ inline size_t utf16_length_from_utf32(const char32_t* buf, size_t len) {
 #endif
 /* end file src/scalar/utf32.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf32_to_utf8/valid_utf32_to_utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf32_to_utf8/valid_utf32_to_utf8.h
 /* begin file src/scalar/utf32_to_utf8/valid_utf32_to_utf8.h */
 #ifndef SIMDUTF_VALID_UTF32_TO_UTF8_H
 #define SIMDUTF_VALID_UTF32_TO_UTF8_H
@@ -10203,7 +10305,7 @@ inline size_t convert_valid(const char32_t* buf, size_t len, char* utf8_output) 
 
 #endif
 /* end file src/scalar/utf32_to_utf8/valid_utf32_to_utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf32_to_utf8/utf32_to_utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf32_to_utf8/utf32_to_utf8.h
 /* begin file src/scalar/utf32_to_utf8/utf32_to_utf8.h */
 #ifndef SIMDUTF_UTF32_TO_UTF8_H
 #define SIMDUTF_UTF32_TO_UTF8_H
@@ -10319,7 +10421,7 @@ inline result convert_with_errors(const char32_t* buf, size_t len, char* utf8_ou
 #endif
 /* end file src/scalar/utf32_to_utf8/utf32_to_utf8.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf32_to_utf16/valid_utf32_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf32_to_utf16/valid_utf32_to_utf16.h
 /* begin file src/scalar/utf32_to_utf16/valid_utf32_to_utf16.h */
 #ifndef SIMDUTF_VALID_UTF32_TO_UTF16_H
 #define SIMDUTF_VALID_UTF32_TO_UTF16_H
@@ -10364,7 +10466,7 @@ inline size_t convert_valid(const char32_t* buf, size_t len, char16_t* utf16_out
 
 #endif
 /* end file src/scalar/utf32_to_utf16/valid_utf32_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf32_to_utf16/utf32_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf32_to_utf16/utf32_to_utf16.h
 /* begin file src/scalar/utf32_to_utf16/utf32_to_utf16.h */
 #ifndef SIMDUTF_UTF32_TO_UTF16_H
 #define SIMDUTF_UTF32_TO_UTF16_H
@@ -10440,7 +10542,7 @@ inline result convert_with_errors(const char32_t* buf, size_t len, char16_t* utf
 #endif
 /* end file src/scalar/utf32_to_utf16/utf32_to_utf16.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf16_to_utf8/valid_utf16_to_utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf16_to_utf8/valid_utf16_to_utf8.h
 /* begin file src/scalar/utf16_to_utf8/valid_utf16_to_utf8.h */
 #ifndef SIMDUTF_VALID_UTF16_TO_UTF8_H
 #define SIMDUTF_VALID_UTF16_TO_UTF8_H
@@ -10514,7 +10616,7 @@ inline size_t convert_valid(const char16_t* buf, size_t len, char* utf8_output) 
 
 #endif
 /* end file src/scalar/utf16_to_utf8/valid_utf16_to_utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf16_to_utf8/utf16_to_utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf16_to_utf8/utf16_to_utf8.h
 /* begin file src/scalar/utf16_to_utf8/utf16_to_utf8.h */
 #ifndef SIMDUTF_UTF16_TO_UTF8_H
 #define SIMDUTF_UTF16_TO_UTF8_H
@@ -10650,7 +10752,7 @@ inline result convert_with_errors(const char16_t* buf, size_t len, char* utf8_ou
 #endif
 /* end file src/scalar/utf16_to_utf8/utf16_to_utf8.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf16_to_utf32/valid_utf16_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf16_to_utf32/valid_utf16_to_utf32.h
 /* begin file src/scalar/utf16_to_utf32/valid_utf16_to_utf32.h */
 #ifndef SIMDUTF_VALID_UTF16_TO_UTF32_H
 #define SIMDUTF_VALID_UTF16_TO_UTF32_H
@@ -10692,7 +10794,7 @@ inline size_t convert_valid(const char16_t* buf, size_t len, char32_t* utf32_out
 
 #endif
 /* end file src/scalar/utf16_to_utf32/valid_utf16_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf16_to_utf32/utf16_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf16_to_utf32/utf16_to_utf32.h
 /* begin file src/scalar/utf16_to_utf32/utf16_to_utf32.h */
 #ifndef SIMDUTF_UTF16_TO_UTF32_H
 #define SIMDUTF_UTF16_TO_UTF32_H
@@ -10764,7 +10866,7 @@ inline result convert_with_errors(const char16_t* buf, size_t len, char32_t* utf
 #endif
 /* end file src/scalar/utf16_to_utf32/utf16_to_utf32.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf8_to_utf16/valid_utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf8_to_utf16/valid_utf8_to_utf16.h
 /* begin file src/scalar/utf8_to_utf16/valid_utf8_to_utf16.h */
 #ifndef SIMDUTF_VALID_UTF8_TO_UTF16_H
 #define SIMDUTF_VALID_UTF8_TO_UTF16_H
@@ -10849,7 +10951,7 @@ inline size_t convert_valid(const char* buf, size_t len, char16_t* utf16_output)
 
 #endif
 /* end file src/scalar/utf8_to_utf16/valid_utf8_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf8_to_utf16/utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf8_to_utf16/utf8_to_utf16.h
 /* begin file src/scalar/utf8_to_utf16/utf8_to_utf16.h */
 #ifndef SIMDUTF_UTF8_TO_UTF16_H
 #define SIMDUTF_UTF8_TO_UTF16_H
@@ -11067,7 +11169,7 @@ inline result rewind_and_convert_with_errors(const char* buf, size_t len, char16
 #endif
 /* end file src/scalar/utf8_to_utf16/utf8_to_utf16.h */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf8_to_utf32/valid_utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf8_to_utf32/valid_utf8_to_utf32.h
 /* begin file src/scalar/utf8_to_utf32/valid_utf8_to_utf32.h */
 #ifndef SIMDUTF_VALID_UTF8_TO_UTF32_H
 #define SIMDUTF_VALID_UTF8_TO_UTF32_H
@@ -11133,7 +11235,7 @@ inline size_t convert_valid(const char* buf, size_t len, char32_t* utf32_output)
 
 #endif
 /* end file src/scalar/utf8_to_utf32/valid_utf8_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=scalar/utf8_to_utf32/utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=scalar/utf8_to_utf32/utf8_to_utf32.h
 /* begin file src/scalar/utf8_to_utf32/utf8_to_utf32.h */
 #ifndef SIMDUTF_UTF8_TO_UTF32_H
 #define SIMDUTF_UTF8_TO_UTF32_H
@@ -11323,9 +11425,9 @@ SIMDUTF_DISABLE_UNDESIRED_WARNINGS
 
 
 #if SIMDUTF_IMPLEMENTATION_ARM64
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/implementation.cpp
 /* begin file src/arm64/implementation.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/begin.h
 /* begin file src/simdutf/arm64/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "arm64"
 // #define SIMDUTF_IMPLEMENTATION arm64
@@ -11361,7 +11463,7 @@ simdutf_really_inline simd8<bool> must_be_2_3_continuation(const simd8<uint8_t> 
     return is_third_byte ^ is_fourth_byte;
 }
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_detect_encodings.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_detect_encodings.cpp
 /* begin file src/arm64/arm_detect_encodings.cpp */
 template<class checker>
 // len is known to be a multiple of 2 when this is called
@@ -11569,7 +11671,7 @@ int arm_detect_encodings(const char * buf, size_t len) {
 }
 /* end file src/arm64/arm_detect_encodings.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_validate_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_validate_utf16.cpp
 /* begin file src/arm64/arm_validate_utf16.cpp */
 template <endianness big_endian>
 const char16_t* arm_validate_utf16(const char16_t* input, size_t size) {
@@ -11719,7 +11821,7 @@ const result arm_validate_utf16_with_errors(const char16_t* input, size_t size) 
     return result(error_code::SUCCESS, input - start);
 }
 /* end file src/arm64/arm_validate_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_validate_utf32le.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_validate_utf32le.cpp
 /* begin file src/arm64/arm_validate_utf32le.cpp */
 
 const char32_t* arm_validate_utf32le(const char32_t* input, size_t size) {
@@ -11784,7 +11886,7 @@ const result arm_validate_utf32le_with_errors(const char32_t* input, size_t size
 }
 /* end file src/arm64/arm_validate_utf32le.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf8_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf8_to_utf16.cpp
 /* begin file src/arm64/arm_convert_utf8_to_utf16.cpp */
 // Convert up to 12 bytes from utf8 to utf16 using a mask indicating the
 // end of the code points. Only the least significant 12 bits of the mask
@@ -11956,7 +12058,7 @@ size_t convert_masked_utf8_to_utf16(const char *input,
   return consumed;
 }
 /* end file src/arm64/arm_convert_utf8_to_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf8_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf8_to_utf32.cpp
 /* begin file src/arm64/arm_convert_utf8_to_utf32.cpp */
 // Convert up to 12 bytes from utf8 to utf32 using a mask indicating the
 // end of the code points. Only the least significant 12 bits of the mask
@@ -12093,7 +12195,7 @@ size_t convert_masked_utf8_to_utf32(const char *input,
 }
 /* end file src/arm64/arm_convert_utf8_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf16_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf16_to_utf8.cpp
 /* begin file src/arm64/arm_convert_utf16_to_utf8.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -12673,7 +12775,7 @@ std::pair<result, char*> arm_convert_utf16_to_utf8_with_errors(const char16_t* b
   return std::make_pair(result(error_code::SUCCESS, buf - start), reinterpret_cast<char*>(utf8_output));
 }
 /* end file src/arm64/arm_convert_utf16_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf16_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf16_to_utf32.cpp
 /* begin file src/arm64/arm_convert_utf16_to_utf32.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -12850,7 +12952,7 @@ std::pair<result, char32_t*> arm_convert_utf16_to_utf32_with_errors(const char16
 }
 /* end file src/arm64/arm_convert_utf16_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf32_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf32_to_utf8.cpp
 /* begin file src/arm64/arm_convert_utf32_to_utf8.cpp */
 std::pair<const char32_t*, char*> arm_convert_utf32_to_utf8(const char32_t* buf, size_t len, char* utf8_out) {
   uint8_t * utf8_output = reinterpret_cast<uint8_t*>(utf8_out);
@@ -13323,7 +13425,7 @@ std::pair<result, char*> arm_convert_utf32_to_utf8_with_errors(const char32_t* b
   return std::make_pair(result(error_code::SUCCESS, buf - start), reinterpret_cast<char*>(utf8_output));
 }
 /* end file src/arm64/arm_convert_utf32_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=arm64/arm_convert_utf32_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=arm64/arm_convert_utf32_to_utf16.cpp
 /* begin file src/arm64/arm_convert_utf32_to_utf16.cpp */
 template <endianness big_endian>
 std::pair<const char32_t*, char16_t*> arm_convert_utf32_to_utf16(const char32_t* buf, size_t len, char16_t* utf16_out) {
@@ -13456,7 +13558,7 @@ std::pair<result, char16_t*> arm_convert_utf32_to_utf16_with_errors(const char32
 } // unnamed namespace
 } // namespace arm64
 } // namespace simdutf
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/buf_block_reader.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/buf_block_reader.h
 /* begin file src/generic/buf_block_reader.h */
 namespace simdutf {
 namespace arm64 {
@@ -13551,7 +13653,7 @@ simdutf_really_inline void buf_block_reader<STEP_SIZE>::advance() {
 } // namespace arm64
 } // namespace simdutf
 /* end file src/generic/buf_block_reader.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
 /* begin file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
 namespace simdutf {
 namespace arm64 {
@@ -13740,7 +13842,7 @@ using utf8_validation::utf8_checker;
 } // namespace arm64
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
 /* begin file src/generic/utf8_validation/utf8_validator.h */
 namespace simdutf {
 namespace arm64 {
@@ -13867,7 +13969,7 @@ result generic_validate_ascii_with_errors(const char * input, size_t length) {
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_validator.h */
 // transcoding from UTF-8 to UTF-16
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
 
 
@@ -13942,7 +14044,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace arm64
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 
 
@@ -14220,7 +14322,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 // transcoding from UTF-8 to UTF-32
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
 
 namespace simdutf {
@@ -14266,7 +14368,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace arm64
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 
 
@@ -14543,7 +14645,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 // other functions
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8.h
 /* begin file src/generic/utf8.h */
 
 namespace simdutf {
@@ -14590,7 +14692,7 @@ simdutf_really_inline size_t utf32_length_from_utf8(const char* in, size_t size)
 } // namespace arm64
 } // namespace simdutf
 /* end file src/generic/utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf16.h
 /* begin file src/generic/utf16.h */
 namespace simdutf {
 namespace arm64 {
@@ -15125,15 +15227,15 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace arm64
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/arm64/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/arm64/end.h
 /* begin file src/simdutf/arm64/end.h */
 /* end file src/simdutf/arm64/end.h */
 /* end file src/arm64/implementation.cpp */
 #endif
 #if SIMDUTF_IMPLEMENTATION_FALLBACK
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=fallback/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=fallback/implementation.cpp
 /* begin file src/fallback/implementation.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/begin.h
 /* begin file src/simdutf/fallback/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "fallback"
 // #define SIMDUTF_IMPLEMENTATION fallback
@@ -15377,22 +15479,30 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace fallback
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/fallback/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/fallback/end.h
 /* begin file src/simdutf/fallback/end.h */
 /* end file src/simdutf/fallback/end.h */
 /* end file src/fallback/implementation.cpp */
 #endif
 #if SIMDUTF_IMPLEMENTATION_ICELAKE
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/implementation.cpp
 /* begin file src/icelake/implementation.cpp */
 
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/begin.h
 /* begin file src/simdutf/icelake/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "icelake"
 // #define SIMDUTF_IMPLEMENTATION icelake
-SIMDUTF_TARGET_ICELAKE
 
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+// nothing needed.
+#else
+SIMDUTF_TARGET_ICELAKE
+#endif
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_DISABLE_GCC_WARNING(-Wmaybe-uninitialized)
+#endif // end of workaround
 /* end file src/simdutf/icelake/begin.h */
 namespace simdutf {
 namespace icelake {
@@ -15400,7 +15510,7 @@ namespace {
 #ifndef SIMDUTF_ICELAKE_H
 #error "icelake.h must be included"
 #endif
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_utf8_common.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_utf8_common.inl.cpp
 /* begin file src/icelake/icelake_utf8_common.inl.cpp */
 // Common procedures for both validating and non-validating conversions from UTF-8.
 enum block_processing_mode { SIMDUTF_FULL, SIMDUTF_TAIL};
@@ -15426,7 +15536,7 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
   __m512i mask_c0c0c0c0 = _mm512_set1_epi32(0xc0c0c0c0);
   __m512i mask_80808080 = _mm512_set1_epi32(0x80808080);
   __m512i mask_f0f0f0f0 = _mm512_set1_epi32(0xf0f0f0f0);
-  __m512i mask_e0e0e0e0 = _mm512_set1_epi32(0xe0e0e0e0);
+  __m512i mask_dfdfdfdf_tail = _mm512_set_epi64(0xffffdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf, 0xdfdfdfdfdfdfdfdf);
   __m512i mask_c2c2c2c2 = _mm512_set1_epi32(0xc2c2c2c2);
   __m512i mask_ffffffff = _mm512_set1_epi32(0xffffffff);
   __m512i mask_d7c0d7c0 = _mm512_set1_epi32(0xd7c0d7c0);
@@ -15445,8 +15555,10 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
   __mmask64 b = (tail == SIMDUTF_FULL) ? 0xFFFFFFFFFFFFFFFF : (uint64_t(1) << gap) - 1;
   __m512i input = (tail == SIMDUTF_FULL) ? _mm512_loadu_si512(in) : _mm512_maskz_loadu_epi8(b, in);
   __mmask64 m1 = (tail == SIMDUTF_FULL) ? _mm512_cmplt_epu8_mask(input, mask_80808080) : _mm512_mask_cmplt_epu8_mask(b, input, mask_80808080);
-  if (m1 == b) { // all ASCII
+  if(_ktestc_mask64_u8(m1, b)) {// NOT(m1) AND b -- if all zeroes, then all ASCII
+  // alternatively, we could do 'if (m1 == b) { '
     if (tail == SIMDUTF_FULL) {
+      in += 64;          // consumed 64 bytes
       // we convert a full 64-byte block, writing 128 bytes.
       __m512i input1 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(input));
       if(big_endian) { input1 = _mm512_shuffle_epi8(input1, byteflip); }
@@ -15456,15 +15568,14 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
       if(big_endian) { input2 = _mm512_shuffle_epi8(input2, byteflip); }
       _mm512_storeu_si512(out, input2);
       out += 32;
-      in += 64;          // consumed 64 bytes
       return true; // we are done
     } else {
+      in += gap;
       if (gap <= 32) {
         __m512i input1 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(input));
         if(big_endian) { input1 = _mm512_shuffle_epi8(input1, byteflip); }
         _mm512_mask_storeu_epi16(out, __mmask32((uint64_t(1) << (gap)) - 1), input1);
         out += gap;
-        in += gap;
       } else {
         __m512i input1 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(input));
         if(big_endian) { input1 = _mm512_shuffle_epi8(input1, byteflip); }
@@ -15474,16 +15585,15 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
         if(big_endian) { input2 = _mm512_shuffle_epi8(input2, byteflip); }
         _mm512_mask_storeu_epi16(out, __mmask32((uint32_t(1) << (gap - 32)) - 1), input2);
         out += gap - 32;
-        in += gap;
       }
-      return true;; // we are done
+      return true; // we are done
     }
   }
   // classify characters further
   __mmask64 m234 = _mm512_cmp_epu8_mask(mask_c0c0c0c0, input,
                                         _MM_CMPINT_LE); // 0xc0 <= input, 2, 3, or 4 leading byte
-  __mmask64 m34 = _mm512_cmp_epu8_mask(mask_e0e0e0e0, input,
-                                       _MM_CMPINT_LE); // 0xe0 <= input,  3 or 4 leading byte
+  __mmask64 m34 = _mm512_cmp_epu8_mask(mask_dfdfdfdf_tail, input,
+                                       _MM_CMPINT_LT); // 0xdf < input,  3 or 4 leading byte
 
   __mmask64 milltwobytes = _mm512_mask_cmp_epu8_mask(m234, input, mask_c2c2c2c2,
                                                      _MM_CMPINT_LT); // 0xc0 <= input < 0xc2 (illegal two byte sequence)
@@ -15493,7 +15603,7 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
     return false;
   }
   if (_ktestz_mask64_u8(m34, m34) == 0) {
-    // We have a 3-byte sequence and/or a 2-byte sequence
+    // We have a 3-byte sequence and/or a 2-byte sequence, or possibly even a 4-byte sequence!
     __mmask64 m4 = _mm512_cmp_epu8_mask(input, mask_f0f0f0f0,
                                         _MM_CMPINT_NLT); // 0xf0 <= zmm0 (4 byte start bytes)
 
@@ -15501,19 +15611,30 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
 
     __mmask64 mp1 = _kshiftli_mask64(m234, 1);
     __mmask64 mp2 = _kshiftli_mask64(m34, 2);
-    if (m4 == 0) {
+    // We could do it as follows...
+    // if (_kortestz_mask64_u8(m4,m4)) { // compute the bitwise OR of the 64-bit masks a and b and return 1 if all zeroes
+    // but GCC generates better code when we do:
+    if (m4 == 0) { // compute the bitwise OR of the 64-bit masks a and b and return 1 if all zeroes
       // Fast path with 1,2,3 bytes
       __mmask64 mc = _kor_mask64(mp1, mp2); // expected continuation bytes
       __mmask64 m1234 = _kor_mask64(m1, m234);
       // mismatched continuation bytes:
-      __mmask64 bxorm1234 = _kxor_mask64(b, m1234);
-      if (mc != bxorm1234) { return false; }
-
+      if (tail == SIMDUTF_FULL) {
+        __mmask64 xnormcm1234 = _kxnor_mask64(mc, m1234); // XNOR of mc and m1234 should be all zero if they differ
+        // the presence of a 1 bit indicates that they overlap.
+        // _kortestz_mask64_u8: compute the bitwise OR of 64-bit masksand return 1 if all zeroes.
+        if (!_kortestz_mask64_u8(xnormcm1234, xnormcm1234)) { return false; }
+      } else {
+        __mmask64 bxorm1234 = _kxor_mask64(b, m1234);
+        if (mc != bxorm1234) { return false; }
+      }
       // mend: identifying the last bytes of each sequence to be decoded
       __mmask64 mend = _kshiftri_mask64(m1234, 1);
       if (tail != SIMDUTF_FULL) {
         mend = _kor_mask64(mend, (uint64_t(1) << (gap - 1)));
       }
+
+
       __m512i last_and_third = _mm512_maskz_compress_epi8(mend, mask_identity);
       __m512i last_and_thirdu16 = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(last_and_third));
 
@@ -15529,26 +15650,20 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
                                                               beforeasciibytes); // the second last bytes (of two, three byte seq,
                                                                                  // surrogates)
       secondlastbytes = _mm512_slli_epi16(secondlastbytes, 6);                   // shifted into position
-      __m512i secondandlastbytes = _mm512_add_epi16(secondlastbytes, lastbytes);
 
-      __mmask64 mask_thirdlastbytes = _kand_mask64(m34, 0x3fffffffffffffff); // bytes that could be third-last bytes
-                                                                             // (LEAD34 sans wrap around)
       __m512i indexofthirdlastbytes = _mm512_add_epi16(mask_ffffffff,
                                                        indexofsecondlastbytes); // indices of the second last bytes
-      __m512i thirdlastbyte = _mm512_maskz_mov_epi8(mask_thirdlastbytes,
+      __m512i thirdlastbyte = _mm512_maskz_mov_epi8(m34,
                                                     clearedbytes); // only those that are the third last byte of a sequece
       __m512i thirdlastbytes = _mm512_maskz_permutexvar_epi8(0x5555555555555555, indexofthirdlastbytes,
                                                              thirdlastbyte); // the third last bytes (of three byte sequences, hi
                                                                              // surrogate)
       thirdlastbytes = _mm512_slli_epi16(thirdlastbytes, 12);                // shifted into position
-      __m512i thirdsecondandlastbytes = _mm512_add_epi16(secondandlastbytes, thirdlastbytes);
-      __m512i Wout = thirdsecondandlastbytes;
+      __m512i Wout = _mm512_ternarylogic_epi32(lastbytes, secondlastbytes, thirdlastbytes, 254);
       // the elements of Wout excluding the last element if it happens to be a high surrogate:
 
       __mmask64 mprocessed = (tail == SIMDUTF_FULL) ? _pdep_u64(0xFFFFFFFF, mend) : _pdep_u64(0xFFFFFFFF, _kand_mask64(mend, b)); // we adjust mend at the end of the output.
 
-      int64_t nout = _mm_popcnt_u64(mprocessed);
-      int64_t nin = 64 - _lzcnt_u64(mprocessed);
 
       // Encodings out of range...
       {
@@ -15563,10 +15678,11 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
         __mmask32 M3s = _mm512_mask_cmplt_epu16_mask(M3, Moutminusd800, mask_08000800);
         if (_kor_mask32(Msmall800, M3s)) { return false; }
       }
+      int64_t nout = _mm_popcnt_u64(mprocessed);
+      in +=  64 - _lzcnt_u64(mprocessed);
       if(big_endian) { Wout = _mm512_shuffle_epi8(Wout, byteflip); }
       _mm512_mask_storeu_epi16(out, __mmask32((uint64_t(1) << nout) - 1), Wout);
       out += nout;
-      in += nin;
       return true; // ok
     }
     //
@@ -15596,19 +15712,16 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
                                                             beforeasciibytes); // the second last bytes (of two, three byte seq,
                                                                                // surrogates)
     secondlastbytes = _mm512_slli_epi16(secondlastbytes, 6);                   // shifted into position
-    __m512i secondandlastbytes = _mm512_add_epi16(secondlastbytes, lastbytes);
 
-    __mmask64 mask_thirdlastbytes = _kand_mask64(m34, 0x3fffffffffffffff); // bytes that could be third-last bytes
-                                                                           // (LEAD34 sans wrap around)
     __m512i indexofthirdlastbytes = _mm512_add_epi16(mask_ffffffff,
                                                      indexofsecondlastbytes); // indices of the second last bytes
-    __m512i thirdlastbyte = _mm512_maskz_mov_epi8(mask_thirdlastbytes,
+    __m512i thirdlastbyte = _mm512_maskz_mov_epi8(m34,
                                                   clearedbytes); // only those that are the third last byte of a sequece
     __m512i thirdlastbytes = _mm512_maskz_permutexvar_epi8(0x5555555555555555, indexofthirdlastbytes,
                                                            thirdlastbyte); // the third last bytes (of three byte sequences, hi
                                                                            // surrogate)
     thirdlastbytes = _mm512_slli_epi16(thirdlastbytes, 12);                // shifted into position
-    __m512i thirdsecondandlastbytes = _mm512_add_epi16(secondandlastbytes, thirdlastbytes);
+    __m512i thirdsecondandlastbytes = _mm512_ternarylogic_epi32(lastbytes, secondlastbytes, thirdlastbytes, 254);
     uint64_t Mlo_uint64 = _pext_u64(mp3, mend);
     __mmask32 Mlo = __mmask32(Mlo_uint64);
     __mmask32 Mhi = __mmask32(Mlo_uint64 >> 1);
@@ -15624,12 +15737,17 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
     __mmask32 Mout = ~(Mhi & 0x80000000);
     __mmask64 mprocessed = (tail == SIMDUTF_FULL) ? _pdep_u64(Mout, mend) : _pdep_u64(Mout, _kand_mask64(mend, b)); // we adjust mend at the end of the output.
 
-    int64_t nout = _mm_popcnt_u64(mprocessed);
-    int64_t nin = 64 - _lzcnt_u64(mprocessed);
 
     // mismatched continuation bytes:
-    __mmask64 bxorm1234 = _kxor_mask64(b, m1234);
-    if (mc != bxorm1234) { return false; }
+    if (tail == SIMDUTF_FULL) {
+      __mmask64 xnormcm1234 = _kxnor_mask64(mc, m1234); // XNOR of mc and m1234 should be all zero if they differ
+      // the presence of a 1 bit indicates that they overlap.
+      // _kortestz_mask64_u8: compute the bitwise OR of 64-bit masksand return 1 if all zeroes.
+      if (!_kortestz_mask64_u8(xnormcm1234, xnormcm1234)) { return false; }
+    } else {
+      __mmask64 bxorm1234 = _kxor_mask64(b, m1234);
+      if (mc != bxorm1234) { return false; }
+    }
     // Encodings out of range...
     {
       // the location of 3-byte sequence start bytes in the input
@@ -15645,42 +15763,63 @@ simdutf_really_inline bool process_block_utf8_to_utf16(const char *&in, char16_t
       __mmask32 M4s = _mm512_mask_cmpge_epu16_mask(Mhi, Moutminusd800, mask_04000400);
       if (!_kortestz_mask32_u8(M4s, _kor_mask32(Msmall800, M3s))) { return false; }
     }
+    in += 64 - _lzcnt_u64(mprocessed);
+    int64_t nout = _mm_popcnt_u64(mprocessed);
     if(big_endian) { Wout = _mm512_shuffle_epi8(Wout, byteflip); }
     _mm512_mask_storeu_epi16(out, __mmask32((uint64_t(1) << nout) - 1), Wout);
     out += nout;
-    in += nin;
     return true; // ok
   }
   // Fast path 2: all ASCII or 2 byte
+  __mmask64 continuation_or_ascii = (tail == SIMDUTF_FULL) ? _knot_mask64(m234) : _kand_mask64(_knot_mask64(m234), b);
   // on top of -0xc0 we substract -2 which we get back later of the
   // continuation byte tags
   __m512i leading2byte = _mm512_maskz_sub_epi8(m234, input, mask_c2c2c2c2);
   __mmask64 leading = tail == (tail == SIMDUTF_FULL) ? _kor_mask64(m1, m234) : _kand_mask64(_kor_mask64(m1, m234), b); // first bytes of each sequence
-  __mmask64 continuation_or_ascii = (tail == SIMDUTF_FULL) ? _knot_mask64(m234) : _kand_mask64(_knot_mask64(m234), b);
-  __mmask64 bxorleading = _kxor_mask64(b, leading);
-  if (_kshiftli_mask64(m234, 1) != bxorleading) { return false; }
+  if (tail == SIMDUTF_FULL) {
+    __mmask64 xnor234leading = _kxnor_mask64(_kshiftli_mask64(m234, 1), leading);
+    if (!_kortestz_mask64_u8(xnor234leading, xnor234leading)) { return false; }
+  } else {
+    __mmask64 bxorleading = _kxor_mask64(b, leading);
+    if (_kshiftli_mask64(m234, 1) != bxorleading) { return false; }
+  }
+  //
+  if (tail == SIMDUTF_FULL) {
+    // In the two-byte/ASCII scenario, we are easily latency bound, so we want
+    // to increment the input buffer as quickly as possible.
+    // We process 32 bytes unless the byte at index 32 is a continuation byte,
+    // in which case we include it as well for a total of 33 bytes.
+    // Note that if x is an ASCII byte, then the following is false:
+    // int8_t(x) <= int8_t(0xc0) under two's complement.
+    in += 32;
+    if(int8_t(*in) <= int8_t(0xc0)) in++;
+    // The alternative is to do
+    // in += 64 - _lzcnt_u64(_pdep_u64(0xFFFFFFFF, continuation_or_ascii));
+    // but it requires loading the input, doing the mask computation, and converting
+    // back the mask to a general register. It just takes too long, leaving the
+    // processor likely to be idle.
+  } else {
+    in += 64 - _lzcnt_u64(_pdep_u64(0xFFFFFFFF, continuation_or_ascii));
+  }
   __m512i lead = _mm512_maskz_compress_epi8(leading, leading2byte);          // will contain zero for ascii, and the data
   lead = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(lead));                 // ... zero extended into words
   __m512i follow = _mm512_maskz_compress_epi8(continuation_or_ascii, input); // the last bytes of each sequence
   follow = _mm512_cvtepu8_epi16(_mm512_castsi512_si256(follow));             // ... zero extended into words
   lead = _mm512_slli_epi16(lead, 6);                                         // shifted into position
   __m512i final = _mm512_add_epi16(follow, lead);                            // combining lead and follow
-  int64_t nout, nin;
+
+  if(big_endian) { final = _mm512_shuffle_epi8(final, byteflip); }
   if (tail == SIMDUTF_FULL) {
     // Next part is UTF-16 specific and can be generalized to UTF-32.
-    if(big_endian) { final = _mm512_shuffle_epi8(final, byteflip); }
-    _mm512_storeu_si512(out, final);
-    nout = 32;
-    nin = 64 - _lzcnt_u64(_pdep_u64(0xFFFFFFFF, continuation_or_ascii));
-  } else {
-    nout = _mm_popcnt_u64(_pdep_u64(0xFFFFFFFF, leading));
-    nin = 64 - _lzcnt_u64(_pdep_u64(0xFFFFFFFF, continuation_or_ascii));
-    if(big_endian) { final = _mm512_shuffle_epi8(final, byteflip); }
+    int nout = _mm_popcnt_u32(uint32_t(leading));
     _mm512_mask_storeu_epi16(out, __mmask32((uint64_t(1) << nout) - 1), final);
+    out += nout; // UTF-8 to UTF-16 is only expansionary in this case.
+  } else {
+    int nout = int(_mm_popcnt_u64(_pdep_u64(0xFFFFFFFF, leading)));
+    _mm512_mask_storeu_epi16(out, __mmask32((uint64_t(1) << nout) - 1), final);
+    out += nout; // UTF-8 to UTF-16 is only expansionary in this case.
   }
-  out += nout; // UTF-8 to UTF-16 is only expansionary in this case.
-  // computing the consumed input is more fun:
-  in += nin;
+
   return true; // we are fine.
 }
 
@@ -15840,12 +15979,12 @@ __m512i prev(__m512i input, __m512i previous) {
     static_assert(N<=32, "N must be no larger than 32");
     const __m512i movemask = _mm512_setr_epi32(28,29,30,31,0,1,2,3,4,5,6,7,8,9,10,11);
     const __m512i rotated = _mm512_permutex2var_epi32(input, movemask, previous);
-#if SIMDUTF_GCC8
-    constexpr int shift = 16-N; // workaround for GCC8
+#if SIMDUTF_GCC8 || SIMDUTF_GCC9
+    constexpr int shift = 16-N; // workaround for GCC8,9
     return _mm512_alignr_epi8(input, rotated, shift);
 #else
     return _mm512_alignr_epi8(input, rotated, 16-N);
-#endif // SIMDUTF_GCC8
+#endif // SIMDUTF_GCC8 || SIMDUTF_GCC9
 }
 
 template <unsigned idx0, unsigned idx1, unsigned idx2, unsigned idx3>
@@ -16036,7 +16175,7 @@ simdutf_really_inline __m512i expand_utf8_to_utf32(__m512i input) {
     return expanded_utf8_to_utf32(char_class, input);
 }
 /* end file src/icelake/icelake_utf8_common.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_macros.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_macros.inl.cpp
 /* begin file src/icelake/icelake_macros.inl.cpp */
 
 /*
@@ -16172,7 +16311,7 @@ simdutf_really_inline __m512i expand_utf8_to_utf32(__m512i input) {
                 }                                                                         \
         }
 /* end file src/icelake/icelake_macros.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_from_valid_utf8.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_from_valid_utf8.inl.cpp
 /* begin file src/icelake/icelake_from_valid_utf8.inl.cpp */
 // file included directly
 
@@ -16311,7 +16450,7 @@ std::pair<const char*, OUTPUT*> valid_utf8_to_fixed_length(const char* str, size
 
 using utf8_to_utf16_result = std::pair<const char*, char16_t*>;
 /* end file src/icelake/icelake_from_valid_utf8.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_utf8_validation.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_utf8_validation.inl.cpp
 /* begin file src/icelake/icelake_utf8_validation.inl.cpp */
 // file included directly
 
@@ -16441,7 +16580,7 @@ simdutf_really_inline __m512i check_special_cases(__m512i input, const __m512i p
 
   }; // struct avx512_utf8_checker
 /* end file src/icelake/icelake_utf8_validation.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_from_utf8.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_from_utf8.inl.cpp
 /* begin file src/icelake/icelake_from_utf8.inl.cpp */
 // file included directly
 
@@ -16453,6 +16592,7 @@ simdutf_really_inline __m512i check_special_cases(__m512i input, const __m512i p
  * Returns the position of the input and output after the processing is
  * completed. Upon error, the output is set to null.
  */
+
 template <endianness big_endian>
 utf8_to_utf16_result fast_avx512_convert_utf8_to_utf16(const char *in, size_t len, char16_t *out) {
   const char *const final_in = in + len;
@@ -16741,7 +16881,7 @@ std::tuple<const char*, OUTPUT*, bool> validating_utf8_to_fixed_length_with_cons
     return {ptr, output, true};
 }
 /* end file src/icelake/icelake_from_utf8.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_convert_utf16_to_utf32.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_convert_utf16_to_utf32.inl.cpp
 /* begin file src/icelake/icelake_convert_utf16_to_utf32.inl.cpp */
 // file included directly
 
@@ -16853,7 +16993,7 @@ std::tuple<const char16_t*, char32_t*, bool> convert_utf16_to_utf32(const char16
   return std::make_tuple(buf+carry, utf32_output, true);
 }
 /* end file src/icelake/icelake_convert_utf16_to_utf32.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_convert_utf32_to_utf8.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_convert_utf32_to_utf8.inl.cpp
 /* begin file src/icelake/icelake_convert_utf32_to_utf8.inl.cpp */
 // file included directly
 
@@ -17339,7 +17479,7 @@ std::pair<result, char*> avx512_convert_utf32_to_utf8_with_errors(const char32_t
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf8_output);
 }
 /* end file src/icelake/icelake_convert_utf32_to_utf8.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_convert_utf32_to_utf16.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_convert_utf32_to_utf16.inl.cpp
 /* begin file src/icelake/icelake_convert_utf32_to_utf16.inl.cpp */
 // file included directly
 
@@ -17474,7 +17614,7 @@ std::pair<result, char16_t*> avx512_convert_utf32_to_utf16_with_errors(const cha
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf16_output);
 }
 /* end file src/icelake/icelake_convert_utf32_to_utf16.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_ascii_validation.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_ascii_validation.inl.cpp
 /* begin file src/icelake/icelake_ascii_validation.inl.cpp */
 // file included directly
 
@@ -17493,7 +17633,7 @@ const char* validate_ascii(const char* buf, size_t len) {
   }
 }
 /* end file src/icelake/icelake_ascii_validation.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_utf32_validation.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_utf32_validation.inl.cpp
 /* begin file src/icelake/icelake_utf32_validation.inl.cpp */
 // file included directly
 
@@ -17525,7 +17665,7 @@ const char32_t* validate_utf32(const char32_t* buf, size_t len) {
     return buf;
 }
 /* end file src/icelake/icelake_utf32_validation.inl.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=icelake/icelake_convert_utf16_to_utf8.inl.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=icelake/icelake_convert_utf16_to_utf8.inl.cpp
 /* begin file src/icelake/icelake_convert_utf16_to_utf8.inl.cpp */
 // file included directly
 
@@ -17535,9 +17675,8 @@ const char32_t* validate_utf32(const char32_t* buf, size_t len) {
  * is written to 'outlen' and the function reports the number of input word
  * consumed.
  */
-
- template <endianness big_endian>
- size_t utf16_to_utf8_avx512i(const char16_t *inbuf, size_t inlen,
+template <endianness big_endian>
+size_t utf16_to_utf8_avx512i(const char16_t *inbuf, size_t inlen,
                                unsigned char *outbuf, size_t *outlen) {
   __m512i in;
   __mmask32 inmask = _cvtu32_mask32(0x7fffffff);
@@ -18840,21 +18979,39 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace icelake
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/icelake/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/icelake/end.h
 /* begin file src/simdutf/icelake/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_ICELAKE
+// nothing needed.
+#else
 SIMDUTF_UNTARGET_REGION
+#endif
+
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif // end of workaround
 /* end file src/simdutf/icelake/end.h */
 /* end file src/icelake/implementation.cpp */
 #endif
 #if SIMDUTF_IMPLEMENTATION_HASWELL
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/implementation.cpp
 /* begin file src/haswell/implementation.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/begin.h
 /* begin file src/simdutf/haswell/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "haswell"
 // #define SIMDUTF_IMPLEMENTATION haswell
+
+#if SIMDUTF_CAN_ALWAYS_RUN_HASWELL
+// nothing needed.
+#else
 SIMDUTF_TARGET_HASWELL
+#endif
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_DISABLE_GCC_WARNING(-Wmaybe-uninitialized)
+#endif // end of workaround
 /* end file src/simdutf/haswell/begin.h */
 namespace simdutf {
 namespace haswell {
@@ -18884,7 +19041,7 @@ simdutf_really_inline simd8<bool> must_be_2_3_continuation(const simd8<uint8_t> 
   return simd8<int8_t>(is_third_byte | is_fourth_byte) > int8_t(0);
 }
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_detect_encodings.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_detect_encodings.cpp
 /* begin file src/haswell/avx2_detect_encodings.cpp */
 template<class checker>
 // len is known to be a multiple of 2 when this is called
@@ -19074,7 +19231,7 @@ int avx2_detect_encodings(const char * buf, size_t len) {
 }
 /* end file src/haswell/avx2_detect_encodings.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_validate_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_validate_utf16.cpp
 /* begin file src/haswell/avx2_validate_utf16.cpp */
 /*
     In UTF-16 words in range 0xD800 to 0xDFFF have special meaning.
@@ -19275,7 +19432,7 @@ const result avx2_validate_utf16_with_errors(const char16_t* input, size_t size)
     return result(error_code::SUCCESS, input - start);
 }
 /* end file src/haswell/avx2_validate_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_validate_utf32le.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_validate_utf32le.cpp
 /* begin file src/haswell/avx2_validate_utf32le.cpp */
 /* Returns:
    - pointer to the last unprocessed character (a scalar fallback should check the rest);
@@ -19341,7 +19498,7 @@ const result avx2_validate_utf32le_with_errors(const char32_t* input, size_t siz
 }
 /* end file src/haswell/avx2_validate_utf32le.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf8_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf8_to_utf16.cpp
 /* begin file src/haswell/avx2_convert_utf8_to_utf16.cpp */
 // depends on "tables/utf8_to_utf16_tables.h"
 
@@ -19509,7 +19666,7 @@ size_t convert_masked_utf8_to_utf16(const char *input,
   return consumed;
 }
 /* end file src/haswell/avx2_convert_utf8_to_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf8_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf8_to_utf32.cpp
 /* begin file src/haswell/avx2_convert_utf8_to_utf32.cpp */
 // depends on "tables/utf8_to_utf16_tables.h"
 
@@ -19637,7 +19794,7 @@ size_t convert_masked_utf8_to_utf32(const char *input,
 }
 /* end file src/haswell/avx2_convert_utf8_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf16_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf16_to_utf8.cpp
 /* begin file src/haswell/avx2_convert_utf16_to_utf8.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -20170,7 +20327,7 @@ std::pair<result, char*> avx2_convert_utf16_to_utf8_with_errors(const char16_t* 
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf8_output);
 }
 /* end file src/haswell/avx2_convert_utf16_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf16_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf16_to_utf32.cpp
 /* begin file src/haswell/avx2_convert_utf16_to_utf32.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -20355,7 +20512,7 @@ std::pair<result, char32_t*> avx2_convert_utf16_to_utf32_with_errors(const char1
 }
 /* end file src/haswell/avx2_convert_utf16_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf32_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf32_to_utf8.cpp
 /* begin file src/haswell/avx2_convert_utf32_to_utf8.cpp */
 std::pair<const char32_t*, char*> avx2_convert_utf32_to_utf8(const char32_t* buf, size_t len, char* utf8_output) {
   const char32_t* end = buf + len;
@@ -20838,7 +20995,7 @@ std::pair<result, char*> avx2_convert_utf32_to_utf8_with_errors(const char32_t* 
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf8_output);
 }
 /* end file src/haswell/avx2_convert_utf32_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=haswell/avx2_convert_utf32_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=haswell/avx2_convert_utf32_to_utf16.cpp
 /* begin file src/haswell/avx2_convert_utf32_to_utf16.cpp */
 template <endianness big_endian>
 std::pair<const char32_t*, char16_t*> avx2_convert_utf32_to_utf16(const char32_t* buf, size_t len, char16_t* utf16_output) {
@@ -20974,7 +21131,7 @@ std::pair<result, char16_t*> avx2_convert_utf32_to_utf16_with_errors(const char3
 } // namespace haswell
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/buf_block_reader.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/buf_block_reader.h
 /* begin file src/generic/buf_block_reader.h */
 namespace simdutf {
 namespace haswell {
@@ -21069,7 +21226,7 @@ simdutf_really_inline void buf_block_reader<STEP_SIZE>::advance() {
 } // namespace haswell
 } // namespace simdutf
 /* end file src/generic/buf_block_reader.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
 /* begin file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
 namespace simdutf {
 namespace haswell {
@@ -21258,7 +21415,7 @@ using utf8_validation::utf8_checker;
 } // namespace haswell
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
 /* begin file src/generic/utf8_validation/utf8_validator.h */
 namespace simdutf {
 namespace haswell {
@@ -21385,7 +21542,7 @@ result generic_validate_ascii_with_errors(const char * input, size_t length) {
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_validator.h */
 // transcoding from UTF-8 to UTF-16
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
 
 
@@ -21460,7 +21617,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace haswell
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 
 
@@ -21738,7 +21895,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 // transcoding from UTF-8 to UTF-32
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
 
 namespace simdutf {
@@ -21784,7 +21941,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace haswell
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 
 
@@ -22061,7 +22218,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 // other functions
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8.h
 /* begin file src/generic/utf8.h */
 
 namespace simdutf {
@@ -22108,7 +22265,7 @@ simdutf_really_inline size_t utf32_length_from_utf8(const char* in, size_t size)
 } // namespace haswell
 } // namespace simdutf
 /* end file src/generic/utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf16.h
 /* begin file src/generic/utf16.h */
 namespace simdutf {
 namespace haswell {
@@ -22636,21 +22793,30 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace haswell
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/haswell/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/haswell/end.h
 /* begin file src/simdutf/haswell/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_HASWELL
+// nothing needed.
+#else
 SIMDUTF_UNTARGET_REGION
+#endif
+
+
+#if SIMDUTF_GCC11ORMORE // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105593
+SIMDUTF_POP_DISABLE_WARNINGS
+#endif // end of workaround
 /* end file src/simdutf/haswell/end.h */
 /* end file src/haswell/implementation.cpp */
 #endif
 #if SIMDUTF_IMPLEMENTATION_PPC64
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=ppc64/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=ppc64/implementation.cpp
 /* begin file src/ppc64/implementation.cpp */
 
 
 
 
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/begin.h
 /* begin file src/simdutf/ppc64/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "ppc64"
 // #define SIMDUTF_IMPLEMENTATION ppc64
@@ -22688,7 +22854,7 @@ simdutf_really_inline simd8<bool> must_be_2_3_continuation(const simd8<uint8_t> 
 } // namespace ppc64
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/buf_block_reader.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/buf_block_reader.h
 /* begin file src/generic/buf_block_reader.h */
 namespace simdutf {
 namespace ppc64 {
@@ -22783,7 +22949,7 @@ simdutf_really_inline void buf_block_reader<STEP_SIZE>::advance() {
 } // namespace ppc64
 } // namespace simdutf
 /* end file src/generic/buf_block_reader.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
 /* begin file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
 namespace simdutf {
 namespace ppc64 {
@@ -22972,7 +23138,7 @@ using utf8_validation::utf8_checker;
 } // namespace ppc64
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
 /* begin file src/generic/utf8_validation/utf8_validator.h */
 namespace simdutf {
 namespace ppc64 {
@@ -23099,7 +23265,7 @@ result generic_validate_ascii_with_errors(const char * input, size_t length) {
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_validator.h */
 // transcoding from UTF-8 to UTF-16
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
 
 
@@ -23174,7 +23340,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace ppc64
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 
 
@@ -23452,7 +23618,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 // transcoding from UTF-8 to UTF-32
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
 
 namespace simdutf {
@@ -23498,7 +23664,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace ppc64
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 
 
@@ -23775,7 +23941,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 // other functions
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8.h
 /* begin file src/generic/utf8.h */
 
 namespace simdutf {
@@ -23822,7 +23988,7 @@ simdutf_really_inline size_t utf32_length_from_utf8(const char* in, size_t size)
 } // namespace ppc64
 } // namespace simdutf
 /* end file src/generic/utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf16.h
 /* begin file src/generic/utf16.h */
 namespace simdutf {
 namespace ppc64 {
@@ -24121,19 +24287,24 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace ppc64
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/ppc64/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/ppc64/end.h
 /* begin file src/simdutf/ppc64/end.h */
 /* end file src/simdutf/ppc64/end.h */
 /* end file src/ppc64/implementation.cpp */
 #endif
 #if SIMDUTF_IMPLEMENTATION_WESTMERE
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/implementation.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/implementation.cpp
 /* begin file src/westmere/implementation.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/begin.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/begin.h
 /* begin file src/simdutf/westmere/begin.h */
 // redefining SIMDUTF_IMPLEMENTATION to "westmere"
 // #define SIMDUTF_IMPLEMENTATION westmere
+
+#if SIMDUTF_CAN_ALWAYS_RUN_WESTMERE
+// nothing needed.
+#else
 SIMDUTF_TARGET_WESTMERE
+#endif
 /* end file src/simdutf/westmere/begin.h */
 namespace simdutf {
 namespace westmere {
@@ -24162,7 +24333,7 @@ simdutf_really_inline simd8<bool> must_be_2_3_continuation(const simd8<uint8_t> 
   return simd8<int8_t>(is_third_byte | is_fourth_byte) > int8_t(0);
 }
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_detect_encodings.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_detect_encodings.cpp
 /* begin file src/westmere/sse_detect_encodings.cpp */
 template<class checker>
 // len is known to be a multiple of 2 when this is called
@@ -24372,7 +24543,7 @@ int sse_detect_encodings(const char * buf, size_t len) {
 }
 /* end file src/westmere/sse_detect_encodings.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_validate_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_validate_utf16.cpp
 /* begin file src/westmere/sse_validate_utf16.cpp */
 /*
     In UTF-16 words in range 0xD800 to 0xDFFF have special meaning.
@@ -24572,7 +24743,7 @@ const result sse_validate_utf16_with_errors(const char16_t* input, size_t size) 
     return result(error_code::SUCCESS, input - start);
 }
 /* end file src/westmere/sse_validate_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_validate_utf32le.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_validate_utf32le.cpp
 /* begin file src/westmere/sse_validate_utf32le.cpp */
 /* Returns:
    - pointer to the last unprocessed character (a scalar fallback should check the rest);
@@ -24638,7 +24809,7 @@ const result sse_validate_utf32le_with_errors(const char32_t* input, size_t size
 }
 /* end file src/westmere/sse_validate_utf32le.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf8_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf8_to_utf16.cpp
 /* begin file src/westmere/sse_convert_utf8_to_utf16.cpp */
 // depends on "tables/utf8_to_utf16_tables.h"
 
@@ -24808,7 +24979,7 @@ size_t convert_masked_utf8_to_utf16(const char *input,
   return consumed;
 }
 /* end file src/westmere/sse_convert_utf8_to_utf16.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf8_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf8_to_utf32.cpp
 /* begin file src/westmere/sse_convert_utf8_to_utf32.cpp */
 // depends on "tables/utf8_to_utf16_tables.h"
 
@@ -24940,7 +25111,7 @@ size_t convert_masked_utf8_to_utf32(const char *input,
 }
 /* end file src/westmere/sse_convert_utf8_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf16_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf16_to_utf8.cpp
 /* begin file src/westmere/sse_convert_utf16_to_utf8.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -25468,7 +25639,7 @@ std::pair<result, char*> sse_convert_utf16_to_utf8_with_errors(const char16_t* b
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf8_output);
 }
 /* end file src/westmere/sse_convert_utf16_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf16_to_utf32.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf16_to_utf32.cpp
 /* begin file src/westmere/sse_convert_utf16_to_utf32.cpp */
 /*
     The vectorized algorithm works on single SSE register i.e., it
@@ -25652,7 +25823,7 @@ std::pair<result, char32_t*> sse_convert_utf16_to_utf32_with_errors(const char16
 }
 /* end file src/westmere/sse_convert_utf16_to_utf32.cpp */
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf32_to_utf8.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf32_to_utf8.cpp
 /* begin file src/westmere/sse_convert_utf32_to_utf8.cpp */
 std::pair<const char32_t*, char*> sse_convert_utf32_to_utf8(const char32_t* buf, size_t len, char* utf8_output) {
 
@@ -26139,7 +26310,7 @@ std::pair<result, char*> sse_convert_utf32_to_utf8_with_errors(const char32_t* b
   return std::make_pair(result(error_code::SUCCESS, buf - start), utf8_output);
 }
 /* end file src/westmere/sse_convert_utf32_to_utf8.cpp */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=westmere/sse_convert_utf32_to_utf16.cpp
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=westmere/sse_convert_utf32_to_utf16.cpp
 /* begin file src/westmere/sse_convert_utf32_to_utf16.cpp */
 template <endianness big_endian>
 std::pair<const char32_t*, char16_t*> sse_convert_utf32_to_utf16(const char32_t* buf, size_t len, char16_t* utf16_output) {
@@ -26278,7 +26449,7 @@ std::pair<result, char16_t*> sse_convert_utf32_to_utf16_with_errors(const char32
 } // namespace westmere
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/buf_block_reader.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/buf_block_reader.h
 /* begin file src/generic/buf_block_reader.h */
 namespace simdutf {
 namespace westmere {
@@ -26373,7 +26544,7 @@ simdutf_really_inline void buf_block_reader<STEP_SIZE>::advance() {
 } // namespace westmere
 } // namespace simdutf
 /* end file src/generic/buf_block_reader.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_lookup4_algorithm.h
 /* begin file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
 namespace simdutf {
 namespace westmere {
@@ -26562,7 +26733,7 @@ using utf8_validation::utf8_checker;
 } // namespace westmere
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_lookup4_algorithm.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_validation/utf8_validator.h
 /* begin file src/generic/utf8_validation/utf8_validator.h */
 namespace simdutf {
 namespace westmere {
@@ -26689,7 +26860,7 @@ result generic_validate_ascii_with_errors(const char * input, size_t length) {
 } // namespace simdutf
 /* end file src/generic/utf8_validation/utf8_validator.h */
 // transcoding from UTF-8 to UTF-16
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/valid_utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
 
 
@@ -26764,7 +26935,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace westmere
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/valid_utf8_to_utf16.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf16/utf8_to_utf16.h
 /* begin file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 
 
@@ -27042,7 +27213,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf16/utf8_to_utf16.h */
 // transcoding from UTF-8 to UTF-32
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/valid_utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
 
 namespace simdutf {
@@ -27088,7 +27259,7 @@ simdutf_warn_unused size_t convert_valid(const char* input, size_t size,
 } // namespace westmere
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/valid_utf8_to_utf32.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8_to_utf32/utf8_to_utf32.h
 /* begin file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 
 
@@ -27365,7 +27536,7 @@ using namespace simd;
 } // namespace simdutf
 /* end file src/generic/utf8_to_utf32/utf8_to_utf32.h */
 // other functions
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf8.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf8.h
 /* begin file src/generic/utf8.h */
 
 namespace simdutf {
@@ -27412,7 +27583,7 @@ simdutf_really_inline size_t utf32_length_from_utf8(const char* in, size_t size)
 } // namespace westmere
 } // namespace simdutf
 /* end file src/generic/utf8.h */
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=generic/utf16.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=generic/utf16.h
 /* begin file src/generic/utf16.h */
 namespace simdutf {
 namespace westmere {
@@ -27944,9 +28115,14 @@ simdutf_warn_unused size_t implementation::utf32_length_from_utf8(const char * i
 } // namespace westmere
 } // namespace simdutf
 
-// dofile: invoked with prepath=/Users/jarred/Build/simdutf/src, filename=simdutf/westmere/end.h
+// dofile: invoked with prepath=/Users/dlemire/CVS/github/simdutf/src, filename=simdutf/westmere/end.h
 /* begin file src/simdutf/westmere/end.h */
+#if SIMDUTF_CAN_ALWAYS_RUN_WESTMERE
+// nothing needed.
+#else
 SIMDUTF_UNTARGET_REGION
+#endif
+
 /* end file src/simdutf/westmere/end.h */
 /* end file src/westmere/implementation.cpp */
 #endif

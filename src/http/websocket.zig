@@ -3,12 +3,6 @@
 const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
-const tcp = std.x.net.tcp;
-const ip = std.x.net.ip;
-
-const IPv4 = std.x.os.IPv4;
-const IPv6 = std.x.os.IPv6;
-const Socket = std.x.os.Socket;
 const os = std.os;
 const bun = @import("bun");
 const string = bun.string;
@@ -144,7 +138,7 @@ pub const Websocket = struct {
         EndOfStream,
     } || std.fs.File.WriteError;
 
-    conn: *tcp.Connection,
+    stream: std.net.Stream,
 
     err: ?anyerror = null,
     buf: [8096]u8 = undefined,
@@ -152,7 +146,7 @@ pub const Websocket = struct {
     reader: ReadStream.Reader,
     flags: u32 = 0,
     pub fn create(
-        conn: *tcp.Connection,
+        fd: std.os.fd_t,
         comptime flags: u32,
     ) Websocket {
         var stream = ReadStream{
@@ -162,7 +156,7 @@ pub const Websocket = struct {
         var socket = Websocket{
             .read_stream = undefined,
             .reader = undefined,
-            .conn = conn,
+            .stream = std.net.Stream{ .handle = @intCast(std.os.socket_t, fd) },
             .flags = flags,
         };
 
@@ -232,7 +226,7 @@ pub const Websocket = struct {
 
     // Write a raw data frame
     pub fn writeDataFrame(self: *Websocket, dataframe: WebsocketDataFrame) anyerror!usize {
-        var stream = self.conn.client.writer(self.flags);
+        var stream = self.stream.writer();
 
         if (!dataframe.isValid()) return error.InvalidMessage;
 
@@ -270,7 +264,7 @@ pub const Websocket = struct {
         @memset(&self.buf, 0, self.buf.len);
 
         // Read and retry if we hit the end of the stream buffer
-        var start = try self.conn.client.read(&self.buf, self.flags);
+        var start = try self.stream.read(&self.buf);
         if (start == 0) {
             return error.ConnectionClosed;
         }
@@ -328,7 +322,7 @@ pub const Websocket = struct {
         const end = start + length;
 
         if (end > self.read_stream.pos) {
-            var extend_length = try self.conn.client.read(self.buf[self.read_stream.pos..], self.flags);
+            var extend_length = try self.stream.read(self.buf[self.read_stream.pos..]);
             if (self.read_stream.pos + extend_length > self.buf.len) {
                 return error.MessageTooLarge;
             }

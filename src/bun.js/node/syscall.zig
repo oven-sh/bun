@@ -105,6 +105,7 @@ pub const Tag = enum(u8) {
     kill,
     waitpid,
     posix_spawn,
+    getaddrinfo,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("bun").PathString;

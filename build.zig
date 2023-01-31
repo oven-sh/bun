@@ -43,6 +43,8 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
+var compiler_rt_path: []const u8 = "";
+var compiler_rt_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, zig_exe: []const u8, target: anytype) !void {
     var bun = std.build.Pkg{
         .name = "bun",
@@ -87,12 +89,47 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Alloca
     step.addPackage(io);
     step.addPackage(bun);
 
-    // workaround for https://github.com/ziglang/zig/issues/14099
-    const compiler_rt: std.build.Pkg = .{
-        .name = "compiler_rt",
-        .source = .{ .path = try std.fmt.allocPrint(allocator, "{s}/lib/compiler_rt.zig", .{std.fs.path.dirname(zig_exe).?}) },
+    const paths_to_try = .{
+        "{s}/../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/zig/compiler_rt/stack_probe.zig",
     };
-    step.addPackage(compiler_rt);
+    var found = false;
+    if (compiler_rt_path.len > 0) {
+        const compiler_rt: std.build.Pkg = .{
+            .name = "compiler_rt",
+            .source = .{ .path = compiler_rt_path },
+        };
+        found = true;
+        step.addPackage(compiler_rt);
+    } else {
+        inline for (paths_to_try) |path_fmt| {
+            if (!found) brk: {
+                // workaround for https://github.com/ziglang/zig/issues/14099
+                const path = try std.fmt.allocPrint(allocator, path_fmt, .{zig_exe});
+                var target_path = std.os.realpath(
+                    std.fs.path.resolve(allocator, &.{path}) catch break :brk,
+                    &compiler_rt_path_buf,
+                ) catch break :brk;
+                const compiler_rt: std.build.Pkg = .{
+                    .name = "compiler_rt",
+                    .source = .{ .path = target_path },
+                };
+                found = true;
+                step.addPackage(compiler_rt);
+                compiler_rt_path = target_path;
+            }
+        }
+    }
+
+    if (!found) {
+        std.io.getStdErr().writeAll("\nwarning: Could not find compiler_rt. This might cause a build error until https://github.com/ziglang/zig/issues/14099 is fixed.\n\n") catch {};
+    }
 }
 
 const BunBuildOptions = struct {
@@ -330,6 +367,10 @@ pub fn build(b: *std.build.Builder) !void {
         obj.bundle_compiler_rt = true;
         obj.omit_frame_pointer = mode != .Debug;
 
+        if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
+            obj.emit_bin = .no_emit;
+        }
+
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
             obj.link_emit_relocs = true;
@@ -468,7 +509,8 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
-    obj.setOutputDir(output_dir);
+    if (obj.emit_bin != .no_emit)
+        obj.setOutputDir(output_dir);
     b.default_step.dependOn(obj_step);
 }
 

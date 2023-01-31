@@ -1,17 +1,19 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
+const bun = @import("bun");
+const logger = bun.logger;
+const Environment = @import("../env.zig");
+const Install = @import("./install.zig");
+const ExternalStringList = Install.ExternalStringList;
+const Features = Install.Features;
+const PackageNameHash = Install.PackageNameHash;
+const Repository = @import("./repository.zig").Repository;
 const Semver = @import("./semver.zig");
 const ExternalString = Semver.ExternalString;
+const SlicedString = Semver.SlicedString;
 const String = Semver.String;
 const std = @import("std");
-const SlicedString = Semver.SlicedString;
-const PackageNameHash = @import("./install.zig").PackageNameHash;
-const Features = @import("./install.zig").Features;
-const Install = @import("./install.zig");
-const logger = @import("bun").logger;
-const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
-const bun = @import("bun");
+const Dependency = @This();
 
 pub const Pair = struct {
     resolution_id: Install.PackageID = Install.invalid_package_id,
@@ -71,29 +73,31 @@ pub fn isLessThan(string_buf: []const u8, lhs: Dependency, rhs: Dependency) bool
     return strings.cmpStringsAsc(void{}, lhs_name, rhs_name);
 }
 
-pub fn countWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+pub fn countWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
     builder.count(this.name.slice(name_buf));
     builder.count(this.version.literal.slice(version_buf));
 }
 
-pub fn count(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
+pub fn count(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) void {
     this.countWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn clone(this: Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn clone(this: *const Dependency, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     return this.cloneWithDifferentBuffers(buf, buf, StringBuilder, builder);
 }
 
-pub fn cloneWithDifferentBuffers(this: Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
+pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, version_buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) !Dependency {
     const out_slice = builder.lockfile.buffers.string_bytes.items;
     const new_literal = builder.append(String, this.version.literal.slice(version_buf));
     const sliced = new_literal.sliced(out_slice);
+    const new_name = builder.append(String, this.name.slice(name_buf));
 
     return Dependency{
         .name_hash = this.name_hash,
-        .name = builder.append(String, this.name.slice(name_buf)),
+        .name = new_name,
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
+            new_name,
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -116,17 +120,37 @@ pub const Context = struct {
     buffer: []const u8,
 };
 
+/// Get the name of the package as it should appear in a remote registry.
+pub inline fn realname(this: *const Dependency) String {
+    return switch (this.version.tag) {
+        .npm => this.version.value.npm.name,
+        .dist_tag => this.version.value.dist_tag.name,
+        .github => this.version.value.github.package_name,
+        else => this.name,
+    };
+}
+
+pub inline fn isAliased(this: *const Dependency, buf: []const u8) bool {
+    return switch (this.version.tag) {
+        .npm => !this.version.value.npm.name.eql(this.name, buf, buf),
+        .dist_tag => !this.version.value.dist_tag.name.eql(this.name, buf, buf),
+        .github => !this.version.value.github.package_name.eql(this.name, buf, buf),
+        else => false,
+    };
+}
+
 pub fn toDependency(
     this: External,
     ctx: Context,
 ) Dependency {
+    const name = String{
+        .bytes = this[0..8].*,
+    };
     return Dependency{
-        .name = String{
-            .bytes = this[0..8].*,
-        },
+        .name = name,
         .name_hash = @bitCast(u64, this[8..16].*),
         .behavior = @intToEnum(Dependency.Behavior, this[16]),
-        .version = Dependency.Version.toVersion(this[17..this.len].*, ctx),
+        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
     };
 }
 
@@ -140,42 +164,23 @@ pub fn toExternal(this: Dependency) External {
 }
 
 pub const Version = struct {
-    tag: Dependency.Version.Tag = Dependency.Version.Tag.uninitialized,
-    literal: String = String{},
-    value: Value = Value{ .uninitialized = void{} },
+    tag: Dependency.Version.Tag = .uninitialized,
+    literal: String = .{},
+    value: Value = .{ .uninitialized = {} },
 
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
             .npm => {
-                this.value.npm.deinit();
+                this.value.npm.version.deinit();
             },
             else => {},
         }
     }
 
-    pub const @"0.0.0" = Version{
-        .tag = Dependency.Version.Tag.npm,
-        .literal = String.init("0.0.0", "0.0.0"),
-        .value = Value{
-            .npm = Semver.Query.Group{
-                .allocator = bun.default_allocator,
-                .head = .{
-                    .head = .{
-                        .range = .{
-                            .left = .{
-                                .op = .gte,
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    };
-
     pub const zeroed = Version{};
 
     pub fn clone(
-        this: Version,
+        this: *const Version,
         buf: []const u8,
         comptime StringBuilder: type,
         builder: StringBuilder,
@@ -188,13 +193,14 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        std.debug.assert(lhs.tag == rhs.tag);
+        if (Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
     pub const External = [9]u8;
 
     pub fn toVersion(
+        alias: String,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -203,6 +209,7 @@ pub const Version = struct {
         const sliced = &slice.sliced(ctx.buffer);
         return Dependency.parseWithTag(
             ctx.allocator,
+            alias,
             sliced.slice,
             tag,
             sliced,
@@ -218,8 +225,8 @@ pub const Version = struct {
     }
 
     pub inline fn eql(
-        lhs: Version,
-        rhs: Version,
+        lhs: *const Version,
+        rhs: *const Version,
         lhs_buf: []const u8,
         rhs_buf: []const u8,
     ) bool {
@@ -231,10 +238,12 @@ pub const Version = struct {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
             .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
-                lhs.value.npm.eql(rhs.value.npm),
+                lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            .github => lhs.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
+            .workspace => lhs.value.workspace.eql(rhs.value.workspace, lhs_buf, rhs_buf),
             else => true,
         };
     }
@@ -259,7 +268,6 @@ pub const Version = struct {
         /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
         symlink = 5,
 
-        /// TODO:
         workspace = 6,
         /// TODO:
         git = 7,
@@ -271,20 +279,36 @@ pub const Version = struct {
         }
 
         pub inline fn isGitHubRepoPath(dependency: string) bool {
-            var slash_count: u8 = 0;
+            // Shortest valid expression: u/r
+            if (dependency.len < 3) return false;
 
-            for (dependency) |c| {
-                slash_count += @as(u8, @boolToInt(c == '/'));
-                if (slash_count > 1 or c == '#') break;
+            var hash_index: usize = 0;
+            var slash_index: usize = 0;
 
-                // Must be alphanumeric
+            for (dependency) |c, i| {
                 switch (c) {
-                    '\\', '/', 'a'...'z', 'A'...'Z', '0'...'9', '%' => {},
+                    '/' => {
+                        if (i == 0) return false;
+                        if (slash_index > 0) return false;
+                        slash_index = i;
+                    },
+                    '#' => {
+                        if (i == 0) return false;
+                        if (hash_index > 0) return false;
+                        if (slash_index == 0) return false;
+                        hash_index = i;
+                    },
+                    // Not allowed in username
+                    '.', '_' => {
+                        if (slash_index == 0) return false;
+                    },
+                    // Must be alphanumeric
+                    '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
                     else => return false,
                 }
             }
 
-            return (slash_count == 1);
+            return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
         }
 
         // this won't work for query string params
@@ -294,230 +318,235 @@ pub const Version = struct {
         }
 
         pub fn infer(dependency: string) Tag {
+            // empty string means >= 0.0.0
+            if (dependency.len == 0) return .npm;
             switch (dependency[0]) {
-                // npm package
-                '=', '>', '<', '0'...'9', '^', '*', '|' => return Tag.npm,
-
-                '.' => return Tag.folder,
-
-                '~' => {
-
-                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#local-paths
-                    if (dependency.len > 1 and dependency[1] == '/') {
-                        return Tag.folder;
-                    }
-
-                    return Tag.npm;
-                },
-
-                'n' => {
-                    if (dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
-                        return Tag.npm;
-                    }
-                },
-
-                // MIGHT be semver, might not be.
-                'x', 'X' => {
-                    if (dependency.len == 1) {
-                        return Tag.npm;
-                    }
-
-                    if (dependency[1] == '.') {
-                        return Tag.npm;
-                    }
-
-                    return .dist_tag;
-                },
-
-                // git://, git@, git+ssh
-                'g' => {
-                    if (strings.eqlComptime(
-                        dependency[0..@min("git://".len, dependency.len)],
-                        "git://",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git@".len, dependency.len)],
-                        "git@",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+ssh".len, dependency.len)],
-                        "git+ssh",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+file".len, dependency.len)],
-                        "git+file",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+http".len, dependency.len)],
-                        "git+http",
-                    ) or strings.eqlComptime(
-                        dependency[0..@min("git+https".len, dependency.len)],
-                        "git+https",
-                    )) {
-                        return .git;
-                    }
-
-                    if (strings.eqlComptime(
-                        dependency[0..@min("github".len, dependency.len)],
-                        "github",
-                    ) or isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
-
-                '/' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
+                // =1
+                // >1.2
+                // >=1.2.3
+                // <1
+                // <=1.2
+                // ^1.2.3
+                // *
+                // || 1.x
+                '=', '>', '<', '^', '*', '|' => return .npm,
+                // ./foo.tgz
+                // ./path/to/foo
+                // ../path/to/bar
+                '.' => {
+                    if (isTarball(dependency)) return .tarball;
                     return .folder;
                 },
-
-                // https://, http://
-                'h' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
-                    var remainder = dependency;
-                    if (strings.eqlComptime(
-                        remainder[0..@min("https://".len, remainder.len)],
-                        "https://",
-                    )) {
-                        remainder = remainder["https://".len..];
-                    }
-
-                    if (strings.eqlComptime(
-                        remainder[0..@min("http://".len, remainder.len)],
-                        "http://",
-                    )) {
-                        remainder = remainder["http://".len..];
-                    }
-
-                    if (strings.eqlComptime(
-                        remainder[0..@min("github".len, remainder.len)],
-                        "github",
-                    ) or isGitHubRepoPath(remainder)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
-                },
-
-                // Dependencies can start with v
-                // v1.0.0 is the same as 1.0.0
-                // However, a github repo or a tarball could start with v
-                'v' => {
-                    if (isTarball(dependency)) {
-                        return .tarball;
-                    }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .npm;
-                },
-
-                // file:
-                'f' => {
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (strings.eqlComptime(
-                        dependency[0..@min("file:".len, dependency.len)],
-                        "file:",
-                    )) {
+                // ~1.2.3
+                // ~/foo.tgz
+                // ~/path/to/foo
+                '~' => {
+                    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#local-paths
+                    if (dependency.len > 1 and dependency[1] == '/') {
+                        if (isTarball(dependency)) return .tarball;
                         return .folder;
                     }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
+                    return .npm;
                 },
-
-                // link://
+                // /path/to/foo
+                // /path/to/foo.tgz
+                '/' => {
+                    if (isTarball(dependency)) return .tarball;
+                    return .folder;
+                },
+                // 1.2.3
+                // 123.tar.gz
+                '0'...'9' => {
+                    if (isTarball(dependency)) return .tarball;
+                    return .npm;
+                },
+                // foo.tgz
+                // foo/repo
+                // file:path/to/foo
+                // file:path/to/foo.tar.gz
+                'f' => {
+                    if (strings.hasPrefixComptime(dependency, "file:")) {
+                        if (isTarball(dependency)) return .tarball;
+                        return .folder;
+                    }
+                },
+                // git_user/repo
+                // git_tarball.tgz
+                // github:user/repo
+                // git@example.com/repo.git
+                // git://user@example.com/repo.git
+                'g' => {
+                    if (strings.hasPrefixComptime(dependency, "git")) {
+                        var url = dependency["git".len..];
+                        if (url.len > 2) {
+                            switch (url[0]) {
+                                ':' => {
+                                    if (strings.hasPrefixComptime(url, "://")) return .git;
+                                },
+                                '+' => {
+                                    if (strings.hasPrefixComptime(url, "+ssh:") or
+                                        strings.hasPrefixComptime(url, "+file:"))
+                                    {
+                                        return .git;
+                                    }
+                                    if (strings.hasPrefixComptime(url, "+http")) {
+                                        url = url["+http".len..];
+                                        if (url.len > 2 and switch (url[0]) {
+                                            ':' => brk: {
+                                                if (strings.hasPrefixComptime(url, "://")) {
+                                                    url = url["://".len..];
+                                                    break :brk true;
+                                                }
+                                                break :brk false;
+                                            },
+                                            's' => brk: {
+                                                if (strings.hasPrefixComptime(url, "s://")) {
+                                                    url = url["s://".len..];
+                                                    break :brk true;
+                                                }
+                                                break :brk false;
+                                            },
+                                            else => false,
+                                        }) {
+                                            if (strings.hasPrefixComptime(url, "github.com/")) {
+                                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                            }
+                                            return .git;
+                                        }
+                                    }
+                                },
+                                'h' => {
+                                    if (strings.hasPrefixComptime(url, "hub:")) {
+                                        if (isGitHubRepoPath(url["hub:".len..])) return .github;
+                                    }
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+                },
+                // hello/world
+                // hello.tar.gz
+                // https://github.com/user/repo
+                'h' => {
+                    if (strings.hasPrefixComptime(dependency, "http")) {
+                        var url = dependency["http".len..];
+                        if (url.len > 2) {
+                            switch (url[0]) {
+                                ':' => {
+                                    if (strings.hasPrefixComptime(url, "://")) {
+                                        url = url["://".len..];
+                                    }
+                                },
+                                's' => {
+                                    if (strings.hasPrefixComptime(url, "s://")) {
+                                        url = url["s://".len..];
+                                    }
+                                },
+                                else => {},
+                            }
+                            if (strings.hasPrefixComptime(url, "github.com/")) {
+                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                            }
+                        }
+                    }
+                },
+                // lisp.tgz
+                // lisp/repo
+                // link:path/to/foo
                 'l' => {
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (strings.eqlComptime(
-                        dependency[0..@min("link:".len, dependency.len)],
-                        "link:",
-                    )) {
-                        return .symlink;
-                    }
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
+                    if (strings.hasPrefixComptime(dependency, "link:")) return .symlink;
                 },
+                // newspeak.tgz
+                // newspeak/repo
+                // npm:package@1.2.3
+                'n' => {
+                    if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
+                        const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
+                        for (remain) |c, i| {
+                            if (c == '@') {
+                                return infer(remain[i + 1 ..]);
+                            }
+                        }
 
-                // workspace://
-                'w' => {
-                    if (strings.eqlComptime(
-                        dependency[0..@min("workspace://".len, dependency.len)],
-                        "workspace://",
-                    )) {
-                        return .workspace;
+                        return .npm;
                     }
-
-                    if (isTarball(dependency))
-                        return .tarball;
-
-                    if (isGitHubRepoPath(dependency)) {
-                        return .github;
-                    }
-
-                    return .dist_tag;
                 },
-
+                // v1.2.3
+                // verilog.tar.gz
+                // verilog/repo
+                'v' => {
+                    if (isTarball(dependency)) return .tarball;
+                    if (isGitHubRepoPath(dependency)) return .github;
+                    return .npm;
+                },
+                // x
+                // xyz.tar.gz
+                // xyz/repo#main
+                'x', 'X' => {
+                    if (dependency.len == 1) return .npm;
+                    if (dependency[1] == '.') return .npm;
+                },
                 else => {},
             }
 
-            if (isTarball(dependency))
-                return .tarball;
-
-            if (isGitHubRepoPath(dependency)) {
-                return .github;
-            }
-
+            // foo.tgz
+            // bar.tar.gz
+            if (isTarball(dependency)) return .tarball;
+            // user/repo
+            // user/repo#main
+            if (isGitHubRepoPath(dependency)) return .github;
+            // beta
             return .dist_tag;
+        }
+    };
+
+    const NpmInfo = struct {
+        name: String,
+        version: Semver.Query.Group,
+
+        fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
+        }
+    };
+
+    const TagInfo = struct {
+        name: String,
+        tag: String,
+
+        fn eql(this: TagInfo, that: TagInfo, this_buf: []const u8, that_buf: []const u8) bool {
+            return this.name.eql(that.name, this_buf, that_buf) and this.tag.eql(that.tag);
         }
     };
 
     pub const Value = union {
         uninitialized: void,
 
-        npm: Semver.Query.Group,
-        dist_tag: String,
+        npm: NpmInfo,
+        dist_tag: TagInfo,
         tarball: URI,
         folder: String,
 
         /// Equivalent to npm link
         symlink: String,
 
-        /// Unsupported, but still parsed so an error can be thrown
-        workspace: void,
+        workspace: String,
         /// Unsupported, but still parsed so an error can be thrown
         git: void,
-        /// Unsupported, but still parsed so an error can be thrown
-        github: void,
+        github: Repository,
     };
 };
 
 pub fn eql(
-    a: Dependency,
-    b: Dependency,
+    a: *const Dependency,
+    b: *const Dependency,
     lhs_buf: []const u8,
     rhs_buf: []const u8,
 ) bool {
-    return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(b.version, lhs_buf, rhs_buf);
+    return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
 }
 
-pub fn eqlResolved(a: Dependency, b: Dependency) bool {
+pub fn eqlResolved(a: *const Dependency, b: *const Dependency) bool {
     if (a.isNPM() and b.tag.isNPM()) {
         return a.resolution == b.resolution;
     }
@@ -525,32 +554,30 @@ pub fn eqlResolved(a: Dependency, b: Dependency) bool {
     return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
-pub fn parse(
+pub inline fn parse(
     allocator: std.mem.Allocator,
-    dependency_: string,
+    alias: String,
+    dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    var dependency = std.mem.trimLeft(u8, dependency_, " \t\n\r");
+    return parseWithOptionalTag(allocator, alias, dependency, null, sliced, log);
+}
 
-    if (dependency.len == 0) return null;
-    const tag = Version.Tag.infer(dependency);
-
-    if (tag == .npm and dependency.len > 4 and strings.eqlComptimeIgnoreLen(dependency[0..4], "npm:")) {
-        dependency = dependency[4..];
-    }
-
-    // Strip single leading v
-    // v1.0.0 -> 1.0.0
-    // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
-    if (tag == .npm and dependency.len > 1 and dependency[0] == 'v') {
-        dependency = dependency[1..];
-    }
-
+pub fn parseWithOptionalTag(
+    allocator: std.mem.Allocator,
+    alias: String,
+    dependency: string,
+    tag: ?Dependency.Version.Tag,
+    sliced: *const SlicedString,
+    log: ?*logger.Log,
+) ?Version {
+    const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
     return parseWithTag(
         allocator,
-        dependency,
-        tag,
+        alias,
+        dep,
+        tag orelse Version.Tag.infer(dep),
         sliced,
         log,
     );
@@ -558,17 +585,42 @@ pub fn parse(
 
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
+    alias: String,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
+    alias.assertDefined();
+
     switch (tag) {
         .npm => {
+            var input = dependency;
+            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
+                var str = input["npm:".len..];
+                var i: usize = @boolToInt(str.len > 0 and str[0] == '@');
+
+                while (i < str.len) : (i += 1) {
+                    if (str[i] == '@') {
+                        input = str[i + 1 ..];
+                        break :brk str[0..i];
+                    }
+                }
+                input = str[i..];
+                break :brk str[0..i];
+            }).value() else alias;
+
+            // Strip single leading v
+            // v1.0.0 -> 1.0.0
+            // note: "vx" is valid, it becomes "x". "yarn add react@vx" -> "yarn add react@x" -> "yarn add react@17.0.2"
+            if (input.len > 1 and input[0] == 'v') {
+                input = input[1..];
+            }
+
             const version = Semver.Query.parse(
                 allocator,
-                dependency,
-                sliced.sub(dependency),
+                input,
+                sliced.sub(input),
             ) catch |err| {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
                 return null;
@@ -576,15 +628,127 @@ pub fn parseWithTag(
 
             return Version{
                 .literal = sliced.value(),
-                .value = .{ .npm = version },
+                .value = .{
+                    .npm = .{
+                        .name = name,
+                        .version = version,
+                    },
+                },
                 .tag = .npm,
             };
         },
         .dist_tag => {
+            var tag_to_use: String = sliced.value();
+
+            const actual = if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len)
+                // npm:@foo/bar@latest
+                sliced.sub(brk: {
+                    var i: usize = "npm:".len;
+
+                    // npm:@foo/bar@latest
+                    //     ^
+                    i += @boolToInt(dependency[i] == '@');
+
+                    while (i < dependency.len) : (i += 1) {
+                        // npm:@foo/bar@latest
+                        //             ^
+                        if (dependency[i] == '@') {
+                            break;
+                        }
+                    }
+
+                    tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
+                    if (tag_to_use.isEmpty()) {
+                        tag_to_use = String.from("latest");
+                    }
+
+                    break :brk dependency["npm:".len..i];
+                }).value()
+            else
+                alias;
+
+            // name should never be empty
+            if (Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+
+            // tag should never be empty
+            if (Environment.allow_assert) std.debug.assert(!tag_to_use.isEmpty());
+
             return Version{
                 .literal = sliced.value(),
-                .value = .{ .dist_tag = sliced.value() },
+                .value = .{
+                    .dist_tag = .{
+                        .name = actual,
+                        .tag = tag_to_use,
+                    },
+                },
                 .tag = .dist_tag,
+            };
+        },
+        .github => {
+            var from_url = false;
+            var input = dependency;
+            if (strings.hasPrefixComptime(input, "github:")) {
+                input = input["github:".len..];
+            } else {
+                if (strings.hasPrefixComptime(input, "git+")) {
+                    input = input["git+".len..];
+                }
+                if (strings.hasPrefixComptime(input, "http")) {
+                    var url = input["http".len..];
+                    if (url.len > 2) {
+                        switch (url[0]) {
+                            ':' => {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            },
+                            's' => {
+                                if (strings.hasPrefixComptime(url, "s://")) {
+                                    url = url["s://".len..];
+                                }
+                            },
+                            else => {},
+                        }
+                        if (strings.hasPrefixComptime(url, "github.com/")) {
+                            input = url["github.com/".len..];
+                            from_url = true;
+                        }
+                    }
+                }
+            }
+
+            if (Environment.allow_assert) std.debug.assert(Version.Tag.isGitHubRepoPath(input));
+
+            var hash_index: usize = 0;
+            var slash_index: usize = 0;
+            for (input) |c, i| {
+                switch (c) {
+                    '/' => {
+                        slash_index = i;
+                    },
+                    '#' => {
+                        hash_index = i;
+                        break;
+                    },
+                    else => {},
+                }
+            }
+
+            var repo = if (hash_index == 0) input[slash_index + 1 ..] else input[slash_index + 1 .. hash_index];
+            if (from_url and strings.endsWithComptime(repo, ".git")) {
+                repo = repo[0 .. repo.len - ".git".len];
+            }
+
+            return Version{
+                .literal = sliced.value(),
+                .value = .{
+                    .github = .{
+                        .owner = sliced.sub(input[0..slash_index]).value(),
+                        .repo = sliced.sub(repo).value(),
+                        .committish = if (hash_index == 0) String.from("") else sliced.sub(input[hash_index + 1 ..]).value(),
+                    },
+                },
+                .tag = .github,
             };
         },
         .tarball => {
@@ -652,8 +816,15 @@ pub fn parseWithTag(
                 .literal = sliced.value(),
             };
         },
-        .workspace, .git, .github => {
-            if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported dependency type {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
+        .workspace => {
+            return Version{
+                .value = .{ .workspace = sliced.value() },
+                .tag = .workspace,
+                .literal = sliced.value(),
+            };
+        },
+        .git => {
+            if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Support for dependency type \"{s}\" is not implemented yet (\"{s}\")", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },
     }
@@ -667,6 +838,11 @@ pub const Behavior = enum(u8) {
     pub const optional: u8 = 1 << 2;
     pub const dev: u8 = 1 << 3;
     pub const peer: u8 = 1 << 4;
+    pub const workspace: u8 = 1 << 5;
+
+    pub inline fn isNormal(this: Behavior) bool {
+        return (@enumToInt(this) & Behavior.normal) != 0;
+    }
 
     pub inline fn isOptional(this: Behavior) bool {
         return (@enumToInt(this) & Behavior.optional) != 0 and !this.isPeer();
@@ -680,16 +856,48 @@ pub const Behavior = enum(u8) {
         return (@enumToInt(this) & Behavior.peer) != 0;
     }
 
-    pub inline fn isNormal(this: Behavior) bool {
-        return (@enumToInt(this) & Behavior.normal) != 0;
+    pub inline fn isWorkspace(this: Behavior) bool {
+        return (@enumToInt(this) & Behavior.workspace) != 0;
+    }
+
+    pub inline fn setNormal(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.normal);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.normal);
+        }
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.optional);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.optional);
+        }
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        return @intToEnum(Behavior, @enumToInt(this) | (@as(u8, @boolToInt(value))) << 2);
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.dev);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.dev);
+        }
+    }
+
+    pub inline fn setPeer(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.peer);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.peer);
+        }
+    }
+
+    pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
+        if (value) {
+            return @intToEnum(Behavior, @enumToInt(this) | Behavior.workspace);
+        } else {
+            return @intToEnum(Behavior, @enumToInt(this) & ~Behavior.workspace);
+        }
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
@@ -725,6 +933,13 @@ pub const Behavior = enum(u8) {
                 .lt;
         }
 
+        if (lhs.isWorkspace() != rhs.isWorkspace()) {
+            return if (lhs.isWorkspace())
+                .gt
+            else
+                .lt;
+        }
+
         return .eq;
     }
 
@@ -734,8 +949,9 @@ pub const Behavior = enum(u8) {
 
     pub fn isEnabled(this: Behavior, features: Features) bool {
         return this.isNormal() or
+            (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            (features.optional_dependencies and this.isOptional());
+            this.isWorkspace();
     }
 };

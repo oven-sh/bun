@@ -37,20 +37,6 @@ pub const URL = struct {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
     }
 
-    pub fn getIPv4Address(this: *const URL) ?std.x.net.ip.Address.IPv4 {
-        return (if (this.hostname.length > 0)
-            std.x.os.IPv4.parse(this.hostname)
-        else
-            std.x.os.IPv4.parse(this.href)) catch return null;
-    }
-
-    pub fn getIPv6Address(this: *const URL) ?std.x.net.ip.Address.IPv6 {
-        return (if (this.hostname.length > 0)
-            std.x.os.IPv6.parse(this.hostname)
-        else
-            std.x.os.IPv6.parse(this.href)) catch return null;
-    }
-
     pub fn displayProtocol(this: *const URL) string {
         if (this.protocol.len > 0) {
             return this.protocol;

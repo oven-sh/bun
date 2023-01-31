@@ -19,7 +19,7 @@ const Bin = @import("./bin.zig").Bin;
 const Environment = @import("bun").Environment;
 const Aligner = @import("./install.zig").Aligner;
 const HTTPClient = @import("bun").HTTP;
-const json_parser = @import("../json_parser.zig");
+const json_parser = bun.JSON;
 const default_allocator = @import("bun").default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
@@ -407,6 +407,13 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
+
+    pub fn verify(this: *const PackageVersion) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        this.man_dir.value.assertDefined();
+    }
 };
 
 pub const NpmPackage = extern struct {
@@ -439,6 +446,23 @@ pub const PackageManifest = struct {
     external_strings_for_versions: []const ExternalString = &[_]ExternalString{},
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
+
+    pub fn verify(this: *const PackageManifest) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        for (this.extern_strings_bin_entries) |*entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.external_strings_for_versions) |entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.package_versions) |package| {
+            package.tarball_url.value.assertDefined();
+        }
+    }
 
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
@@ -577,7 +601,14 @@ pub const PackageManifest = struct {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
             defer cache_file.close();
-            var bytes = try cache_file.readToEndAlloc(allocator, std.math.maxInt(u32));
+            var bytes = try cache_file.readToEndAllocOptions(
+                allocator,
+                std.math.maxInt(u32),
+                cache_file.getEndPos() catch null,
+                @alignOf(u8),
+                null,
+            );
+
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
             const result = try readAll(bytes);
@@ -610,11 +641,13 @@ pub const PackageManifest = struct {
                 }
             }
 
+            package_manifest.verify();
+
             return package_manifest;
         }
     };
 
-    pub fn str(self: *const PackageManifest, external: ExternalString) string {
+    pub fn str(self: *const PackageManifest, external: *const ExternalString) string {
         return external.slice(self.string_buf);
     }
 
@@ -1106,12 +1139,30 @@ pub const PackageManifest = struct {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
                                             }
@@ -1392,12 +1443,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {
-                        release_versions[0] = parsed_version.version;
+                        release_versions[0] = parsed_version.version.fill();
                         versioned_package_releases[0] = package_version;
                         release_versions = release_versions[1..];
                         versioned_package_releases = versioned_package_releases[1..];
                     } else {
-                        prerelease_versions[0] = parsed_version.version;
+                        prerelease_versions[0] = parsed_version.version.fill();
                         versioned_package_prereleases[0] = package_version;
                         prerelease_versions = prerelease_versions[1..];
                         versioned_package_prereleases = versioned_package_prereleases[1..];
@@ -1425,7 +1476,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version;
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version.fill();
                         dist_tag_i += 1;
                     }
                 }

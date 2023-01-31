@@ -22,17 +22,17 @@ const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
-const ParseResult = @import("../bundler.zig").ParseResult;
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const ParseResult = bun.bundler.ParseResult;
 const logger = @import("bun").logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = @import("../bundler.zig").Bundler;
-const PluginRunner = @import("../bundler.zig").PluginRunner;
-const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../js_printer.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const Bundler = bun.Bundler;
+const PluginRunner = bun.bundler.PluginRunner;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -119,7 +119,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
-        file = std.fs.openFileAbsoluteZ(std.meta.assumeSentinel(absolute_path_to_use.ptr, 0), .{ .mode = .read_only }) catch {
+        file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
             const WarnOnce = struct {
                 pub var warned = false;
             };
@@ -230,7 +230,7 @@ pub const ModuleLoader = struct {
 
             pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.PackageID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
-                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(dependency.name)});
+                debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -243,7 +243,7 @@ pub const ModuleLoader = struct {
                             this.vm(),
                             module.parse_result.pending_imports.items(.import_record_id)[dep_i],
                             .{
-                                .name = this.vm().packageManager().lockfile.str(dependency.name),
+                                .name = this.vm().packageManager().lockfile.str(&dependency.name),
                                 .err = err,
                                 .url = "",
                                 .version = dependency.version,
@@ -395,16 +395,18 @@ pub const ModuleLoader = struct {
                 this.map.items.len = i;
             }
 
-            pub fn onExtract(this: *Queue, package_id: u32, comptime _: PackageManager.Options.LogLevel) void {
-                if (comptime Environment.allow_assert)
+            pub fn onExtract(this: *Queue, package_id: Install.PackageID, _: Install.ExtractData, comptime _: PackageManager.Options.LogLevel) void {
+                if (comptime Environment.allow_assert) {
+                    const lockfile = this.vm().packageManager().lockfile;
                     debug("onExtract: {s} ({d})", .{
-                        this.vm().packageManager().lockfile.str(this.vm().packageManager().lockfile.packages.get(package_id).name),
+                        lockfile.str(&lockfile.packages.get(package_id).name),
                         package_id,
                     });
+                }
                 this.onPackageID(package_id);
             }
 
-            pub fn onPackageID(this: *Queue, package_id: u32) void {
+            pub fn onPackageID(this: *Queue, package_id: Install.PackageID) void {
                 var values = this.map.items;
                 for (values) |value| {
                     var package_ids = value.parse_result.pending_imports.items(.resolution_id);
@@ -621,9 +623,9 @@ pub const ModuleLoader = struct {
                     .{ result.name, result.url },
                 ),
                 error.DistTagNotFound, error.NoMatchingVersion => brk: {
-                    const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.isExact())
+                    const prefix: []const u8 = if (result.err == error.NoMatchingVersion and result.version.tag == .npm and result.version.value.npm.version.isExact())
                         "Version not found"
-                    else if (result.version.tag == .npm and !result.version.value.npm.isExact())
+                    else if (result.version.tag == .npm and !result.version.value.npm.version.isExact())
                         "No matching version found"
                     else
                         "No match found";
@@ -631,7 +633,7 @@ pub const ModuleLoader = struct {
                     break :brk std.fmt.allocPrint(
                         bun.default_allocator,
                         "{s} '{s}' for package '{s}' (but package exists)",
-                        .{ prefix, vm.packageManager().lockfile.str(result.version.literal), result.name },
+                        .{ prefix, vm.packageManager().lockfile.str(&result.version.literal), result.name },
                     );
                 },
                 else => |err| std.fmt.allocPrint(
@@ -726,7 +728,8 @@ pub const ModuleLoader = struct {
                     bun.default_allocator,
                     "{s} downloading package '{s}@{any}'",
                     .{
-                        std.mem.span(@errorName(err)),                                                  result.name,
+                        std.mem.span(@errorName(err)),
+                        result.name,
                         result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
                     },
                 ),
@@ -884,6 +887,7 @@ pub const ModuleLoader = struct {
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
+        display_specifier: string,
         referrer: string,
         path: Fs.Path,
         loader: options.Loader,
@@ -940,7 +944,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -978,6 +982,25 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 };
 
+                if (parse_result.loader == .wasm) {
+                    const wasm_result = transpileSourceCode(
+                        jsc_vm,
+                        specifier,
+                        display_specifier,
+                        referrer,
+                        path,
+                        .wasm,
+                        log,
+                        &parse_result.source,
+                        ret,
+                        promise_ptr,
+                        source_code_printer,
+                        globalObject,
+                        flags,
+                    );
+                    return wasm_result;
+                }
+
                 if (jsc_vm.bundler.log.errors > 0) {
                     return error.ParseError;
                 }
@@ -990,7 +1013,7 @@ pub const ModuleLoader = struct {
                             .print_source => ZigString.init(parse_result.source.contents),
                             else => unreachable,
                         },
-                        .specifier = ZigString.init(specifier),
+                        .specifier = ZigString.init(display_specifier),
                         .source_url = ZigString.init(path.text),
                         .hash = 0,
                     };
@@ -1102,7 +1125,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (jsc_vm.isWatcherEnabled()) {
-                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, display_specifier, path.text, null);
 
                     if (parse_result.input_fd) |fd_| {
                         if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
@@ -1124,7 +1147,7 @@ pub const ModuleLoader = struct {
                 return ResolvedSource{
                     .allocator = null,
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
-                    .specifier = ZigString.init(specifier),
+                    .specifier = ZigString.init(display_specifier),
                     .source_url = ZigString.init(path.text),
                     // // TODO: change hash to a bitfield
                     // .hash = 1,
@@ -1176,6 +1199,55 @@ pub const ModuleLoader = struct {
             //         .tag = ResolvedSource.Tag.wasm,
             //     };
             // },
+            .wasm => {
+                if (strings.eqlComptime(referrer, "undefined") and strings.eqlLong(jsc_vm.main, path.text, true)) {
+                    if (virtual_source) |source| {
+                        if (globalObject) |globalThis| {
+                            // attempt to avoid reading the WASM file twice.
+                            var encoded = JSC.EncodedJSValue{
+                                .asPtr = globalThis,
+                            };
+                            const globalValue = @intToEnum(JSC.JSValue, encoded.asInt64);
+                            globalValue.put(
+                                globalThis,
+                                JSC.ZigString.static("wasmSourceBytes"),
+                                JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
+                            );
+                        }
+                    }
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            strings.append3(
+                                bun.default_allocator,
+                                JSC.Node.fs.constants_string,
+                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./wasi.exports.js")),
+                                jsModuleFromFile(jsc_vm.load_builtins_from_path, "wasi-runner.js"),
+                            ) catch unreachable,
+                        ),
+                        .specifier = ZigString.init(display_specifier),
+                        .source_url = ZigString.init(path.text),
+                        .hash = 0,
+                    };
+                }
+
+                return transpileSourceCode(
+                    jsc_vm,
+                    specifier,
+                    display_specifier,
+                    referrer,
+                    path,
+                    .file,
+                    log,
+                    virtual_source,
+                    ret,
+                    promise_ptr,
+                    source_code_printer,
+                    globalObject,
+                    flags,
+                );
+            },
+
             else => {
                 var stack_buf = std.heap.stackFallback(4096, jsc_vm.allocator);
                 var allocator = stack_buf.get();
@@ -1311,7 +1383,7 @@ pub const ModuleLoader = struct {
             }
 
             if (!promise.isEmptyOrUndefinedOrNull()) {
-                if (promise.asInternalPromise()) |promise_value| {
+                if (promise.asAnyPromise()) |promise_value| {
                     jsc_vm.waitForPromise(promise_value);
 
                     if (promise_value.status(jsc_vm.global.vm()) == .Rejected) {
@@ -1325,7 +1397,7 @@ pub const ModuleLoader = struct {
             }
         }
     }
-    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string) string {
+    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string, string_to_use_for_source: *[]const u8) string {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
@@ -1355,6 +1427,12 @@ pub const ModuleLoader = struct {
             if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
                 slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
             }
+        }
+
+        string_to_use_for_source.* = slice;
+
+        if (strings.indexOfChar(slice, '?')) |i| {
+            slice = slice[0..i];
         }
 
         return slice;
@@ -1402,7 +1480,12 @@ pub const ModuleLoader = struct {
         var referrer_slice = referrer.toSlice(jsc_vm.allocator);
         defer _specifier.deinit();
         defer referrer_slice.deinit();
-        var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
+        var display_specifier: []const u8 = "";
+        var specifier = normalizeSpecifier(
+            jsc_vm,
+            _specifier.slice(),
+            &display_specifier,
+        );
         const path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse options.Loader.js;
         var promise: ?*JSC.JSInternalPromise = null;
@@ -1410,6 +1493,7 @@ pub const ModuleLoader = struct {
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
                 specifier,
+                display_specifier,
                 referrer_slice.slice(),
                 path,
                 loader,
@@ -1636,6 +1720,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:zlib" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "zlib.exports.js")),
+                        .specifier = ZigString.init("node:zlib"),
+                        .source_url = ZigString.init("node:zlib"),
+                        .hash = 0,
+                    };
+                },
 
                 .@"node:fs/promises" => {
                     return ResolvedSource{
@@ -1652,6 +1745,33 @@ pub const ModuleLoader = struct {
                         .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "path.exports.js")),
                         .specifier = ZigString.init("node:path"),
                         .source_url = ZigString.init("node:path"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:dns" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-dns.exports.js")),
+                        .specifier = ZigString.init("node:dns"),
+                        .source_url = ZigString.init("node:dns"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:tls" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-tls.exports.js")),
+                        .specifier = ZigString.init("node:tls"),
+                        .source_url = ZigString.init("node:tls"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:dns/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "node-dns_promises.exports.js")),
+                        .specifier = ZigString.init("node:dns/promises"),
+                        .source_url = ZigString.init("node:dns/promises"),
                         .hash = 0,
                     };
                 },
@@ -1689,6 +1809,24 @@ pub const ModuleLoader = struct {
                         .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "crypto.exports.js")),
                         .specifier = ZigString.init("node:crypto"),
                         .source_url = ZigString.init("node:crypto"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:readline" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "readline.exports.js")),
+                        .specifier = ZigString.init("node:readline"),
+                        .source_url = ZigString.init("node:readline"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:readline/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "readline_promises.exports.js")),
+                        .specifier = ZigString.init("node:readline/promises"),
+                        .source_url = ZigString.init("node:readline/promises"),
                         .hash = 0,
                     };
                 },
@@ -1840,6 +1978,21 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:wasi" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            strings.append(
+                                bun.default_allocator,
+                                JSC.Node.fs.constants_string,
+                                @as(string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "./wasi.exports.js")),
+                            ) catch unreachable,
+                        ),
+                        .specifier = ZigString.init("node:wasi"),
+                        .source_url = ZigString.init("node:wasi"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:http" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1874,9 +2027,7 @@ pub const ModuleLoader = struct {
                     };
                 },
             }
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and
-            strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
-        {
+        } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
                 return ResolvedSource{
                     .allocator = null,
@@ -1931,6 +2082,7 @@ pub const ModuleLoader = struct {
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
                 specifier,
+                specifier,
                 referrer_slice.slice(),
                 path,
                 options.Loader.fromString(@tagName(loader)).?,
@@ -1983,6 +2135,8 @@ pub const HardcodedModule = enum {
     @"node:buffer",
     @"node:child_process",
     @"node:crypto",
+    @"node:dns",
+    @"node:dns/promises",
     @"node:events",
     @"node:fs",
     @"node:fs/promises",
@@ -1990,12 +2144,15 @@ pub const HardcodedModule = enum {
     @"node:https",
     @"node:module",
     @"node:net",
+    @"node:tls",
     @"node:os",
     @"node:path",
     @"node:path/posix",
     @"node:path/win32",
     @"node:perf_hooks",
     @"node:process",
+    @"node:readline",
+    @"node:readline/promises",
     @"node:stream",
     @"node:stream/consumers",
     @"node:stream/web",
@@ -2006,9 +2163,11 @@ pub const HardcodedModule = enum {
     @"node:url",
     @"node:util",
     @"node:util/types",
+    @"node:zlib",
     depd,
     undici,
     ws,
+    @"node:wasi",
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
     /// Do not put modules that have aliases in here
@@ -2027,6 +2186,8 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
+            .{ "node:dns", HardcodedModule.@"node:dns" },
+            .{ "node:dns/promises", HardcodedModule.@"node:dns/promises" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
@@ -2040,16 +2201,21 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
+            .{ "node:readline", HardcodedModule.@"node:readline" },
+            .{ "node:readline/promises", HardcodedModule.@"node:readline/promises" },
             .{ "node:stream", HardcodedModule.@"node:stream" },
             .{ "node:stream/consumers", HardcodedModule.@"node:stream/consumers" },
             .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
             .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
+            .{ "node:tls", HardcodedModule.@"node:tls" },
             .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "node:util", HardcodedModule.@"node:util" },
             .{ "node:util/types", HardcodedModule.@"node:util/types" },
+            .{ "node:wasi", HardcodedModule.@"node:wasi" },
+            .{ "node:zlib", HardcodedModule.@"node:zlib" },
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
         },
@@ -2069,6 +2235,8 @@ pub const HardcodedModule = enum {
             .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
+            .{ "dns", "node:dns" },
+            .{ "dns/promises", "node:dns/promises" },
             .{ "events", "node:events" },
             .{ "ffi", "bun:ffi" },
             .{ "fs", "node:fs" },
@@ -2081,6 +2249,8 @@ pub const HardcodedModule = enum {
             .{ "node:buffer", "node:buffer" },
             .{ "node:child_process", "node:child_process" },
             .{ "node:crypto", "node:crypto" },
+            .{ "node:dns", "node:dns" },
+            .{ "node:dns/promises", "node:dns/promises" },
             .{ "node:events", "node:events" },
             .{ "node:fs", "node:fs" },
             .{ "node:fs/promises", "node:fs/promises" },
@@ -2094,16 +2264,21 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", "node:path/win32" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
+            .{ "node:readline", "node:readline" },
+            .{ "node:readline/promises", "node:readline/promises" },
             .{ "node:stream", "node:stream" },
             .{ "node:stream/consumers", "node:stream/consumers" },
             .{ "node:stream/web", "node:stream/web" },
             .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
+            .{ "node:tls", "node:tls" },
             .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
             .{ "node:util", "node:util" },
             .{ "node:util/types", "node:util/types" },
+            .{ "node:wasi", "node:wasi" },
+            .{ "node:zlib", "node:zlib" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path/posix" },
@@ -2113,19 +2288,24 @@ pub const HardcodedModule = enum {
             .{ "readable-stream", "node:stream" },
             .{ "readable-stream/consumer", "node:stream/consumers" },
             .{ "readable-stream/web", "node:stream/web" },
+            .{ "readline", "node:readline" },
+            .{ "readline/promises", "node:readline/promises" },
             .{ "stream", "node:stream" },
             .{ "stream/consumers", "node:stream/consumers" },
             .{ "stream/web", "node:stream/web" },
             .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
+            .{ "tls", "node:tls" },
             .{ "tty", "node:tty" },
             .{ "undici", "undici" },
             .{ "url", "node:url" },
             .{ "util", "node:util" },
             .{ "util/types", "node:util/types" },
+            .{ "wasi", "node:wasi" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
+            .{ "zlib", "node:zlib" },
         },
     );
 };

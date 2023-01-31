@@ -9,8 +9,9 @@
 #include "JSDOMWrapperCache.h"
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
-extern "C" JSC__JSValue Bun__resolve(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
-extern "C" JSC__JSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
+extern "C" EncodedJSValue Bun__resolve(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm);
+extern "C" EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm);
+extern "C" EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, ZigString* from, bool is_esm);
 
 namespace Zig {
 
@@ -28,9 +29,15 @@ public:
         return ptr;
     }
 
+    static JSC::Structure* createResolveFunctionStructure(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    static JSValue createResolveFunctionPrototype(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    static JSObject* createRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
+
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSValue key);
+
     static inline Zig::ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSString* keyString)
     {
+        // TODO: optimize this by reusing the same JSC::Structure object and using putDirectOffset
         auto& vm = globalObject->vm();
         auto view = keyString->value(globalObject);
         JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
@@ -93,8 +100,6 @@ public:
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-
-    static JSObject* createRequireFunction(VM& vm, JSGlobalObject* globalObject, WTF::String& pathString);
 
 private:
     ImportMetaObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)

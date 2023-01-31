@@ -24,11 +24,10 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn contains(this: @This(), item: []const Type) bool {
-            return @ptrToInt(item.ptr) >= @ptrToInt(this.ptr) and @ptrToInt(item.ptr) < @ptrToInt(this.ptr) + this.len;
+            return this.len > 0 and @ptrToInt(item.ptr) >= @ptrToInt(this.ptr) and @ptrToInt(item.ptr) < @ptrToInt(this.ptr) + this.len;
         }
 
-        pub inline fn init(items: []const Type) ListType {
-            @setRuntimeSafety(false);
+        pub inline fn initConst(items: []const Type) ListType {
             return ListType{
                 // Remove the const qualifier from the items
                 .ptr = @intToPtr([*]Type, @ptrToInt(items.ptr)),
@@ -38,9 +37,15 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
-        pub inline fn fromList(list_: anytype) ListType {
-            @setRuntimeSafety(false);
+        pub inline fn init(items: []Type) ListType {
+            return ListType{
+                .ptr = items.ptr,
+                .len = @truncate(u32, items.len),
+                .cap = @truncate(u32, items.len),
+            };
+        }
 
+        pub inline fn fromList(list_: anytype) ListType {
             if (comptime Environment.allow_assert) {
                 std.debug.assert(list_.items.len <= list_.capacity);
             }
@@ -53,10 +58,11 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn update(this: *ListType, list_: anytype) void {
-            @setRuntimeSafety(false);
-            this.ptr = list_.items.ptr;
-            this.len = @truncate(u32, list_.items.len);
-            this.cap = @truncate(u32, list_.capacity);
+            this.* = .{
+                .ptr = list_.items.ptr,
+                .len = @truncate(u32, list_.items.len),
+                .cap = @truncate(u32, list_.capacity),
+            };
 
             if (comptime Environment.allow_assert) {
                 std.debug.assert(this.len <= this.cap);

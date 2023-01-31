@@ -1195,6 +1195,20 @@ var require_assert = __commonJS({
           stackStartFn: notStrictEqual,
         });
     };
+    assert.match = function match(actual, expected, message) {
+      if (arguments.length < 2)
+        throw new ERR_MISSING_ARGS("actual", "expected");
+      if (!isRegExp(expected))
+        throw new ERR_INVALID_ARG_TYPE("expected", "RegExp", expected);
+      expected.test(actual) ||
+        innerFail({
+          actual,
+          expected,
+          message,
+          operator: "match",
+          stackStartFn: match,
+        });
+    };
     var Comparison = function Comparison2(obj, keys, actual) {
       var _this = this;
       _classCallCheck(this, Comparison2),
@@ -1264,10 +1278,12 @@ var require_assert = __commonJS({
           );
         return (
           keys.forEach(function (key) {
-            (typeof actual[key] == "string" &&
-              isRegExp(expected[key]) &&
-              expected[key].test(actual[key])) ||
-              compareExceptionKey(actual, expected, key, msg, keys, fn);
+            return (
+              (typeof actual[key] == "string" &&
+                isRegExp(expected[key]) &&
+                expected[key].test(actual[key])) ||
+              compareExceptionKey(actual, expected, key, msg, keys, fn)
+            );
           }),
           !0
         );

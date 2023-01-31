@@ -12,8 +12,8 @@ const std = @import("std");
 const options = @import("../options.zig");
 const logger = @import("bun").logger;
 const cache = @import("../cache.zig");
-const js_ast = @import("../js_ast.zig");
-const js_lexer = @import("../js_lexer.zig");
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these

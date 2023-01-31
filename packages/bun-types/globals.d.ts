@@ -318,7 +318,9 @@ interface EncodeIntoResult {
 
 interface Process {
   /**
-   * The current version of Bun
+   * A Node.js LTS version
+   *
+   * To see the current Bun version, use {@link Bun.version}
    */
   version: string;
   /**
@@ -342,7 +344,7 @@ interface Process {
   arch: Architecture;
   platform: Platform;
   argv: string[];
-  // execArgv: string[];
+  execArgv: string[];
   env: Bun.Env;
 
   /** Whether you are using Bun */
@@ -351,7 +353,7 @@ interface Process {
   revision: string;
   chdir(directory: string): void;
   cwd(): string;
-  exit(code?: number): void;
+  exit(code?: number): never;
   getgid(): number;
   setgid(id: number | string): void;
   getuid(): number;
@@ -391,6 +393,10 @@ interface Process {
    * @returns Bun process's file mode creation mask.
    */
   umask(mask?: number): number;
+
+  emitWarning(warning: string | Error /*name?: string, ctor?: Function*/): void;
+
+  readonly config: Object;
 }
 
 declare var process: Process;
@@ -826,6 +832,22 @@ interface RequestInit {
    * Enable or disable HTTP request timeout
    */
   timeout?: boolean;
+
+}
+
+interface FetchRequestInit extends RequestInit {
+    /**
+   * Log the raw HTTP request & response to stdout. This API may be
+   * removed in a future version of Bun without notice.
+   * This is a custom property that is not part of the Fetch API specification.
+   * It exists mostly as a debugging tool
+   */
+    verbose?: boolean,
+    /**
+     * Override http_proxy or HTTPS_PROXY
+     * This is a custom property that is not part of the Fetch API specification.
+     */
+    proxy?: string
 }
 
 /**
@@ -1233,18 +1255,7 @@ declare function clearTimeout(id?: number): void;
  */
 declare function fetch(
   url: string,
-  init?: RequestInit,
-  /**
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
-   */
-  bunOnlyOptions?: {
-    /**
-     * Log the raw HTTP request & response to stdout. This API may be
-     * removed in a future version of Bun without notice.
-     */
-    verbose: boolean;
-  },
+  init?: FetchRequestInit
 ): Promise<Response>;
 
 /**
@@ -1260,18 +1271,7 @@ declare function fetch(
 // tslint:disable-next-line:unified-signatures
 declare function fetch(
   request: Request,
-  init?: RequestInit,
-  /**
-   * This is a custom property that is not part of the Fetch API specification.
-   * It exists mostly as a debugging tool
-   */
-  bunOnlyOptions?: {
-    /**
-     * Log the raw HTTP request & response to stdout. This API may be
-     * removed in a future version of Bun without notice.
-     */
-    verbose: boolean;
-  },
+  init?: RequestInit
 ): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
@@ -1280,6 +1280,14 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
  * @param error Error or string
  */
 declare function reportError(error: any): void;
+/**
+ * Run a function immediately after main event loop is vacant
+ * @param handler function to call
+ */
+declare function setImmediate(
+  handler: TimerHandler,
+  ...arguments: any[]
+): number;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
@@ -1846,7 +1854,7 @@ declare var AbortSignal: {
 
 // type AlgorithmIdentifier = Algorithm | string;
 // type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
-type BufferSource = ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
+type BufferSource = TypedArray | DataView | ArrayBufferLike;
 // type COSEAlgorithmIdentifier = number;
 // type CSSNumberish = number;
 // type CanvasImageSource =
@@ -2277,7 +2285,7 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-/* 
+/*
 
  Web Crypto API
 

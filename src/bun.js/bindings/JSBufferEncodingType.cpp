@@ -43,7 +43,7 @@ String convertEnumerationToString(BufferEncodingType enumerationValue)
         MAKE_STATIC_STRING_IMPL("hex"),
         MAKE_STATIC_STRING_IMPL("buffer"),
     };
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
@@ -55,13 +55,23 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 // this function is mostly copied from node
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
+
     JSC::JSString* str = value.toStringOrNull(&lexicalGlobalObject);
     if (!str)
         return std::nullopt;
 
     auto encoding = str->value(&lexicalGlobalObject);
-    if (encoding.length() < 3)
+    switch (encoding.length()) {
+    case 0: {
+        return BufferEncodingType::utf8;
+    }
+    case 1:
+    case 2: {
         return std::nullopt;
+    }
+    default: {
+    }
+    }
 
     switch (encoding[0]) {
     case 'u':

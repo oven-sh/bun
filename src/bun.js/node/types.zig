@@ -346,68 +346,46 @@ pub const SliceOrBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?SliceOrBuffer {
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return SliceOrBuffer{ .string = zig_str };
-            },
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => SliceOrBuffer{
+        if (!value.isEmpty() and value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,
                 },
-            },
-            else => null,
-        };
+            };
+        }
+
+        if (value.isEmpty()) {
+            return null;
+        }
+
+        var str = value.toStringOrNull(global) orelse return null;
+        return SliceOrBuffer{ .string = str.toSlice(global, allocator) };
     }
 
     pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?SliceOrBuffer {
-        if (encoding_value.isEmptyOrUndefinedOrNull())
-            return fromJS(global, allocator, value);
-
-        switch (value.jsType()) {
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => return SliceOrBuffer{
+        if (value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,
                 },
-            },
-            else => {},
+            };
         }
 
-        var encoding_str = encoding_value.toSlice(global, allocator);
-        if (encoding_str.len == 0)
-            return fromJS(global, allocator, value);
+        const encoding: Encoding = brk: {
+            if (encoding_value.isEmpty())
+                break :brk .utf8;
+            var encoding_str = encoding_value.toSlice(global, allocator);
+            if (encoding_str.len == 0)
+                break :brk .utf8;
 
-        defer encoding_str.deinit();
-        // TODO: better error
-        const encoding = Encoding.from(encoding_str.slice()) orelse return null;
+            defer encoding_str.deinit();
+
+            // TODO: better error
+            break :brk Encoding.from(encoding_str.slice()) orelse return null;
+        };
+
         if (encoding == .utf8) {
             return fromJS(global, allocator, value);
         }
@@ -417,35 +395,7 @@ pub const SliceOrBuffer = union(Tag) {
             return fromJS(global, allocator, value);
         }
 
-        const out = brk: {
-            if (zig_str.is16Bit()) {
-                const buf = zig_str.slice();
-                break :brk switch (encoding) {
-                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf8),
-                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ucs2),
-                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .utf16le),
-                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .latin1),
-                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .ascii),
-                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64),
-                    Encoding.hex => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .hex),
-                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .buffer),
-                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU8(buf.ptr, buf.len, .base64url),
-                };
-            } else {
-                const buf = zig_str.utf16SliceAligned();
-                break :brk switch (encoding) {
-                    Encoding.utf8 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf8),
-                    Encoding.ucs2 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ucs2),
-                    Encoding.utf16le => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .utf16le),
-                    Encoding.latin1 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .latin1),
-                    Encoding.ascii => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .ascii),
-                    Encoding.base64 => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64),
-                    Encoding.hex => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .hex),
-                    Encoding.buffer => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .buffer),
-                    Encoding.base64url => JSC.WebCore.Encoder.constructFromU16(buf.ptr, buf.len, .base64url),
-                };
-            }
-        };
+        const out = zig_str.encode(encoding);
 
         return .{ .string = JSC.ZigString.Slice.from(out, allocator) };
     }
@@ -630,7 +580,8 @@ pub const PathLike = union(Tag) {
     pub inline fn sliceZAssume(
         this: PathLike,
     ) [:0]const u8 {
-        return std.meta.assumeSentinel(this.slice(), 0);
+        var sliced = this.slice();
+        return sliced.ptr[0..sliced.len :0];
     }
 
     pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -1020,7 +971,7 @@ pub const FileSystemFlags = enum(Mode) {
 
         if (val.isNumber()) {
             const number = val.toInt32();
-            if (!(number > 0o000 and number < 0o777)) {
+            if (!(number >= 0o000 and number <= 0o777)) {
                 JSC.throwInvalidArguments(
                     "Invalid integer mode: must be a number between 0o000 and 0o777",
                     .{},
@@ -1942,6 +1893,38 @@ pub const Process = struct {
         return JSC.ZigString.fromUTF8(out).toValueGC(globalObject);
     }
 
+    pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const allocator = globalObject.allocator();
+        var vm = globalObject.bunVM();
+        var args = allocator.alloc(
+            JSC.ZigString,
+            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
+            // argv also omits the script name
+            std.os.argv.len -| 1,
+        ) catch unreachable;
+        defer allocator.free(args);
+        var used: usize = 0;
+        const offset: usize = 1;
+
+        for (std.os.argv[@min(std.os.argv.len, offset)..]) |arg_| {
+            const arg = bun.span(arg_);
+            if (arg.len == 0)
+                continue;
+
+            if (arg[0] != '-')
+                continue;
+
+            if (vm.argv.len > 0 and strings.eqlLong(vm.argv[0], arg, true))
+                break;
+
+            args[used] = JSC.ZigString.fromUTF8(arg);
+
+            used += 1;
+        }
+
+        return JSC.JSValue.createStringArray(globalObject, args.ptr, used, true);
+    }
+
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var vm = globalObject.bunVM();
 
@@ -2021,7 +2004,7 @@ pub const Process = struct {
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
                 JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.get().bundler.fs.top_level_dir, 0));
+                    _ = Syscall.chdir(@ptrCast([:0]const u8, JSC.VirtualMachine.get().bundler.fs.top_level_dir));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 
@@ -2039,13 +2022,18 @@ pub const Process = struct {
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
-    pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
-    pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
-    pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
-    pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
     pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
-    pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
+    pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
+    pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
+    pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
+    pub export const Bun__versions_uws: [*:0]const u8 = bun.Global.versions.uws;
+    pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
     pub export const Bun__versions_zig: [*:0]const u8 = bun.Global.versions.zig;
+    pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
+    pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
+    pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
+    pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
+    pub export const Bun__versions_usockets: [*:0]const u8 = bun.Global.versions.usockets;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
 };
 

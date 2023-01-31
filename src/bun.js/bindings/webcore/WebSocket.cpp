@@ -159,6 +159,7 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
 {
     m_state = CONNECTING;
     m_hasPendingActivity.store(true);
+    ref();
 }
 
 WebSocket::~WebSocket()
@@ -803,7 +804,9 @@ void WebSocket::didReceiveMessage(String&& message)
 
     if (this->hasEventListeners("message"_s)) {
         // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+        this->incPendingActivityCount();
         dispatchEvent(MessageEvent::create(WTFMove(message), m_url.string()));
+        this->decPendingActivityCount();
         return;
     }
 
@@ -839,7 +842,9 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     case BinaryType::ArrayBuffer: {
         if (this->hasEventListeners("message"_s)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            this->incPendingActivityCount();
             dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+            this->decPendingActivityCount();
             return;
         }
 

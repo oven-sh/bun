@@ -472,8 +472,8 @@ pub const Archive = struct {
         file_buffer: []const u8,
         dir_: std.fs.IterableDir,
         ctx: ?*Archive.Context,
-        comptime FilePathAppender: type,
-        appender: FilePathAppender,
+        comptime ContextType: type,
+        appender: ContextType,
         comptime depth_to_skip: usize,
         comptime close_handles: bool,
         comptime log: bool,
@@ -497,7 +497,14 @@ pub const Archive = struct {
                 Status.retry => continue :loop,
                 Status.failed, Status.fatal => return error.Fail,
                 else => {
-                    var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+                    var pathname: [:0]const u8 = bun.sliceTo(lib.archive_entry_pathname(entry).?, 0);
+
+                    if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
+                        if (appender.needs_first_dirname) {
+                            appender.onFirstDirectoryName(strings.withoutTrailingSlash(std.mem.span(pathname)));
+                        }
+                    }
+
                     var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
 
@@ -580,7 +587,7 @@ pub const Archive = struct {
                                     else
                                         @as(u64, 0);
 
-                                    if (comptime FilePathAppender != void) {
+                                    if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "appendMutable")) {
                                         var result = ctx.?.all_files.getOrPutAdapted(hash, Context.U64Context{}) catch unreachable;
                                         if (!result.found_existing) {
                                             result.value_ptr.* = (try appender.appendMutable(@TypeOf(slice), slice)).ptr;

@@ -15,15 +15,15 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../../bundler.zig").MacroEntryPoint;
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
 const logger = @import("bun").logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = @import("../../bundler.zig").Bundler;
-const ServerEntryPoint = @import("../../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../../js_printer.zig");
-const js_parser = @import("../../js_parser.zig");
-const js_ast = @import("../../js_ast.zig");
+const Bundler = bun.Bundler;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../../http.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -33,7 +33,7 @@ const Runtime = @import("../../runtime.zig");
 const Router = @import("./filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = @import("../../bundler.zig").ParseResult;
+const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
 const WebCore = @import("bun").JSC.WebCore;
@@ -72,7 +72,7 @@ const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
-const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
 const Which = @import("../../which.zig");
@@ -942,7 +942,17 @@ fn doResolve(
         return null;
     }
 
-    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, false);
+    var is_esm = true;
+    if (args.nextEat()) |next| {
+        if (next.isBoolean()) {
+            is_esm = next.toBoolean();
+        } else {
+            JSC.throwInvalidArguments("esm must be a boolean", .{}, ctx, exception);
+            return null;
+        }
+    }
+
+    return doResolveWithArgs(ctx, specifier.getZigString(ctx.ptr()), from.getZigString(ctx.ptr()), exception, is_esm, false);
 }
 
 fn doResolveWithArgs(
@@ -950,9 +960,11 @@ fn doResolveWithArgs(
     specifier: ZigString,
     from: ZigString,
     exception: js.ExceptionRef,
+    is_esm: bool,
     comptime is_file_path: bool,
 ) ?JSC.JSValue {
     var errorable: ErrorableZigString = undefined;
+    var query_string = ZigString.Empty;
 
     if (comptime is_file_path) {
         VirtualMachine.resolveFilePathForAPI(
@@ -960,6 +972,8 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
+            is_esm,
         );
     } else {
         VirtualMachine.resolveForAPI(
@@ -967,6 +981,8 @@ fn doResolveWithArgs(
             ctx.ptr(),
             specifier,
             from,
+            &query_string,
+            is_esm,
         );
     }
 
@@ -975,7 +991,23 @@ fn doResolveWithArgs(
         return null;
     }
 
-    return errorable.result.value.toValue(ctx.ptr());
+    if (query_string.len > 0) {
+        var stack = std.heap.stackFallback(1024, ctx.allocator());
+        const allocator = stack.get();
+        var arraylist = std.ArrayList(u8).initCapacity(allocator, 1024) catch unreachable;
+        defer arraylist.deinit();
+        arraylist.writer().print("{any}{any}", .{
+            errorable.result.value,
+            query_string,
+        }) catch {
+            JSC.JSError(allocator, "Failed to allocate memory", .{}, ctx, exception);
+            return null;
+        };
+
+        return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
+    }
+
+    return errorable.result.value.toValue(ctx);
 }
 
 pub fn resolveSync(
@@ -1010,10 +1042,11 @@ export fn Bun__resolve(
     global: *JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
+    is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -1023,10 +1056,24 @@ export fn Bun__resolveSync(
     global: *JSGlobalObject,
     specifier: JSValue,
     source: JSValue,
+    is_esm: bool,
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, is_esm, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
+export fn Bun__resolveSyncWithSource(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: *ZigString,
+    is_esm: bool,
+) JSC.JSValue {
+    var exception_ = [1]JSC.JSValueRef{null};
+    var exception = &exception_;
+    return doResolveWithArgs(global, specifier.getZigString(global), source.*, exception, is_esm, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1035,6 +1082,7 @@ comptime {
     if (!is_bindgen) {
         _ = Bun__resolve;
         _ = Bun__resolveSync;
+        _ = Bun__resolveSyncWithSource;
     }
 }
 
@@ -1500,8 +1548,19 @@ pub const Crypto = struct {
                     return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine);
                 }
 
-                if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md| {
-                    return EVP.init(algorithm, md, engine);
+                switch (algorithm) {
+                    .md4 => return EVP.init(algorithm, BoringSSL.EVP_md4(), engine),
+                    .md5 => return EVP.init(algorithm, BoringSSL.EVP_md5(), engine),
+                    .sha1 => return EVP.init(algorithm, BoringSSL.EVP_sha1(), engine),
+                    .sha224 => return EVP.init(algorithm, BoringSSL.EVP_sha224(), engine),
+                    .sha256 => return EVP.init(algorithm, BoringSSL.EVP_sha256(), engine),
+                    .sha384 => return EVP.init(algorithm, BoringSSL.EVP_sha384(), engine),
+                    .sha512 => return EVP.init(algorithm, BoringSSL.EVP_sha512(), engine),
+                    .@"sha512-256" => return EVP.init(algorithm, BoringSSL.EVP_sha512_256(), engine),
+                    else => {
+                        if (BoringSSL.EVP_get_digestbyname(@tagName(algorithm))) |md|
+                            return EVP.init(algorithm, md, engine);
+                    },
                 }
             }
 
@@ -1523,7 +1582,7 @@ pub const Crypto = struct {
 
         _ = BoringSSL.ERR_error_string_n(err_code, message_buf, message_buf.len);
 
-        const error_message: []const u8 = bun.span(std.meta.assumeSentinel(&outbuf, 0));
+        const error_message: []const u8 = bun.sliceTo(outbuf[0..], 0);
         if (error_message.len == "BoringSSL error: ".len) {
             return ZigString.static("Unknown BoringSSL error").toErrorInstance(globalThis);
         }
@@ -2269,15 +2328,7 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(ZigString.static("BunTranspiler"));
-    if (existing.isEmpty()) {
-        return ctx.ptr().putCachedObject(
-            &ZigString.init("BunTranspiler"),
-            JSC.JSValue.fromRef(Transpiler.Constructor.constructor(ctx)),
-        ).asObjectRef();
-    }
-
-    return existing.asObjectRef();
+    return JSC.API.Bun.Transpiler.getConstructor(ctx).asObjectRef();
 }
 
 pub fn getFileSystemRouter(
@@ -2781,7 +2832,7 @@ pub const Timer = struct {
             }
 
             var this = args.ptr[1].asPtr(CallbackJob);
-            globalThis.bunVM().runErrorHandlerWithDedupe(args.ptr[0], null);
+            globalThis.bunVM().onUnhandledError(globalThis, args.ptr[0]);
             this.deinit();
             return JSValue.jsUndefined();
         }
@@ -2849,17 +2900,17 @@ pub const Timer = struct {
                 return;
             }
 
-            if (result.isAnyError(globalThis)) {
-                vm.runErrorHandlerWithDedupe(result, null);
+            if (result.isAnyError()) {
+                vm.onUnhandledError(globalThis, result);
                 this.deinit();
                 return;
             }
 
-            if (result.asPromise()) |promise| {
+            if (result.asAnyPromise()) |promise| {
                 switch (promise.status(globalThis.vm())) {
                     .Rejected => {
                         this.deinit();
-                        vm.runErrorHandlerWithDedupe(promise.result(globalThis.vm()), null);
+                        vm.onUnhandledError(globalThis, promise.result(globalThis.vm()));
                     },
                     .Fulfilled => {
                         this.deinit();
@@ -2970,7 +3021,7 @@ pub const Timer = struct {
 
             var vm = this.globalThis.bunVM();
 
-            this.poll_ref.unref(vm);
+            this.poll_ref.unrefOnNextTick(vm);
             this.timer.deinit();
             this.callback.deinit();
             this.arguments.deinit();
@@ -3847,8 +3898,8 @@ pub const EnvironmentVariables = struct {
     }
 };
 
-export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.get().runErrorHandler(err, null);
+export fn Bun__reportError(globalObject: *JSGlobalObject, err: JSC.JSValue) void {
+    JSC.VirtualMachine.runErrorHandlerWithDedupe(globalObject.bunVM(), err, null);
 }
 
 comptime {

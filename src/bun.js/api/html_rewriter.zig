@@ -10,7 +10,7 @@ const JSC = @import("bun").JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Router = @This();
-const Bundler = @import("../../bundler.zig");
+const Bundler = bun.bundler;
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
@@ -842,14 +842,7 @@ fn HandlerCallback(
                     return true;
                 }
 
-                if (result.asPromise()) |promise| {
-                    this.global.bunVM().waitForPromise(promise);
-                    const fail = promise.status(this.global.vm()) == .Rejected;
-                    if (fail) {
-                        this.global.bunVM().runErrorHandler(promise.result(this.global.vm()), null);
-                    }
-                    return fail;
-                } else if (result.asInternalPromise()) |promise| {
+                if (result.asAnyPromise()) |promise| {
                     this.global.bunVM().waitForPromise(promise);
                     const fail = promise.status(this.global.vm()) == .Rejected;
                     if (fail) {
@@ -1462,13 +1455,13 @@ pub const AttributeIterator = struct {
         \\  }
         \\
         \\  #iterator;
-        \\  
+        \\
         \\  [Symbol.iterator]() {
         \\     return this;
         \\  }
-        \\  
+        \\
         \\  next() {
-        \\     if (this.#iterator === null) 
+        \\     if (this.#iterator === null)
         \\          return {done: true};
         \\     var value = this.#iterator.next();
         \\     if (!value) {

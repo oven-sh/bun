@@ -8,7 +8,7 @@ ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG BUN_PACKAGES_DIR=${BUN_DIR}/packages
-ARG ZIG_VERSION="0.11.0-dev.947+cf822c6dd"
+ARG ZIG_VERSION="0.11.0-dev.1393+38eebf3c4"
 
 ARG ZIG_FOLDERNAME=zig-linux-${ARCH}-${ZIG_VERSION}
 ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
@@ -99,7 +99,7 @@ RUN tar -xf ${ZIG_FILENAME} && \
     mv ${ZIG_FOLDERNAME} ${ZIG_PATH};
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-linux-$BUILDARCH.tar.gz && \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null

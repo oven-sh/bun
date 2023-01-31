@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("bun");
 const builtin = @import("builtin");
 const os = std.os;
 const mem = std.mem;
@@ -285,6 +286,20 @@ pub const SystemErrno = enum(u8) {
 
     pub const max = 107;
 
+    pub fn init(code: anytype) ?SystemErrno {
+        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
+            if (code < 0)
+                return init(-code);
+        }
+
+        if (code >= max) return null;
+        return @intToEnum(SystemErrno, code);
+    }
+
+    pub fn label(this: SystemErrno) ?[]const u8 {
+        return labels.get(this) orelse null;
+    }
+
     const LabelMap = std.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
@@ -554,7 +569,7 @@ pub fn get_version(buf: []u8) []const u8 {
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
+    return bun.sliceTo(buf, 0);
 }
 
 pub fn get_release(buf: []u8) []const u8 {
@@ -570,7 +585,7 @@ pub fn get_release(buf: []u8) []const u8 {
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
+    return bun.sliceTo(buf, 0);
 }
 
 const IO_CTL_RELATED = struct {

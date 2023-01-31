@@ -11,13 +11,13 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const std = @import("std");
-const lex = @import("js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 const options = @import("options.zig");
-const js_parser = @import("js_parser.zig");
-const json_parser = @import("json_parser.zig");
-const js_printer = @import("js_printer.zig");
-const js_ast = @import("js_ast.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const Ref = @import("ast/base.zig").Ref;
 const Define = @import("defines.zig").Define;
@@ -454,7 +454,7 @@ pub const Bundler = struct {
             DotEnv.instance = env_loader;
         }
 
-        env_loader.quiet = log.level.atLeast(.info);
+        env_loader.quiet = !log.level.atLeast(.warn);
 
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
@@ -1404,6 +1404,17 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
+                // wasm magic number
+                if (source.isWebAssembly()) {
+                    return ParseResult{
+                        .source = source,
+                        .input_fd = input_fd,
+                        .loader = .wasm,
+                        .empty = true,
+                        .ast = js_ast.Ast.empty,
+                    };
+                }
+
                 const platform = bundler.options.platform;
 
                 var jsx = this_parse.jsx;
@@ -1518,7 +1529,7 @@ pub const Bundler = struct {
             },
             .wasm => {
                 if (bundler.options.platform.isBun()) {
-                    if (source.contents.len < 4 or @bitCast(u32, source.contents[0..4].*) != @bitCast(u32, [4]u8{ 0, 'a', 's', 'm' })) {
+                    if (!source.isWebAssembly()) {
                         bundler.log.addErrorFmt(
                             null,
                             logger.Loc.Empty,

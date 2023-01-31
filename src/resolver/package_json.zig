@@ -14,11 +14,11 @@ const std = @import("std");
 const options = @import("../options.zig");
 const cache = @import("../cache.zig");
 const logger = @import("bun").logger;
-const js_ast = @import("../js_ast.zig");
+const js_ast = bun.JSAst;
 
 const fs = @import("../fs.zig");
 const resolver = @import("./resolver.zig");
-const js_lexer = @import("../js_lexer.zig");
+const js_lexer = bun.js_lexer;
 const resolve_path = @import("./resolve_path.zig");
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed
@@ -760,8 +760,8 @@ pub const PackageJSON = struct {
 
                         if (tag == .npm) {
                             const sliced = Semver.SlicedString.init(package_json.version, package_json.version);
-                            if (Dependency.parseWithTag(r.allocator, package_json.version, .npm, &sliced, r.log)) |dependency_version| {
-                                if (dependency_version.value.npm.isExact()) {
+                            if (Dependency.parseWithTag(r.allocator, String.init(package_json.name, package_json.name), package_json.version, .npm, &sliced, r.log)) |dependency_version| {
+                                if (dependency_version.value.npm.version.isExact()) {
                                     if (pm.lockfile.resolve(package_json.name, dependency_version)) |resolved| {
                                         package_json.package_manager_package_id = resolved;
                                         if (resolved > 0) {
@@ -870,20 +870,22 @@ pub const PackageJSON = struct {
                             if (group_json.data == .e_object) {
                                 var group_obj = group_json.data.e_object;
                                 for (group_obj.properties.slice()) |*prop| {
-                                    const name = prop.key orelse continue;
-                                    const name_str = name.asString(r.allocator) orelse continue;
+                                    const name_prop = prop.key orelse continue;
+                                    const name_str = name_prop.asString(r.allocator) orelse continue;
+                                    const name = String.init(name_str, name_str);
                                     const version_value = prop.value orelse continue;
                                     const version_str = version_value.asString(r.allocator) orelse continue;
                                     const sliced_str = Semver.SlicedString.init(version_str, version_str);
 
                                     if (Dependency.parse(
                                         r.allocator,
+                                        name,
                                         version_str,
                                         &sliced_str,
                                         r.log,
                                     )) |dependency_version| {
                                         const dependency = Dependency{
-                                            .name = String.init(name_str, name_str),
+                                            .name = name,
                                             .version = dependency_version,
                                             .name_hash = bun.hash(name_str),
                                             .behavior = group.behavior,

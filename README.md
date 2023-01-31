@@ -29,6 +29,12 @@ Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
 curl -fsSL https://bun.sh/install | bash
 ```
 
+npm:
+
+```sh
+npm install -g bun
+```
+
 Homebrew: (MacOS and Linux)
 
 ```sh
@@ -175,6 +181,7 @@ bun upgrade --canary
   - [`Bun.Transpiler.scan`](#buntranspilerscan)
   - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
 - [`Bun.peek` - read a promise same-tick](#bunpeek---read-a-promise-without-resolving-it)
+- [`Bun.dns` - lookup a domain](#bundns---lookup-a-domain)
 - [Module resolution in Bun](#module-resolution-in-bun)
 - [Environment variables](#environment-variables)
 - [Credits](#credits)
@@ -415,6 +422,21 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
+## Using bun as a WebAssembly runner
+
+Bun v0.5.2 added experimental support for the [WebAssembly System Interface](https://github.com/WebAssembly/WASI) (WASI). This means you can run WebAssembly binaries in Bun.
+
+To run a WASI binary, use `bun run`:
+
+```bash
+bun run ./my-wasm-app.wasm
+
+# you can omit "run" if the filename ends with .wasm
+bun ./my-wasm-app.wasm
+```
+
+WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not optimized for performance, but if this feature gets popular, we'll definitely invest time in making it faster.
+
 ## Creating a Discord bot with Bun
 
 ### Application Commands
@@ -580,7 +602,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | ------------------------------------------------------------------------------------- | -------------- |
 | Web Streams with Fetch API                                                            | bun.js         |
 | Web Streams with HTMLRewriter                                                         | bun.js         |
-| Package hoisting that matches npm behavior                                            | bun install    |
 | Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |
 | JavaScript Minifier                                                                   | JS Transpiler  |
@@ -1254,7 +1275,7 @@ bun install --backend copyfile
 
 **`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
-If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has it's own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
 ```bash
 rm -rf node_modules
@@ -1275,7 +1296,7 @@ bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but m
 
 ### `bun run`
 
-`bun run` is a fast `package.json` script runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
+`bun run` is a fast `package.json` script runner and executable runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
 
 By default, `bun run` prints the script that will be invoked:
 
@@ -1290,7 +1311,7 @@ You can disable that with `--silent`
 bun run --silent clean
 ```
 
-`bun run ${script-name}` runs the equivalent of `npm run script-name`. For example, `bun run dev` runs the `dev` script in `package.json`, which may sometimes spin up non-bun processes.
+`bun run ${script-name}` runs the equivalent of `npm run script-name`, `npx bin-name`, and `node file-name` all in one command. For example, `bun run dev` runs the `dev` script in `package.json`, which may sometimes spin up non-bun processes.
 
 `bun run ${javascript-file.js}` will run it with bun, as long as the file doesn't have a node shebang.
 
@@ -2591,7 +2612,7 @@ If you need to read from `stdout` or `stderr` synchronously, you should use `Bun
 
 `Bun.spawn` returns a `Subprocess` object.
 
-More complete types are available in [`bun-types`](https://github.com/oven-sh/bun-types).
+More complete types are available in [`bun-types`](https://github.com/oven-sh/bun/tree/main/packages/bun-types).
 
 ```ts
 interface Subprocess {
@@ -2822,6 +2843,50 @@ queueMicrotask(() => {
 ```
 
 Builtin buffering is planned in a future version of Bun.
+
+## `Bun.dns` - lookup a domain
+
+`Bun.dns` includes utilities to make DNS requests, similar to `node:dns`. As of Bun v0.5.0, the only implemented function is `dns.lookup`, though more will be implemented soon.
+
+You can lookup the IP addresses of a hostname by using `dns.lookup`.
+
+```ts
+import { dns } from "bun";
+
+const [{ address }] = await dns.lookup("example.com");
+console.log(address); // "93.184.216.34"
+```
+
+If you need to limit IP addresses to either IPv4 or IPv6, you can specify the `family` as an option.
+
+```ts
+import { dns } from "bun";
+
+const [{ address }] = await dns.lookup("example.com", { family: 6 });
+console.log(address); // "2606:2800:220:1:248:1893:25c8:1946"
+```
+
+Bun supports three backends for DNS resolution:
+
+- `c-ares` - This is the default on Linux, and it uses the [c-ares](https://c-ares.org/) library to perform DNS resolution.
+- `system` - Uses the system's non-blocking DNS resolver, if available. Otherwise, falls back to `getaddrinfo`. This is the default on macOS, and the same as `getaddrinfo` on Linux.
+- `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function, which may cause performance issues under concurrent load.
+
+You can choose a particular backend by specifying `backend` as an option.
+
+```ts
+import { dns } from "bun";
+
+const [{ address, ttl }] = await dns.lookup("example.com", {
+  backend: "c-ares",
+});
+console.log(address); // "93.184.216.34"
+console.log(ttl); // 21237
+```
+
+Note: the `ttl` property is only accurate when the `backend` is c-ares. Otherwise, `ttl` will be `0`.
+
+This was added in Bun v0.5.0.
 
 ## `Bun.peek` - read a promise without resolving it
 
@@ -4581,7 +4646,7 @@ It will check the lockfile for the version. If the lockfile doesn't have a versi
 
 Lowlights:
 
-- TypeScript type support isn't implmented yet
+- TypeScript type support isn't implemented yet
 - patch package support isn't implemented yet
 
 #### Resolving packages
@@ -4932,7 +4997,6 @@ bun also statically links these libraries:
 
 - [`boringssl`](https://boringssl.googlesource.com/boringssl/), which has [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE)
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
-- [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It’s a dependency of libarchive.
 - [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is BSD 3-Clause licensed
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
@@ -4940,8 +5004,10 @@ bun also statically links these libraries:
 - [`tinycc`](https://github.com/tinycc/tinycc), which is LGPL v2.1 licensed
 - [`uSockets`](https://github.com/uNetworking/uSockets), which is Apache 2.0 licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
-- `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
+- [`c-ares`](https://github.com/c-ares/c-ares), which is MIT licensed
+- `libicu` 72, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
+- WASI implementation from [`wasi-js`](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js), which is BSD 3 clause licensed. Note that wasi-js is originally based on [wasmer-js](https://github.com/wasmerio/wasmer-js), which is MIT licensed. wasmer-js was based on [node-wasi](https://github.com/devsnek/node-wasi) by Gus Caplan (also MIT licensed). You can [read more about the history here](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js#history).
 
 For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
@@ -5054,18 +5120,18 @@ Install LLVM 15 and homebrew dependencies:
 brew install llvm@15 coreutils libtool cmake libiconv automake ninja gnu-sed pkg-config esbuild go rust
 ```
 
-bun (& the version of Zig) need LLVM 15 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
+bun (& the version of Zig) need LLVM 15 and Clang 15 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
 
 Make sure LLVM 15 is in your `$PATH`:
 
 ```bash
-which clang-13
+which clang-15
 ```
 
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH="$(brew --prefix llvm@15)/bin:$HOME/.bun-tools/zig:$PATH"
+export PATH="$(brew --prefix llvm@15)/bin"
 export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
 export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 ```
@@ -5074,79 +5140,104 @@ On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 
 #### Install Zig (macOS)
 
-Note: **you must use the same version of Zig used by Bun in [oven-sh/zig](https://github.com/oven-sh/zig)**. Installing `zig` from brew will not work. Installing the latest stable version of Zig won't work. If you don't use the same version Bun uses, you will get strange build errors and be sad because you put all this work into trying to get Bun to compile and it failed for weird reasons.
-
-To install the zig binary:
+Install the latest version of Zig via Homebrew:
 
 ```bash
-# Custom path for the custom zig install
-mkdir -p $HOME/.bun-tools
-
-# Requires jq & grab latest binary
-curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig-macos-$(uname -m).tar.gz
-
-# This will extract to $HOME/.bun-tools/zig
-tar -xvf zig.tar.gz -C $HOME/.bun-tools/
-rm zig.tar.gz
-
-# Make sure it gets trusted
-# If you get an error 'No such xattr: com.apple.quarantine', that means it's already trusted and you can continue
-xattr -d com.apple.quarantine $HOME/.bun-tools/zig/zig
+brew install zig --head
 ```
-
-Now you'll need to add Zig to your PATH.
-
-Using `zsh`:
-
-```zsh
-echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.zshrc
-source ~/.zshrc
-```
-
-Using `fish`:
-
-```fish
-# Add to PATH (fish)
-fish_add_path $HOME/.bun-tools/zig
-```
-
-Using `bash`:
-
-```bash
-echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.bash_profile
-source ~/.bash_profile
-```
-
-The version of Zig used by Bun is not a fork, just a slightly older version. Zig is a new programming language and moves quickly.
 
 #### Build bun (macOS)
 
-If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
-
-You can still work with the generated binary locally at `packages/debug-bun-*/bun-debug` even if the code signing fails.
-
-In `bun`:
+One-off command to run:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1 --checkout
-make vendor identifier-cache bindings jsc dev
+make vendor identifier-cache webcrypto-debug
+```
+
+To compile C++ code:
+
+```bash
+# don't forget -j or you will spend like 30 minutes compiling
+make bindings -j12
+```
+
+To compile Zig code and link `bun-debug` into `packages/debug-bun-darwin-${arch}/bun-debug`:
+
+```bash
+make dev
+```
+
+These are separate commands to (usually) save you time, but you can combine them like so:
+
+```bash
+make bindings -j12 && make dev
 ```
 
 #### Verify it worked (macOS)
 
-First ensure the node dependencies are installed
-
 ```bash
-(cd test/snippets && npm i)
-(cd test/scripts && npm i)
+packages/debug-bun-darwin-*/bun-debug --version
 ```
 
-Then
+It should print `bun 0.4.0__dev` or something similar.
+
+You will want to add `packages/debug-bun-darwin-arm64/` or `packages/debug-bun-darwin-x64/` to your `$PATH` so you can run `bun-debug` from anywhere.
+
+#### JavaScript builtins
+
+When you change anything in `src/bun.js/builtins/js/*`, you need to run this:
 
 ```bash
-make test-dev-all
+make clean-bindings generate-builtins && make bindings -j12
 ```
+
+That inlines the JavaScript code into C++ headers using the same builtins generator script that Safari uses.
+
+#### Code generation scripts
+
+Bun leverages a lot of code generation scripts
+
+[./src/bun.js/bindings/headers.h](./src/bun.js/bindings/headers.h) has bindings to & from Zig <> C++ code. This file is generated by running the following:
+
+```bash
+make headers
+```
+
+This ensures that the types for Zig and the types for C++ match up correctly, by using comptime reflection over functions exported/imported.
+
+TypeScript files that end with `*.classes.ts` are another code generation script. They generate C++ boilerplate for classes implemented in Zig. The generated code lives in:
+
+- [src/bun.js/bindings/ZigGeneratedClasses.cpp](src/bun.js/bindings/ZigGeneratedClasses.cpp)
+- [src/bun.js/bindings/ZigGeneratedClasses.h](src/bun.js/bindings/ZigGeneratedClasses.h)
+- [src/bun.js/bindings/generated_classes.zig](src/bun.js/bindings/generated_classes.zig)
+
+To generate the code, run:
+
+```bash
+make codegen
+```
+
+Lastly, we also have a [code generation script](src/bun.js/scripts/generate-jssink.js) for our native stream implementations.
+
+To run that, run:
+
+```bash
+make generate-sink
+```
+
+You probably won't need to run that one much.
+
+### Modifying ESM core modules
+
+How to modify ESM modules like `node:fs`, `node:path`, `node:stream`, `bun:sqlite`:
+
+ESM modules implemented in JavaScript live in `*.exports.js` within src/bun.js.
+
+While bun is in beta, you can modify them at runtime in release builds via the environment variable `BUN_OVERRIDE_MODULE_PATH`.
+
+This will look at a folder for a file with the same name as in src/bun.js/\*.exports.js and if it exists, it will use that instead. This is useful for testing changes to the ESM modules without needing to compile Bun.
 
 #### Troubleshooting (macOS)
 

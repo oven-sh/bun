@@ -10,11 +10,10 @@ fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?
     return @intCast(u16, filepath.len);
 }
 
+extern "C" fn is_executable_file(path: [*:0]const u8) bool;
 fn checkPath(filepath: [:0]const u8) bool {
-    // TODO: is there a single system call for executable AND file?
-    std.os.accessZ(filepath, std.os.X_OK) catch return false;
-    std.os.accessZ(filepath, std.os.F_OK) catch return false;
-    return true;
+    bun.JSC.markBinding(@src());
+    return is_executable_file(filepath);
 }
 
 // Like /usr/bin/which but without needing to exec a child process

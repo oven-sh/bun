@@ -12,13 +12,13 @@ const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const root = @import("root");
 const std = @import("std");
-const lex = @import("js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 const options = @import("options.zig");
-const js_parser = @import("js_parser.zig");
-const json_parser = @import("json_parser.zig");
-const js_printer = @import("js_printer.zig");
-const js_ast = @import("js_ast.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 
 const sync = @import("./sync.zig");
@@ -28,7 +28,7 @@ const configureTransformOptionsForBun = @import("./bun.js/config.zig").configure
 const clap = @import("bun").clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
-const bundler = @import("bundler.zig");
+const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
 
 const fs = @import("fs.zig");
@@ -258,9 +258,7 @@ pub const Arguments = struct {
     fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
         if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
-            var outbuf = resolve_path.joinAbsStringBuf(data_dir, buf, &paths, .auto);
-            buf[outbuf.len] = 0;
-            return std.meta.assumeSentinel(outbuf, 0);
+            return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
         }
 
         return null;
@@ -352,8 +350,14 @@ pub const Arguments = struct {
 
         var cwd: []u8 = undefined;
         if (args.option("--cwd")) |cwd_| {
-            var cwd_paths = [_]string{cwd_};
-            cwd = try std.fs.path.resolve(allocator, &cwd_paths);
+            cwd = brk: {
+                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
+                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+                break :brk try allocator.dupe(u8, out);
+            };
         } else {
             cwd = try std.process.getCwdAlloc(allocator);
         }
@@ -832,6 +836,8 @@ pub const Command = struct {
         macros: ?MacroMap = null,
         editor: string = "",
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
+
+        test_directory: []const u8 = "",
     };
 
     pub const Context = struct {
@@ -1237,7 +1243,7 @@ pub const Command = struct {
                 const force_using_bun = ctx.debug.run_in_bun;
                 var did_check = false;
                 if (default_loader) |loader| {
-                    if (loader.isJavaScriptLike()) {
+                    if (loader.canBeRunByBun()) {
                         was_js_like = true;
                         if (maybeOpenWithBunJS(&ctx)) {
                             return;
@@ -1330,7 +1336,7 @@ pub const Command = struct {
         Global.configureAllocator(.{ .long_running = true });
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        var absolute_script_path = std.os.getFdPath(file.handle, &script_name_buf) catch return false;
+        var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
         BunJS.Run.boot(
             ctx.*,
             file,

@@ -111,7 +111,7 @@ pub const FileSystem = struct {
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dir = try std.os.getFdPath(fd, &buf);
+        var dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
 
@@ -1057,7 +1057,7 @@ pub const FileSystem = struct {
                 }
                 const _stat = try file.stat();
 
-                symlink = try std.os.getFdPath(file.handle, &outpath);
+                symlink = try bun.getFdPath(file.handle, &outpath);
 
                 _kind = _stat.kind;
             }

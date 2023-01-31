@@ -26,7 +26,7 @@ pub const BunxCommand = struct {
         bun.JSAst.Expr.Data.Store.create(default_allocator);
         bun.JSAst.Stmt.Data.Store.create(default_allocator);
 
-        const expr = try bun.json.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
+        const expr = try bun.JSON.ParseJSONUTF8(&source, bundler.log, bundler.allocator);
 
         // choose the first package that fits
         if (expr.get("bin")) |bin_expr| {
@@ -223,11 +223,10 @@ pub const BunxCommand = struct {
         );
 
         var PATH = this_bundler.env.map.get("PATH").?;
-        const display_version: []const u8 =
-            if (update_request.missing_version)
+        const display_version = if (update_request.version.literal.isEmpty())
             "latest"
         else
-            update_request.version_buf;
+            update_request.version.literal.slice(update_request.version_buf);
 
         const PATH_FOR_BIN_DIRS = PATH;
         if (PATH.len > 0) {

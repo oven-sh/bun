@@ -14,6 +14,7 @@ const C = bun.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
+const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 const Variable = struct {
@@ -431,6 +432,46 @@ pub const Loader = struct {
             this.map.get("bamboo.buildKey")) != null;
     }
 
+    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+        // TODO: When Web Worker support is added, make sure to intern these strings
+        var http_proxy: ?URL = null;
+
+        if (url.isHTTP()) {
+            if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+            }
+        } else {
+            if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+            }
+        }
+
+        //NO_PROXY filter
+        if (http_proxy != null) {
+            if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
+                if (no_proxy_text.len == 0) return http_proxy;
+
+                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
+                var next = no_proxy_list.next();
+                while (next != null) {
+                    var host = next.?;
+                    if (strings.eql(host, "*")) {
+                        return null;
+                    }
+                    //strips .
+                    if (host[0] == '.') {
+                        host = host[1.. :0];
+                    }
+                    //hostname ends with suffix
+                    if (strings.endsWith(url.hostname, host)) {
+                        return null;
+                    }
+                    next = no_proxy_list.next();
+                }
+            }
+        }
+        return http_proxy;
+    }
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 
@@ -525,7 +566,7 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
-                const js_ast = @import("./js_ast.zig");
+                const js_ast = bun.JSAst;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
@@ -635,8 +676,10 @@ pub const Loader = struct {
 
         // This is a little weird because it's evidently stored line-by-line
         var source = logger.Source.initPathString("process.env", "");
+
+        this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
         for (std.os.environ) |env| {
-            source.contents = std.mem.span(env);
+            source.contents = bun.span(env);
             Parser.parse(&source, this.allocator, this.map, true, true);
         }
         this.did_load_process = true;

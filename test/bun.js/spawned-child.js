@@ -22,6 +22,8 @@ if (TARGET === "STDIN") {
   });
 } else if (TARGET === "STDOUT") {
   process.stdout.write("stdout_test");
+} else if (TARGET === "ERROR") {
+  console.log("oops");
 } else {
-  console.log("unknown target! you messed up...");
+  // nothing
 }

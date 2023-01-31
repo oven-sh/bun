@@ -195,18 +195,15 @@ const char* const s_importMetaObjectRequireESMCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireCodeLength = 1133;
-static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_importMetaObjectRequireCode =
-    "(function (name) {\n" \
+const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectInternalRequireCodeLength = 983;
+static const JSC::Intrinsic s_importMetaObjectInternalRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectInternalRequireCode =
+    "(function (resolved) {\n" \
     "  \"use strict\";\n" \
-    "  if (typeof name !== \"string\") {\n" \
-    "    @throwTypeError(\"require() expects a string as its argument\");\n" \
-    "  }\n" \
-    "  const resolved = @resolveSync(name, this.path);\n" \
+    "\n" \
     "  var cached = @requireMap.@get(resolved);\n" \
     "  const last5 = resolved.substring(resolved.length - 5);\n" \
     "  if (cached) {\n" \
@@ -238,6 +235,23 @@ const char* const s_importMetaObjectRequireCode =
     "    @requireMap.@set(resolved, exports);\n" \
     "    return exports;\n" \
     "  }\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_importMetaObjectRequireCodeLength = 222;
+static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectRequireCode =
+    "(function (name) {\n" \
+    "  const from = this?.path ?? arguments.callee.path;\n" \
+    "\n" \
+    "  if (typeof name !== \"string\") {\n" \
+    "    @throwTypeError(\"require(name) must be a string\");\n" \
+    "  }\n" \
+    "\n" \
+    "  return @internalRequire(@resolveSync(name, from));\n" \
     "})\n" \
 ;
 

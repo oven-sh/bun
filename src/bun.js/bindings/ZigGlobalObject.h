@@ -44,6 +44,7 @@ class SubtleCrypto;
 }
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
@@ -197,6 +198,11 @@ public:
     JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
 
+    JSC::Structure* JSBufferStructure() { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSBufferConstructor() { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSBufferPrototype() { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::Structure* JSBufferSubclassStructure() { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
+
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -237,6 +243,11 @@ public:
     JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
+
+    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
+    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+
+    JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
     {
@@ -293,60 +304,7 @@ public:
     };
     static constexpr size_t promiseFunctionsSize = 22;
 
-    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
-    {
-        if (handler == Bun__HTTPRequestContext__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onReject;
-        } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContext__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onResolve;
-        } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
-        } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
-        } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
-        } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
-        } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == jsFunctionOnLoadObjectResultResolve) {
-            return PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
-        } else if (handler == jsFunctionOnLoadObjectResultReject) {
-            return PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-        } else if (handler == Bun__TestScope__onReject) {
-            return PromiseFunctions::Bun__TestScope__onReject;
-        } else if (handler == Bun__TestScope__onResolve) {
-            return PromiseFunctions::Bun__TestScope__onResolve;
-        } else if (handler == CallbackJob__onResolve) {
-            return PromiseFunctions::CallbackJob__onResolve;
-        } else if (handler == CallbackJob__onReject) {
-            return PromiseFunctions::CallbackJob__onReject;
-        } else {
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
+    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
     JSFunction* thenable(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
     {
@@ -462,6 +420,7 @@ private:
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_callSiteStructure;
+    LazyClassStructure m_JSBufferClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -490,6 +449,10 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
@@ -498,66 +461,6 @@ private:
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
-};
-
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
-
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
 };
 
 } // namespace Zig

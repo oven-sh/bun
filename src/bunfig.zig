@@ -12,8 +12,8 @@ const URL = @import("./url.zig").URL;
 const C = bun.C;
 const options = @import("./options.zig");
 const logger = @import("bun").logger;
-const js_ast = @import("./js_ast.zig");
-const js_lexer = @import("./js_lexer.zig");
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
 const Defines = @import("./defines.zig");
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
 const Api = @import("./api/schema.zig").Api;
@@ -25,7 +25,7 @@ pub const MacroMap = bun.StringArrayHashMapUnmanaged(MacroImportReplacementMap);
 pub const BundlePackageOverride = bun.StringArrayHashMapUnmanaged(options.BundleOverride);
 const LoaderMap = bun.StringArrayHashMapUnmanaged(options.Loader);
 const Analytics = @import("./analytics.zig");
-const JSONParser = @import("./json_parser.zig");
+const JSONParser = bun.JSON;
 const Command = @import("cli.zig").Command;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 
@@ -187,6 +187,14 @@ pub const Bunfig = struct {
                         if (this.bunfig.port.? == 0) {
                             this.bunfig.port = 3000;
                         }
+                    }
+                }
+            }
+
+            if (comptime cmd == .TestCommand) {
+                if (json.get("test")) |test_| {
+                    if (test_.get("root")) |root| {
+                        this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
                     }
                 }
             }

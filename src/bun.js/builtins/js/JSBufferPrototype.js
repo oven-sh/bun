@@ -31,176 +31,176 @@
 
 function setBigUint64(offset, value, le) {
   "use strict";
-  return this.dataView.setBigUint64(offset, value, le);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, le);
 }
 function readInt8(offset) {
   "use strict";
-  return this.dataView.getInt8(offset);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt8(offset);
 }
 function readUInt8(offset) {
   "use strict";
-  return this.dataView.getUint8(offset);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint8(offset);
 }
 function readInt16LE(offset) {
   "use strict";
-  return this.dataView.getInt16(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, true);
 }
 function readInt16BE(offset) {
   "use strict";
-  return this.dataView.getInt16(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, false);
 }
 function readUInt16LE(offset) {
   "use strict";
-  return this.dataView.getUint16(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, true);
 }
 function readUInt16BE(offset) {
   "use strict";
-  return this.dataView.getUint16(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, false);
 }
 function readInt32LE(offset) {
   "use strict";
-  return this.dataView.getInt32(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, true);
 }
 function readInt32BE(offset) {
   "use strict";
-  return this.dataView.getInt32(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, false);
 }
 function readUInt32LE(offset) {
   "use strict";
-  return this.dataView.getUint32(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, true);
 }
 function readUInt32BE(offset) {
   "use strict";
-  return this.dataView.getUint32(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, false);
 }
 function readFloatLE(offset) {
   "use strict";
-  return this.dataView.getFloat32(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);
 }
 function readFloatBE(offset) {
   "use strict";
-  return this.dataView.getFloat32(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, false);
 }
 function readDoubleLE(offset) {
   "use strict";
-  return this.dataView.getFloat64(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, true);
 }
 function readDoubleBE(offset) {
   "use strict";
-  return this.dataView.getFloat64(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, false);
 }
 function readBigInt64LE(offset) {
   "use strict";
-  return this.dataView.getBigInt64(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, true);
 }
 function readBigInt64BE(offset) {
   "use strict";
-  return this.dataView.getBigInt64(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, false);
 }
 function readBigUInt64LE(offset) {
   "use strict";
-  return this.dataView.getBigUint64(offset, true);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, true);
 }
 function readBigUInt64BE(offset) {
   "use strict";
-  return this.dataView.getBigUint64(offset, false);
+  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);
 }
 function writeInt8(value, offset) {
   "use strict";
-  this.dataView.setInt8(offset, value);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
   return offset + 1;
 }
 function writeUInt8(value, offset) {
   "use strict";
-  this.dataView.setUint8(offset, value);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);
   return offset + 1;
 }
 function writeInt16LE(value, offset) {
   "use strict";
-  this.dataView.setInt16(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);
   return offset + 2;
 }
 function writeInt16BE(value, offset) {
   "use strict";
-  this.dataView.setInt16(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);
   return offset + 2;
 }
 function writeUInt16LE(value, offset) {
   "use strict";
-  this.dataView.setUint16(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);
   return offset + 2;
 }
 function writeUInt16BE(value, offset) {
   "use strict";
-  this.dataView.setUint16(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);
   return offset + 2;
 }
 function writeInt32LE(value, offset) {
   "use strict";
-  this.dataView.setInt32(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);
   return offset + 4;
 }
 function writeInt32BE(value, offset) {
   "use strict";
-  this.dataView.setInt32(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);
   return offset + 4;
 }
 function writeUInt32LE(value, offset) {
   "use strict";
-  this.dataView.setUint32(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);
   return offset + 4;
 }
 function writeUInt32BE(value, offset) {
   "use strict";
-  this.dataView.setUint32(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
   return offset + 4;
 }
 
 function writeFloatLE(value, offset) {
   "use strict";
-  this.dataView.setFloat32(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);
   return offset + 4;
 }
 
 function writeFloatBE(value, offset) {
   "use strict";
-  this.dataView.setFloat32(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);
   return offset + 4;
 }
 
 function writeDoubleLE(value, offset) {
   "use strict";
-  this.dataView.setFloat64(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);
   return offset + 8;
 }
 
 function writeDoubleBE(value, offset) {
   "use strict";
-  this.dataView.setFloat64(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);
   return offset + 8;
 }
 
 function writeBigInt64LE(value, offset) {
   "use strict";
-  this.dataView.setBigInt64(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);
   return offset + 8;
 }
 
 function writeBigInt64BE(value, offset) {
   "use strict";
-  this.dataView.setBigInt64(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);
   return offset + 8;
 }
 
 function writeBigUInt64LE(value, offset) {
   "use strict";
-  this.dataView.setBigUint64(offset, value, true);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);
   return offset + 8;
 }
 
 function writeBigUInt64BE(value, offset) {
   "use strict";
-  this.dataView.setBigUint64(offset, value, false);
+  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);
   return offset + 8;
 }
 
@@ -300,6 +300,17 @@ function slice(start, end) {
   return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);
 }
 
+@getter
+function parent() {
+  "use strict";
+  return this?.buffer;
+}
+
+@getter
+function offset() {
+  "use strict";
+  return this?.byteOffset;
+}
 
 function initializeBunBuffer(parameters)
 {

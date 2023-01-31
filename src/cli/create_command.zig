@@ -11,12 +11,12 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
+const lex = bun.js_lexer;
 const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 
 const allocators = @import("../allocators.zig");
@@ -25,7 +25,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
@@ -34,7 +34,7 @@ const NetworkThread = HTTP.NetworkThread;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
@@ -405,7 +405,7 @@ pub const CreateCommand = struct {
         switch (example_tag) {
             Example.Tag.github_repository, Example.Tag.official => {
                 var tarball_bytes: MutableString = switch (example_tag) {
-                    .official => Example.fetch(ctx, template, &progress, node) catch |err| {
+                    .official => Example.fetch(ctx, &env_loader, template, &progress, node) catch |err| {
                         switch (err) {
                             error.HTTPForbidden, error.ExampleNotFound => {
                                 node.end();
@@ -1710,7 +1710,7 @@ pub const Example = struct {
     }
 
     pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*std.Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
-        const remote_examples = try Example.fetchAll(ctx, node);
+        const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
@@ -1846,21 +1846,13 @@ pub const Example = struct {
             }
         }
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8096);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1910,7 +1902,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetch(ctx: Command.Context, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
+    pub fn fetch(ctx: Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
         progress.name = "Fetching package.json";
         refresher.refresh();
 
@@ -1920,18 +1912,11 @@ pub const Example = struct {
 
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -2003,16 +1988,11 @@ pub const Example = struct {
         mutable.reset();
 
         // ensure very stable memory address
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            URL.parse(tarball_url),
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        const parsed_tarball_url = URL.parse(tarball_url);
+
+        http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
+
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2033,23 +2013,16 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetchAll(ctx: Command.Context, progress_node: ?*std.Progress.Node) ![]Example {
+    pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
+
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

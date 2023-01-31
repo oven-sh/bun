@@ -1,4 +1,5 @@
 [install]
+cache = false
 registry = "http://localhost:54321/"
 
 [install.scopes]

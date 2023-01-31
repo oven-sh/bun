@@ -83,10 +83,16 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 pub fn IOTask(comptime Context: type) type {
+    return WorkTask(Context, true);
+}
+
+pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
     return struct {
+        const TaskType = if (async_io) NetworkThread.Task else WorkPoolTask;
+
         const This = @This();
         ctx: *Context,
-        task: NetworkThread.Task = .{ .callback = &runFromThreadPool },
+        task: TaskType = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
@@ -108,7 +114,7 @@ pub fn IOTask(comptime Context: type) type {
             return this;
         }
 
-        pub fn runFromThreadPool(task: *NetworkThread.Task) void {
+        pub fn runFromThreadPool(task: *TaskType) void {
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -121,8 +127,12 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             this.ref.ref(this.event_loop.virtual_machine);
-            NetworkThread.init() catch return;
-            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            if (comptime async_io) {
+                NetworkThread.init() catch return;
+                NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            } else {
+                WorkPool.schedule(&this.task);
+            }
         }
 
         pub fn onFinish(this: *This) void {
@@ -175,6 +185,7 @@ const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
 const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
+const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -189,6 +200,7 @@ pub const Task = TaggedPointerUnion(.{
     CppTask,
     HotReloadTask,
     PollPendingModulesTask,
+    GetAddrInfoRequestTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -416,6 +428,11 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
                     this.virtual_machine.modules.onPoll();
                 },
+                @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
+                    var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
+                    any.runFromJS();
+                    any.deinit();
+                },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else unreachable,
@@ -459,7 +476,21 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        var loop = this.virtual_machine.uws_event_loop.?;
+        var ctx = this.virtual_machine;
+        var loop = ctx.uws_event_loop.?;
+
+        // Some tasks need to keep the event loop alive for one more tick.
+        // We want to keep the event loop alive long enough to process those ticks and any microtasks
+        //
+        // BUT. We don't actually have an idle event in that case.
+        // That means the process will be waiting forever on nothing.
+        // So we need to drain the counter immediately before entering uSockets loop
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
         if (loop.num_polls > 0 or loop.active > 0) {
             loop.tick();
             this.processGCTimer();
@@ -469,6 +500,15 @@ pub const EventLoop = struct {
 
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.virtual_machine.uws_event_loop.?;
+
+        var ctx = this.virtual_machine;
+
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
         if (loop.active > 0) {
             loop.tick();
             this.processGCTimer();
@@ -480,7 +520,6 @@ pub const EventLoop = struct {
         this.virtual_machine.gc_controller.processGCTimer();
     }
 
-    // TODO: fix this technical debt
     pub fn tick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
         this.tickConcurrent();
@@ -489,7 +528,7 @@ pub const EventLoop = struct {
 
         var global_vm = ctx.global.vm();
         while (true) {
-            while (this.tickWithCount() > 0) {
+            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();
@@ -500,6 +539,8 @@ pub const EventLoop = struct {
             break;
         }
 
+        // TODO: unify the event loops
+        // This needs a hook into JSC to schedule timers
         this.global.vm().doWork();
 
         while (this.tickWithCount() > 0) {
@@ -529,19 +570,7 @@ pub const EventLoop = struct {
         }
     }
 
-    // TODO: fix this technical debt
-    pub fn waitForPromise(this: *EventLoop, promise: anytype) void {
-        return waitForPromiseWithType(this, std.meta.Child(@TypeOf(promise)), promise);
-    }
-
-    pub fn waitForPromiseWithType(this: *EventLoop, comptime Promise: type, promise: *Promise) void {
-        comptime {
-            switch (Promise) {
-                JSC.JSPromise, JSC.JSInternalPromise => {},
-                else => @compileError("Promise must be a JSPromise or JSInternalPromise, received: " ++ @typeName(Promise)),
-            }
-        }
-
+    pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.global.vm())) {
             JSC.JSPromise.Status.Pending => {
                 while (promise.status(this.global.vm()) == .Pending) {

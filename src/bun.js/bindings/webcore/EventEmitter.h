@@ -45,7 +45,7 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 
     WEBCORE_EXPORT bool isNode() const { return false; };
-
+    bool removeAllListeners();
     WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
@@ -83,6 +83,15 @@ public:
 
     IdentifierEventListenerMap& eventListenerMap() { return ensureEventEmitterData().eventListenerMap; }
 
+    void setThisObject(JSC::JSValue thisObject)
+    {
+        m_thisObject.clear();
+
+        if (thisObject.isCell()) {
+            m_thisObject = JSC::Weak<JSC::JSObject>(thisObject.getObject());
+        }
+    }
+
 private:
     EventEmitter(ScriptExecutionContext& context)
         : ContextDestructionObserver(&context)
@@ -99,6 +108,8 @@ private:
 
     EventEmitterData m_eventTargetData;
     unsigned m_maxListeners { 10 };
+
+    mutable JSC::Weak<JSC::JSObject> m_thisObject { nullptr };
 };
 
 inline const EventEmitterData* EventEmitter::eventTargetData() const

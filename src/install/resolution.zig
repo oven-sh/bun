@@ -39,6 +39,24 @@ pub const Resolution = extern struct {
         };
     }
 
+    pub fn verify(this: *const Resolution) void {
+        switch (this.tag) {
+            .npm => {
+                this.value.npm.url.assertDefined();
+            },
+            .local_tarball => this.value.local_tarball.assertDefined(),
+            .git_ssh => this.value.git_ssh.assertDefined(),
+            .git_http => this.value.git_http.assertDefined(),
+            .folder => this.value.folder.assertDefined(),
+            .remote_tarball => this.value.remote_tarball.assertDefined(),
+            .workspace => this.value.workspace.assertDefined(),
+            .symlink => this.value.symlink.assertDefined(),
+            .github => this.value.github.verify(),
+            .gitlab => this.value.gitlab.verify(),
+            else => {},
+        }
+    }
+
     pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
         switch (this.tag) {
             .npm => this.value.npm.count(buf, Builder, builder),
@@ -56,7 +74,7 @@ pub const Resolution = extern struct {
         }
     }
 
-    pub fn clone(this: Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
+    pub fn clone(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
         return Resolution{
             .tag = this.tag,
             .value = switch (this.tag) {
@@ -99,17 +117,17 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmt(this: Resolution, buf: []const u8) Formatter {
+    pub fn fmt(this: *const Resolution, buf: []const u8) Formatter {
         return Formatter{ .resolution = this, .buf = buf };
     }
 
-    pub fn fmtURL(this: Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
+    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
         return URLFormatter{ .resolution = this, .buf = buf, .package_name = name, .options = options };
     }
 
     pub fn eql(
-        lhs: Resolution,
-        rhs: Resolution,
+        lhs: *const Resolution,
+        rhs: *const Resolution,
         lhs_string_buf: []const u8,
         rhs_string_buf: []const u8,
     ) bool {
@@ -159,12 +177,12 @@ pub const Resolution = extern struct {
                 rhs_string_buf,
             ),
             .github => lhs.value.github.eql(
-                rhs.value.github,
+                &rhs.value.github,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
             .gitlab => lhs.value.gitlab.eql(
-                rhs.value.gitlab,
+                &rhs.value.gitlab,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
@@ -173,7 +191,7 @@ pub const Resolution = extern struct {
     }
 
     pub const URLFormatter = struct {
-        resolution: Resolution,
+        resolution: *const Resolution,
         options: *const PackageManager.Options,
         package_name: string,
 
@@ -189,16 +207,16 @@ pub const Resolution = extern struct {
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
                 .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
                 .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }
     };
 
     pub const Formatter = struct {
-        resolution: Resolution,
+        resolution: *const Resolution,
         buf: []const u8,
 
         pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
@@ -211,9 +229,9 @@ pub const Resolution = extern struct {
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
                 .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
                 .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
                 .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }

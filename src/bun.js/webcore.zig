@@ -1,6 +1,9 @@
 pub usingnamespace @import("./webcore/response.zig");
 pub usingnamespace @import("./webcore/encoding.zig");
 pub usingnamespace @import("./webcore/streams.zig");
+pub usingnamespace @import("./webcore/blob.zig");
+pub usingnamespace @import("./webcore/request.zig");
+pub usingnamespace @import("./webcore/body.zig");
 
 const JSC = @import("bun").JSC;
 const std = @import("std");
@@ -458,6 +461,7 @@ pub const Crypto = struct {
             null,
             0,
         ) != 1)) {
+            BoringSSL.ERR_clear_error();
             return globalThis.createErrorInstance("scrypt parameters are invalid", .{});
         }
         var slice: []u8 = undefined;
@@ -574,6 +578,7 @@ pub const Crypto = struct {
             buf.ptr,
             keylen,
         ) != 1) {
+            BoringSSL.ERR_clear_error();
             return globalThis.createErrorInstance("Failed to derive key", .{});
         }
 

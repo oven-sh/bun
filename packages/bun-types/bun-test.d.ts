@@ -19,18 +19,44 @@
 
 declare module "bun:test" {
   export function describe(label: string, body: () => void): any;
-  export function test(
-    label: string,
-    test: (done: (err?: any) => void) => void | Promise<any>,
-  ): any;
+  export interface Test {
+    (
+      label: string,
+      test: (done: (err?: any) => void) => void | Promise<any>,
+    ): any;
+    /**
+     * Note: does not fully work yet.
+     */
+    only(
+      label: string,
+      test: (done: (err?: any) => void) => void | Promise<any>,
+    ): any;
+
+    /**
+     * Skip a test
+     */
+    skip(
+      label: string,
+      test: (done: (err?: any) => void) => void | Promise<any>,
+    ): any;
+  }
+  export const test: Test;
   export { test as it };
 
   export function expect(value: any): Expect;
-  export function afterAll(fn: () => void): void;
-  export function beforeAll(fn: () => void): void;
+  export function afterAll(
+    fn: (done: (err?: any) => void) => void | Promise<any>,
+  ): void;
+  export function beforeAll(
+    fn: (done: (err?: any) => void) => void | Promise<any>,
+  ): void;
 
-  export function afterEach(fn: () => void): void;
-  export function beforeEach(fn: () => void): void;
+  export function afterEach(
+    fn: (done: (err?: any) => void) => void | Promise<any>,
+  ): void;
+  export function beforeEach(
+    fn: (done: (err?: any) => void) => void | Promise<any>,
+  ): void;
 
   interface Expect {
     not: Expect;
@@ -50,6 +76,7 @@ declare module "bun:test" {
     toBeGreaterThanOrEqual(value: number | bigint): void;
     toBeLessThan(value: number | bigint): void;
     toBeLessThanOrEqual(value: number | bigint): void;
+    toThrow(error?: string | Error | ErrorConstructor): void;
     toMatchSnapshot(hint?: string): void;
   }
 }

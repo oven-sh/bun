@@ -2,7 +2,7 @@ const std = @import("std");
 const logger = @import("bun").logger;
 const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 
 const bun = @import("bun");
 const string = bun.string;
@@ -3018,7 +3018,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
             @bitCast(V1x16, backslash == vec);
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @ptrCast(*const u16, &any_significant).*;
+            const bitmask = @bitCast(u16, any_significant);
             const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));

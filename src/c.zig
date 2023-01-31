@@ -392,18 +392,19 @@ const LazyStatus = enum {
     loaded,
     failed,
 };
-pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
+
+pub fn dlsymWithHandle(comptime Type: type, comptime name: [:0]const u8, comptime handle_getter: fn () ?*anyopaque) ?Type {
+    if (comptime @typeInfo(Type) != .Pointer) {
+        @compileError("dlsym must be a pointer type (e.g. ?const *fn()). Received " ++ @typeName(Type) ++ ".");
+    }
+
     const Wrapper = struct {
         pub var function: Type = undefined;
         pub var loaded: LazyStatus = LazyStatus.pending;
     };
 
     if (Wrapper.loaded == .pending) {
-        const RTLD_DEFAULT = if (bun.Environment.isMac)
-            @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
-        else
-            @intToPtr(?*anyopaque, @as(usize, 0));
-        const result = std.c.dlsym(RTLD_DEFAULT, name);
+        const result = std.c.dlsym(@call(.always_inline, handle_getter, .{}), name);
 
         if (result) |ptr| {
             Wrapper.function = bun.cast(Type, ptr);
@@ -420,6 +421,21 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
     }
 
     return null;
+}
+
+pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
+    const handle_getter = struct {
+        const RTLD_DEFAULT = if (bun.Environment.isMac)
+            @intToPtr(?*anyopaque, @bitCast(usize, @as(isize, -2)))
+        else
+            @intToPtr(?*anyopaque, @as(usize, 0));
+
+        pub fn getter() ?*anyopaque {
+            return RTLD_DEFAULT;
+        }
+    }.getter;
+
+    return dlsymWithHandle(Type, name, handle_getter);
 }
 
 // set in c-bindings.cpp

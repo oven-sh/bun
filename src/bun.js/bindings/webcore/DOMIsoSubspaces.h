@@ -16,7 +16,6 @@ class DOMIsoSubspaces {
 public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
-    std::unique_ptr<IsoSubspace> m_subspaceForBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
@@ -31,6 +30,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
     std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
+    std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

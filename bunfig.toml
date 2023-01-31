@@ -1,0 +1,8 @@
+[test]
+# Large monorepos (like Bun) may want to specify the test directory more specifically 
+# By default, `bun wiptest` scans every single folder recurisvely which, if you
+# have a gigantic submodule (like WebKit), it has to do lots of directory
+# traversals
+#
+# Instead, we can just make it scan only the test directory for Bun's runtime tests
+root = "test/bun.js"

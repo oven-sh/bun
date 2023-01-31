@@ -330,6 +330,8 @@ bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
 void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res);
 void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset);
 
+void uws_app_close(int ssl, uws_app_t *app);
+
 #ifdef __cplusplus
 }
 #endif

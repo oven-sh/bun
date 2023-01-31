@@ -22,17 +22,17 @@ const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
-const ParseResult = @import("../bundler.zig").ParseResult;
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const ParseResult = bun.bundler.ParseResult;
 const logger = @import("bun").logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = @import("../bundler.zig").Bundler;
-const PluginRunner = @import("../bundler.zig").PluginRunner;
-const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../js_printer.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const Bundler = bun.Bundler;
+const PluginRunner = bun.bundler.PluginRunner;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
@@ -359,6 +359,7 @@ pub const VirtualMachine = struct {
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
+    pending_unref_counter: i32 = 0,
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -429,7 +430,7 @@ pub const VirtualMachine = struct {
     auto_install_dependencies: bool = false,
     load_builtins_from_path: []const u8 = "",
 
-    onUnhandledRejection: *const fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void = defaultOnUnhandledRejection,
+    onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
     onUnhandledRejectionCtx: ?*anyopaque = null,
     unhandled_error_counter: usize = 0,
 
@@ -437,6 +438,8 @@ pub const VirtualMachine = struct {
     aggressive_garbage_collection: GCLevel = GCLevel.none,
 
     gc_controller: JSC.GarbageCollectionController = .{},
+
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
@@ -453,6 +456,30 @@ pub const VirtualMachine = struct {
     };
 
     pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub const UnhandledRejectionScope = struct {
+        ctx: ?*anyopaque = null,
+        onUnhandledRejection: *const OnUnhandledRejection = undefined,
+        count: usize = 0,
+
+        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+            vm.onUnhandledRejection = this.onUnhandledRejection;
+            vm.onUnhandledRejectionCtx = this.ctx;
+            vm.unhandled_error_counter = this.count;
+        }
+    };
+
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+    }
+
+    pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
+        return .{
+            .onUnhandledRejection = this.onUnhandledRejection,
+            .ctx = this.onUnhandledRejectionCtx,
+            .count = this.unhandled_error_counter,
+        };
+    }
 
     pub fn resetUnhandledRejection(this: *VirtualMachine) void {
         this.onUnhandledRejection = defaultOnUnhandledRejection;
@@ -571,7 +598,17 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitForPromise(this: *VirtualMachine, promise: anytype) void {
+    pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+        while (!cond.*) {
+            this.eventLoop().tick();
+
+            if (!cond.*) {
+                this.eventLoop().autoTick();
+            }
+        }
+    }
+
+    pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
     }
 
@@ -844,8 +881,8 @@ pub const VirtualMachine = struct {
         if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
         }
-
-        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier);
+        var display_specifier = _specifier;
+        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier, &display_specifier);
         var path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -858,6 +895,7 @@ pub const VirtualMachine = struct {
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
             specifier,
+            display_specifier,
             referrer,
             path,
             loader,
@@ -874,13 +912,28 @@ pub const VirtualMachine = struct {
     pub const ResolveFunctionResult = struct {
         result: ?Resolver.Result,
         path: string,
+        query_string: []const u8 = "",
     };
 
+    fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
+        var specifier = specifier_;
+        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
+
+        if (strings.indexOfChar(specifier, '?')) |i| {
+            specifier = specifier[0..i];
+            query_string.* = specifier[i..];
+        }
+
+        return specifier;
+    }
+
+    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         _: *JSGlobalObject,
         specifier: string,
         source: string,
+        is_esm: bool,
         comptime is_a_file_path: bool,
         comptime realpath: bool,
     ) !void {
@@ -900,11 +953,11 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = jsc_vm.entry_point.source.path.text;
             return;
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon)) {
+        } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
             ret.result = null;
             ret.path = specifier;
             return;
@@ -915,30 +968,65 @@ pub const VirtualMachine = struct {
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
-
-        const result = try switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
-            if (!is_special_source)
-                if (is_a_file_path)
-                    Fs.PathName.init(source).dirWithTrailingSlash()
-                else
-                    source
+        var query_string: []const u8 = "";
+        const normalized_specifier = normalizeSpecifierForResolution(specifier, &query_string);
+        const source_to_use = if (!is_special_source)
+            if (is_a_file_path)
+                Fs.PathName.init(source).dirWithTrailingSlash()
             else
-                jsc_vm.bundler.fs.top_level_dir,
-            // TODO: do we need to handle things like query string params?
-            if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
-            .stmt,
-            .read_only,
-        )) {
-            .success => |r| r,
-            .failure => |e| e,
-            .not_found => error.ModuleNotFound,
-            .pending => unreachable,
+                source
+        else
+            jsc_vm.bundler.fs.top_level_dir;
+
+        const result: Resolver.Result = try brk: {
+            var retry_on_not_found = query_string.len > 0;
+            while (true) {
+                break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
+                    source_to_use,
+                    normalized_specifier,
+                    if (is_esm) .stmt else .require,
+                    .read_only,
+                )) {
+                    .success => |r| r,
+                    .failure => |e| e,
+                    .pending => unreachable,
+                    .not_found => if (!retry_on_not_found)
+                        error.ModuleNotFound
+                    else {
+                        retry_on_not_found = false;
+
+                        const buster_name = name: {
+                            if (std.fs.path.isAbsolute(normalized_specifier)) {
+                                if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                }
+                            }
+
+                            var parts = [_]string{
+                                source_to_use,
+                                normalized_specifier,
+                            };
+
+                            break :name bun.path.joinAbsStringBuf(
+                                jsc_vm.bundler.fs.top_level_dir,
+                                &specifier_cache_resolver_buf,
+                                &parts,
+                                .auto,
+                            );
+                        };
+
+                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
+                        continue;
+                    },
+                };
+            }
         };
 
         if (!jsc_vm.macro_mode) {
             jsc_vm.has_any_macro_remappings = jsc_vm.has_any_macro_remappings or jsc_vm.bundler.options.macro_remap.count() > 0;
         }
         ret.result = result;
+        ret.query_string = query_string;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         jsc_vm.resolved_count += 1;
         if (comptime !realpath) {
@@ -1002,19 +1090,57 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false, true);
+    pub fn resolveForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false, true);
     }
 
-    pub fn resolveFilePathForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, true);
+    pub fn resolveFilePathForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, true);
     }
 
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, false);
+    pub fn resolve(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
+    fn normalizeSource(source: []const u8) []const u8 {
+        if (strings.hasPrefixComptime(source, "file://")) {
+            return source["file://".len..];
+        }
+
+        return source;
+    }
+
+    fn resolveMaybeNeedsTrailingSlash(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: ?*ZigString,
+        is_esm: bool,
+        comptime is_a_file_path: bool,
+        comptime realpath: bool,
+    ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
         var jsc_vm = VirtualMachine.get();
         if (jsc_vm.plugin_runner) |plugin_runner| {
@@ -1047,7 +1173,7 @@ pub const VirtualMachine = struct {
             jsc_vm.bundler.linker.log = old_log;
             jsc_vm.bundler.resolver.log = old_log;
         }
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err_| {
+        _resolve(&result, global, specifier.slice(), normalizeSource(source.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
             var err = err_;
             const msg: logger.Msg = brk: {
                 var msgs: []logger.Msg = log.msgs.items;
@@ -1084,6 +1210,10 @@ pub const VirtualMachine = struct {
 
             return;
         };
+
+        if (query_string) |query| {
+            query.* = ZigString.init(result.query_string);
+        }
 
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
@@ -1308,7 +1438,9 @@ pub const VirtualMachine = struct {
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
                 promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
-                this.waitForPromise(promise);
+                this.waitForPromise(JSC.AnyPromise{
+                    .Internal = promise,
+                });
                 if (promise.status(this.global.vm()) == .Rejected)
                     return promise;
             }
@@ -1343,7 +1475,9 @@ pub const VirtualMachine = struct {
             }
         } else {
             this.eventLoop().performGC();
-            this.waitForPromise(promise);
+            this.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
         }
 
         this.eventLoop().autoTick();
@@ -1390,7 +1524,9 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
-        this.waitForPromise(promise);
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
 
         return promise;
     }
@@ -1771,8 +1907,11 @@ pub const VirtualMachine = struct {
 
         const message = exception.message;
         var did_print_name = false;
-        if (source_lines.next()) |source| {
-            if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
+        if (source_lines.next()) |source| brk: {
+            if (source.text.len == 0) break :brk;
+
+            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
 
@@ -1787,12 +1926,11 @@ pub const VirtualMachine = struct {
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
-            } else if (source.text.len > 0) {
+            } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
-                const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
 
                 try writer.print(
@@ -2032,7 +2170,9 @@ pub const EventListenerMixin = struct {
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 
-            vm.event_loop.waitForPromise(promise);
+            vm.event_loop.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
 
             if (fetch_event.rejected) return;
 
@@ -2493,6 +2633,9 @@ pub const HotReloader = struct {
 
     onAccept: std.ArrayHashMapUnmanaged(Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     vm: *JSC.VirtualMachine,
+    verbose: bool = false,
+
+    tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
     pub const HotReloadTask = struct {
         reloader: *HotReloader,
@@ -2556,6 +2699,7 @@ pub const HotReloader = struct {
         var reloader = bun.default_allocator.create(HotReloader) catch @panic("OOM");
         reloader.* = .{
             .vm = this,
+            .verbose = this.log.level.atLeast(.info),
         };
         this.bun_watcher = JSC.Watcher.init(
             reloader,
@@ -2577,6 +2721,14 @@ pub const HotReloader = struct {
         }
     }
 
+    fn putTombstone(this: *HotReloader, key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
+        this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
+    }
+
+    fn getTombstone(this: *HotReloader, key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
+        return this.tombstones.get(key);
+    }
+
     pub fn onFileUpdate(
         this: *HotReloader,
         events: []watcher.WatchEvent,
@@ -2588,6 +2740,7 @@ pub const HotReloader = struct {
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
+        const parents = slice.items(.parent_hash);
         var file_descriptors = slice.items(.fd);
         var ctx = this.vm.bun_watcher.?;
         defer ctx.flushEvictions();
@@ -2616,7 +2769,7 @@ pub const HotReloader = struct {
             const id = hashes[event.index];
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -2630,36 +2783,80 @@ pub const HotReloader = struct {
                         );
                     }
 
-                    if (comptime bun.FeatureFlags.verbose_watcher) {
+                    if (this.verbose)
                         Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
-                    }
 
-                    if (event.op.write) {
+                    if (event.op.write or event.op.delete or event.op.rename) {
                         current_task.append(id);
                     }
                 },
                 .directory => {
-                    const affected = event.names(changed_files);
+                    var affected_buf: [128][]const u8 = undefined;
                     var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
-                    if (affected.len > 0) {
-                        entries_option = rfs.entries.get(file_path);
+
+                    const affected = brk: {
+                        if (comptime Environment.isMac) {
+                            if (rfs.entries.get(file_path)) |existing| {
+                                this.putTombstone(file_path, existing);
+                                entries_option = existing;
+                            } else if (this.getTombstone(file_path)) |existing| {
+                                entries_option = existing;
+                            }
+
+                            var affected_i: usize = 0;
+
+                            // if a file descriptor is stale, we need to close it
+                            if (event.op.delete and entries_option != null) {
+                                for (parents) |parent_hash, entry_id| {
+                                    if (parent_hash == id) {
+                                        const affected_path = file_paths[entry_id];
+                                        const was_deleted = check: {
+                                            std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                            break :check false;
+                                        };
+                                        if (!was_deleted) continue;
+
+                                        affected_buf[affected_i] = affected_path[file_path.len..];
+                                        affected_i += 1;
+                                        if (affected_i >= affected_buf.len) break;
+                                    }
+                                }
+                            }
+
+                            break :brk affected_buf[0..affected_i];
+                        }
+
+                        break :brk event.names(changed_files);
+                    };
+
+                    if (affected.len > 0 and !Environment.isMac) {
+                        if (rfs.entries.get(file_path)) |existing| {
+                            this.putTombstone(file_path, existing);
+                            entries_option = existing;
+                        } else if (this.getTombstone(file_path)) |existing| {
+                            entries_option = existing;
+                        }
                     }
 
-                    rfs.bustEntriesCache(file_path);
-                    resolver.dir_cache.remove(file_path);
+                    resolver.bustDirCache(file_path);
 
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
-                        for (affected) |changed_name_ptr| {
-                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+
+                        for (affected) |changed_name_| {
+                            const changed_name: []const u8 = if (comptime Environment.isMac)
+                                changed_name_
+                            else
+                                std.mem.span(changed_name_.?);
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                            var prev_entry_id: usize = std.math.maxInt(usize);
                             if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
                                 var path_string: bun.PathString = undefined;
                                 var file_hash: Watcher.HashType = last_file_hash;
                                 const abs_path: string = brk: {
-                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                    if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
                                         // reset the file descriptor
                                         file_ent.entry.cache.fd = 0;
                                         file_ent.entry.need_stat = true;
@@ -2667,7 +2864,19 @@ pub const HotReloader = struct {
                                         file_hash = Watcher.getHash(path_string.slice());
                                         for (hashes) |hash, entry_id| {
                                             if (hash == file_hash) {
-                                                file_descriptors[entry_id] = 0;
+                                                if (file_descriptors[entry_id] != 0) {
+                                                    if (prev_entry_id != entry_id) {
+                                                        current_task.append(@truncate(u32, entry_id));
+                                                        ctx.removeAtIndex(
+                                                            @truncate(u16, entry_id),
+                                                            0,
+                                                            &.{},
+                                                            .file,
+                                                        );
+                                                    }
+                                                }
+
+                                                prev_entry_id = entry_id;
                                                 break;
                                             }
                                         }
@@ -2689,17 +2898,14 @@ pub const HotReloader = struct {
                                 if (last_file_hash == file_hash) continue;
                                 last_file_hash = file_hash;
 
-                                Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                if (this.verbose)
+                                    Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
                             }
                         }
                     }
 
-                    // if (event.op.delete or event.op.rename)
-                    //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-                    if (comptime false) {
-                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                    } else {
-                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    if (this.verbose) {
+                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
                     }
                 },
             }

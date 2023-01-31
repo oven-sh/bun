@@ -63,7 +63,7 @@ pub const Kind = enum(i8) {
     }
 };
 
-pub const Loc = packed struct {
+pub const Loc = packed struct(i32) {
     start: i32 = -1,
 
     pub inline fn toNullable(loc: *Loc) ?Loc {
@@ -588,7 +588,7 @@ pub const Log = struct {
         this.errors = 0;
     }
 
-    pub var default_log_level = if (Environment.isDebug) Level.info else Level.warn;
+    pub var default_log_level = Level.warn;
 
     pub fn hasAny(this: *const Log) bool {
         return (this.warnings + this.errors) > 0;
@@ -1143,6 +1143,13 @@ pub const Source = struct {
     index: u32 = 0,
     contents: string,
     contents_is_recycled: bool = false,
+
+    pub fn isWebAssembly(this: *const Source) bool {
+        if (this.contents.len < 4) return false;
+
+        const bytes = @bitCast(u32, this.contents[0..4].*);
+        return bytes == 0x6d736100; // "\0asm"
+    }
 
     pub const ErrorPosition = struct {
         line_start: usize,

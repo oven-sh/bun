@@ -80,6 +80,159 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it("modifiers", () => {
+      const exp = ts.expectPrinted_;
+
+      exp("class Foo { public foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { private foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { protected foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { declare foo: number }", "class Foo {\n}");
+      exp("class Foo { declare public foo: number }", "class Foo {\n}");
+      exp("class Foo { public declare foo: number }", "class Foo {\n}");
+      exp("class Foo { override foo: number }", "class Foo {\n  foo;\n}");
+      exp(
+        "class Foo { override public foo: number }",
+        "class Foo {\n  foo;\n}",
+      );
+      exp(
+        "class Foo { public override foo: number }",
+        "class Foo {\n  foo;\n}",
+      );
+      exp(
+        "class Foo { declare override public foo: number }",
+        "class Foo {\n}",
+      );
+      exp("class Foo { declare foo = 123 }", "class Foo {\n}");
+
+      exp(
+        "class Foo { public static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { private static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { protected static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp("class Foo { declare static foo: number }", "class Foo {\n}");
+      exp("class Foo { declare public static foo: number }", "class Foo {\n}");
+      exp("class Foo { public declare static foo: number }", "class Foo {\n}");
+      exp("class Foo { public static declare foo: number }", "class Foo {\n}");
+      exp(
+        "class Foo { override static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { override public static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { public override static foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { public static override foo: number }",
+        "class Foo {\n  static foo;\n}",
+      );
+      exp(
+        "class Foo { declare override public static foo: number }",
+        "class Foo {\n}",
+      );
+      exp("class Foo { declare static foo = 123 }", "class Foo {\n}");
+      exp("class Foo { static declare foo = 123 }", "class Foo {\n}");
+
+      exp("let x: abstract new () => void = Foo", "let x = Foo");
+      exp("let x: abstract new <T>() => Foo<T>", "let x");
+    });
+
+    it("types", () => {
+      exp("x as 1 < 1", "x < 1");
+      exp("x as 1n < 1", "x < 1");
+      exp("x as -1 < 1", "x < 1");
+      exp("x as -1n < 1", "x < 1");
+      exp("x as '' < 1", "x < 1");
+      exp("x as `` < 1", "x < 1");
+      exp("x as any < 1", "x < 1");
+      exp("x as bigint < 1", "x < 1");
+      exp("x as false < 1", "x < 1");
+      exp("x as never < 1", "x < 1");
+      exp("x as null < 1", "x < 1");
+      exp("x as number < 1", "x < 1");
+      exp("x as object < 1", "x < 1");
+      exp("x as string < 1", "x < 1");
+      exp("x as symbol < 1", "x < 1");
+      exp("x as this < 1", "x < 1");
+      exp("x as true < 1", "x < 1");
+      exp("x as undefined < 1", "x < 1");
+      exp("x as unique symbol < 1", "x < 1");
+      exp("x as unknown < 1", "x < 1");
+      exp("x as void < 1", "x < 1");
+    });
+
+    it("class constructor", () => {
+      const fixtures = [
+        [
+          `class Test {
+            b: string;
+          
+            constructor(private a: string) {
+              this.b = a;
+            }
+          }`,
+
+          `
+class Test {
+  a;
+  b;
+  constructor(a) {
+    this.a = a;
+    this.b = a;
+  }
+}
+                  `.trim(),
+        ],
+        [
+          `class Test extends Bar {
+            b: string;
+          
+            constructor(private a: string) {
+              super();
+              this.b = a;
+            }
+          }`,
+
+          `
+class Test extends Bar {
+  a;
+  b;
+  constructor(a) {
+    super();
+    this.a = a;
+    this.b = a;
+  }
+}
+                  `.trim(),
+        ],
+      ];
+
+      for (const [code, out] of fixtures) {
+        expect(ts.parsed(code, false, false).trim()).toBe(out);
+        expect(
+          ts
+            .parsed("var Test = " + code.trim(), false, false)
+            .trim()
+            .replaceAll("\n", "")
+            .replaceAll("  ", ""),
+        ).toBe(
+          ("var Test = " + out.trim() + ";\n")
+            .replaceAll("\n", "")
+            .replaceAll("  ", ""),
+        );
+      }
+    });
+
     it("import Foo = require('bar')", () => {
       ts.expectPrinted_(
         "import React = require('react')",
@@ -104,6 +257,31 @@ describe("Bun.Transpiler", () => {
 
     it("export = {foo: 123}", () => {
       ts.expectPrinted_("export = {foo: 123}", "module.exports = { foo: 123 }");
+    });
+
+    it("export default class implements TypeScript regression", () => {
+      expect(
+        transpiler
+          .transformSync(
+            `
+      export default class implements ITest {
+        async* runTest(path: string): AsyncGenerator<number> {
+          yield Math.random();
+        }
+      }
+      `,
+            "ts",
+          )
+          .trim(),
+      ).toBe(
+        `
+export default class {
+  async* runTest(path) {
+    yield Math.random();
+  }
+}
+      `.trim(),
+      );
     });
 
     it("satisfies", () => {
@@ -914,6 +1092,19 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
     });
 
     it("fold string addition", () => {
+      expectPrinted_(
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a);
+        `,
+        `
+const a = "[^aeiou]";
+const b = a + "[^aeiouy]*";
+console.log(a)
+        `.trim(),
+      );
+
       expectPrinted_(
         `export const foo = "a" + "b";`,
         `export const foo = "ab"`,
@@ -1732,6 +1923,22 @@ class Foo {
       check(
         `const foo = "foo"; const bar = "bar"; return foo + bar`,
         `return "foobar";`,
+      );
+
+      check(
+        `
+const a = "a";
+const c = "b" + a;
+const b = c + a;
+const d = b + a;
+console.log(a, b, c, d);
+        `,
+        `
+const c = "ba";
+const b = c + "a";
+const d = b + "a";
+console.log("a", b, c, d);
+        `.trim(),
       );
 
       // check that it doesn't inline after "var"

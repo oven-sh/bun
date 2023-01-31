@@ -597,6 +597,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );
@@ -606,6 +607,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );
@@ -633,6 +635,13 @@ pub const Loader = enum(u4) {
     toml,
     wasm,
     napi,
+
+    pub fn canBeRunByBun(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            else => false,
+        };
+    }
 
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
@@ -667,7 +676,7 @@ pub const Loader = enum(u4) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
             return null;
         };
     }

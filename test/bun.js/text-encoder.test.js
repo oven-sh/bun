@@ -37,6 +37,22 @@ describe("TextEncoder", () => {
     }
     expect(encoded.length).toBe(result.length);
     expect(out.written).toBe(result.length);
+
+    const repeatCOunt = 16;
+    text = "H©ell©o Wor©ld!".repeat(repeatCOunt);
+    const byteLength = getByteLength(text);
+    const encoded2 = encoder.encode(text);
+    expect(encoded2.length).toBe(byteLength);
+    const into2 = new Uint8Array(byteLength);
+    const out2 = encoder.encodeInto(text, into2);
+    expect(out2.read).toBe(text.length);
+    expect(out2.written).toBe(byteLength);
+    expect(into2).toEqual(encoded2);
+    const repeatedResult = new Uint8Array(byteLength);
+    for (let i = 0; i < repeatCOunt; i++) {
+      repeatedResult.set(result, i * result.length);
+    }
+    expect(into2).toEqual(repeatedResult);
   });
 
   it("should encode latin1 text", () => {

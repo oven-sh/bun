@@ -1,5 +1,3 @@
-import { Encoding } from "crypto";
-
 interface VoidFunction {
   (): void;
 }
@@ -28,6 +26,8 @@ declare namespace Bun {
  *
  */
 declare module "bun" {
+  type ArrayBufferView = TypedArray | DataView;
+  import { Encoding as CryptoEncoding } from "crypto";
   /**
    * The environment variables of the process
    *
@@ -88,8 +88,8 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<ServeOoptions extends Serve<any>>(
-    options: ServeOoptions,
+  export function serve<WebSocketDataType>(
+    options: Serve<WebSocketDataType>,
   ): Server;
 
   /**
@@ -397,6 +397,120 @@ declare module "bun" {
      */
     flush(): number | Uint8Array | ArrayBuffer;
     end(): ArrayBuffer | Uint8Array;
+  }
+
+  export const dns: {
+    /**
+     * Lookup the IP address for a hostname
+     *
+     * Uses non-blocking APIs by default
+     *
+     * @param hostname The hostname to lookup
+     * @param options Options for the lookup
+     *
+     * ## Example
+     *
+     * ```js
+     * const [{ address }] = await Bun.dns.lookup('example.com');
+     * ```
+     *
+     * ### Filter results to IPv4:
+     *
+     * ```js
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {family: 4});
+     * console.log(address); // "123.122.22.126"
+     * ```
+     *
+     * ### Filter results to IPv6:
+     *
+     * ```js
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {family: 6});
+     * console.log(address); // "2001:db8::1"
+     * ```
+     *
+     * #### DNS resolver client
+     *
+     * Bun supports three DNS resolvers:
+     * - `c-ares` - Uses the c-ares library to perform DNS resolution. This is the default on Linux.
+     * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
+     * - `getaddrinfo` - Uses the posix standard `getaddrinfo` function. Will cause performance issues under concurrent loads.
+     *
+     * To customize the DNS resolver, pass a `backend` option to `dns.lookup`:
+     * ```js
+     * import { dns } from 'bun';
+     * const [{ address }] = await dns.lookup('example.com', {backend: 'getaddrinfo'});
+     * console.log(address); // "19.42.52.62"
+     * ```
+     */
+    lookup(
+      hostname: string,
+      options?: {
+        /**
+         * Limit results to either IPv4, IPv6, or both
+         */
+        family?: 4 | 6 | 0 | "IPv4" | "IPv6" | "any";
+        /**
+         * Limit results to either UDP or TCP
+         */
+        socketType?: "udp" | "tcp";
+        flags?: number;
+        port?: number;
+
+        /**
+         * The DNS resolver implementation to use
+         *
+         * Defaults to `"c-ares"` on Linux and `"system"` on macOS. This default
+         * may change in a future version of Bun if c-ares is not reliable
+         * enough.
+         *
+         * On macOS, `system` uses the builtin macOS [non-blocking DNS
+         * resolution
+         * API](https://opensource.apple.com/source/Libinfo/Libinfo-222.1/lookup.subproj/netdb_async.h.auto.html).
+         *
+         * On Linux, `system` is the same as `getaddrinfo`.
+         *
+         * `c-ares` is more performant on Linux in some high concurrency
+         * situations, but it lacks support support for mDNS (`*.local`,
+         * `*.localhost` domains) along with some other advanced features. If
+         * you run into issues using `c-ares`, you should try `system`. If the
+         * hostname ends with `.local` or `.localhost`, Bun will automatically
+         * use `system` instead of `c-ares`.
+         *
+         * [`getaddrinfo`](https://man7.org/linux/man-pages/man3/getaddrinfo.3.html)
+         * is the POSIX standard function for blocking DNS resolution. Bun runs
+         * it in Bun's thread pool, which is limited to `cpus / 2`. That means
+         * if you run a lot of concurrent DNS lookups, concurrent IO will
+         * potentially pause until the DNS lookups are done.
+         *
+         * On macOS, it shouldn't be necessary to use "`getaddrinfo`" because
+         * `"system"` uses the same API underneath (except non-blocking).
+         *
+         */
+        backend?: "c-ares" | "system" | "getaddrinfo";
+      },
+    ): Promise<DNSLookup[]>;
+  };
+
+  interface DNSLookup {
+    /**
+     * The IP address of the host as a string in IPv4 or IPv6 format.
+     *
+     * @example "127.0.0.1"
+     * @example "192.168.0.1"
+     * @example "2001:4860:4860::8888"
+     */
+    address: string;
+    family: 4 | 6;
+
+    /**
+     * Time to live in seconds
+     *
+     * Only supported when using the `c-ares` DNS resolver via "backend" option
+     * to {@link dns.lookup}. Otherwise, it's 0.
+     */
+    ttl: number;
   }
 
   /**
@@ -1260,6 +1374,21 @@ declare module "bun" {
      * @see {@link ServerWebSocket.publish}
      */
     closeOnBackpressureLimit?: boolean;
+
+    /**
+     * Control whether or not ws.publish() should include the ServerWebSocket
+     * that published the message. This is enabled by default, but it was an API
+     * design mistake. A future version of Bun will change this default to
+     * `false` and eventually remove this option entirely. The better way to publish to all is to use {@link Server.publish}.
+     *
+     * if `true` or `undefined`, {@link ServerWebSocket.publish} will publish to all subscribers, including the websocket publishing the message.
+     *
+     * if `false`, {@link ServerWebSocket.publish} will publish to all subscribers excluding the websocket publishing the message.
+     *
+     * @default true
+     *
+     */
+    publishToSelf?: boolean;
   }
 
   interface GenericServeOptions {
@@ -1423,6 +1552,11 @@ declare module "bun" {
     dhParamsFile?: string;
 
     /**
+     * Explicitly set a server name
+     */
+    serverName?: string;
+
+    /**
      * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
      * It reduces overall performance but saves some memory.
      * @default false
@@ -1458,11 +1592,12 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * It does not close existing connections.
+     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
      *
-     * It may take a second or two to actually stop.
+     * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
+     * @default false
      */
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.
@@ -1966,7 +2101,7 @@ declare module "bun" {
      *
      * @param input
      */
-    update(input: StringOrBuffer, inputEncoding?: Encoding): CryptoHasher;
+    update(input: StringOrBuffer, inputEncoding?: CryptoEncoding): CryptoHasher;
 
     /**
      * Finalize the hash
@@ -2488,7 +2623,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<typeof options["setup"]>;
+    }): ReturnType<(typeof options)["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2498,7 +2633,7 @@ declare module "bun" {
     clearAll(): void;
   }
 
-  var plugin: BunPlugin;
+  const plugin: BunPlugin;
 
   interface Socket<Data = undefined> {
     /**
@@ -2594,10 +2729,20 @@ declare module "bun" {
      * This will return undefined if the socket was created by {@link Bun.connect} or if the listener has already closed.
      */
     readonly listener?: SocketListener;
+
+    /**
+     * Remote IP address connected to the socket
+     */
+    readonly remoteAddress: string;
+
+    /**
+     * local port connected to the socket
+     */
+    readonly localPort: number;
   }
 
   interface SocketListener<Options extends SocketOptions = SocketOptions> {
-    stop(): void;
+    stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
     reload(options: Pick<Partial<Options>, "socket">): void;
@@ -2616,17 +2761,70 @@ declare module "bun" {
   interface TCPSocket extends Socket {}
   interface TLSSocket extends Socket {}
 
-  interface SocketHandler<Data = unknown> {
+  type BinaryTypeList = {
+    arraybuffer: ArrayBuffer;
+    buffer: Buffer;
+    uint8array: Uint8Array;
+    // TODO: DataView
+    // dataview: DataView;
+  };
+  type BinaryType = keyof BinaryTypeList;
+
+  interface SocketHandler<
+    Data = unknown,
+    DataBinaryType extends BinaryType = "buffer",
+  > {
     open(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
-    data?(socket: Socket<Data>, data: BufferSource): void | Promise<void>;
+    data?(
+      socket: Socket<Data>,
+      data: BinaryTypeList[DataBinaryType],
+    ): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When the socket has been shutdown from the other end, this function is
+     * called. This is a TCP FIN packet.
+     */
+    end?(socket: Socket<Data>): void | Promise<void>;
+
+    /**
+     * When the socket fails to be created, this function is called.
+     *
+     * The promise returned by `Bun.connect` rejects **after** this function is
+     * called.
+     *
+     * When `connectError` is specified, the rejected promise will not be
+     * added to the promise rejection queue (so it won't be reported as an
+     * unhandled promise rejection, since connectError handles it).
+     *
+     * When `connectError` is not specified, the rejected promise will be added
+     * to the promise rejection queue.
+     */
+    connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
+
+    /**
+     * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
+     *
+     * @default "buffer"
+     *
+     * @remarks
+     * This lets you select the desired binary type for the `data` callback.
+     * It's a small performance optimization to let you avoid creating extra
+     * ArrayBufferView objects when possible.
+     *
+     * Bun originally defaulted to `Uint8Array` but when dealing with network
+     * data, it's more useful to be able to directly read from the bytes which
+     * `Buffer` allows.
+     *
+     */
+    binaryType?: BinaryType;
   }
 
   interface SocketOptions<Data = unknown> {
     socket: SocketHandler<Data>;
-    tls?: TLSOptions;
+    tls?: boolean | TLSOptions;
     data?: Data;
   }
   interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -3081,6 +3279,7 @@ type TypedArray =
   | Uint32Array
   | Float32Array
   | Float64Array;
+
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 type PathLike = string | TypedArray | ArrayBufferLike | URL;

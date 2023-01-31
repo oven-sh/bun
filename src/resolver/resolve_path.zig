@@ -31,7 +31,7 @@ inline fn isDotSlash(slice: []const u8) bool {
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
-    return slice.len >= 3 and strings.eqlComptimeIgnoreLen(slice[0..3], "../");
+    return strings.hasPrefixComptime(slice, "../");
 }
 
 // TODO: is it faster to determine longest_common_separator in the while loop
@@ -788,7 +788,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
 
     if (comptime is_sentinel) {
-        buf.ptr[result.len + leading_separator.len + 1] = 0;
+        buf.ptr[result.len + leading_separator.len] = 0;
         return buf[0 .. result.len + leading_separator.len :0];
     } else {
         return buf[0 .. result.len + leading_separator.len];

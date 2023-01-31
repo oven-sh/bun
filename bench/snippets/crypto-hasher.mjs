@@ -21,8 +21,14 @@ bench('crypto.createHash("sha512")', () => {
   hasher.digest();
 });
 
-bench('crypto.createHash("sha512")', () => {
-  var hasher = crypto.createHash("sha512");
+bench('crypto.createHash("sha256")', () => {
+  var hasher = crypto.createHash("sha256");
+  hasher.update(foo);
+  hasher.digest();
+});
+
+bench('crypto.createHash("sha1")', () => {
+  var hasher = crypto.createHash("sha1");
   hasher.update(foo);
   hasher.digest();
 });

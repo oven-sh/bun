@@ -141,6 +141,20 @@ pub const SystemErrno = enum(u8) {
 
     pub const max = 134;
 
+    pub fn init(code: anytype) ?SystemErrno {
+        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
+            if (code < 0)
+                return init(-code);
+        }
+
+        if (code >= max) return null;
+        return @intToEnum(SystemErrno, code);
+    }
+
+    pub fn label(this: SystemErrno) ?[]const u8 {
+        return labels.get(this) orelse null;
+    }
+
     const LabelMap = std.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
@@ -354,7 +368,7 @@ pub fn get_system_loadavg() [3]f64 {
 
 pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
-    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
+    const result = bun.sliceTo(&uts.version, 0);
     std.mem.copy(u8, name_buffer, result);
 
     return name_buffer[0..result.len];
@@ -362,7 +376,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
 
 pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
-    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
+    const result = bun.sliceTo(&uts.release, 0);
     std.mem.copy(u8, name_buffer, result);
 
     return name_buffer[0..result.len];

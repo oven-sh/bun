@@ -510,8 +510,7 @@ var _extend = (exports._extend = function (origin, add) {
 function hasOwnProperty(obj, prop) {
   return Object.prototype.hasOwnProperty.call(obj, prop);
 }
-var kCustomPromisifiedSymbol =
-  typeof Symbol !== "undefined" ? Symbol("util.promisify.custom") : void 0;
+var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
 var promisify = (exports.promisify = function promisify(original) {
   if (typeof original !== "function")
     throw new TypeError('The "original" argument must be of type Function');
@@ -601,8 +600,8 @@ function callbackify(original) {
   return callbackified;
 }
 exports.callbackify = callbackify;
-export var TextEncoder = (exports.TextDecoder = globalThis.TextEncoder);
-export var TextDecoder = (exports.TextEncoder = globalThis.TextDecoder);
+export var TextDecoder = (exports.TextDecoder = globalThis.TextDecoder);
+export var TextEncoder = (exports.TextEncoder = globalThis.TextEncoder);
 exports[Symbol.for("CommonJS")] = 0;
 export default exports;
 

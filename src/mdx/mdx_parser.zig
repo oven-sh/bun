@@ -3,7 +3,7 @@ const logger = @import("bun").logger;
 const mdx_lexer = @import("./mdx_lexer.zig");
 const Lexer = mdx_lexer.Lexer;
 const importRecord = @import("../import_record.zig");
-const js_ast = @import("../js_ast.zig");
+const js_ast = bun.JSAst;
 const JSParser = @import("../js_parser/js_parser.zig").MDXParser;
 const ParseStatementOptions = @import("../js_parser/js_parser.zig").ParseStatementOptions;
 
@@ -24,7 +24,7 @@ const expect = std.testing.expect;
 const ImportKind = importRecord.ImportKind;
 const BindingNodeIndex = js_ast.BindingNodeIndex;
 const Define = @import("../defines.zig").Define;
-const js_lexer = @import("../js_lexer.zig");
+const js_lexer = bun.js_lexer;
 const StmtNodeIndex = js_ast.StmtNodeIndex;
 const ExprNodeIndex = js_ast.ExprNodeIndex;
 const ExprNodeList = js_ast.ExprNodeList;
@@ -1043,9 +1043,8 @@ pub const MDParser = struct {
         }
 
         // Scan for end of the line.
-        while (off + 3 < this.size and
-            !(strings.eqlComptimeIgnoreLen(this.source.contents.ptr[off..][0..4], "\n\n\n\n") or
-            strings.eqlComptimeIgnoreLen(this.source.contents.ptr[off..][0..4], "\r\n\r\n")))
+        while (!(strings.hasPrefixComptime(this.source.contents.ptr[off..], "\n\n\n\n") or
+            strings.hasPrefixComptime(this.source.contents.ptr[off..], "\r\n\r\n")))
         {
             off += 4;
         }

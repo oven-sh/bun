@@ -1,8 +1,8 @@
-import { serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "./gc";
+import { serve } from "bun";
 
-var port = 4321;
+var port = 4301;
 function getPort() {
   if (port > 4444) {
     port = 4321;
@@ -45,13 +45,52 @@ describe("websocket server", () => {
         });
       };
     });
-    server.stop();
+    server.stop(true);
+    done();
+  });
+
+  it("can do publish() with publishToSelf: false", async (done) => {
+    var server = serve({
+      port: getPort(),
+      websocket: {
+        open(ws) {
+          ws.subscribe("all");
+          ws.publish("all", "hey");
+          server.publish("all", "hello");
+        },
+        message(ws, msg) {
+          if (new TextDecoder().decode(msg) !== "hello") {
+            done(new Error("unexpected message"));
+          }
+        },
+        close(ws) {},
+        publishToSelf: false,
+      },
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+
+        return new Response("success");
+      },
+    });
+
+    await new Promise<void>((resolve2, reject2) => {
+      var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+
+      socket.onmessage = (e) => {
+        expect(e.data).toBe("hello");
+        resolve2();
+      };
+    });
+    server.stop(true);
     done();
   });
 
   for (let method of ["publish", "publishText", "publishBinary"]) {
     describe(method, () => {
       it("in close() should work", async () => {
+        var count = 0;
         var server = serve({
           port: getPort(),
           websocket: {
@@ -64,6 +103,11 @@ describe("websocket server", () => {
                 "all",
                 method === "publishBinary" ? Buffer.from("bye!") : "bye!",
               );
+              count++;
+
+              if (count >= 2) {
+                server.stop(true);
+              }
             },
           },
           fetch(req, server) {
@@ -83,30 +127,29 @@ describe("websocket server", () => {
             socket.onopen = () => resolve2(socket);
           });
 
-          const second = await new Promise<WebSocket>((resolve2, reject2) => {
+          await new Promise<WebSocket>((resolve2, reject2) => {
             var socket = new WebSocket(
               `ws://${server.hostname}:${server.port}`,
             );
+            socket.onopen = () => {
+              queueMicrotask(() => first.close());
+            };
             socket.onmessage = (ev) => {
               var msg = ev.data;
               if (typeof msg !== "string") {
                 msg = new TextDecoder().decode(msg);
               }
+
               if (msg === "bye!") {
+                socket.close(0);
                 resolve2(socket);
               } else {
                 reject2(msg);
               }
             };
-            socket.onopen = () => {
-              first.close();
-            };
           });
-
-          second.close();
-        } catch (r) {
         } finally {
-          server.stop();
+          server.stop(true);
         }
       });
     });
@@ -114,6 +157,7 @@ describe("websocket server", () => {
 
   it("close inside open", async () => {
     var resolve;
+    console.trace("here");
     var server = serve({
       port: getPort(),
       websocket: {
@@ -121,6 +165,7 @@ describe("websocket server", () => {
         message(ws, msg) {},
         close() {
           resolve();
+          server.stop(true);
         },
       },
       fetch(req, server) {
@@ -153,63 +198,62 @@ describe("websocket server", () => {
       websocket.onmessage = (e) => {};
       websocket.onerror = (e) => {};
     });
-    server.stop();
   });
 
   it("headers error doesn't crash", async () => {
-    var resolve, reject;
-    var server = serve({
-      port: getPort(),
-      websocket: {
-        open(ws) {},
-        message(ws, msg) {},
-        close() {
-          resolve();
+    await new Promise<void>((resolve, reject) => {
+      const server = serve({
+        port: getPort(),
+        websocket: {
+          open(ws) {
+            ws.close();
+          },
+          message(ws, msg) {},
+          close() {
+            resolve();
+            server.stop(true);
+          },
         },
-      },
-      error(err) {
-        resolve();
-      },
-      fetch(req, server) {
-        try {
-          if (
-            server.upgrade(req, {
-              data: "hello world",
-              headers: 1238 as any,
-            })
-          ) {
-            reject();
-            return;
-          }
-        } catch (e) {
+        error(err) {
+          resolve();
+          server.stop(true);
+        },
+        fetch(req, server) {
+          expect(() => {
+            if (
+              server.upgrade(req, {
+                data: "hello world",
+                headers: 1238 as any,
+              })
+            ) {
+              reject(new Error("should not upgrade"));
+              return new Response("should not upgrade");
+            }
+          }).toThrow("upgrade options.headers must be a Headers or an object");
           resolve();
           return new Response("success");
-        }
+        },
+      });
 
-        reject();
-        return new Response("noooooo hello world");
-      },
-    });
-
-    await new Promise<void>((resolve_, reject) => {
-      resolve = resolve_;
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => websocket.close();
       websocket.onmessage = (e) => {};
       websocket.onerror = (e) => {};
     });
-    server.stop();
   });
   it("can do hello world", async () => {
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {},
+        open(ws) {
+          server.stop();
+        },
         message(ws, msg) {
           ws.send("hello world");
         },
       },
       fetch(req, server) {
+        server.stop();
         if (
           server.upgrade(req, {
             data: "hello world",
@@ -241,9 +285,7 @@ describe("websocket server", () => {
           resolve();
         } catch (r) {
           reject(r);
-          return;
         } finally {
-          server?.stop();
           websocket.close();
         }
       };
@@ -251,14 +293,15 @@ describe("websocket server", () => {
         reject(e);
       };
     });
-    server.stop();
   });
 
   it("fetch() allows a Response object to be returned for an upgraded ServerWebSocket", () => {
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {},
+        open(ws) {
+          server.stop();
+        },
         message(ws, msg) {
           ws.send("hello world");
         },
@@ -267,6 +310,7 @@ describe("websocket server", () => {
         console.error(err);
       },
       fetch(req, server) {
+        server.stop();
         if (
           server.upgrade(req, {
             data: "hello world",
@@ -300,9 +344,7 @@ describe("websocket server", () => {
           resolve();
         } catch (r) {
           reject(r);
-          return;
         } finally {
-          server?.stop();
           websocket.close();
         }
       };
@@ -313,10 +355,12 @@ describe("websocket server", () => {
   });
 
   it("fetch() allows a Promise<Response> object to be returned for an upgraded ServerWebSocket", () => {
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        async open(ws) {},
+        async open(ws) {
+          server.stop();
+        },
         async message(ws, msg) {
           await 1;
           ws.send("hello world");
@@ -326,6 +370,7 @@ describe("websocket server", () => {
         console.error(err);
       },
       async fetch(req, server) {
+        server.stop();
         await 1;
         if (
           server.upgrade(req, {
@@ -359,9 +404,7 @@ describe("websocket server", () => {
           resolve();
         } catch (r) {
           reject(r);
-          return;
         } finally {
-          server?.stop();
           websocket.close();
         }
       };
@@ -372,10 +415,12 @@ describe("websocket server", () => {
   });
   it("binaryType works", async () => {
     var done = false;
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {},
+        open(ws) {
+          server.stop();
+        },
         message(ws, msg) {
           if (ws.binaryType === "uint8array") {
             expect(ws.binaryType).toBe("uint8array");
@@ -392,6 +437,7 @@ describe("websocket server", () => {
         },
       },
       fetch(req, server) {
+        server.stop();
         if (server.upgrade(req, { data: "hello world" })) {
           if (server.upgrade(req)) {
             throw new Error("should not upgrade twice");
@@ -414,24 +460,19 @@ describe("websocket server", () => {
           expect(e.data).toBe("hello world");
 
           if (counter++ > 0) {
-            server?.stop();
             websocket.close();
             resolve(done);
           }
           websocket.send(Buffer.from("oaksd"));
         } catch (r) {
-          server?.stop();
           websocket.close();
           reject(r);
-          return;
-        } finally {
         }
       };
       websocket.onerror = (e) => {
         reject(e);
       };
     });
-    server.stop();
   });
 
   it("does not upgrade for non-websocket connections", async () => {
@@ -446,7 +487,7 @@ describe("websocket server", () => {
         },
         fetch(req, server) {
           if (server.upgrade(req)) {
-            reject("should not upgrade");
+            reject(new Error("should not upgrade"));
           }
 
           return new Response("success");
@@ -456,23 +497,21 @@ describe("websocket server", () => {
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(await response.text()).toBe("success");
       resolve();
-      server.stop();
+      server.stop(true);
     });
   });
 
   it("does not upgrade for non-websocket servers", async () => {
     await new Promise<void>(async (resolve, reject) => {
-      var server = serve({
+      const server = serve({
         port: getPort(),
-
         fetch(req, server) {
-          try {
+          server.stop();
+          expect(() => {
             server.upgrade(req);
-            reject("should not upgrade");
-          } catch (e) {
-            resolve();
-          }
-
+          }).toThrow(
+            'To enable websocket support, set the "websocket" object in Bun.serve({})',
+          );
           return new Response("success");
         },
       });
@@ -480,20 +519,21 @@ describe("websocket server", () => {
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       expect(await response.text()).toBe("success");
       resolve();
-      server.stop();
     });
   });
 
   it("async can do hello world", async () => {
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
         async open(ws) {
+          server.stop(true);
           ws.send("hello world");
         },
         message(ws, msg) {},
       },
       async fetch(req, server) {
+        server.stop();
         await 1;
         if (server.upgrade(req)) return;
 
@@ -510,9 +550,7 @@ describe("websocket server", () => {
           resolve();
         } catch (r) {
           reject(r);
-          return;
         } finally {
-          server?.stop();
           websocket.close();
         }
       };
@@ -533,6 +571,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishText("hello", "world");
             websocket.close();
+            server.stop(true);
             resolve();
           },
           message(ws, msg) {},
@@ -561,8 +600,9 @@ describe("websocket server", () => {
             // we don't care about the data
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.publishBinary("hello", bytes);
-            resolve();
             websocket.close();
+            server.stop(true);
+            resolve();
           },
           message(ws, msg) {},
         },
@@ -590,6 +630,7 @@ describe("websocket server", () => {
             for (let i = 0; i < 40_000; i++) ws.sendText("hello world", true);
             resolve();
             websocket.close();
+            server.stop(true);
           },
           message(ws, msg) {},
         },
@@ -616,6 +657,7 @@ describe("websocket server", () => {
             // we just want to make sure the DOMJIT call doesn't crash
             for (let i = 0; i < 40_000; i++) ws.sendBinary(bytes, true);
             websocket.close();
+            server.stop(true);
             resolve();
           },
           message(ws, msg) {},
@@ -633,10 +675,11 @@ describe("websocket server", () => {
   });
 
   it("can do hello world corked", async () => {
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
         open(ws) {
+          server.stop();
           ws.send("hello world");
         },
         message(ws, msg) {
@@ -646,8 +689,8 @@ describe("websocket server", () => {
         },
       },
       fetch(req, server) {
+        server.stop();
         if (server.upgrade(req)) return;
-
         return new Response("noooooo hello world");
       },
     });
@@ -661,9 +704,7 @@ describe("websocket server", () => {
           resolve();
         } catch (r) {
           reject(r);
-          return;
         } finally {
-          server?.stop();
           websocket.close();
         }
       };
@@ -671,14 +712,17 @@ describe("websocket server", () => {
         reject(e);
       };
     });
+    server.stop(true);
   });
 
   it("can do some back and forth", async () => {
     var dataCount = 0;
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {},
+        open(ws) {
+          server.stop();
+        },
         message(ws, msg) {
           if (msg === "first") {
             ws.send("first");
@@ -688,6 +732,7 @@ describe("websocket server", () => {
         },
       },
       fetch(req, server) {
+        server.stop();
         if (
           server.upgrade(req, {
             data: { count: 0 },
@@ -731,15 +776,11 @@ describe("websocket server", () => {
           }
         } catch (r) {
           reject(r);
-          console.error(r);
-          server?.stop();
-          console.log("i am closing!");
           websocket.close();
-          return;
-        } finally {
         }
       };
     });
+    server.stop(true);
   });
 
   it("send rope strings", async () => {
@@ -752,16 +793,19 @@ describe("websocket server", () => {
     var serverCounter = 0;
     var clientCounter = 0;
 
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
-        open(ws) {},
+        open(ws) {
+          server.stop();
+        },
         message(ws, msg) {
           ws.send(sendQueue[serverCounter++] + " ");
           gcTick();
         },
       },
       fetch(req, server) {
+        server.stop();
         if (
           server.upgrade(req, {
             data: { count: 0 },
@@ -793,15 +837,11 @@ describe("websocket server", () => {
         } catch (r) {
           reject(r);
           console.error(r);
-          server?.stop();
           websocket.close();
-          return;
-        } finally {
         }
       };
     });
-
-    server?.stop();
+    server.stop(true);
   });
 
   // this test sends 100 messages to 10 connected clients via pubsub
@@ -814,10 +854,11 @@ describe("websocket server", () => {
     }
     var serverCounter = 0;
     var clientCount = 0;
-    var server = serve({
+    const server = serve({
       port: getPort(),
       websocket: {
         open(ws) {
+          server.stop();
           ws.subscribe("test");
           gcTick();
           if (!ws.isSubscribed("test")) {
@@ -837,9 +878,9 @@ describe("websocket server", () => {
             ws.publish("test", sendQueue[serverCounter++] + " ");
         },
       },
-      fetch(req, server) {
+      fetch(req) {
         gcTick();
-
+        server.stop();
         if (
           server.upgrade(req, {
             data: { count: 0 },
@@ -922,17 +963,14 @@ describe("websocket server", () => {
             }
           } catch (r) {
             console.error(r);
-            server?.stop();
             websocket.close();
             rejectConnection(r);
             gcTick();
-            return;
-          } finally {
           }
         };
       }
     });
-    server?.stop();
     expect(serverCounter).toBe(sendQueue.length);
+    server.stop(true);
   });
 });

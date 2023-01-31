@@ -10,6 +10,7 @@
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "disableSolutionSearching": true,
+    "noUnusedLocals": true
   },
   "exclude": [
     "dist",

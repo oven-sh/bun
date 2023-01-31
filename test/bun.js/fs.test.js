@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { gc, gcTick } from "./gc";
 import {
   closeSync,
@@ -15,8 +15,13 @@ import {
   lstatSync,
   copyFileSync,
   rmSync,
+  rmdir,
+  rmdirSync,
   createReadStream,
   createWriteStream,
+  promises,
+  unlinkSync,
+  mkdtempSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -108,6 +113,51 @@ it("readdirSync on import.meta.dir", () => {
   }
   gc(true);
   expect(match).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/issues/1887
+it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
+  const tempdir = mkdtempSync(`/tmp/emoji-fruit-🍇 🍈 🍉 🍊 🍋`);
+  expect(existsSync(tempdir)).toBe(true);
+  writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
+  const dirs = readdirSync(tempdir);
+  expect(dirs.length > 0).toBe(true);
+  var match = false;
+  gc(true);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].endsWith("non-ascii-👍.txt")) {
+      match = true;
+      break;
+    }
+  }
+  gc(true);
+  expect(match).toBe(true);
+  unlinkSync(tempdir + "/non-ascii-👍.txt");
+  expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
+  rmdirSync(tempdir);
+  expect(existsSync(tempdir)).toBe(false);
+});
+
+it("mkdtempSync() empty name", () => {
+  const tempdir = mkdtempSync();
+  expect(existsSync(tempdir)).toBe(true);
+  writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
+  const dirs = readdirSync(tempdir);
+  expect(dirs.length > 0).toBe(true);
+  var match = false;
+  gc(true);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i].endsWith("non-ascii-👍.txt")) {
+      match = true;
+      break;
+    }
+  }
+  gc(true);
+  expect(match).toBe(true);
+  unlinkSync(tempdir + "/non-ascii-👍.txt");
+  expect(existsSync(tempdir + "/non-ascii-👍.txt")).toBe(false);
+  rmdirSync(tempdir);
+  expect(existsSync(tempdir)).toBe(false);
 });
 
 it("readdirSync on import.meta.dir with trailing slash", () => {
@@ -431,6 +481,88 @@ describe("rm", () => {
   });
 });
 
+describe("rmdir", () => {
+  it("removes a file", (done) => {
+    const path = `/tmp/${Date.now()}.rm.txt`;
+    writeFileSync(path, "File written successfully", "utf8");
+    expect(existsSync(path)).toBe(true);
+    rmdir(path, (err) => {
+      try {
+        expect(err).toBeDefined();
+        expect(err.code).toBe("EPERM");
+        expect(err.message).toBe("Operation not permitted");
+        expect(existsSync(path)).toBe(true);
+      } catch (e) {
+        return done(e);
+      } finally {
+        done();
+      }
+    });
+  });
+
+  it("removes a dir", (done) => {
+    const path = `/tmp/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdir(path, (err) => {
+      if (err) return done(err);
+      expect(existsSync(path)).toBe(false);
+      done();
+    });
+  });
+  // TODO support `recursive: true`
+  it("removes a dir recursively", (done) => {
+    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    try {
+      mkdirSync(path, { recursive: true });
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdir(join(path, "../../"), { recursive: true }, (err) => {
+      try {
+        expect(existsSync(path)).toBe(false);
+        done(err);
+      } catch (e) {
+        return done(e);
+      } finally {
+        done();
+      }
+    });
+  });
+});
+
+describe("rmdirSync", () => {
+  it("removes a file", () => {
+    const path = `/tmp/${Date.now()}.rm.txt`;
+    writeFileSync(path, "File written successfully", "utf8");
+    expect(existsSync(path)).toBe(true);
+    expect(() => {
+      rmdirSync(path);
+    }).toThrow("Operation not permitted");
+    expect(existsSync(path)).toBe(true);
+  });
+  it("removes a dir", () => {
+    const path = `/tmp/${Date.now()}.rm.dir`;
+    try {
+      mkdirSync(path);
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdirSync(path);
+    expect(existsSync(path)).toBe(false);
+  });
+  // TODO support `recursive: true`
+  it("removes a dir recursively", () => {
+    const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    try {
+      mkdirSync(path, { recursive: true });
+    } catch (e) {}
+    expect(existsSync(path)).toBe(true);
+    rmdirSync(join(path, "../../"), { recursive: true });
+    expect(existsSync(path)).toBe(false);
+  });
+});
+
 describe("createReadStream", () => {
   it("works (1 chunk)", async () => {
     return await new Promise((resolve, reject) => {
@@ -499,20 +631,20 @@ describe("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(null);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
   });
 
-  it("writing null with objectMode: true throws ERR_STREAM_NULL_VALUES", async () => {
+  it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
       objectMode: true,
     });
     try {
       stream.write(null);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
@@ -523,20 +655,105 @@ describe("createWriteStream", () => {
     const stream = createWriteStream(path);
     try {
       stream.write(false);
-      throw new Error("should not get here");
+      expect(() => {}).toThrow(Error);
     } catch (exception) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
 
-  it("writing false with objectMode: true should not throw", async () => {
+  it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
       objectMode: true,
     });
-    stream.write(false);
-    stream.on("error", () => {
-      throw new Error("should not get here");
+    try {
+      stream.write(false);
+      expect(() => {}).toThrow(Error);
+    } catch (exception) {
+      expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+  });
+});
+
+describe("fs/promises", () => {
+  const { exists, mkdir, readFile, rmdir, stat, writeFile } = promises;
+
+  it("should not segfault on exception", async () => {
+    try {
+      await stat("foo/bar");
+    } catch (e) {}
+  });
+
+  it("readFile", async () => {
+    const data = await readFile(import.meta.dir + "/readFileSync.txt", "utf8");
+    expect(data).toBe("File read successfully");
+  });
+
+  it("writeFile", async () => {
+    const path = `/tmp/fs.test.js/${Date.now()}.writeFile.txt`;
+    await writeFile(path, "File written successfully");
+    expect(readFileSync(path, "utf8")).toBe("File written successfully");
+  });
+
+  it("readdir()", async () => {
+    const files = await promises.readdir(import.meta.dir);
+    expect(files.length).toBeGreaterThan(0);
+  });
+
+  it("readdir() no args doesnt segfault", async () => {
+    const fizz = [
+      [],
+      [Symbol("ok")],
+      [Symbol("ok"), Symbol("ok")],
+      [Symbol("ok"), Symbol("ok"), Symbol("ok")],
+      [Infinity, -NaN, -Infinity],
+      "\0\0\0\0",
+      "\r\n",
+    ];
+    for (const args of fizz) {
+      try {
+        // check it doens't segfault when called with invalid arguments
+        await promises.readdir(...args);
+      } catch (e) {
+        // check that producing the error doesn't cause any crashes
+        Bun.inspect(e);
+      }
+    }
+  });
+
+  describe("rmdir", () => {
+    it("removes a file", async () => {
+      const path = `/tmp/${Date.now()}.rm.txt`;
+      await writeFile(path, "File written successfully", "utf8");
+      expect(await exists(path)).toBe(true);
+      try {
+        await rmdir(path);
+        expect(() => {}).toThrow();
+      } catch (err) {
+        expect(err.code).toBe("ENOTDIR");
+        // expect(err.message).toBe("Operation not permitted");
+        expect(await exists(path)).toBe(true);
+      }
     });
+
+    it("removes a dir", async () => {
+      const path = `/tmp/${Date.now()}.rm.dir`;
+      try {
+        await mkdir(path);
+      } catch (e) {}
+      expect(await exists(path)).toBe(true);
+      await rmdir(path);
+      expect(await exists(path)).toBe(false);
+    });
+    // TODO support `recursive: true`
+    // it("removes a dir recursively", async () => {
+    //   const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
+    //   try {
+    //     await mkdir(path, { recursive: true });
+    //   } catch (e) {}
+    //   expect(await exists(path)).toBe(true);
+    //   await rmdir(join(path, "../../"), { recursive: true });
+    //   expect(await exists(path)).toBe(false);
+    // });
   });
 });

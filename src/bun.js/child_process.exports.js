@@ -290,7 +290,9 @@ export function execFile(file, args, options, callback) {
 
     if (args?.length) cmd += ` ${ArrayPrototypeJoin.call(args, " ")}`;
     if (!ex) {
-      ex = genericNodeError(`Command failed: ${cmd}\n${stderr}`, {
+      let message = `Command failed: ${cmd}`;
+      if (stderr) message += `\n${stderr}`;
+      ex = genericNodeError(message, {
         // code: code < 0 ? getSystemErrorName(code) : code, // TODO: Add getSystemErrorName
         code: code,
         killed: child.killed || killed,
@@ -1129,6 +1131,16 @@ export class ChildProcess extends EventEmitter {
 
     // // Add .send() method and start listening for IPC data
     // if (ipc !== undefined) setupChannel(this, ipc, serialization);
+  }
+
+  send() {
+    console.log("ChildProcess.prototype.send() - Sorry! Not implemented yet");
+  }
+
+  disconnect() {
+    console.log(
+      "ChildProcess.prototype.disconnect() - Sorry! Not implemented yet",
+    );
   }
 
   kill(sig) {

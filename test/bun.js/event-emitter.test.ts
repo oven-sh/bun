@@ -7,6 +7,7 @@ import EventEmitter, {
   getEventListeners,
   captureRejectionSymbol,
 } from "node:events";
+import { heapStats } from "bun:jsc";
 
 describe("EventEmitter", () => {
   it("captureRejectionSymbol", () => {
@@ -20,6 +21,24 @@ describe("EventEmitter", () => {
     var emitter = new EventEmitter();
     emitter.setMaxListeners(100);
     expect(emitter.getMaxListeners()).toBe(100);
+  });
+
+  test("EventEmitter.removeAllListeners()", () => {
+    var emitter = new EventEmitter();
+    var ran = false;
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.removeAllListeners();
+    expect(emitter.listenerCount("hey")).toBe(0);
+    emitter.emit("hey");
+    expect(ran).toBe(false);
+    emitter.on("hey", () => {
+      ran = true;
+    });
+    emitter.emit("hey");
+    expect(ran).toBe(true);
+    expect(emitter.listenerCount("hey")).toBe(1);
   });
 
   // These are also tests for the done() function in the test runner.
@@ -105,9 +124,9 @@ for (let create of waysOfCreating) {
     .trim()} should work`, () => {
     var myEmitter = create();
     var called = false;
-
-    myEmitter.once("event", () => {
+    myEmitter.once("event", function () {
       called = true;
+      expect(this as any).toBe(myEmitter);
     });
     var firstEvents = myEmitter._events;
     expect(myEmitter.listenerCount("event")).toBe(1);
@@ -128,4 +147,33 @@ test("EventEmitter.on", () => {
 test("EventEmitter.off", () => {
   var myEmitter = new EventEmitter();
   expect(myEmitter.off("foo", () => {})).toBe(myEmitter);
+});
+
+// Internally, EventEmitter has a JSC::Weak with the thisValue of the listener
+test("EventEmitter GCs", () => {
+  Bun.gc(true);
+
+  const startCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
+  (function () {
+    Bun.gc(true);
+
+    function EventEmitterSubclass() {
+      EventEmitter.call(this);
+    }
+
+    Object.setPrototypeOf(
+      EventEmitterSubclass.prototype,
+      EventEmitter.prototype,
+    );
+    Object.setPrototypeOf(EventEmitterSubclass, EventEmitter);
+
+    var myEmitter = new EventEmitterSubclass();
+    myEmitter.on("foo", () => {});
+    myEmitter.emit("foo");
+    Bun.gc(true);
+  })();
+  Bun.gc(true);
+
+  const endCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
+  expect(endCount).toBe(startCount);
 });

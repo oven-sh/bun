@@ -1331,7 +1331,7 @@ pub extern fn EVP_md5_sha1() *const EVP_MD;
 pub extern fn EVP_get_digestbynid(nid: c_int) ?*const EVP_MD;
 pub extern fn EVP_get_digestbyobj(obj: ?*const ASN1_OBJECT) ?*const EVP_MD;
 pub extern fn EVP_MD_CTX_init(ctx: *EVP_MD_CTX) void;
-pub extern fn EVP_MD_CTX_new() [*c]EVP_MD_CTX;
+pub extern fn EVP_MD_CTX_new() *EVP_MD_CTX;
 pub extern fn EVP_MD_CTX_cleanup(ctx: *EVP_MD_CTX) c_int;
 pub extern fn EVP_MD_CTX_free(ctx: *EVP_MD_CTX) void;
 pub extern fn EVP_MD_CTX_copy_ex(out: [*c]EVP_MD_CTX, in: [*c]const EVP_MD_CTX) c_int;
@@ -1370,7 +1370,7 @@ pub extern fn EVP_MD_CTX_copy(out: [*c]EVP_MD_CTX, in: [*c]const EVP_MD_CTX) c_i
 pub extern fn EVP_add_digest(digest: ?*const EVP_MD) c_int;
 pub extern fn EVP_get_digestbyname([*c]const u8) ?*const EVP_MD;
 pub extern fn EVP_dss1() ?*const EVP_MD;
-pub extern fn EVP_MD_CTX_create() [*c]EVP_MD_CTX;
+pub extern fn EVP_MD_CTX_create() ?*EVP_MD_CTX;
 pub extern fn EVP_MD_CTX_destroy(ctx: *EVP_MD_CTX) void;
 pub extern fn EVP_DigestFinalXOF(ctx: *EVP_MD_CTX, out: [*c]u8, len: usize) c_int;
 pub extern fn EVP_MD_meth_get_flags(md: ?*const EVP_MD) u32;
@@ -18796,11 +18796,15 @@ pub const SSL = opaque {
         return SSL_has_pending(ssl) > 0;
     }
 
+    pub inline fn setFD(this: *SSL, fd: c_int) void {
+        _ = SSL_set_fd(this, fd);
+    }
+
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
-        if (comptime !is_client) {
-            SSL_set_accept_state(ssl);
-        } else {
+        if (comptime is_client) {
             SSL_set_connect_state(ssl);
+        } else {
+            SSL_set_accept_state(ssl);
         }
     }
 
@@ -18954,6 +18958,10 @@ pub const SSL_CTX = opaque {
         SSL_CTX_set_custom_verify(this, 0, cb);
         // SSL_CTX_set_custom_verify(this, 1, cb);
         // SSL_CTX_set_custom_verify(this, 2, cb);
+    }
+
+    pub fn deinit(this: *SSL_CTX) void {
+        SSL_CTX_free(this);
     }
 };
 

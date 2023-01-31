@@ -1,9 +1,9 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
-const string = @import("string_types.zig").string;
-const stringZ = @import("string_types.zig").stringZ;
-const CodePoint = @import("string_types.zig").CodePoint;
+const string = bun.string;
+const stringZ = bun.stringZ;
+const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
@@ -91,34 +91,28 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
 pub inline fn isNPMPackageName(target: string) bool {
-    if (target.len >= 215) return false;
-    switch (target[0]) {
-        'a'...'z',
-        '0'...'9',
-        '$',
-        '@',
-        '-',
-        => {},
+    if (target.len == 0) return false;
+    if (target.len > 214) return false;
+
+    const scoped = switch (target[0]) {
+        'a'...'z', '0'...'9', '$', '-' => false,
+        '@' => true,
         else => return false,
-    }
-    if (target.len == 1) return true;
-
-    var slash_count: usize = 0;
-
-    for (target[1..]) |c| {
+    };
+    var slash_index: usize = 0;
+    for (target[1..]) |c, i| {
         switch (c) {
             'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
             '/' => {
-                if (slash_count > 0) {
-                    return false;
-                }
-                slash_count += 1;
+                if (!scoped) return false;
+                if (slash_index > 0) return false;
+                slash_index = i + 1;
             },
             else => return false,
         }
     }
 
-    return true;
+    return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
 pub inline fn indexAny(in: anytype, target: string) ?usize {
@@ -498,6 +492,15 @@ test "StringOrTinyString Lowercase" {
     try std.testing.expectEqualStrings("hello!!!!!", str.slice());
 }
 
+/// Copy a string into a buffer
+/// Return the copied version
+pub fn copy(buf: []u8, src: []const u8) []const u8 {
+    const len = @min(buf.len, src.len);
+    if (len > 0)
+        @memcpy(buf.ptr, src.ptr, len);
+    return buf[0..len];
+}
+
 /// startsWith except it checks for non-empty strings
 pub fn hasPrefix(self: string, str: string) bool {
     return str.len > 0 and startsWith(self, str);
@@ -542,6 +545,11 @@ pub fn withoutTrailingSlash(this: string) []const u8 {
     }
 
     return href;
+}
+
+pub fn withTrailingSlash(dir: string, in: string) []const u8 {
+    std.debug.assert(bun.isSliceInBuffer(dir, in));
+    return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
 }
 
 pub fn withoutLeadingSlash(this: string) []const u8 {
@@ -824,6 +832,17 @@ pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) 
     return buf;
 }
 
+pub inline fn append3(allocator: std.mem.Allocator, self: string, other: string, third: string) ![]u8 {
+    var buf = try allocator.alloc(u8, self.len + other.len + third.len);
+    if (self.len > 0)
+        @memcpy(buf.ptr, self.ptr, self.len);
+    if (other.len > 0)
+        @memcpy(buf.ptr + self.len, other.ptr, other.len);
+    if (third.len > 0)
+        @memcpy(buf.ptr + self.len + other.len, third.ptr, third.len);
+    return buf;
+}
+
 pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8 {
     var remain = out;
     var count: usize = 0;
@@ -942,31 +961,52 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     if (comptime Environment.allow_assert) {
         std.debug.assert(input_.len <= output_.len);
     }
-    if (comptime !JSC.is_bindgen and Environment.isAarch64) {
-        // faster on aarch64
-        // but it only uses SSE2 when it could use AVX2
-        // so it's better to let llvm auto-vectorize it
-        JSC.WTF.copyLCharsFromUCharSource(output_.ptr, InputType, input_);
-    } else {
-        var output = output_;
-        var input = input_;
-        if (comptime Environment.allow_assert) {
-            std.debug.assert(input.len <= output.len);
+
+    var output = output_;
+    var input = input_;
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(input.len <= output.len);
+    }
+
+    // https://zig.godbolt.org/z/9rTn1orcY
+
+    const group = @as(usize, 16);
+    // end at the last group of 16 bytes
+    var input_ptr = input.ptr;
+    var output_ptr = output.ptr;
+
+    if (comptime Environment.enableSIMD) {
+        const last_vector_ptr = input.ptr + (@min(input.len, output.len) & ~(group - 1));
+        while (last_vector_ptr != input_ptr) {
+            const input_vec1: @Vector(group, u16) = input_ptr[0..group].*;
+            output_ptr[0] = @truncate(u8, input_vec1[0]);
+            output_ptr[1] = @truncate(u8, input_vec1[1]);
+            output_ptr[2] = @truncate(u8, input_vec1[2]);
+            output_ptr[3] = @truncate(u8, input_vec1[3]);
+            output_ptr[4] = @truncate(u8, input_vec1[4]);
+            output_ptr[5] = @truncate(u8, input_vec1[5]);
+            output_ptr[6] = @truncate(u8, input_vec1[6]);
+            output_ptr[7] = @truncate(u8, input_vec1[7]);
+            output_ptr[8] = @truncate(u8, input_vec1[8]);
+            output_ptr[9] = @truncate(u8, input_vec1[9]);
+            output_ptr[10] = @truncate(u8, input_vec1[10]);
+            output_ptr[11] = @truncate(u8, input_vec1[11]);
+            output_ptr[12] = @truncate(u8, input_vec1[12]);
+            output_ptr[13] = @truncate(u8, input_vec1[13]);
+            output_ptr[14] = @truncate(u8, input_vec1[14]);
+            output_ptr[15] = @truncate(u8, input_vec1[15]);
+
+            output_ptr += group;
+            input_ptr += group;
         }
+    }
 
-        // https://zig.godbolt.org/z/Y1qa9PTo1
-        // https://github.com/ziglang/zig/issues/11830
-        // this auto-vectorizes on x64 and aarch64
-        var input_ptr = input.ptr;
-        var output_ptr = output.ptr;
+    const last_input_ptr = input_ptr + @min(input.len, output.len);
 
-        const last_input_ptr = input_ptr + @min(input.len, output.len);
-
-        while (last_input_ptr != input_ptr) {
-            output_ptr[0] = @truncate(u8, input_ptr[0]);
-            output_ptr += 1;
-            input_ptr += 1;
-        }
+    while (last_input_ptr != input_ptr) {
+        output_ptr[0] = @truncate(u8, input_ptr[0]);
+        output_ptr += 1;
+        input_ptr += 1;
     }
 }
 
@@ -1379,7 +1419,7 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
     switch (len) {
         2 => {
             if (Environment.allow_assert)
-                assert(sequence[0] >= 0xC2);
+                assert(sequence[0] >= 0xC0);
             if (Environment.allow_assert)
                 assert(sequence[0] <= 0xDF);
             if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
@@ -1616,39 +1656,60 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     var total_non_ascii_count: usize = 0;
 
     const latin1_last = latin1.ptr + latin1.len;
-    while (latin1.ptr != latin1_last) {
+    if (latin1.ptr != latin1_last) {
         const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
-        const latin1_end = latin1.ptr + wrapped_len;
-        while (latin1.ptr != latin1_end) {
-            const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+        // reference the pointer directly because it improves codegen
+        var ptr = latin1.ptr;
+        const latin1_vec_end = ptr + wrapped_len;
+
+        while (ptr != latin1_vec_end) {
+            const vec: AsciiVector = ptr[0..ascii_vector_size].*;
 
             if (@reduce(.Max, vec) > 127) {
                 const Int = u64;
                 const size = @sizeOf(Int);
 
                 const bytes = [2]Int{
-                    @bitCast(Int, latin1[0..size].*) & 0x8080808080808080,
-                    @bitCast(Int, latin1[size .. 2 * size].*) & 0x8080808080808080,
+                    @bitCast(Int, ptr[0..size].*) & 0x8080808080808080,
+                    @bitCast(Int, ptr[size .. 2 * size].*) & 0x8080808080808080,
                 };
 
-                const non_ascii_count = ((@popCount(bytes[0]) / 8) + (@popCount(bytes[1]) / 8));
-                total_non_ascii_count += non_ascii_count;
+                total_non_ascii_count += @popCount(bytes[0]) + @popCount(bytes[1]);
             }
 
-            latin1.ptr += ascii_vector_size;
-        }
-        latin1.len -= wrapped_len;
-
-        if (latin1.len >= 8) {
-            const bytes = @bitCast(u64, latin1[0..8].*) & 0x8080808080808080;
-            total_non_ascii_count += @popCount(bytes) / 8;
-            latin1 = latin1[8..];
+            ptr += ascii_vector_size;
         }
 
-        while (latin1.ptr != latin1_last) {
-            total_non_ascii_count += @as(usize, @boolToInt(latin1.ptr[0] > 127));
-            latin1.ptr += 1;
+        if (@ptrToInt(ptr + 8) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 8;
         }
+
+        if (@ptrToInt(ptr + 4) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 4;
+        }
+
+        if (@ptrToInt(ptr + 2) < @ptrToInt(latin1_last)) {
+            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
+            total_non_ascii_count += @popCount(bytes);
+            ptr += 2;
+        }
+
+        while (ptr != latin1_last) {
+            assert(@ptrToInt(ptr) < @ptrToInt(latin1_last));
+
+            total_non_ascii_count += @as(usize, @boolToInt(ptr[0] > 127));
+            ptr += 1;
+        }
+
+        // assert we never go out of bounds
+        assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
     }
 
     // each non-ascii latin1 character becomes 2 UTF8 characters
@@ -1662,7 +1723,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
-        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
+        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, @min(latin1.len, buf.len));
         if (comptime std.meta.alignment(Buffer) != @alignOf(u16)) {
             strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
         } else {
@@ -2484,6 +2545,54 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         const width: usize = replacement.utf8Width();
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
+            switch (width) {
+                2 => {
+                    if (remaining.len > 0) {
+                        //only first will be written
+                        remaining[0] = @truncate(u8, 0xC0 | (replacement.code_point >> 6));
+                        remaining = remaining[remaining.len..];
+                    }
+                },
+                3 => {
+                    //only first to second written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @truncate(u8, 0xE0 | (replacement.code_point >> 12));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 6) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                    
+                },
+                4 => {
+                    //only 1 to 3 written
+                    switch (remaining.len) {
+                        1 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining = remaining[remaining.len..];
+                        },
+                        2 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        3 => {
+                            remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
+                            remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
+                            remaining[3] = @truncate(u8, 0x80 | (replacement.code_point >> 0) & 0x3F);
+                            remaining = remaining[remaining.len..];
+                        },
+                        else => {},
+                    }
+                },
+
+                else => {},
+            }
             break;
         }
 
@@ -3958,7 +4067,15 @@ pub fn isIPAddress(input: []const u8) bool {
     if (containsChar(input, ':'))
         return true;
 
-    if (std.x.os.IPv4.parse(input)) |_| {
+    if (std.net.Address.resolveIp(input, 0)) |_| {
+        return true;
+    } else |_| {
+        return false;
+    }
+}
+
+pub fn isIPV6Address(input: []const u8) bool {
+    if (std.net.Address.parseIp6(input, 0)) |_| {
         return true;
     } else |_| {
         return false;

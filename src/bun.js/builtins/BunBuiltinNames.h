@@ -5,8 +5,6 @@
 #include "root.h"
 
 
-#include "helpers.h"
-
 #include "JavaScriptCore/BuiltinUtils.h"
 
 
@@ -24,6 +22,7 @@ using namespace JSC;
 
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
+    macro(Buffer) \
     macro(Bun) \
     macro(Loader) \
     macro(ReadableByteStreamController) \
@@ -37,6 +36,7 @@ using namespace JSC;
     macro(WritableStream) \
     macro(WritableStreamDefaultController) \
     macro(WritableStreamDefaultWriter) \
+    macro(_events) \
     macro(abortAlgorithm) \
     macro(abortSteps) \
     macro(addEventListener) \
@@ -122,6 +122,7 @@ using namespace JSC;
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
+    macro(internalRequire) \
     macro(internalStream) \
     macro(internalWritable) \
     macro(isAbortSignal) \
@@ -247,7 +248,6 @@ using namespace JSC;
     macro(writer) \
     macro(writing) \
     macro(written) \
-    macro(_events) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

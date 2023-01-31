@@ -20,10 +20,10 @@ const allocators = @import("allocators.zig");
 const JSC = @import("bun").JSC;
 const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const JSONParser = @import("./json_parser.zig");
+const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -117,9 +117,20 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return used;
         }
 
+        /// Reset all AST nodes, allowing the memory to be reused for the next parse.
+        /// Only call this when we're done with ALL AST nodes, or you risk
+        /// undefined memory bugs.
+        ///
+        /// Nested parsing should either use the same store, or call
+        /// Store.reclaim.
         pub fn reset() void {
             const blocks = _self.overflow.slice();
             for (blocks) |b| {
+                if (comptime Environment.isDebug) {
+                    // ensure we crash if we use a freed value
+                    var bytes = std.mem.asBytes(&b.items);
+                    @memset(bytes, undefined, bytes.len);
+                }
                 b.used = 0;
             }
             _self.overflow.used = 0;
@@ -548,13 +559,6 @@ pub const G = struct {
     };
 
     pub const Property = struct {
-        class_static_block: ?*ClassStaticBlock = null,
-        ts_decorators: ExprNodeList = ExprNodeList{},
-        // Key is optional for spread
-        key: ?ExprNodeIndex = null,
-
-        // This is omitted for class fields
-        value: ?ExprNodeIndex = null,
 
         // This is used when parsing a pattern that uses default values:
         //
@@ -568,6 +572,14 @@ pub const G = struct {
         initializer: ?ExprNodeIndex = null,
         kind: Kind = Kind.normal,
         flags: Flags.Property.Set = Flags.Property.None,
+
+        class_static_block: ?*ClassStaticBlock = null,
+        ts_decorators: ExprNodeList = ExprNodeList{},
+        // Key is optional for spread
+        key: ?ExprNodeIndex = null,
+
+        // This is omitted for class fields
+        value: ?ExprNodeIndex = null,
 
         pub const List = BabyList(Property);
 
@@ -1548,19 +1560,19 @@ pub const E = struct {
 
         const PackageJSONSort = struct {
             const Fields = enum(u8) {
-                name,
-                version,
-                author,
-                repository,
-                config,
-                main,
-                module,
-                dependencies,
-                devDependencies,
-                optionalDependencies,
-                peerDependencies,
-                exports,
-                __fake,
+                name = 0,
+                version = 1,
+                author = 2,
+                repository = 3,
+                config = 4,
+                main = 5,
+                module = 6,
+                dependencies = 7,
+                devDependencies = 8,
+                optionalDependencies = 9,
+                peerDependencies = 10,
+                exports = 11,
+                __fake = 12,
 
                 pub const Map = ComptimeStringMap(Fields, .{
                     .{ "name", Fields.name },
@@ -1576,7 +1588,6 @@ pub const E = struct {
                     .{ "peerDependencies", Fields.peerDependencies },
                     .{ "exports", Fields.exports },
                 });
-                const max_key_size = 12;
 
                 pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
                     var lhs_key_size: u8 = @enumToInt(Fields.__fake);
@@ -1672,23 +1683,15 @@ pub const E = struct {
 
         pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
-            var bytes = allocator.alloc(u8, this.rope_len) catch unreachable;
-            var ptr = bytes.ptr;
-            var remain = bytes.len;
-            @memcpy(ptr, this.data.ptr, this.data.len);
-            ptr += this.data.len;
-            remain -= this.data.len;
             var str = this.next;
+            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
+
+            bytes.appendSliceAssumeCapacity(this.data);
             while (str) |strin| {
-                @memcpy(ptr, strin.data.ptr, strin.data.len);
-                ptr += strin.data.len;
-                remain -= strin.data.len;
-                var prev = strin;
+                bytes.appendSlice(strin.data) catch unreachable;
                 str = strin.next;
-                prev.next = null;
-                prev.end = null;
             }
-            this.data = bytes;
+            this.data = bytes.items;
             this.next = null;
         }
 
@@ -2187,6 +2190,13 @@ pub const Stmt = struct {
                 has_inited = false;
             }
 
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
+            }
+
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 return All.append(ValueType, value);
             }
@@ -2217,6 +2227,13 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
+        return .{
+            .loc = this.loc,
+            .data = try this.data.clone(allocator),
+        };
+    }
 
     pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
         var stmts = try allocator.alloc(Stmt, 1);
@@ -2396,10 +2413,7 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
-
-        const key_str = expr.data.e_string;
-
-        return if (key_str.isUTF8()) key_str.data else key_str.string(allocator) catch null;
+        return expr.data.e_string.string(allocator) catch null;
     }
 
     pub fn asBool(
@@ -3601,9 +3615,126 @@ pub const Expr = struct {
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
 
+        pub fn clone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
+            return switch (this) {
+                .e_array => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_array)));
+                    item.* = el.*;
+                    return .{ .e_array = item };
+                },
+                .e_unary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_unary)));
+                    item.* = el.*;
+                    return .{ .e_unary = item };
+                },
+                .e_binary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_binary)));
+                    item.* = el.*;
+                    return .{ .e_binary = item };
+                },
+                .e_class => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_class)));
+                    item.* = el.*;
+                    return .{ .e_class = item };
+                },
+                .e_new => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_new)));
+                    item.* = el.*;
+                    return .{ .e_new = item };
+                },
+                .e_function => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_function)));
+                    item.* = el.*;
+                    return .{ .e_function = item };
+                },
+                .e_call => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_call)));
+                    item.* = el.*;
+                    return .{ .e_call = item };
+                },
+                .e_dot => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_dot)));
+                    item.* = el.*;
+                    return .{ .e_dot = item };
+                },
+                .e_index => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_index)));
+                    item.* = el.*;
+                    return .{ .e_index = item };
+                },
+                .e_arrow => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_arrow)));
+                    item.* = el.*;
+                    return .{ .e_arrow = item };
+                },
+                .e_jsx_element => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_jsx_element)));
+                    item.* = el.*;
+                    return .{ .e_jsx_element = item };
+                },
+                .e_object => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_object)));
+                    item.* = el.*;
+                    return .{ .e_object = item };
+                },
+                .e_spread => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
+                    item.* = el.*;
+                    return .{ .e_spread = item };
+                },
+                .e_template_part => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
+                    item.* = el.*;
+                    return .{ .e_template_part = item };
+                },
+                .e_template => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
+                    item.* = el.*;
+                    return .{ .e_template = item };
+                },
+                .e_reg_exp => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_reg_exp)));
+                    item.* = el.*;
+                    return .{ .e_reg_exp = item };
+                },
+                .e_await => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_await)));
+                    item.* = el.*;
+                    return .{ .e_await = item };
+                },
+                .e_yield => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_yield)));
+                    item.* = el.*;
+                    return .{ .e_yield = item };
+                },
+                .e_if => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_if)));
+                    item.* = el.*;
+                    return .{ .e_if = item };
+                },
+                .e_import => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_import)));
+                    item.* = el.*;
+                    return .{ .e_import = item };
+                },
+                .e_big_int => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_big_int)));
+                    item.* = el.*;
+                    return .{ .e_big_int = item };
+                },
+                .e_string => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
+                    item.* = el.*;
+                    return .{ .e_string = item };
+                },
+                else => this,
+            };
+        }
+
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_reg_exp, .e_string, .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,
@@ -3864,6 +3995,13 @@ pub const Expr = struct {
 
                 has_inited = true;
                 _ = All.init(allocator);
+            }
+
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
             }
 
             pub fn reset() void {
@@ -4850,8 +4988,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = @import("./bundler.zig").Bundler;
-    const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
+    const Bundler = bun.Bundler;
+    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -4859,7 +4997,7 @@ pub const Macro = struct {
     pub const namespaceWithColon: string = namespace ++ ":";
 
     pub fn isMacroPath(str: string) bool {
-        return (str.len > namespaceWithColon.len and strings.eqlComptimeIgnoreLen(str[0..namespaceWithColon.len], namespaceWithColon));
+        return strings.hasPrefixComptime(str, namespaceWithColon);
     }
 
     pub const MacroContext = struct {
@@ -6827,11 +6965,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable}) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -6849,13 +6985,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
-                                strings.toUTF8Alloc(self.p.allocator, str.slice16()) catch unreachable,
-                            }) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -7098,7 +7230,7 @@ pub const Macro = struct {
                                 return false;
                             }
 
-                            const JSLexer = @import("./js_lexer.zig");
+                            const JSLexer = bun.js_lexer;
 
                             var array_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = true,
@@ -8105,24 +8237,8 @@ pub const Macro = struct {
 
                             var promise_result = JSC.JSValue.zero;
                             var rejected = false;
-                            if (value.asPromise()) |promise| {
-                                while (true) {
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.tick();
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.eventLoop().autoTick();
-                                }
-
-                                promise_result = promise.result(this.global.vm());
-                                rejected = promise.status(this.global.vm()) == .Rejected;
-                            } else if (value.asInternalPromise()) |promise| {
-                                while (true) {
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.tick();
-                                    if (promise.status(this.global.vm()) != .Pending) break;
-                                    this.macro.vm.eventLoop().autoTick();
-                                }
-
+                            if (value.asAnyPromise()) |promise| {
+                                this.macro.vm.waitForPromise(promise);
                                 promise_result = promise.result(this.global.vm());
                                 rejected = promise.status(this.global.vm()) == .Rejected;
                             } else {

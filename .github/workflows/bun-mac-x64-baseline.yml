@@ -27,11 +27,11 @@ on:
 jobs:
   macos-object-files:
     name: macOS Object
-    runs-on: zig-object
+    runs-on: med-ubuntu
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
           # - cpu: haswell
@@ -104,13 +104,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: haswell
@@ -119,16 +119,16 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: haswell
@@ -137,7 +137,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           # - cpu: native
@@ -145,7 +145,7 @@ jobs:
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
           #   dependencies: true
           #   compile_obj: true
@@ -243,14 +243,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             package: bun-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: haswell
           #   arch: x86_64
           #   tag: bun-darwin-x64
@@ -258,14 +258,14 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: native
           #   arch: aarch64
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   package: bun-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/dec17/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jan29/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
@@ -374,7 +374,9 @@ jobs:
       - name: Release
         id: release
         uses: ncipollo/release-action@v1
-        if: github.ref == 'refs/heads/main'
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
         with:
           prerelease: true
           body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
@@ -386,3 +388,38 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/${{matrix.tag}}.zip,${{runner.temp}}/release/${{matrix.tag}}-profile.zip"
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
+        with:
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # - name: Sign Release
+      #   id: sign-release
+      #   if: |
+      #     github.repository_owner == 'oven-sh'
+      #     && github.ref == 'refs/heads/main'
+      #   env:
+      #     GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      #   run: |
+      #     echo "$GPG_PASSPHRASE" | bun run .scripts/sign-release.ts
+      # - name: Release Checksum
+      #   id: release-checksum
+      #   uses: ncipollo/release-action@v1
+      #   if: |
+      #     github.repository_owner == 'oven-sh'
+      #     && github.ref == 'refs/heads/main'
+      #   with:
+      #     prerelease: true
+      #     body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+      #     allowUpdates: true
+      #     replacesArtifacts: true
+      #     generateReleaseNotes: true
+      #     artifactErrorsFailBuild: true
+      #     token: ${{ secrets.GITHUB_TOKEN }}
+      #     name: "Canary (${{github.sha}})"
+      #     tag: "canary"
+      #     artifacts: "SHASUMS256.txt,SHASUMS256.txt.asc"

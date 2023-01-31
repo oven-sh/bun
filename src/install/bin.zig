@@ -20,7 +20,30 @@ pub const Bin = extern struct {
     tag: Tag = Tag.none,
     value: Value = Value{ .none = {} },
 
-    pub fn count(this: Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
+    pub fn verify(this: *const Bin, extern_strings: []const ExternalString) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        switch (this.tag) {
+            .file => this.value.file.assertDefined(),
+            .named_file => {
+                this.value.named_file[0].assertDefined();
+                this.value.named_file[1].assertDefined();
+            },
+            .dir => {
+                this.value.dir.assertDefined();
+            },
+            .map => {
+                const list = this.value.map.get(extern_strings);
+                for (list) |*extern_string| {
+                    extern_string.value.assertDefined();
+                }
+            },
+            else => {},
+        }
+    }
+
+    pub fn count(this: *const Bin, buf: []const u8, extern_strings: []const ExternalString, comptime StringBuilder: type, builder: StringBuilder) u32 {
         switch (this.tag) {
             .file => builder.count(this.value.file.slice(buf)),
             .named_file => {
@@ -29,10 +52,11 @@ pub const Bin = extern struct {
             },
             .dir => builder.count(this.value.dir.slice(buf)),
             .map => {
-                for (this.value.map.get(extern_strings)) |extern_string| {
+                const list = this.value.map.get(extern_strings);
+                for (list) |*extern_string| {
                     builder.count(extern_string.slice(buf));
                 }
-                return this.value.map.len;
+                return @truncate(u32, list.len);
             },
             else => {},
         }
@@ -40,7 +64,7 @@ pub const Bin = extern struct {
         return 0;
     }
 
-    pub fn clone(this: Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
+    pub fn clone(this: *const Bin, buf: []const u8, prev_external_strings: []const ExternalString, all_extern_strings: []ExternalString, extern_strings_slice: []ExternalString, comptime StringBuilder: type, builder: StringBuilder) Bin {
         return switch (this.tag) {
             .none => Bin{ .tag = .none, .value = .{ .none = {} } },
             .file => Bin{
@@ -191,16 +215,19 @@ pub const Bin = extern struct {
                     this.i += 1;
                     this.done = true;
                     const base = std.fs.path.basename(this.package_name.slice(this.string_buffer));
-                    if (strings.hasPrefix(base, "./")) return base[2..];
-                    return base;
+                    if (strings.hasPrefix(base, "./"))
+                        return strings.copy(&this.buf, base[2..]);
+
+                    return strings.copy(&this.buf, base);
                 },
                 .named_file => {
                     if (this.i > 0) return null;
                     this.i += 1;
                     this.done = true;
                     const base = std.fs.path.basename(this.bin.value.named_file[0].slice(this.string_buffer));
-                    if (strings.hasPrefix(base, "./")) return base[2..];
-                    return base;
+                    if (strings.hasPrefix(base, "./"))
+                        return strings.copy(&this.buf, base[2..]);
+                    return strings.copy(&this.buf, base);
                 },
 
                 .dir => return try this.nextInDir(),
@@ -209,15 +236,18 @@ pub const Bin = extern struct {
                     const index = this.i;
                     this.i += 2;
                     this.done = this.i >= this.bin.value.map.len;
+                    const current_string = this.bin.value.map.get(
+                        this.extern_string_buf,
+                    )[index];
+
                     const base = std.fs.path.basename(
-                        this.bin.value.map.get(
-                            this.extern_string_buf,
-                        )[index].slice(
+                        current_string.slice(
                             this.string_buffer,
                         ),
                     );
-                    if (strings.hasPrefix(base, "./")) return base[2..];
-                    return base;
+                    if (strings.hasPrefix(base, "./"))
+                        return strings.copy(&this.buf, base[2..]);
+                    return strings.copy(&this.buf, base);
                 },
                 else => return null,
             }
@@ -302,7 +332,7 @@ pub const Bin = extern struct {
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
-                const abs = std.os.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
                     this.err = err;
                     return;
                 };
@@ -427,7 +457,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
+                    var basedir_path = bun.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };
@@ -479,7 +509,7 @@ pub const Bin = extern struct {
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
-                const abs = std.os.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                const abs = bun.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
                     this.err = err;
                     return;
                 };
@@ -579,7 +609,7 @@ pub const Bin = extern struct {
 
                     var iter = child_dir.iterate();
 
-                    var basedir_path = std.os.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
+                    var basedir_path = bun.getFdPath(child_dir.dir.fd, &target_buf) catch |err| {
                         this.err = err;
                         return;
                     };

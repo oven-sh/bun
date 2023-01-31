@@ -16,7 +16,6 @@ public:
     DOMClientIsoSubspaces() = default;
 
     /* --- bun --- */
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
@@ -31,6 +30,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

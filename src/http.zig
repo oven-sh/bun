@@ -17,8 +17,8 @@ const ApiReader = @import("./api/schema.zig").Reader;
 const ApiWriter = @import("./api/schema.zig").Writer;
 const ByteApiWriter = @import("./api/schema.zig").ByteWriter;
 const NewApiWriter = @import("./api/schema.zig").Writer;
-const js_ast = @import("./js_ast.zig");
-const bundler = @import("bundler.zig");
+const js_ast = bun.JSAst;
+const bundler = bun.bundler;
 const logger = @import("bun").logger;
 const Fs = @import("./fs.zig");
 const Options = @import("./options.zig");
@@ -36,7 +36,7 @@ const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Arena = std.heap.ArenaAllocator;
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
-const JSON = @import("./json_parser.zig");
+const JSON = bun.JSON;
 const DateTime = bun.DateTime;
 const ThreadPool = @import("bun").ThreadPool;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
@@ -50,12 +50,6 @@ pub fn constStrToU8(s: string) []u8 {
 
 pub const MutableStringAPIWriter = NewApiWriter(*MutableString);
 
-const tcp = std.x.net.tcp;
-const ip = std.x.net.ip;
-
-const IPv4 = std.x.os.IPv4;
-const IPv6 = std.x.os.IPv6;
-const Socket = std.x.os.Socket;
 const os = std.os;
 
 const picohttp = @import("bun").picohttp;
@@ -66,7 +60,7 @@ pub const Headers = picohttp.Headers;
 pub const MimeType = @import("./http/mime_type.zig");
 const Bundler = bundler.Bundler;
 const Websocket = @import("./http/websocket.zig");
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 const watcher = @import("./watcher.zig");
 threadlocal var req_headers_buf: [100]picohttp.Header = undefined;
 threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
@@ -87,10 +81,17 @@ const SOCKET_FLAGS: u32 = if (Environment.isLinux)
 else
     os.SOCK.CLOEXEC;
 
+fn iovec(buf: []const u8) os.iovec_const {
+    return os.iovec_const{
+        .iov_base = buf.ptr,
+        .iov_len = buf.len,
+    };
+}
+
 fn disableSIGPIPESoClosingTheTabDoesntCrash(conn: anytype) void {
     if (comptime !Environment.isMac) return;
     std.os.setsockopt(
-        conn.client.socket.fd,
+        conn.handle,
         std.os.SOL.SOCKET,
         std.os.SO.NOSIGPIPE,
         &std.mem.toBytes(@as(c_int, 1)),
@@ -102,7 +103,7 @@ pub const RequestContext = struct {
     request: Request,
     method: Method,
     url: URLPath,
-    conn: *tcp.Connection,
+    conn: std.net.Stream,
     allocator: std.mem.Allocator,
     arena: ThreadlocalArena,
     req_body_node: *RequestDataPool.Node = undefined,
@@ -563,7 +564,7 @@ pub const RequestContext = struct {
             if (stat.kind == .SymLink) {
                 file.* = std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only }) catch return null;
 
-                absolute_path = std.os.getFdPath(
+                absolute_path = bun.getFdPath(
                     file.handle,
                     &Bundler.tmp_buildfile_buf,
                 ) catch return null;
@@ -679,7 +680,7 @@ pub const RequestContext = struct {
         var total: usize = 0;
         var buf: []const u8 = buf_;
         while (buf.len > 0) {
-            switch (Syscall.send(ctx.conn.client.socket.fd, buf, SOCKET_FLAGS)) {
+            switch (Syscall.send(ctx.conn.handle, buf, SOCKET_FLAGS)) {
                 .err => |err| {
                     const erro = AsyncIO.asError(err.getErrno());
                     if (erro == error.EBADF or erro == error.ECONNABORTED or erro == error.ECONNREFUSED) {
@@ -737,7 +738,7 @@ pub const RequestContext = struct {
         this: *RequestContext,
         req: Request,
         arena: ThreadlocalArena,
-        conn: *tcp.Connection,
+        conn: std.net.Stream,
         bundler_: *Bundler,
         watcher_: *Watcher,
         timer: std.time.Timer,
@@ -832,7 +833,7 @@ pub const RequestContext = struct {
 
     pub fn done(ctx: *RequestContext) void {
         std.debug.assert(!ctx.has_called_done);
-        ctx.conn.deinit();
+        std.os.closeSocket(ctx.conn.handle);
         ctx.has_called_done = true;
     }
 
@@ -891,7 +892,7 @@ pub const RequestContext = struct {
         try ctx.prepareToSendBody(content_length, false);
 
         _ = try std.os.sendfile(
-            ctx.conn.client.socket.fd,
+            ctx.conn.handle,
             node_modules_bundle.fd,
             node_modules_bundle.codeStartOffset(),
             content_length,
@@ -926,7 +927,7 @@ pub const RequestContext = struct {
         var remain = content_length;
         while (remain > 0) {
             const wrote = try std.os.sendfile(
-                ctx.conn.client.socket.fd,
+                ctx.conn.handle,
                 ctx.bundler.options.routes.single_page_app_fd,
                 content_length - remain,
                 remain,
@@ -1192,7 +1193,7 @@ pub const RequestContext = struct {
 
     pub const JavaScriptHandler = struct {
         ctx: RequestContext,
-        conn: tcp.Connection,
+        conn: std.net.Stream,
         params: Router.Param.List,
 
         pub fn deinit(this: *JavaScriptHandler) void {
@@ -1605,14 +1606,14 @@ pub const RequestContext = struct {
             var clone = try server.allocator.create(JavaScriptHandler);
             clone.* = JavaScriptHandler{
                 .ctx = ctx.*,
-                .conn = ctx.conn.*,
+                .conn = ctx.conn,
                 .params = if (params.len > 0)
                     try params.clone(server.allocator)
                 else
                     Router.Param.List{},
             };
 
-            clone.ctx.conn = &clone.conn;
+            clone.ctx.conn = clone.conn;
             clone.ctx.matched_route.?.params = &clone.params;
 
             // this is a threadlocal arena
@@ -1667,7 +1668,7 @@ pub const RequestContext = struct {
         accept_key: [28]u8 = undefined,
         ctx: RequestContext,
         websocket: Websocket.Websocket,
-        conn: tcp.Connection,
+        conn: std.net.Stream,
         tombstone: bool = false,
         builder: WatchBuilder,
         message_buffer: MutableString,
@@ -1681,13 +1682,13 @@ pub const RequestContext = struct {
 
             var clone = try server.allocator.create(WebsocketHandler);
             clone.ctx = ctx.*;
-            clone.conn = ctx.conn.*;
+            clone.conn = ctx.conn;
             try ctx.bundler.clone(server.allocator, &clone.bundler);
             ctx.bundler = &clone.bundler;
 
             clone.task = .{ .callback = &onTask };
             clone.message_buffer = try MutableString.init(server.allocator, 0);
-            clone.ctx.conn = &clone.conn;
+            clone.ctx.conn = clone.conn;
             clone.ctx.log = logger.Log.init(server.allocator);
             clone.ctx.origin = ZigURL.parse(server.allocator.dupe(u8, ctx.origin.href) catch unreachable);
 
@@ -1700,7 +1701,7 @@ pub const RequestContext = struct {
                 .origin = clone.ctx.origin,
             };
 
-            clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
+            clone.websocket = Websocket.Websocket.create(clone.conn.handle, SOCKET_FLAGS);
             clone.tombstone = false;
 
             ctx.allocator = undefined;
@@ -1808,7 +1809,7 @@ pub const RequestContext = struct {
 
         fn _handle(handler: *WebsocketHandler, ctx: *RequestContext) !void {
             var is_socket_closed = false;
-            const fd = ctx.conn.client.socket.fd;
+            const fd = ctx.conn.handle;
             defer {
                 websocket_printer = handler.builder.printer.ctx;
                 handler.tombstone = true;
@@ -1911,7 +1912,7 @@ pub const RequestContext = struct {
                 Output.flush();
 
                 defer Output.flush();
-                handler.conn.client.getError() catch |err| {
+                std.os.getsockoptError(handler.conn.handle) catch |err| {
                     handler.tombstone = true;
                     Output.prettyErrorln("<r><red>Websocket ERR:<r> <b>{s}<r>", .{@errorName(err)});
                     is_socket_closed = true;
@@ -2019,11 +2020,11 @@ pub const RequestContext = struct {
                                         var writer = buffer_writer.writable.writer();
                                         const body_len = handler.message_buffer.list.items.len;
                                         try head.writeHeader(&writer, body_len);
-                                        const buffers = handler.message_buffer.toSocketBuffers(2, .{
+                                        var buffers = handler.message_buffer.toSocketBuffers(2, .{
                                             .{ body_len, handler.message_buffer.list.items.len },
                                             .{ 0, body_len },
                                         });
-                                        _ = try handler.conn.client.writeMessage(std.x.os.Socket.Message.fromBuffers(&buffers), SOCKET_FLAGS);
+                                        _ = try handler.conn.writevAll(&buffers);
                                         continue;
                                     }
 
@@ -2068,7 +2069,7 @@ pub const RequestContext = struct {
                                     handler.message_buffer.reset();
                                     var buffer_writer = MutableStringAPIWriter.init(&handler.message_buffer);
                                     try msg.encode(&buffer_writer);
-                                    var socket_buffers = std.mem.zeroes([4]std.x.os.Buffer);
+                                    var socket_buffers = std.mem.zeroes([4]std.os.iovec_const);
 
                                     var socket_buffer_count: usize = 2;
 
@@ -2079,15 +2080,15 @@ pub const RequestContext = struct {
                                             const first_message_len = handler.message_buffer.list.items.len;
                                             head.len = Websocket.WebsocketHeader.packLength(total);
                                             try head.writeHeader(&handler.message_buffer.writer(), total);
-                                            socket_buffers[0] = std.x.os.Buffer.from(handler.message_buffer.list.items[first_message_len..]);
-                                            socket_buffers[1] = std.x.os.Buffer.from(handler.message_buffer.list.items[0..first_message_len]);
+                                            socket_buffers[0] = iovec(handler.message_buffer.list.items[first_message_len..]);
+                                            socket_buffers[1] = iovec(handler.message_buffer.list.items[0..first_message_len]);
 
                                             if (build_result.bytes.len > 0) {
-                                                socket_buffers[2] = std.x.os.Buffer.from(build_result.bytes);
+                                                socket_buffers[2] = iovec(build_result.bytes);
                                                 // we reuse the accept key buffer
                                                 // so we have a pointer that is not stack memory
                                                 handler.accept_key[0..@sizeOf(usize)].* = @bitCast([@sizeOf(usize)]u8, std.hash.Wyhash.hash(0, build_result.bytes));
-                                                socket_buffers[3] = std.x.os.Buffer.from(handler.accept_key[0..4]);
+                                                socket_buffers[3] = iovec(handler.accept_key[0..4]);
                                                 socket_buffer_count = 4;
                                             }
                                         },
@@ -2096,14 +2097,13 @@ pub const RequestContext = struct {
                                             head.len = Websocket.WebsocketHeader.packLength(handler.message_buffer.list.items.len);
                                             const first_message_len = handler.message_buffer.list.items.len;
                                             try head.writeHeader(&handler.message_buffer.writer(), handler.message_buffer.list.items.len);
-                                            socket_buffers[0] = std.x.os.Buffer.from(handler.message_buffer.list.items[first_message_len..]);
-                                            socket_buffers[1] = std.x.os.Buffer.from(handler.message_buffer.list.items[0..first_message_len]);
+                                            socket_buffers[0] = iovec(handler.message_buffer.list.items[first_message_len..]);
+                                            socket_buffers[1] = iovec(handler.message_buffer.list.items[0..first_message_len]);
                                         },
                                     }
 
-                                    _ = try handler.conn.client.writeMessage(
-                                        std.x.os.Socket.Message.fromBuffers(socket_buffers[0..socket_buffer_count]),
-                                        SOCKET_FLAGS,
+                                    _ = try handler.conn.writevAll(
+                                        socket_buffers[0..socket_buffer_count],
                                     );
                                 }
                             },
@@ -2631,7 +2631,7 @@ pub const RequestContext = struct {
                         if (!send_body) return;
 
                         _ = try std.os.sendfile(
-                            ctx.conn.client.socket.fd,
+                            ctx.conn.handle,
                             file.fd,
                             0,
                             result.file.size,
@@ -3036,7 +3036,7 @@ pub const RequestContext = struct {
                 try ctx.prepareToSendBody(content_length, false);
 
                 _ = try std.os.sendfile(
-                    ctx.conn.client.socket.fd,
+                    ctx.conn.handle,
                     fd,
                     0,
                     content_length,
@@ -3085,37 +3085,37 @@ pub const RequestContext = struct {
             return true;
         }
 
-        if (ctx.url.path.len > "blob:".len) {
-            if (strings.eqlComptimeIgnoreLen(ctx.url.path[0.."blob:".len], "blob:")) {
-                try ctx.handleBlobURL(server);
-                return true;
-            }
+        if (strings.hasPrefixComptime(ctx.url.path, "blob:")) {
+            try ctx.handleBlobURL(server);
+            return true;
+        }
 
-            // From HTTP, we serve files with a hash modkey
-            // The format is
-            //    hash:${hash}/${ORIGINAL_PATH}
-            //    hash:abcdefg123/app/foo/my-file.jpeg
-            // The hash exists for browser cache invalidation
-            if (strings.eqlComptimeIgnoreLen(ctx.url.path[0.."hash:".len], "hash:")) {
-                var current = ctx.url.path;
-                current = current["hash:".len..];
-                if (strings.indexOfChar(current, '/')) |i| {
-                    current = current[i + 1 ..];
-                    ctx.url.path = current;
-                    return false;
-                }
+        // From HTTP, we serve files with a hash modkey
+        // The format is
+        //    hash:${hash}/${ORIGINAL_PATH}
+        //    hash:abcdefg123/app/foo/my-file.jpeg
+        // The hash exists for browser cache invalidation
+        if (strings.hasPrefixComptime(ctx.url.path, "hash:")) {
+            var current = ctx.url.path;
+            current = current["hash:".len..];
+            if (strings.indexOfChar(current, '/')) |i| {
+                current = current[i + 1 ..];
+                ctx.url.path = current;
+                return false;
             }
         }
 
-        const isMaybePrefix = ctx.url.path.len > "bun:".len;
-
-        if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."bun:".len], "bun:")) {
+        if (strings.hasPrefixComptime(ctx.url.path, "bun:")) {
             try ctx.handleBunURL(server);
             return true;
-        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."src:".len], "src:")) {
+        }
+
+        if (strings.hasPrefixComptime(ctx.url.path, "src:")) {
             try ctx.handleSrcURL(server);
             return true;
-        } else if (isMaybePrefix and strings.eqlComptimeIgnoreLen(ctx.url.path[0.."abs:".len], "abs:")) {
+        }
+
+        if (strings.hasPrefixComptime(ctx.url.path, "abs:")) {
             try ctx.handleAbsURL(server);
             return true;
         }
@@ -3439,7 +3439,9 @@ pub const Server = struct {
         RequestContext.WebsocketHandler.open_websockets = @TypeOf(
             RequestContext.WebsocketHandler.open_websockets,
         ).init(server.allocator);
-        const listener = try tcp.Listener.init(.ip, .{ .close_on_exec = true });
+        var listener = std.net.StreamServer.init(.{
+            .kernel_backlog = 1280,
+        });
         defer listener.deinit();
         server.websocket_threadpool.stack_size = @truncate(
             u32,
@@ -3449,8 +3451,6 @@ pub const Server = struct {
             ),
         );
 
-        listener.setReuseAddress(true) catch {};
-        listener.setReusePort(false) catch {};
         // listener.setFastOpen(true) catch {};
         // listener.setNoDelay(true) catch {};
         // listener.setQuickACK(true) catch {};
@@ -3469,8 +3469,8 @@ pub const Server = struct {
             var attempts: u8 = 0;
 
             restart: while (attempts < 10) : (attempts += 1) {
-                listener.bind(ip.Address.initIPv4(
-                    IPv4.unspecified,
+                listener.listen(std.net.Address.initIp4(
+                    .{ 0, 0, 0, 0 },
                     port,
                 )) catch |err| {
                     switch (err) {
@@ -3504,11 +3504,10 @@ pub const Server = struct {
             }
         }
 
-        try listener.listen(1280);
-        const addr = try listener.getLocalAddress();
+        const addr = listener.listen_address;
 
-        if (port != addr.ipv4.port) {
-            server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
+        if (port != addr.getPort()) {
+            server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.getPort()});
         }
 
         const start_time = Global.getStartTime();
@@ -3533,20 +3532,20 @@ pub const Server = struct {
         // This is technically imprecise.
         // However, we want to optimize for easy to copy paste
         // Nobody should get weird CORS errors when you go to the printed url.
-        if (std.mem.readIntNative(u32, &addr.ipv4.host.octets) == 0 or std.mem.readIntNative(u128, &addr.ipv6.host.octets) == 0) {
+        if (addr.in.sa.addr == 0) {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(
                     " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>{s}/index.html<r> \n\n\n",
                     .{
                         Global.package_json_version_with_sha,
-                        addr.ipv4.port,
+                        addr.getPort(),
                         display_path,
                     },
                 );
             } else {
                 Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
                     Global.package_json_version_with_sha,
-                    addr.ipv4.port,
+                    addr.getPort(),
                 });
             }
         } else {
@@ -3578,10 +3577,10 @@ pub const Server = struct {
         var did_init = false;
         while (!did_init) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch
+            var conn = listener.accept() catch
                 continue;
 
-            disableSIGPIPESoClosingTheTabDoesntCrash(conn);
+            disableSIGPIPESoClosingTheTabDoesntCrash(conn.stream);
 
             // We want to bind to the network socket as quickly as possible so that opening the URL works
             // We use a secondary loop so that we avoid the extra branch in a hot code path
@@ -3592,7 +3591,7 @@ pub const Server = struct {
             did_init = true;
             Analytics.enqueue(Analytics.EventName.http_start);
 
-            server.handleConnection(&conn, comptime features);
+            server.handleConnection(conn.stream, comptime features);
         }
 
         server.cleanupRequestData();
@@ -3600,12 +3599,12 @@ pub const Server = struct {
 
         while (true) {
             defer Output.flush();
-            var conn = listener.accept(.{ .close_on_exec = true }) catch
+            var conn = listener.accept() catch
                 continue;
 
-            disableSIGPIPESoClosingTheTabDoesntCrash(conn);
+            disableSIGPIPESoClosingTheTabDoesntCrash(conn.stream);
 
-            server.handleConnection(&conn, comptime features);
+            server.handleConnection(conn.stream, comptime features);
             counter +%= 1;
             if (counter % 4 == 0) server.cleanupRequestData();
         }
@@ -3623,12 +3622,12 @@ pub const Server = struct {
     };
 
     threadlocal var req_ctx_: RequestContext = undefined;
-    pub fn handleConnection(server: *Server, conn: *tcp.Connection, comptime features: ConnectionFeatures) void {
+    pub fn handleConnection(server: *Server, conn: std.net.Stream, comptime features: ConnectionFeatures) void {
         var req_buf_node = RequestDataPool.get(server.allocator);
 
         // https://stackoverflow.com/questions/686217/maximum-on-http-header-values
-        var read_size = conn.client.read(&req_buf_node.data, SOCKET_FLAGS) catch {
-            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
+        var read_size = conn.read(&req_buf_node.data) catch {
+            _ = conn.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n") catch {};
             return;
         };
 
@@ -3638,8 +3637,8 @@ pub const Server = struct {
         }
 
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
-            _ = conn.client.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
-            _ = Syscall.close(conn.client.socket.fd);
+            _ = conn.write(comptime RequestContext.printStatusLine(400) ++ "\r\n\r\n") catch {};
+            _ = Syscall.close(conn.handle);
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };
@@ -3657,7 +3656,7 @@ pub const Server = struct {
             server.timer,
         ) catch |err| {
             Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
-            _ = Syscall.close(conn.client.socket.fd);
+            _ = Syscall.close(conn.handle);
             request_arena.deinit();
             return;
         };
@@ -3682,7 +3681,7 @@ pub const Server = struct {
         if (req_ctx.url.needs_redirect) {
             req_ctx.handleRedirect(req_ctx.url.path) catch |err| {
                 Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
-                conn.client.deinit();
+                conn.close();
                 return;
             };
             return;

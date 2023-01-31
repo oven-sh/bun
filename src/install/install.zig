@@ -4270,17 +4270,25 @@ pub const PackageManager = struct {
             // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
-                for (updates) |update, i| {
+                for (updates) |*update| {
                     outer: for (dependency_lists_to_check) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(update.name)) |value| {
                                     if (value.expr.data == .e_string) {
                                         if (update.resolved_name.isEmpty()) {
-                                            updates[i].e_string = value.expr.data.e_string;
+                                            update.e_string = value.expr.data.e_string;
                                             remaining -= 1;
                                         } else {
                                             replacing += 1;
+                                            update.e_string = (try JSAst.Expr.init(
+                                                JSAst.E.String,
+                                                JSAst.E.String{
+                                                    // we set it later
+                                                    .data = "",
+                                                },
+                                                logger.Loc.Empty,
+                                            ).clone(allocator)).data.e_string;
                                         }
                                     }
                                     break :outer;
@@ -4290,13 +4298,16 @@ pub const PackageManager = struct {
                     }
                 }
 
-                if (remaining == 0)
+                if (remaining == 0 and replacing == 0)
                     break :ast_modifier;
 
                 var dependencies: []G.Property = &[_]G.Property{};
+                var dependencies_obj: ?*JSAst.E.Object = null;
                 if (current_package_json.asProperty(dependency_list)) |query| {
                     if (query.expr.data == .e_object) {
-                        dependencies = query.expr.data.e_object.properties.slice();
+                        dependencies_obj = query.expr.data.e_object;
+
+                        dependencies = dependencies_obj.?.properties.slice();
                     }
                 }
 
@@ -4304,32 +4315,25 @@ pub const PackageManager = struct {
                 std.mem.copy(G.Property, new_dependencies, dependencies);
                 std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
 
-                outer: for (updates) |update, j| {
+                outer: for (updates) |*update| {
                     if (update.e_string != null) continue;
+                    defer std.debug.assert(update.e_string != null);
 
                     var k: usize = 0;
-
                     while (k < new_dependencies.len) : (k += 1) {
-                        if (new_dependencies[k].key) |key| {
-                            if (key.data.e_string.eql(string, update.name)) {
-                                if (update.resolved_name.isEmpty()) {
-                                    // This actually is a duplicate
-                                    // like "react" appearing in both "dependencies" and "optionalDependencies"
-                                    // For this case, we'll just swap remove it
-                                    if (new_dependencies.len > 1) {
-                                        new_dependencies[k] = new_dependencies[new_dependencies.len - 1];
-                                        new_dependencies = new_dependencies[0 .. new_dependencies.len - 1];
-                                    } else {
-                                        new_dependencies = &[_]G.Property{};
-                                    }
-                                    continue;
+                        if (dependencies_obj) |obj| {
+                            if (obj.asProperty(update.name)) |prop| {
+                                if (prop.expr.data == .e_string) {
+                                    var str = try prop.expr.clone(allocator);
+                                    str.data.e_string.* = try str.data.e_string.clone(allocator);
+                                    update.e_string = str.data.e_string;
+                                    continue :outer;
                                 }
-                                new_dependencies[k].key = null;
                             }
                         }
 
                         if (new_dependencies[k].key == null) {
-                            new_dependencies[k].key = JSAst.Expr.init(
+                            new_dependencies[k].key = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
                                     .data = try allocator.dupe(u8, if (update.is_aliased or update.resolved_name.isEmpty())
@@ -4338,17 +4342,17 @@ pub const PackageManager = struct {
                                         update.resolved_name.slice(update.version_buf)),
                                 },
                                 logger.Loc.Empty,
-                            );
+                            ).clone(allocator);
 
-                            new_dependencies[k].value = JSAst.Expr.init(
+                            new_dependencies[k].value = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
                                     // we set it later
                                     .data = "",
                                 },
                                 logger.Loc.Empty,
-                            );
-                            updates[j].e_string = new_dependencies[k].value.?.data.e_string;
+                            ).clone(allocator);
+                            update.e_string = new_dependencies[k].value.?.data.e_string;
                             continue :outer;
                         }
                     }

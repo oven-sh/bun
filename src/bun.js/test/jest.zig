@@ -2099,7 +2099,9 @@ pub const TestRunnerTask = struct {
                 std.debug.assert(this.sync_state == .pending);
                 this.sync_state = .fulfilled;
             },
-            .unhandledRejection => {},
+            .unhandledRejection => {
+                this.done_callback_state = .fulfilled;
+            },
             else => @compileError("Bad from"),
         }
 

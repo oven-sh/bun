@@ -318,47 +318,55 @@ describe("child_process cwd", () => {
   //   // }
   // });
 
-  it("should work for valid given cwd", (done) => {
-    const tmpdir = { path: platformTmpDir };
-    const createDone = createDoneDotAll(done);
-
-    // Assume these exist, and 'pwd' gives us the right directory back
-    testCwd(
-      { cwd: tmpdir.path },
-      {
-        expectPidType: "number",
-        expectCode: 0,
-        expectData: platformTmpDir,
-      },
-      createDone(1500),
-    );
-    const shouldExistDir = "/dev";
-    testCwd(
-      { cwd: shouldExistDir },
-      {
-        expectPidType: "number",
-        expectCode: 0,
-        expectData: shouldExistDir,
-      },
-      createDone(1500),
-    );
-    testCwd(
-      { cwd: Bun.pathToFileURL(tmpdir.path) },
-      {
-        expectPidType: "number",
-        expectCode: 0,
-        expectData: platformTmpDir,
-      },
-      createDone(1500),
-    );
+  describe("it should work for valid given cwd", () => {
+    it("temp dir", (done) => {
+      const tmpdir = { path: platformTmpDir };
+      testCwd(
+        { cwd: tmpdir.path },
+        {
+          expectPidType: "number",
+          expectCode: 0,
+          expectData: platformTmpDir,
+        },
+        done,
+      );
+    });
+    it("/dev dir", (done) => {
+      const shouldExistDir = "/dev";
+      testCwd(
+        { cwd: shouldExistDir },
+        {
+          expectPidType: "number",
+          expectCode: 0,
+          expectData: shouldExistDir,
+        },
+        done,
+      );
+    });
+    it("file url", (done) => {
+      const tmpdir = { path: platformTmpDir };
+      testCwd(
+        { cwd: Bun.pathToFileURL(tmpdir.path) },
+        {
+          expectPidType: "number",
+          expectCode: 0,
+          expectData: platformTmpDir,
+        },
+        done,
+      );
+    });
   });
 
-  it.skip("shouldn't try to chdir to an invalid cwd", (done) => {
-    const createDone = createDoneDotAll(done);
-    // Spawn() shouldn't try to chdir() to invalid arg, so this should just work
-    testCwd({ cwd: "" }, { expectPidType: "number" }, createDone(1500));
-    testCwd({ cwd: undefined }, { expectPidType: "number" }, createDone(1500));
-    testCwd({ cwd: null }, { expectPidType: "number" }, createDone(1500));
+  describe("it shouldn't try to chdir to an invalid cwd", () => {
+    it("empty string", (done) => {
+      testCwd({ cwd: "" }, { expectPidType: "number" }, done);
+    });
+    it("undefined cwd", (done) => {
+      testCwd({ cwd: undefined }, { expectPidType: "number" }, done);
+    });
+    it("null cwd", (done) => {
+      testCwd({ cwd: null }, { expectPidType: "number" }, done);
+    });
   });
 });
 

@@ -79,14 +79,14 @@ pub const SnapshotFile = struct {
     // This is the data that is read from the snapshot file
     // data is represented like:
     // { 'test constructor works': 4 }
-    snapshotData: SnapshotError!JSC.JSValue,
+    snapshot_data: SnapshotError!JSC.JSValue,
     // This is the actual values that the user calls
     // used to update the snapshot file
     tests: std.ArrayListUnmanaged(TestData) = .{},
     counters: CountersMap,
-    updateSnapshot: bool = false,
+    update_snapshot: bool = false,
 
-    pub var updateAllSnapshots: bool = false;
+    pub var update_all_snapshots: bool = false;
 
     pub const TestData = struct {
         k: ZigString,
@@ -104,13 +104,6 @@ pub const SnapshotFile = struct {
 
     pub const CountersMap = std.HashMap(u64, u32, IdentityContext(u64), 80);
 
-    // pub fn init(globalObject: *JSC.JSGlobalObject, path: fs.Path) !SnapshotFile {
-    //     var _file_system = try fs.FileSystem.init1(globalObject.bunVM().allocator, null);
-    //     var snapshot = SnapshotFile{ .globalObject = globalObject, .path = path, .file_system = _file_system, .allocator = globalObject.bunVM().allocator, .snapshotData = null };
-    //     snapshot.readAndParseSnapshot(globalObject) catch unreachable;
-    //     return snapshot;
-    // }
-
     pub fn readAndParseSnapshot(this: *SnapshotFile, globalObject: *JSC.JSGlobalObject) void {
         var snapshot_contents = this.readSnapshot() catch return;
         const contents_string = ZigString.init(snapshot_contents);
@@ -119,7 +112,7 @@ pub const SnapshotFile = struct {
 
     pub fn readSnapshot(this: *SnapshotFile) !bun.string {
         var file: std.fs.File = std.fs.cwd().openFile(this.path.text, .{ .mode = .read_write }) catch {
-            this.snapshotData = SnapshotError.SnapshotNotFound;
+            this.snapshot_data = SnapshotError.SnapshotNotFound;
             return SnapshotError.SnapshotNotFound;
         };
         const file_size = try file.getEndPos();
@@ -130,7 +123,7 @@ pub const SnapshotFile = struct {
     }
 
     pub fn setSnapshotContents(this: *SnapshotFile, snapshot: js.JSValueRef) void {
-        this.snapshotData = snapshot;
+        this.snapshot_data = snapshot;
     }
 
     // Parses an existing by passing the snapshot file's contents into the javascript equivalent code:
@@ -159,7 +152,7 @@ pub const SnapshotFile = struct {
         // if (exception_ptr[0] != null) {
         //     std.debug.print("exception_ptr\n", .{});
         // }
-        this.snapshotData = JSC.JSValue.fromRef(expect_arg);
+        this.snapshot_data = JSC.JSValue.fromRef(expect_arg);
     }
 
     fn incrementCounter(this: *SnapshotFile, testName: bun.string) !u32 {
@@ -173,16 +166,15 @@ pub const SnapshotFile = struct {
         return count;
     }
 
-    // @TODO add support for hints later
-    pub fn getSnapshotValue(this: *SnapshotFile, snapshotName: bun.string, count: u32, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
-        const snapshot_key = std.fmt.allocPrint(this.allocator, "{s} {}", .{ snapshotName, count }) catch unreachable;
+    pub fn getSnapshotValue(this: *SnapshotFile, snapshot_name: bun.string, count: u32, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
+        const snapshot_key = std.fmt.allocPrint(this.allocator, "{s} {}", .{ snapshot_name, count }) catch unreachable;
 
         const test_name_string = ZigString.init(snapshot_key);
-        const snapshotData = this.snapshotData catch {
-            this.updateSnapshot = true;
+        const snapshot_data = this.snapshot_data catch {
+            this.update_snapshot = true;
             return SnapshotError.SnapshotNotFound;
         };
-        const value = snapshotData.getIfPropertyExistsImpl(globalObject, test_name_string.ptr, @truncate(u32, test_name_string.len));
+        const value = snapshot_data.getIfPropertyExistsImpl(globalObject, test_name_string.ptr, @truncate(u32, test_name_string.len));
         if (@enumToInt(value) == 0) {
             return SnapshotError.CaseNotFound;
         }
@@ -207,27 +199,27 @@ pub const SnapshotFile = struct {
         return std.mem.eql(u8, actual_formatted, expected_formatted);
     }
 
-    pub fn match(this: *SnapshotFile, snapshotName: bun.string, actual: JSC.JSValue, not: bool, globalObject: *JSC.JSGlobalObject) !bool {
+    pub fn match(this: *SnapshotFile, snapshot_name: bun.string, actual: JSC.JSValue, not: bool, globalObject: *JSC.JSGlobalObject) !bool {
         this.globalObject = globalObject;
-        var count: u32 = this.incrementCounter(snapshotName) catch 1;
+        var count: u32 = this.incrementCounter(snapshot_name) catch 1;
 
-        try this.tests.append(this.allocator, TestData{ .k = ZigString.init(snapshotName), .v = actual, .count = count });
+        try this.tests.append(this.allocator, TestData{ .k = ZigString.init(snapshot_name), .v = actual, .count = count });
 
-        const expected = this.getSnapshotValue(snapshotName, count, globalObject) catch |err| {
+        const expected = this.getSnapshotValue(snapshot_name, count, globalObject) catch |err| {
             if (err == SnapshotError.SnapshotNotFound) {
                 Output.prettyln("    <green>Missing Snapshot file, creating one<r>\n", .{});
                 Output.flush();
                 // If the snapshot file does not exist, then we return true
                 // and update the snapshot file
-                this.updateSnapshot = true;
+                this.update_snapshot = true;
                 return true;
             }
-            if (this.updateSnapshot or SnapshotFile.updateAllSnapshots) {
+            if (this.update_snapshot or SnapshotFile.update_all_snapshots) {
                 Output.prettyln("    <green>Updating Snapshot<r>\n", .{});
                 Output.flush();
                 return true;
             }
-            globalObject.throw("The snapshot `{s} {}` was not found in {s}", .{ snapshotName, count, this.path.text });
+            globalObject.throw("The snapshot `{s} {}` was not found in {s}", .{ snapshot_name, count, this.path.text });
             return false;
         };
 
@@ -260,7 +252,7 @@ pub const SnapshotFile = struct {
     }
 
     pub fn writeToFile(this: *SnapshotFile) void {
-        if (!this.updateSnapshot and !SnapshotFile.updateAllSnapshots) return;
+        if (!this.update_snapshot and !SnapshotFile.update_all_snapshots) return;
         const globalObject = this.globalObject orelse {
             return;
         };

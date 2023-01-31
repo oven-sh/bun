@@ -345,7 +345,7 @@ const Scanner = struct {
 
 const ParamType = clap.Param(clap.Help);
 const params = [_]ParamType{
-    clap.parseParam("--updateSnapshot              Update snapshot in bun:test") catch unreachable,
+    clap.parseParam("--update_snapshot              Update snapshot in bun:test") catch unreachable,
     clap.parseParam("--help                            Print this bun-test help menu") catch unreachable,
     clap.parseParam("<POS>...                         ") catch unreachable,
 };
@@ -374,10 +374,10 @@ pub const TestCommand = struct {
             clap.help(Output.writer(), &params) catch {};
             Output.flush();
             Global.exit(0);
-        } else if (args.flag("--updateSnapshot")) {
+        } else if (args.flag("--update_snapshot")) {
             Output.prettyln("\n<b><magenta>bun wiptest<r> Updating All Snapshots\n", .{});
             Output.flush();
-            SnapshotFile.updateAllSnapshots = true;
+            SnapshotFile.update_all_snapshots = true;
         }
 
         var env_loader = brk: {

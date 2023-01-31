@@ -73,7 +73,7 @@ pub const TestRunner = struct {
     index: File.Map = File.Map{},
     only: bool = false,
     last_file: u64 = 0,
-    updateSnapshot: bool = true,
+    update_snapshot: bool = true,
     snapshots: File.Snapshot,
 
     timeout_seconds: f64 = 5.0,
@@ -176,27 +176,11 @@ pub const TestRunner = struct {
         if (entry.found_existing) {
             return this.files.items(.module_scope)[entry.value_ptr.*];
         }
-
-        // put snapshot here
-        // const snapshot_path = snapshot.resolveSnapshotPath(Fs.Path.init(file_path), this.allocator);
-        // var snapshot_file: *snapshot.SnapshotFile = if (this.scope.tests.items[this.test_id].snapshot) |s| s else blk: {
-        //     var s = this.allocator.create(snapshot.SnapshotFile) catch unreachable;
-
-        //     s.* = .{ .path = snapshot_path, .allocator = this.allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(this.allocator) };
-        //     // this.scope.tests.items[this.test_id].snapshot = s;
-        //     break :blk s;
-        // };
-        // const snapshot_path = snapshot.resolveSnapshotPath(Fs.Path.init(file_path), this.allocator);
-        // var snapshot_file: *snapshot.SnapshotFile = this.allocator.create(snapshot.SnapshotFile) catch unreachable;
-
-        // snapshot_file.* = .{ .path = snapshot_path, .globalObject = null, .allocator = this.allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(this.allocator) };
-
         var scope = this.allocator.create(DescribeScope) catch unreachable;
         const file_id = @truncate(File.ID, this.files.len);
         scope.* = DescribeScope{
             .file_id = file_id,
             .test_id_start = @truncate(Test.ID, this.tests.len),
-            // .snapshot = snapshot_file,
         };
         this.files.append(this.allocator, .{ .module_scope = scope, .source = logger.Source.initEmptyFile(file_path) }) catch unreachable;
         entry.value_ptr.* = file_id;
@@ -214,7 +198,6 @@ pub const TestRunner = struct {
         source: logger.Source = logger.Source.initEmptyFile(""),
         log: logger.Log = logger.Log.initComptime(default_allocator),
         module_scope: *DescribeScope = undefined,
-        // snapshot: snapshot.SnapshotFile,
 
         pub const List = std.MultiArrayList(File);
         pub const ID = u32;
@@ -1277,7 +1260,7 @@ pub const Expect = struct {
         const snapshot_file: *snapshot.SnapshotFile = Jest.runner.?.snapshots.get(hash) orelse blk: {
             const snapshot_path = snapshot.resolveSnapshotPath(file_fs, allocator);
             var snapshot_file: *snapshot.SnapshotFile = allocator.create(snapshot.SnapshotFile) catch unreachable;
-            snapshot_file.* = .{ .path = snapshot_path, .globalObject = null, .allocator = allocator, .snapshotData = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(allocator) };
+            snapshot_file.* = .{ .path = snapshot_path, .globalObject = null, .allocator = allocator, .snapshot_data = JSC.JSValue.jsUndefined(), .counters = snapshot.SnapshotFile.CountersMap.init(allocator) };
             Jest.runner.?.snapshots.put(hash, snapshot_file) catch unreachable;
             break :blk snapshot_file;
         };
@@ -1385,7 +1368,6 @@ pub const TestScope = struct {
     ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
-    // snapshot: ?*snapshot.SnapshotFile,
 
     pub const Class = NewClass(
         void,
@@ -1492,7 +1474,6 @@ pub const TestScope = struct {
             .label = label,
             .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
-            // .snapshot = null,
         }) catch unreachable;
 
         return this;

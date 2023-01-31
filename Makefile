@@ -509,6 +509,7 @@ npm-install:
 	$(NPM_CLIENT) install --ignore-scripts --production
 
 print-%  : ; @echo $* = $($*)
+get-%  : ; @echo $($*)
 
 
 

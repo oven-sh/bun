@@ -647,6 +647,7 @@ var require_wasi = __commonJS({
       constants_1.WASI_RIGHT_FD_FDSTAT_SET_FLAGS;
     var msToNs = (ms) => {
       const msInt = Math.trunc(ms);
+
       const decimal = BigInt(Math.round((ms - msInt) * 1e6));
       const ns = BigInt(msInt) * BigInt(1e6);
       return ns + decimal;
@@ -923,16 +924,17 @@ var require_wasi = __commonJS({
           }
           return stats;
         };
-        const CPUTIME_START = bindings.hrtime();
+        const CPUTIME_START = Bun.nanoseconds();
+        const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);
         const now = (clockId) => {
           switch (clockId) {
             case constants_1.WASI_CLOCK_MONOTONIC:
-              return bindings.hrtime();
+              return Bun.nanoseconds();
             case constants_1.WASI_CLOCK_REALTIME:
-              return msToNs(Date.now());
+              return Bun.nanoseconds() + timeOrigin;
             case constants_1.WASI_CLOCK_PROCESS_CPUTIME_ID:
             case constants_1.WASI_CLOCK_THREAD_CPUTIME_ID:
-              return bindings.hrtime() - CPUTIME_START;
+              return Bun.nanoseconds() - CPUTIME_START;
             default:
               return null;
           }
@@ -1478,11 +1480,23 @@ var require_wasi = __commonJS({
             bufPtr += 8;
             this.view.setBigUint64(bufPtr, BigInt(rstats.size), true);
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.atimeMs), true);
+            this.view.setBigUint64(
+              bufPtr,
+              BigInt(rstats.atime.getTime() * 1e6),
+              true,
+            );
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.mtimeMs), true);
+            this.view.setBigUint64(
+              bufPtr,
+              BigInt(rstats.mtime.getTime() * 1e6),
+              true,
+            );
             bufPtr += 8;
-            this.view.setBigUint64(bufPtr, msToNs(rstats.ctimeMs), true);
+            this.view.setBigUint64(
+              bufPtr,
+              BigInt(rstats.ctime.getTime() * 1e6),
+              true,
+            );
             return constants_1.WASI_ESUCCESS;
           }),
           path_filestat_set_times: wrap(
@@ -1871,15 +1885,16 @@ var require_wasi = __commonJS({
                     log(name, { clockid, timeout, absolute });
                   }
                   if (!absolute) {
-                    fd_timeout_ms = Number(timeout / BigInt(1e6));
+                    fd_timeout_ms = timeout / BigInt(1e6);
                   }
                   let e = constants_1.WASI_ESUCCESS;
                   const t = now(clockid);
                   if (t == null) {
                     e = constants_1.WASI_EINVAL;
                   } else {
-                    const end = absolute ? timeout : t + timeout;
-                    const waitNs = end - t;
+                    const tNS = BigInt(t);
+                    const end = absolute ? timeout : tNS + timeout;
+                    const waitNs = end - tNS;
                     if (waitNs > waitTimeNs) {
                       waitTimeNs = waitNs;
                     }
@@ -1945,7 +1960,7 @@ var require_wasi = __commonJS({
               }
             }
             if (waitTimeNs > 0) {
-              waitTimeNs -= BigInt(bindings.hrtime()) - startNs;
+              waitTimeNs -= Bun.nanoseconds() - timeOrigin;
               if (waitTimeNs >= 1e6) {
                 if (this.sleep == null && !warnedAboutSleep) {
                   warnedAboutSleep = true;

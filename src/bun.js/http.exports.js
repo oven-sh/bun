@@ -1,10 +1,188 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
+const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
-const { newArrayWithSize, isPromise } = import.meta.primordials;
+const nop = () => {};
+const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : () => {};
+
+const kEmptyObject = Object.freeze(Object.create(null));
+const kOutHeaders = Symbol.for("kOutHeaders");
+const kEndCalled = Symbol.for("kEndCalled");
+const kCorked = Symbol.for("kCorked");
+const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
+
+// Primordials
+const StringPrototypeSlice = String.prototype.slice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const ArrayIsArray = Array.isArray;
+const RegExpPrototypeExec = RegExp.prototype.exec;
+const ObjectAssign = Object.assign;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+
+const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
+const NODE_HTTP_WARNING =
+  "WARN: Agent is mostly unused in Bun's implementation of http. If you see strange behavior, this is probably the cause.";
+
+var _globalAgent;
+
+class FakeSocket {
+  on() {
+    return this;
+  }
+  off() {}
+  addListener() {
+    return this;
+  }
+  removeListener() {}
+  removeAllListeners() {}
+}
 
 export function createServer(options, callback) {
   return new Server(options, callback);
+}
+
+export class Agent extends EventEmitter {
+  #defaultPort = 80;
+  #protocol = "http:";
+  #options;
+  #requests;
+  #sockets;
+  #freeSockets;
+
+  #keepAliveMsecs;
+  #keepAlive;
+  #maxSockets;
+  #maxFreeSockets;
+  #scheduling;
+  #maxTotalSockets;
+  #totalSocketCount;
+
+  #fakeSocket;
+
+  static get globalAgent() {
+    return (_globalAgent ??= new Agent());
+  }
+
+  static get defaultMaxSockets() {
+    return Infinity;
+  }
+
+  constructor(options = kEmptyObject) {
+    super();
+    this.#options = options = { ...options, path: null };
+    if (options.noDelay === undefined) options.noDelay = true;
+
+    // Don't confuse net and make it think that we're connecting to a pipe
+    this.#requests = kEmptyObject;
+    this.#sockets = kEmptyObject;
+    this.#freeSockets = kEmptyObject;
+
+    this.#keepAliveMsecs = options.keepAliveMsecs || 1000;
+    this.#keepAlive = options.keepAlive || false;
+    this.#maxSockets = options.maxSockets || Agent.defaultMaxSockets;
+    this.#maxFreeSockets = options.maxFreeSockets || 256;
+    this.#scheduling = options.scheduling || "lifo";
+    this.#maxTotalSockets = options.maxTotalSockets;
+    this.#totalSocketCount = 0;
+  }
+
+  get defaultPort() {
+    return this.#defaultPort;
+  }
+
+  get protocol() {
+    return this.#protocol;
+  }
+
+  get requests() {
+    return this.#requests;
+  }
+
+  get sockets() {
+    return this.#sockets;
+  }
+
+  get freeSockets() {
+    return this.#freeSockets;
+  }
+
+  get options() {
+    return this.#options;
+  }
+
+  get keepAliveMsecs() {
+    return this.#keepAliveMsecs;
+  }
+
+  get keepAlive() {
+    return this.#keepAlive;
+  }
+
+  get maxSockets() {
+    return this.#maxSockets;
+  }
+
+  get maxFreeSockets() {
+    return this.#maxFreeSockets;
+  }
+
+  get scheduling() {
+    return this.#scheduling;
+  }
+
+  get maxTotalSockets() {
+    return this.#maxTotalSockets;
+  }
+
+  get totalSocketCount() {
+    return this.#totalSocketCount;
+  }
+
+  createConnection() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
+    return (this.#fakeSocket ??= new FakeSocket());
+  }
+
+  getName(options = kEmptyObject) {
+    let name = `http:${options.host || "localhost"}:`;
+    if (options.port) name += options.port;
+    name += ":";
+    if (options.localAddress) name += options.localAddress;
+    // Pacify parallel/test-http-agent-getname by only appending
+    // the ':' when options.family is set.
+    if (options.family === 4 || options.family === 6) name += `:${options.family}`;
+    if (options.socketPath) name += `:${options.socketPath}`;
+    return name;
+  }
+
+  addRequest() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
+  }
+
+  createSocket(req, options, cb) {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
+    cb(null, (this.#fakeSocket ??= new FakeSocket()));
+  }
+
+  removeSocket() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
+  }
+
+  keepSocketAlive() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
+  }
+
+  reuseSocket() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
+  }
+
+  destroy() {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
+  }
 }
 
 export class Server extends EventEmitter {
@@ -124,23 +302,28 @@ function destroyBodyStreamNT(bodyStream) {
   bodyStream.destroy();
 }
 export class IncomingMessage extends Readable {
-  constructor(req) {
+  #options;
+  constructor(req, options = { type: "request" }) {
     const method = req.method;
+    const type = options.type;
 
     super();
 
     const url = new URL(req.url);
 
     this.#noBody =
-      "GET" === method ||
-      "HEAD" === method ||
-      "TRACE" === method ||
-      "CONNECT" === method ||
-      "OPTIONS" === method ||
-      (parseInt(req.headers.get("Content-Length") || "") || 0) === 0;
+      type === "request" // TODO: Add logic for checking for body on response
+        ? "GET" === method ||
+          "HEAD" === method ||
+          "TRACE" === method ||
+          "CONNECT" === method ||
+          "OPTIONS" === method ||
+          (parseInt(req.headers.get("Content-Length") || "") || 0) === 0
+        : false;
 
     this.#req = req;
     this.method = method;
+    this.#options = options;
     this.complete = !!this.#noBody;
 
     this.#bodyStream = null;
@@ -163,7 +346,7 @@ export class IncomingMessage extends Readable {
 
   _construct(callback) {
     // TODO: streaming
-    if (this.#noBody) {
+    if (this.#options.type === "response" || this.#noBody) {
       callback();
       return;
     }
@@ -181,6 +364,7 @@ export class IncomingMessage extends Readable {
   }
 
   #closeBodyStream() {
+    debug("closeBodyStream()");
     var bodyStream = this.#bodyStream;
     if (bodyStream == null) return;
     this.complete = true;
@@ -204,6 +388,7 @@ export class IncomingMessage extends Readable {
 
       if (isBodySizeKnown) {
         this.#bodyStream.on("data", chunk => {
+          debug("body size known", remaining);
           this.push(chunk);
           // when we are streaming a known body size, automatically close the stream when we have read enough
           remaining -= chunk?.byteLength ?? 0;
@@ -239,15 +424,15 @@ export class IncomingMessage extends Readable {
   }
 
   get connection() {
-    throw new Error("not implemented");
+    return this.#socket;
   }
 
   get statusCode() {
-    throw new Error("not implemented");
+    return this.#req.status;
   }
 
   get statusMessage() {
-    throw new Error("not implemented");
+    return STATUS_CODES[this.#req.status];
   }
 
   get httpVersion() {
@@ -267,7 +452,7 @@ export class IncomingMessage extends Readable {
   }
 
   get trailers() {
-    return Object.create(null);
+    return kEmptyObject;
   }
 
   get socket() {
@@ -283,6 +468,206 @@ export class IncomingMessage extends Readable {
 
   setTimeout(msecs, callback) {
     throw new Error("not implemented");
+  }
+}
+
+function emitErrorNt(msg, err, callback) {
+  callback(err);
+  if (typeof msg.emit === "function" && !msg._closed) {
+    msg.emit("error", err);
+  }
+}
+
+function onError(self, err, cb) {
+  process.nextTick(() => emitErrorNt(self, err, cb));
+}
+
+function isUint8Array(arr) {
+  return Object.prototype.toString.call(arr) === "[object Uint8Array]";
+}
+
+function write_(msg, chunk, encoding, callback, fromEnd) {
+  if (typeof callback !== "function") callback = nop;
+
+  let len;
+  if (chunk === null) {
+    // throw new ERR_STREAM_NULL_VALUES();
+    throw new Error("ERR_STREAM_NULL_VALUES");
+  } else if (typeof chunk === "string") {
+    len = Buffer.byteLength(chunk, encoding);
+  } else if (isUint8Array(chunk)) {
+    len = chunk.length;
+  } else {
+    throw new Error("Invalid arg type for chunk");
+    // throw new ERR_INVALID_ARG_TYPE(
+    //   "chunk",
+    //   ["string", "Buffer", "Uint8Array"],
+    //   chunk,
+    // );
+  }
+
+  let err;
+  if (msg.finished) {
+    // err = new ERR_STREAM_WRITE_AFTER_END();
+    err = new Error("ERR_STREAM_WRITE_AFTER_END");
+  } else if (msg.destroyed) {
+    // err = new ERR_STREAM_DESTROYED("write");
+    err = new Error("ERR_STREAM_DESTROYED");
+  }
+
+  if (err) {
+    if (!msg.destroyed) {
+      onError(msg, err, callback);
+    } else {
+      process.nextTick(callback, err);
+    }
+    return false;
+  }
+
+  if (!msg._header) {
+    if (fromEnd) {
+      msg._contentLength = len;
+    }
+    // msg._implicitHeader();
+  }
+
+  if (!msg._hasBody) {
+    debug("This type of response MUST NOT have a body. " + "Ignoring write() calls.");
+    process.nextTick(callback);
+    return true;
+  }
+
+  // if (!fromEnd && msg.socket && !msg.socket.writableCorked) {
+  //   msg.socket.cork();
+  //   process.nextTick(connectionCorkNT, msg.socket);
+  // }
+
+  return true;
+}
+
+const kClearTimeout = Symbol("kClearTimeout");
+
+export class OutgoingMessage extends Writable {
+  #headers = new Headers();
+  headersSent = false;
+  sendDate = true;
+  req;
+
+  #finished = false;
+  [kEndCalled] = false;
+
+  #socket;
+  #timeoutTimer = null;
+
+  // So that headers are accessible outside of `OutgoingMessage`
+  get _headers() {
+    return this.#headers;
+  }
+
+  // For compat with IncomingRequest
+  get headers() {
+    return this.#headers;
+  }
+
+  get shouldKeepAlive() {
+    return true;
+  }
+
+  get chunkedEncoding() {
+    return false;
+  }
+
+  set chunkedEncoding(value) {
+    // throw new Error('not implemented');
+  }
+
+  set shouldKeepAlive(value) {
+    // throw new Error('not implemented');
+  }
+
+  get useChunkedEncodingByDefault() {
+    return true;
+  }
+
+  set useChunkedEncodingByDefault(value) {
+    // throw new Error('not implemented');
+  }
+
+  get socket() {
+    var _socket = this.#socket;
+    if (_socket) return _socket;
+
+    this.#socket = _socket = new EventEmitter();
+    this.on("end", () => _socket.emit("end"));
+    this.on("close", () => _socket.emit("close"));
+
+    return _socket;
+  }
+
+  get connection() {
+    return this.socket;
+  }
+
+  get finished() {
+    return this.#finished;
+  }
+
+  appendHeader(name, value) {
+    this.#headers.append(name, value);
+  }
+
+  flushHeaders() {}
+
+  getHeader(name) {
+    return this.#headers.get(name);
+  }
+
+  getHeaders() {
+    if (!this.#headers) return {};
+    return this.#headers.toJSON();
+  }
+
+  getHeaderNames() {
+    var headers = this.#headers;
+    return Array.from(headers.keys());
+  }
+
+  removeHeader(name) {
+    this.#headers.delete(name);
+  }
+
+  setHeader(name, value) {
+    this.#headers.set(name, value);
+    return this;
+  }
+
+  hasHeader(name) {
+    return this.#headers.has(name);
+  }
+
+  addTrailers(headers) {
+    throw new Error("not implemented");
+  }
+
+  [kClearTimeout]() {
+    if (this.#timeoutTimer) {
+      clearTimeout(this.#timeoutTimer);
+      this.#timeoutTimer = null;
+    }
+  }
+
+  setTimeout(msecs, callback) {
+    if (this.#timeoutTimer) return this;
+    if (callback) {
+      this.on("timeout", callback);
+    }
+
+    this.#timeoutTimer = globalThis.setTimeout(async () => {
+      this.emit("timeout");
+      this.#timeoutTimer = null;
+    }, msecs);
+
+    return this;
   }
 }
 
@@ -317,8 +702,6 @@ export class ServerResponse extends Writable {
   _removedContLen = false;
   #deferred = undefined;
   #finished = false;
-
-  #fakeSocket;
 
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
@@ -409,18 +792,6 @@ export class ServerResponse extends Writable {
     });
   }
 
-  get socket() {
-    if (!this.#fakeSocket) {
-      this.#fakeSocket = Object.create(this);
-    }
-
-    return this.#fakeSocket;
-  }
-
-  get connection() {
-    throw new Error("not implemented");
-  }
-
   writeProcessing() {
     throw new Error("not implemented");
   }
@@ -509,6 +880,358 @@ export class ServerResponse extends Writable {
     if (!this.#headers) return {};
     return this.#headers.toJSON();
   }
+}
+
+export class ClientRequest extends OutgoingMessage {
+  #timeout;
+  #res = null;
+  #aborted = false;
+  #timeoutCb = null;
+  #upgradeOrConnect = false;
+  #parser = null;
+  #maxHeadersCount = null;
+  #reusedSocket = false;
+  #host;
+  #protocol;
+  #method;
+  #port;
+  #joinDuplicateHeaders;
+  #maxHeaderSize;
+  #agent = _globalAgent;
+  #path;
+  #socketPath;
+
+  #body = null;
+  #fetchRequest;
+
+  #options;
+  #finished;
+
+  get path() {
+    return this.#path;
+  }
+
+  get port() {
+    return this.#port;
+  }
+
+  get host() {
+    return this.#host;
+  }
+
+  get protocol() {
+    return this.#protocol;
+  }
+
+  _write(chunk, encoding, callback) {
+    var body = this.#body;
+    if (!body) {
+      this.#body = chunk;
+      callback();
+      return;
+    }
+    this.#body = body + chunk;
+    callback();
+  }
+
+  _writev(chunks, callback) {
+    var body = this.#body;
+    if (!body) {
+      this.#body = chunks.join();
+      callback();
+      return;
+    }
+    this.#body = body + chunks.join();
+    callback();
+  }
+
+  _final(callback) {
+    this.#finished = true;
+    this.#fetchRequest = globalThis
+      .fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
+        method: this.#method,
+        headers: this.getHeaders(),
+        body: this.#body,
+        redirect: "manual",
+        verbose: Boolean(process.env.BUN_JS_DEBUG),
+      })
+      .then(response => {
+        var res = (this.#res = new IncomingMessage(response, {
+          type: "response",
+        }));
+        this.emit("response", res);
+      })
+      .catch(err => {
+        if (process.env.BUN_JS_DEBUG) globalThis.reportError(err);
+        this.emit("error", err);
+      })
+      .finally(() => {
+        this.#fetchRequest = null;
+        this[kClearTimeout]();
+      });
+
+    callback();
+
+    // TODO: Clear timeout here
+  }
+
+  get aborted() {
+    return this.#aborted;
+  }
+
+  abort() {
+    if (this.#aborted) return;
+    this.#aborted = true;
+    this[kClearTimeout]();
+    // TODO: Close stream if body streaming
+  }
+
+  constructor(input, options, cb) {
+    super();
+
+    if (typeof input === "string") {
+      const urlStr = input;
+      input = urlToHttpOptions(new URL(urlStr));
+    } else if (input && input[searchParamsSymbol] && input[searchParamsSymbol][searchParamsSymbol]) {
+      // url.URL instance
+      input = urlToHttpOptions(input);
+    } else {
+      cb = options;
+      options = input;
+      input = null;
+    }
+
+    if (typeof options === "function") {
+      cb = options;
+      options = input || kEmptyObject;
+    } else {
+      options = ObjectAssign(input || {}, options);
+    }
+
+    const defaultAgent = options._defaultAgent || Agent.globalAgent;
+    const protocol = (this.#protocol = options.protocol || defaultAgent.protocol);
+    const expectedProtocol = defaultAgent.protocol;
+
+    if (options.path) {
+      const path = String(options.path);
+      if (RegExpPrototypeExec.call(INVALID_PATH_REGEX, path) !== null) {
+        debug('Path contains unescaped characters: "%s"', path);
+        throw new Error("Path contains unescaped characters");
+        // throw new ERR_UNESCAPED_CHARACTERS("Request path");
+      }
+    }
+
+    if (protocol !== expectedProtocol) {
+      throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
+      // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+    }
+
+    const defaultPort = options.defaultPort || (this.#agent && this.#agent.defaultPort);
+
+    this.#port = options.port = options.port || defaultPort || 80;
+    const host =
+      (this.#host =
+      options.host =
+        validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
+
+    // const setHost = options.setHost === undefined || Boolean(options.setHost);
+
+    this.#socketPath = options.socketPath;
+
+    // if (options.timeout !== undefined)
+    //   this.timeout = getTimerDuration(options.timeout, "timeout");
+
+    const signal = options.signal;
+    if (signal) {
+      // TODO: Implement this when AbortSignal binding is available from Zig (required for fetch)
+      // addAbortSignal(signal, this);
+    }
+    let method = options.method;
+    const methodIsString = typeof method === "string";
+    if (method !== null && method !== undefined && !methodIsString) {
+      // throw new ERR_INVALID_ARG_TYPE("options.method", "string", method);
+      throw new Error("ERR_INVALID_ARG_TYPE: options.method");
+    }
+
+    if (methodIsString && method) {
+      if (!checkIsHttpToken(method)) {
+        // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
+        throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
+      }
+      method = this.#method = StringPrototypeToUpperCase.call(method);
+    } else {
+      method = this.#method = "GET";
+    }
+
+    const _maxHeaderSize = options.maxHeaderSize;
+    // TODO: Validators
+    // if (maxHeaderSize !== undefined)
+    //   validateInteger(maxHeaderSize, "maxHeaderSize", 0);
+    this.#maxHeaderSize = _maxHeaderSize;
+
+    // const insecureHTTPParser = options.insecureHTTPParser;
+    // if (insecureHTTPParser !== undefined) {
+    //   validateBoolean(insecureHTTPParser, 'options.insecureHTTPParser');
+    // }
+
+    // this.insecureHTTPParser = insecureHTTPParser;
+    var _joinDuplicateHeaders = options.joinDuplicateHeaders;
+    if (_joinDuplicateHeaders !== undefined) {
+      // TODO: Validators
+      // validateBoolean(
+      //   options.joinDuplicateHeaders,
+      //   "options.joinDuplicateHeaders",
+      // );
+    }
+
+    this.#joinDuplicateHeaders = _joinDuplicateHeaders;
+
+    this.#path = options.path || "/";
+    if (cb) {
+      this.once("response", cb);
+    }
+
+    debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+
+    // if (
+    //   method === "GET" ||
+    //   method === "HEAD" ||
+    //   method === "DELETE" ||
+    //   method === "OPTIONS" ||
+    //   method === "TRACE" ||
+    //   method === "CONNECT"
+    // ) {
+    //   this.useChunkedEncodingByDefault = false;
+    // } else {
+    //   this.useChunkedEncodingByDefault = true;
+    // }
+
+    this.#finished = false;
+    this.#res = null;
+    this.#aborted = false;
+    this.#timeoutCb = null;
+    this.#upgradeOrConnect = false;
+    this.#parser = null;
+    this.#maxHeadersCount = null;
+    this.#reusedSocket = false;
+    this.#host = host;
+    this.#protocol = protocol;
+
+    const headersArray = ArrayIsArray(headers);
+    if (!headersArray) {
+      var headers = options.headers;
+      if (headers) {
+        for (let key in headers) {
+          this.setHeader(key, headers[key]);
+        }
+      }
+
+      // if (host && !this.getHeader("host") && setHost) {
+      //   let hostHeader = host;
+
+      //   // For the Host header, ensure that IPv6 addresses are enclosed
+      //   // in square brackets, as defined by URI formatting
+      //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
+      //   const posColon = StringPrototypeIndexOf.call(hostHeader, ":");
+      //   if (
+      //     posColon !== -1 &&
+      //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
+      //     StringPrototypeCharCodeAt(hostHeader, 0) !== 91 /* '[' */
+      //   ) {
+      //     hostHeader = `[${hostHeader}]`;
+      //   }
+
+      //   if (port && +port !== defaultPort) {
+      //     hostHeader += ":" + port;
+      //   }
+      //   this.setHeader("Host", hostHeader);
+      // }
+
+      var auth = options.auth;
+      if (auth && !this.getHeader("Authorization")) {
+        this.setHeader("Authorization", "Basic " + Buffer.from(auth).toString("base64"));
+      }
+
+      //   if (this.getHeader("expect")) {
+      //     if (this._header) {
+      //       throw new ERR_HTTP_HEADERS_SENT("render");
+      //     }
+
+      //     this._storeHeader(
+      //       this.method + " " + this.path + " HTTP/1.1\r\n",
+      //       this[kOutHeaders],
+      //     );
+      //   }
+      // } else {
+      //   this._storeHeader(
+      //     this.method + " " + this.path + " HTTP/1.1\r\n",
+      //     options.headers,
+      //   );
+    }
+
+    // this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
+
+    var optsWithoutSignal = options;
+    if (optsWithoutSignal.signal) {
+      optsWithoutSignal = ObjectAssign({}, options);
+      delete optsWithoutSignal.signal;
+    }
+    this.#options = optsWithoutSignal;
+
+    var timeout = options.timeout;
+    if (timeout) {
+      this.setTimeout(timeout);
+    }
+  }
+
+  setSocketKeepAlive(enable = true, initialDelay = 0) {
+    debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+  }
+}
+
+function urlToHttpOptions(url) {
+  var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
+  const options = {
+    protocol,
+    hostname:
+      typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
+        ? StringPrototypeSlice.call(hostname, 1, -1)
+        : hostname,
+    hash,
+    search,
+    pathname,
+    path: `${pathname || ""}${search || ""}`,
+    href,
+  };
+  if (port !== "") {
+    options.port = Number(port);
+  }
+  if (username || password) {
+    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
+  }
+  return options;
+}
+
+function validateHost(host, name) {
+  if (host !== null && host !== undefined && typeof host !== "string") {
+    // throw new ERR_INVALID_ARG_TYPE(
+    //   `options.${name}`,
+    //   ["string", "undefined", "null"],
+    //   host,
+    // );
+    throw new Error("Invalid arg type in options");
+  }
+  return host;
+}
+
+const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
+/**
+ * Verifies that the given val is a valid HTTP token
+ * per the rules defined in RFC 7230
+ * See https://tools.ietf.org/html/rfc7230#section-3.2.6
+ */
+function checkIsHttpToken(val) {
+  return RegExpPrototypeExec.call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.
@@ -707,13 +1430,51 @@ function _writeHead(statusCode, reason, obj, response) {
     }
   }
 }
+
+/**
+ * Makes an HTTP request.
+ * @param {string | URL} url
+ * @param {HTTPRequestOptions} [options]
+ * @param {Function} [cb]
+ * @returns {ClientRequest}
+ */
+export function request(url, options, cb) {
+  return new ClientRequest(url, options, cb);
+}
+
+/**
+ * Makes a `GET` HTTP request.
+ * @param {string | URL} url
+ * @param {HTTPRequestOptions} [options]
+ * @param {Function} [cb]
+ * @returns {ClientRequest}
+ */
+export function get(url, options, cb) {
+  const req = request(url, options, cb);
+  req.end();
+  return req;
+}
+
 var defaultObject = {
+  Agent,
   Server,
   METHODS,
   STATUS_CODES,
   createServer,
   ServerResponse,
   IncomingMessage,
+  request,
+  get,
+  maxHeaderSize: 16384,
+  // validateHeaderName,
+  // validateHeaderValue,
+  setMaxIdleHTTPParsers(max) {
+    debug(`${NODE_HTTP_WARNING}\n`, "setMaxIdleHTTPParsers() is a no-op");
+  },
+  get globalAgent() {
+    return (_globalAgent ??= new Agent());
+  },
+  set globalAgent(agent) {},
 };
 
 var wrapper =

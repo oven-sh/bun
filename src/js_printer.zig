@@ -4751,7 +4751,7 @@ pub fn NewPrinter(
             }
 
             return Printer{
-                .import_records = tree.import_records,
+                .import_records = tree.import_records.slice(),
                 .options = opts,
                 .symbols = symbols,
                 .writer = writer,

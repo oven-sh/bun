@@ -11,3 +11,10 @@ declare global {
 expectType<"WHATEVER">(process.env.WHATEVER);
 
 export {};
+new Bun.Transpiler({
+  macros: {
+    "react-relay": {
+      graphql: "bun-macro-relay/bun-macro-relay.tsx",
+    },
+  },
+});

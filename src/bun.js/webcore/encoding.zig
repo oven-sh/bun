@@ -882,9 +882,6 @@ pub const Encoder = struct {
             },
             // encode latin1 into UTF16
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
-                Output.println("writeU8 ucs2/utf16  {any} {any}", .{ len, to_len});
-                Output.flush();
-
                 if (to_len < 2)
                     return 0;
 
@@ -972,7 +969,7 @@ pub const Encoder = struct {
             },
             // string is already encoded, just need to copy the data
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
-                if(allow_partial_write) {
+                if (allow_partial_write) {
                     const bytes_input_len = len * 2;
                     const written = @min(bytes_input_len, to_len);
                     const input_u8 = @ptrCast([*]const u8, input);
@@ -988,7 +985,6 @@ pub const Encoder = struct {
                     strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
                     return @intCast(i64, fixed_len);
                 }
-                
             },
 
             JSC.Node.Encoding.hex => {

@@ -233,6 +233,9 @@ pub fn resetTerminal() void {
     }
 }
 
+/// Write buffered stdout & stderr to the terminal.
+/// Must be called before the process exits or the buffered output will be lost.
+/// Bun automatically calls this function in Global.exit().
 pub fn flush() void {
     if (Environment.isNative and source_set) {
         source.buffered_stream.flush() catch {};
@@ -304,6 +307,9 @@ pub fn printErrorable(comptime fmt: string, args: anytype) !void {
     }
 }
 
+/// Print to stdout
+/// This will appear in the terminal, including in production.
+/// Text automatically buffers
 pub fn println(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
@@ -312,6 +318,8 @@ pub fn println(comptime fmt: string, args: anytype) void {
     return print(fmt, args);
 }
 
+/// Print to stdout, but only in debug builds.
+/// Text automatically buffers
 pub inline fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
     prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
@@ -547,6 +555,8 @@ pub fn pretty(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, print, .stdout);
 }
 
+/// Like Output.println, except it will automatically strip ansi color codes if
+/// the terminal doesn't support them.
 pub fn prettyln(comptime fmt: string, args: anytype) void {
     if (enable_ansi_colors) {
         println(comptime prettyFmt(fmt, true), args);
@@ -567,6 +577,8 @@ pub fn prettyError(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Error);
 }
 
+/// Print to stderr with ansi color codes automatically stripped out if the
+/// terminal doesn't support them. Text is buffered
 pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return prettyWithPrinter(

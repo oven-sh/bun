@@ -1681,7 +1681,7 @@ pub const ModuleLoader = struct {
                     if (comptime Environment.isDebug) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.init(strings.append(bun.default_allocator, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js"), JSC.Node.fs.constants_string) catch unreachable),
+                            .source_code = ZigString.init(strings.append(bun.default_allocator, JSC.Node.fs.constants_string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")) catch unreachable),
                             .specifier = ZigString.init("node:fs"),
                             .source_url = ZigString.init("node:fs"),
                             .hash = 0,
@@ -1689,7 +1689,7 @@ pub const ModuleLoader = struct {
                     } else if (jsc_vm.load_builtins_from_path.len != 0) {
                         return ResolvedSource{
                             .allocator = null,
-                            .source_code = ZigString.init(strings.append(bun.default_allocator, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js"), JSC.Node.fs.constants_string) catch unreachable),
+                            .source_code = ZigString.init(strings.append(bun.default_allocator, JSC.Node.fs.constants_string, jsModuleFromFile(jsc_vm.load_builtins_from_path, "fs.exports.js")) catch unreachable),
                             .specifier = ZigString.init("node:fs"),
                             .source_url = ZigString.init("node:fs"),
                             .hash = 0,

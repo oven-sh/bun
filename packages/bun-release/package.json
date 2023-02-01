@@ -1,9 +1,9 @@
 {
   "private": true,
   "dependencies": {
-    "@octokit/rest": "^19.0.7",
     "esbuild": "^0.17.3",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "octokit": "^2.0.14"
   },
   "devDependencies": {
     "@octokit/types": "^8.1.1",

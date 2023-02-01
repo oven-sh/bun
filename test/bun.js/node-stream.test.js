@@ -1,14 +1,8 @@
 import { expect, describe, it } from "bun:test";
-import {
-  Readable,
-  Writable,
-  Duplex,
-  Transform,
-  PassThrough,
-} from "node:stream";
+import { Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 
 describe("Readable", () => {
-  it("should be able to be created without _construct method defined", (done) => {
+  it("should be able to be created without _construct method defined", done => {
     const readable = new Readable({
       read() {
         this.push("Hello World!\n");
@@ -17,7 +11,7 @@ describe("Readable", () => {
     });
     expect(readable instanceof Readable).toBe(true);
     let data = "";
-    readable.on("data", (chunk) => {
+    readable.on("data", chunk => {
       data += chunk.toString();
     });
     readable.on("end", () => {
@@ -26,7 +20,7 @@ describe("Readable", () => {
     });
   });
 
-  it("should be able to be piped via .pipe", (done) => {
+  it("should be able to be piped via .pipe", done => {
     const readable = new Readable({
       read() {
         this.push("Hello World!");

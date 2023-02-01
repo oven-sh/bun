@@ -185,10 +185,7 @@ it("scrypt bad", () => {
     const expected = {
       message: /Invalid scrypt param/,
     };
-    assert.throws(
-      () => crypto.scryptSync("pass", "salt", 1, options),
-      expected,
-    );
+    assert.throws(() => crypto.scryptSync("pass", "salt", 1, options), expected);
   }
 });
 
@@ -197,10 +194,7 @@ it("scrypt toobig", () => {
     const expected = {
       message: /Invalid scrypt param/,
     };
-    assert.throws(
-      () => crypto.scryptSync("pass", "salt", 1, options),
-      expected,
-    );
+    assert.throws(() => crypto.scryptSync("pass", "salt", 1, options), expected);
   }
 });
 

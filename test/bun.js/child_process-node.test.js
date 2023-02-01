@@ -1,11 +1,6 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import { ChildProcess, spawn, exec } from "node:child_process";
-import {
-  throws,
-  assert,
-  createCallCheckCtx,
-  createDoneDotAll,
-} from "node-test-helpers";
+import { throws, assert, createCallCheckCtx, createDoneDotAll } from "node-test-helpers";
 import { tmpdir } from "node:os";
 import { gcTick } from "gc";
 const strictEqual = (a, b) => expect(a).toStrictEqual(b);
@@ -53,7 +48,7 @@ describe("ChildProcess.spawn()", () => {
     // Verify that invalid options to spawn() throw.
     const child = new ChildProcess();
 
-    [undefined, null, "foo", 0, 1, NaN, true, false].forEach((options) => {
+    [undefined, null, "foo", 0, 1, NaN, true, false].forEach(options => {
       throws(
         () => {
           child.spawn(options);
@@ -72,7 +67,7 @@ describe("ChildProcess.spawn()", () => {
   it("should throw if file is not a string", () => {
     // Verify that spawn throws if file is not a string.
     const child = new ChildProcess();
-    [undefined, null, 0, 1, NaN, true, false, {}].forEach((file) => {
+    [undefined, null, 0, 1, NaN, true, false, {}].forEach(file => {
       throws(
         () => {
           child.spawn({ file });
@@ -92,7 +87,7 @@ describe("ChildProcess.spawn()", () => {
     // Verify that spawn throws if envPairs is not an array or undefined.
     const child = new ChildProcess();
 
-    [null, 0, 1, NaN, true, false, {}, "foo"].forEach((envPairs) => {
+    [null, 0, 1, NaN, true, false, {}, "foo"].forEach(envPairs => {
       throws(
         () => {
           child.spawn({
@@ -115,7 +110,7 @@ describe("ChildProcess.spawn()", () => {
     // Verify that spawn throws if args is not an array or undefined.
     const child = new ChildProcess();
 
-    [null, 0, 1, NaN, true, false, {}, "foo"].forEach((args) => {
+    [null, 0, 1, NaN, true, false, {}, "foo"].forEach(args => {
       throws(
         () => {
           child.spawn({ file: "foo", args });
@@ -189,7 +184,7 @@ describe("ChildProcess spawn bad stdio", () => {
     return child;
   }
 
-  it("should handle normal execution of child process", (done) => {
+  it("should handle normal execution of child process", done => {
     createChild(
       {},
       (err, stdout, stderr) => {
@@ -201,10 +196,8 @@ describe("ChildProcess spawn bad stdio", () => {
     );
   });
 
-  it("should handle error event of child process", (done) => {
-    const error = new Error(
-      `Command failed: bun ${import.meta.dir}/spawned-child.js ERROR`,
-    );
+  it("should handle error event of child process", done => {
+    const error = new Error(`Command failed: bun ${import.meta.dir}/spawned-child.js ERROR`);
     createChild(
       {},
       (err, stdout, stderr) => {
@@ -217,7 +210,7 @@ describe("ChildProcess spawn bad stdio", () => {
     );
   });
 
-  it("should handle killed process", (done) => {
+  it("should handle killed process", done => {
     createChild(
       { timeout: 1 },
       (err, stdout, stderr) => {
@@ -235,11 +228,7 @@ describe("child_process cwd", () => {
   // - whether the child pid is undefined or number,
   // - whether the exit code equals expectCode,
   // - optionally whether the trimmed stdout result matches expectData
-  function testCwd(
-    options,
-    { expectPidType, expectCode = 0, expectData },
-    done = () => {},
-  ) {
+  function testCwd(options, { expectPidType, expectCode = 0, expectData }, done = () => {}) {
     const createDone = createDoneDotAll(done);
     const { mustCall } = createCallCheckCtx(createDone(1500));
     const exitDone = createDone(5000);
@@ -252,7 +241,7 @@ describe("child_process cwd", () => {
 
     // No need to assert callback since `data` is asserted.
     let data = "";
-    child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", chunk => {
       data += chunk;
     });
 
@@ -318,7 +307,7 @@ describe("child_process cwd", () => {
   //   // }
   // });
 
-  it("should work for valid given cwd", (done) => {
+  it("should work for valid given cwd", done => {
     const tmpdir = { path: platformTmpDir };
     const createDone = createDoneDotAll(done);
 
@@ -353,7 +342,7 @@ describe("child_process cwd", () => {
     );
   });
 
-  it.skip("shouldn't try to chdir to an invalid cwd", (done) => {
+  it.skip("shouldn't try to chdir to an invalid cwd", done => {
     const createDone = createDoneDotAll(done);
     // Spawn() shouldn't try to chdir() to invalid arg, so this should just work
     testCwd({ cwd: "" }, { expectPidType: "number" }, createDone(1500));
@@ -363,14 +352,14 @@ describe("child_process cwd", () => {
 });
 
 describe("child_process default options", () => {
-  it("should use process.env as default env", (done) => {
+  it("should use process.env as default env", done => {
     globalThis.process.env.TMPDIR = platformTmpDir;
 
     let child = spawn("printenv", [], {});
     let response = "";
 
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", chunk => {
       debug(`stdout: ${chunk}`);
       response += chunk;
     });
@@ -385,10 +374,10 @@ describe("child_process default options", () => {
 });
 
 describe("child_process double pipe", () => {
-  it("should allow two pipes to be used at once", (done) => {
+  it("should allow two pipes to be used at once", done => {
     // const { mustCallAtLeast, mustCall } = createCallCheckCtx(done);
-    const mustCallAtLeast = (fn) => fn;
-    const mustCall = (fn) => fn;
+    const mustCallAtLeast = fn => fn;
+    const mustCall = fn => fn;
     let grep, sed, echo;
     grep = spawn("grep", ["o"], { stdio: ["pipe", "pipe", "pipe"] });
     sed = spawn("sed", ["s/o/O/"]);
@@ -397,7 +386,7 @@ describe("child_process double pipe", () => {
     // pipe grep | sed
     grep.stdout.on(
       "data",
-      mustCallAtLeast((data) => {
+      mustCallAtLeast(data => {
         debug(`grep stdout ${data.length}`);
         if (!sed.stdin.write(data)) {
           grep.stdout.pause();
@@ -408,7 +397,7 @@ describe("child_process double pipe", () => {
     // print sed's output
     sed.stdout.on(
       "data",
-      mustCallAtLeast((data) => {
+      mustCallAtLeast(data => {
         result += data.toString("utf8");
         debug(data);
       }),
@@ -416,7 +405,7 @@ describe("child_process double pipe", () => {
 
     echo.stdout.on(
       "data",
-      mustCallAtLeast((data) => {
+      mustCallAtLeast(data => {
         debug(`grep stdin write ${data.length}`);
         if (!grep.stdin.write(data)) {
           debug("echo stdout pause");

@@ -45,7 +45,7 @@ it("listen() should throw connection error for invalid host", () => {
   }).toThrow();
 });
 
-it("should reject on connection error, calling both connectError() and rejecting the promise", (done) => {
+it("should reject on connection error, calling both connectError() and rejecting the promise", done => {
   var data = {};
   connect({
     data,
@@ -80,7 +80,7 @@ it("should reject on connection error, calling both connectError() and rejecting
     },
   }).then(
     () => done(new Error("Promise should reject instead")),
-    (err) => {
+    err => {
       expect(err).toBeDefined();
       expect(err.name).toBe("SystemError");
       expect(err.message).toBe("Failed to connect");
@@ -91,7 +91,7 @@ it("should reject on connection error, calling both connectError() and rejecting
 });
 
 // this also tests we mark the promise as handled if connectError() is called
-it("should handle connection error", (done) => {
+it("should handle connection error", done => {
   var data = {};
   connect({
     data,

@@ -21,13 +21,11 @@ test("it exists", () => {
 });
 
 // //TODO: use a bun.sh SRV for testing
-test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
+test("dns.resolveSrv (_test._tcp.test.socketify.dev)", done => {
   dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
-    expect(results[0].name).toBe(
-      "_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev",
-    );
+    expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
     expect(results[0].priority).toBe(50);
     expect(results[0].weight).toBe(50);
     expect(results[0].port).toBe(80);
@@ -35,7 +33,7 @@ test("dns.resolveSrv (_test._tcp.test.socketify.dev)", (done) => {
   });
 });
 
-test("dns.resolveSrv (_test._tcp.invalid.localhost)", (done) => {
+test("dns.resolveSrv (_test._tcp.invalid.localhost)", done => {
   dns.resolveSrv("_test._tcp.invalid.localhost", (err, results) => {
     expect(err).toBeTruthy();
     expect(results).toBeUndefined(true);
@@ -43,7 +41,7 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", (done) => {
   });
 });
 
-test("dns.resolveTxt (txt.socketify.dev)", (done) => {
+test("dns.resolveTxt (txt.socketify.dev)", done => {
   dns.resolveTxt("txt.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -52,7 +50,7 @@ test("dns.resolveTxt (txt.socketify.dev)", (done) => {
   });
 });
 
-test("dns.resolveSoa (bun.sh)", (done) => {
+test("dns.resolveSoa (bun.sh)", done => {
   dns.resolveSoa("bun.sh", (err, result) => {
     expect(err).toBeNull();
     expect(result.serial).toBe(2295878541);
@@ -66,7 +64,7 @@ test("dns.resolveSoa (bun.sh)", (done) => {
   });
 });
 
-test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
+test("dns.resolveNaptr (naptr.socketify.dev)", done => {
   dns.resolveNaptr("naptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -80,7 +78,7 @@ test("dns.resolveNaptr (naptr.socketify.dev)", (done) => {
   });
 });
 
-test("dns.resolveCaa (caa.socketify.dev)", (done) => {
+test("dns.resolveCaa (caa.socketify.dev)", done => {
   dns.resolveCaa("caa.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -90,7 +88,7 @@ test("dns.resolveCaa (caa.socketify.dev)", (done) => {
   });
 });
 
-test("dns.resolveMx (bun.sh)", (done) => {
+test("dns.resolveMx (bun.sh)", done => {
   dns.resolveMx("bun.sh", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -101,7 +99,7 @@ test("dns.resolveMx (bun.sh)", (done) => {
   });
 });
 
-test("dns.resolveNs (bun.sh) ", (done) => {
+test("dns.resolveNs (bun.sh) ", done => {
   dns.resolveNs("bun.sh", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -110,7 +108,7 @@ test("dns.resolveNs (bun.sh) ", (done) => {
   });
 });
 
-test("dns.resolvePtr (ptr.socketify.dev)", (done) => {
+test("dns.resolvePtr (ptr.socketify.dev)", done => {
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -119,7 +117,7 @@ test("dns.resolvePtr (ptr.socketify.dev)", (done) => {
   });
 });
 
-test("dns.resolveCname (cname.socketify.dev)", (done) => {
+test("dns.resolveCname (cname.socketify.dev)", done => {
   dns.resolveCname("cname.socketify.dev", (err, results) => {
     expect(err).toBeNull();
     expect(results instanceof Array).toBe(true);
@@ -128,7 +126,7 @@ test("dns.resolveCname (cname.socketify.dev)", (done) => {
   });
 });
 
-test("dns.lookup (example.com)", (done) => {
+test("dns.lookup (example.com)", done => {
   dns.lookup("example.com", (err, address, family) => {
     expect(err).toBeNull();
     expect(typeof address).toBe("string");
@@ -136,7 +134,7 @@ test("dns.lookup (example.com)", (done) => {
   });
 });
 
-test("dns.lookup (localhost)", (done) => {
+test("dns.lookup (localhost)", done => {
   dns.lookup("localhost", (err, address, family) => {
     expect(err).toBeNull();
     if (family === 6) {

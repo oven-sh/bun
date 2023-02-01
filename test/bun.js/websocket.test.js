@@ -5,8 +5,7 @@ import { bunExe } from "bunExe";
 import { gc } from "./gc";
 import { bunEnv } from "bunEnv";
 
-const TEST_WEBSOCKET_HOST =
-  process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
+const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 
 describe("WebSocket", () => {
   it("should connect", async () => {
@@ -35,7 +34,7 @@ describe("WebSocket", () => {
     await closed;
   });
 
-  it("supports headers", (done) => {
+  it("supports headers", done => {
     const server = Bun.serve({
       port: 8024,
       fetch(req, server) {
@@ -59,7 +58,7 @@ describe("WebSocket", () => {
     });
   });
 
-  it("should connect over http", (done) => {
+  it("should connect over http", done => {
     const server = Bun.serve({
       port: 8025,
       fetch(req, server) {
@@ -90,7 +89,7 @@ describe("WebSocket", () => {
     // 10 messages in burst
     var promise = new Promise((resolve, reject) => {
       var remain = count;
-      ws.onmessage = (event) => {
+      ws.onmessage = event => {
         gc(true);
         expect(event.data).toBe("Hello World!");
         remain--;
@@ -116,7 +115,7 @@ describe("WebSocket", () => {
       return new Promise((resolve, reject) => {
         gc(true);
         const msg = `Hello World! ${echo++}`;
-        ws.onmessage = (event) => {
+        ws.onmessage = event => {
           expect(event.data).toBe(msg);
           resolve();
         };
@@ -160,11 +159,7 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [
-        bunExe(),
-        import.meta.dir + "/websocket-subprocess.ts",
-        `http://${server.hostname}:${server.port}`,
-      ],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -178,11 +173,7 @@ describe("websocket in subprocess", () => {
 
   it("should exit after killed", async () => {
     const subprocess = Bun.spawn({
-      cmd: [
-        bunExe(),
-        import.meta.dir + "/websocket-subprocess.ts",
-        TEST_WEBSOCKET_HOST,
-      ],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", TEST_WEBSOCKET_HOST],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -196,11 +187,7 @@ describe("websocket in subprocess", () => {
 
   it("should exit with invalid url", async () => {
     const subprocess = Bun.spawn({
-      cmd: [
-        bunExe(),
-        import.meta.dir + "/websocket-subprocess.ts",
-        "invalid url",
-      ],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", "invalid url"],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -236,11 +223,7 @@ describe("websocket in subprocess", () => {
       },
     });
     const subprocess = Bun.spawn({
-      cmd: [
-        bunExe(),
-        import.meta.dir + "/websocket-subprocess.ts",
-        `http://${server.hostname}:${server.port}`,
-      ],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",
@@ -270,11 +253,7 @@ describe("websocket in subprocess", () => {
     });
 
     const subprocess = Bun.spawn({
-      cmd: [
-        bunExe(),
-        import.meta.dir + "/websocket-subprocess.ts",
-        `http://${server.hostname}:${server.port}`,
-      ],
+      cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", `http://${server.hostname}:${server.port}`],
       stderr: "pipe",
       stdin: "pipe",
       stdout: "pipe",

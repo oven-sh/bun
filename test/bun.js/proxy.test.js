@@ -45,11 +45,7 @@ afterAll(() => {
 
 describe("proxy", () => {
   const requests = [
-    [
-      new Request("http://localhost:54322"),
-      "fetch() GET with non-TLS Proxy",
-      "http://localhost:54312",
-    ],
+    [new Request("http://localhost:54322"), "fetch() GET with non-TLS Proxy", "http://localhost:54312"],
     [
       new Request("http://localhost:54322", {
         method: "POST",

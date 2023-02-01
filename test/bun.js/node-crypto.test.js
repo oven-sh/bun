@@ -17,10 +17,7 @@ it("crypto.createHash ", () => {
 });
 
 it("crypto.createHmac", () => {
-  const result = crypto
-    .createHmac("sha256", "key")
-    .update("message")
-    .digest("base64");
+  const result = crypto.createHmac("sha256", "key").update("message").digest("base64");
 
   expect(result).toBe("bp7ym3X//Ft6uuUn1Y/a2y/kLnIZARl2kXNDBl9Y7Uo=");
 });

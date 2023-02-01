@@ -60,17 +60,15 @@ describe("util.promisify", () => {
       const promise = stat(__filename);
       assert.equal(promise instanceof Promise, true);
       promise.then(
-        common.mustCall((value) => {
+        common.mustCall(value => {
           assert.deepStrictEqual(value, fs.statSync(__filename));
         }),
       );
 
       const promiseFileDontExist = stat("/dontexist");
       promiseFileDontExist.catch(
-        common.mustCall((error) => {
-          assert(
-            error.message.includes("ENOENT: no such file or directory, stat"),
-          );
+        common.mustCall(error => {
+          assert(error.message.includes("ENOENT: no such file or directory, stat"));
         }),
       );
     });
@@ -94,9 +92,7 @@ describe("util.promisify", () => {
       // TODO: register shared symbol promisify.custom
       // util.promisify.custom is a shared symbol which can be accessed
       // as `Symbol.for("nodejs.util.promisify.custom")`.
-      const kCustomPromisifiedSymbol = Symbol.for(
-        "nodejs.util.promisify.custom",
-      );
+      const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
       fn[kCustomPromisifiedSymbol] = promisifiedFn;
 
       assert.strictEqual(kCustomPromisifiedSymbol, promisify.custom);
@@ -148,7 +144,7 @@ describe("util.promisify", () => {
         called = true;
         callback(null, "foo", "bar");
       }
-      await promisify(fn)().then((value) => {
+      await promisify(fn)().then(value => {
         assert.strictEqual(value, "foo");
         assert.strictEqual(called, true);
       });
@@ -160,7 +156,7 @@ describe("util.promisify", () => {
         called = true;
         callback(null);
       }
-      await promisify(fn)().then((value) => {
+      await promisify(fn)().then(value => {
         assert.strictEqual(value, undefined);
         assert.strictEqual(called, true);
       });
@@ -172,7 +168,7 @@ describe("util.promisify", () => {
         called = true;
         callback();
       }
-      await promisify(fn)().then((value) => {
+      await promisify(fn)().then(value => {
         assert.strictEqual(value, undefined);
         assert.strictEqual(called, true);
       });
@@ -184,7 +180,7 @@ describe("util.promisify", () => {
         called = true;
         callback(err, val);
       }
-      await promisify(fn)(null, 42).then((value) => {
+      await promisify(fn)(null, 42).then(value => {
         assert.strictEqual(value, 42);
         assert.strictEqual(called, true);
       });
@@ -196,7 +192,7 @@ describe("util.promisify", () => {
         called = true;
         callback(err, val);
       }
-      await promisify(fn)(new Error("oops"), null).catch((err) => {
+      await promisify(fn)(new Error("oops"), null).catch(err => {
         assert.strictEqual(err.message, "oops");
         assert.strictEqual(called, true);
       });
@@ -227,16 +223,14 @@ describe("util.promisify", () => {
 
       o.fn = fn;
 
-      await o.fn().then((val) => {
+      await o.fn().then(val => {
         assert.strictEqual(called, true);
         assert.strictEqual(val, true);
       });
     });
 
     it("should not have called callback with error", async () => {
-      const err = new Error(
-        "Should not have called the callback with the error.",
-      );
+      const err = new Error("Should not have called the callback with the error.");
       const stack = err.stack;
       var called = false;
 
@@ -271,13 +265,13 @@ describe("util.promisify", () => {
       });
       await thrower(1, 2, 3)
         .then(assert.fail)
-        .then(assert.fail, (e) => assert.strictEqual(e, errToThrow));
+        .then(assert.fail, e => assert.strictEqual(e, errToThrow));
     });
 
     it("should also throw error inside Promise.all", async () => {
       const err = new Error();
 
-      const a = promisify((cb) => cb(err))();
+      const a = promisify(cb => cb(err))();
       const b = promisify(() => {
         throw err;
       })();
@@ -298,7 +292,7 @@ describe("util.promisify", () => {
     // is not thrown in the error. does it have different
     // throw error implementation in bun?
     it("should throw on invalid inputs for promisify", () => {
-      [undefined, null, true, 0, "str", {}, [], Symbol()].forEach((input) => {
+      [undefined, null, true, 0, "str", {}, [], Symbol()].forEach(input => {
         assert.throws(() => promisify(input), {
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",

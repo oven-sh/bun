@@ -65,7 +65,7 @@ export class Server extends EventEmitter {
           var pendingResponse;
           var pendingError;
           var rejectFunction, resolveFunction;
-          var reject = (err) => {
+          var reject = err => {
             if (pendingError) return;
             pendingError = err;
             if (rejectFunction) rejectFunction(err);
@@ -80,8 +80,8 @@ export class Server extends EventEmitter {
           const http_req = new RequestClass(req);
           const http_res = new ResponseClass({ reply, req: http_req });
 
-          http_req.once("error", (err) => reject(err));
-          http_res.once("error", (err) => reject(err));
+          http_req.once("error", err => reject(err));
+          http_res.once("error", err => reject(err));
           server.emit("request", http_req, http_res);
 
           if (pendingError) {
@@ -99,11 +99,7 @@ export class Server extends EventEmitter {
         },
       });
 
-      if (onListen)
-        setTimeout(
-          () => onListen(null, this.#server.hostname, this.#server.port),
-          0,
-        );
+      if (onListen) setTimeout(() => onListen(null, this.#server.hostname, this.#server.port), 0);
     } catch (err) {
       if (onListen) {
         setTimeout(onListen, 0, err);
@@ -201,15 +197,13 @@ export class IncomingMessage extends Readable {
       const contentLength = this.#req.headers.get("content-length");
       let remaining = contentLength ? parseInt(contentLength, 10) : 0;
       this.#bodyStream = Readable.fromWeb(this.#req.body, {
-        highWaterMark: Number.isFinite(remaining)
-          ? Math.min(remaining, 16384)
-          : 16384,
+        highWaterMark: Number.isFinite(remaining) ? Math.min(remaining, 16384) : 16384,
       });
 
       const isBodySizeKnown = remaining > 0 && Number.isSafeInteger(remaining);
 
       if (isBodySizeKnown) {
-        this.#bodyStream.on("data", (chunk) => {
+        this.#bodyStream.on("data", chunk => {
           this.push(chunk);
           // when we are streaming a known body size, automatically close the stream when we have read enough
           remaining -= chunk?.byteLength ?? 0;
@@ -218,7 +212,7 @@ export class IncomingMessage extends Readable {
           }
         });
       } else {
-        this.#bodyStream.on("data", (chunk) => {
+        this.#bodyStream.on("data", chunk => {
           this.push(chunk);
         });
       }
@@ -333,7 +327,7 @@ export class ServerResponse extends Writable {
       return;
     }
 
-    this.#ensureReadableStreamController((controller) => {
+    this.#ensureReadableStreamController(controller => {
       controller.write(chunk);
       callback();
     });
@@ -346,7 +340,7 @@ export class ServerResponse extends Writable {
       return;
     }
 
-    this.#ensureReadableStreamController((controller) => {
+    this.#ensureReadableStreamController(controller => {
       for (const chunk of chunks) {
         controller.write(chunk.chunk);
       }
@@ -365,13 +359,13 @@ export class ServerResponse extends Writable {
       new Response(
         new ReadableStream({
           type: "direct",
-          pull: (controller) => {
+          pull: controller => {
             this.#controller = controller;
             if (firstWrite) controller.write(firstWrite);
             firstWrite = undefined;
             run(controller);
             if (!this.#finished) {
-              return new Promise((resolve) => {
+              return new Promise(resolve => {
                 this.#deferred = resolve;
               });
             }
@@ -403,7 +397,7 @@ export class ServerResponse extends Writable {
     }
 
     this.#finished = true;
-    this.#ensureReadableStreamController((controller) => {
+    this.#ensureReadableStreamController(controller => {
       controller.end();
 
       callback();
@@ -685,8 +679,7 @@ function _writeHead(statusCode, reason, obj, response) {
     response.statusMessage = reason;
   } else {
     // writeHead(statusCode[, headers])
-    if (!response.statusMessage)
-      response.statusMessage = STATUS_CODES[statusCode] || "unknown";
+    if (!response.statusMessage) response.statusMessage = STATUS_CODES[statusCode] || "unknown";
     obj = reason;
   }
   response.statusCode = statusCode;

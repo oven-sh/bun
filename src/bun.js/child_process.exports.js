@@ -162,9 +162,7 @@ export function spawn(file, args, options) {
       process.nextTick(onAbortListener);
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
-      child.once("exit", () =>
-        signal.removeEventListener("abort", onAbortListener),
-      );
+      child.once("exit", () => signal.removeEventListener("abort", onAbortListener));
     }
 
     function onAbortListener() {
@@ -200,12 +198,7 @@ export function spawn(file, args, options) {
  * @returns {ChildProcess}
  */
 export function execFile(file, args, options, callback) {
-  ({ file, args, options, callback } = normalizeExecFileArgs(
-    file,
-    args,
-    options,
-    callback,
-  ));
+  ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
     encoding: "utf8",
@@ -357,10 +350,7 @@ export function execFile(file, args, options, callback) {
                 encodedStdoutLen += actualLen;
               }
               const truncatedLen = maxBuffer - (encodedStdoutLen - actualLen);
-              ArrayPrototypePush.call(
-                _stdout,
-                StringPrototypeSlice.apply(chunk, 0, truncatedLen),
-              );
+              ArrayPrototypePush.call(_stdout, StringPrototypeSlice.apply(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stdout");
               kill();
@@ -408,10 +398,7 @@ export function execFile(file, args, options, callback) {
                 encodedStderrLen += actualLen;
               }
               const truncatedLen = maxBuffer - (encodedStderrLen - actualLen);
-              ArrayPrototypePush.call(
-                _stderr,
-                StringPrototypeSlice.call(chunk, 0, truncatedLen),
-              );
+              ArrayPrototypePush.call(_stderr, StringPrototypeSlice.call(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
               kill();
@@ -424,10 +411,7 @@ export function execFile(file, args, options, callback) {
 
             if (stderrLen > maxBuffer) {
               const truncatedLen = maxBuffer - (stderrLen - chunk.length);
-              ArrayPrototypePush.call(
-                _stderr,
-                StringPrototypeSlice.call(chunk, 0, truncatedLen),
-              );
+              ArrayPrototypePush.call(_stderr, StringPrototypeSlice.call(chunk, 0, truncatedLen));
 
               ex = new ERR_CHILD_PROCESS_STDIO_MAXBUFFER("stderr");
               kill();
@@ -530,11 +514,7 @@ export function spawnSync(file, args, options) {
     } else if (typeof input === "string") {
       bunStdio[0] = Buffer.from(input, encoding || "utf8");
     } else {
-      throw new ERR_INVALID_ARG_TYPE(
-        `options.stdio[0]`,
-        ["Buffer", "TypedArray", "DataView", "string"],
-        input,
-      );
+      throw new ERR_INVALID_ARG_TYPE(`options.stdio[0]`, ["Buffer", "TypedArray", "DataView", "string"], input);
     }
   }
 
@@ -565,13 +545,7 @@ export function spawnSync(file, args, options) {
   result.stderr = result.output[2];
 
   if (!success) {
-    result.error = new SystemError(
-      result.output[2],
-      options.file,
-      "spawnSync",
-      -1,
-      result.status,
-    );
+    result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
     result.error.spawnargs = ArrayPrototypeSlice.call(options.args, 1);
   }
 
@@ -657,8 +631,7 @@ export function fork() {
 // Section 2. child_process helpers
 //------------------------------------------------------------------------------
 function convertToValidSignal(signal) {
-  if (typeof signal === "number" && getSignalsToNamesMapping()[signal])
-    return signal;
+  if (typeof signal === "number" && getSignalsToNamesMapping()[signal]) return signal;
 
   if (typeof signal === "string") {
     const signalName = signals[StringPrototypeToUpperCase.call(signal)];
@@ -672,11 +645,7 @@ function sanitizeKillSignal(killSignal) {
   if (typeof killSignal === "string" || typeof killSignal === "number") {
     return convertToValidSignal(killSignal);
   } else if (killSignal != null) {
-    throw new ERR_INVALID_ARG_TYPE(
-      "options.killSignal",
-      ["string", "number"],
-      killSignal,
-    );
+    throw new ERR_INVALID_ARG_TYPE("options.killSignal", ["string", "number"], killSignal);
   }
 }
 
@@ -756,8 +725,7 @@ function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
-  if (file.length === 0)
-    throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
+  if (file.length === 0) throw new ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
   if (ArrayIsArray(args)) {
     args = ArrayPrototypeSlice.call(args);
@@ -787,16 +755,8 @@ function normalizeSpawnArguments(file, args, options) {
   // TODO: Uid check
 
   // Validate the shell, if present.
-  if (
-    options.shell != null &&
-    typeof options.shell !== "boolean" &&
-    typeof options.shell !== "string"
-  ) {
-    throw new ERR_INVALID_ARG_TYPE(
-      "options.shell",
-      ["boolean", "string"],
-      options.shell,
-    );
+  if (options.shell != null && typeof options.shell !== "boolean" && typeof options.shell !== "string") {
+    throw new ERR_INVALID_ARG_TYPE("options.shell", ["boolean", "string"], options.shell);
   }
 
   // Validate argv0, if present.
@@ -858,8 +818,7 @@ function checkExecSyncError(ret, args, cmd) {
   } else if (ret.status !== 0) {
     let msg = "Command failed: ";
     msg += cmd || ArrayPrototypeJoin.call(args, " ");
-    if (ret.stderr && ret.stderr.length > 0)
-      msg += `\n${ret.stderr.toString()}`;
+    if (ret.stderr && ret.stderr.length > 0) msg += `\n${ret.stderr.toString()}`;
     err = genericNodeError(msg, ret);
   }
   return err;
@@ -937,9 +896,7 @@ export class ChildProcess extends EventEmitter {
   #getBunSpawnIo(i, encoding) {
     if (__DEBUG__ && !this.#handle) {
       if (this.#handle === null) {
-        debug(
-          "ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited",
-        );
+        debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
       } else {
         debug("ChildProcess: getBunSpawnIo: this.#handle is undefined");
       }
@@ -967,9 +924,7 @@ export class ChildProcess extends EventEmitter {
               __TRACK_STDIO__
                 ? {
                     encoding,
-                    __id: `PARENT_${fdToStdioName(
-                      i,
-                    ).toUpperCase()}-${globalThis.__getId()}`,
+                    __id: `PARENT_${fdToStdioName(i).toUpperCase()}-${globalThis.__getId()}`,
                   }
                 : { encoding },
             );
@@ -1081,9 +1036,7 @@ export class ChildProcess extends EventEmitter {
         if (!hasEmittedSpawn) {
           hasEmittedSpawn = true;
           process.nextTick(onSpawnNT, this);
-          process.nextTick((exitCode, signalCode, err) =>
-            this.#handleOnExit(exitCode, signalCode, err),
-          );
+          process.nextTick((exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err));
         } else {
           this.#handleOnExit(exitCode, signalCode, err);
         }
@@ -1138,16 +1091,11 @@ export class ChildProcess extends EventEmitter {
   }
 
   disconnect() {
-    console.log(
-      "ChildProcess.prototype.disconnect() - Sorry! Not implemented yet",
-    );
+    console.log("ChildProcess.prototype.disconnect() - Sorry! Not implemented yet");
   }
 
   kill(sig) {
-    const signal =
-      sig === 0
-        ? sig
-        : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
+    const signal = sig === 0 ? sig : convertToValidSignal(sig === undefined ? "SIGTERM" : sig);
 
     if (this.#handle) {
       this.#handle.kill(signal);
@@ -1238,7 +1186,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map((item) => nodeToBun(item));
+  const bunStdio = normalizedStdio.map(item => nodeToBun(item));
   return bunStdio;
 }
 
@@ -1264,7 +1212,7 @@ function normalizeStdio(stdio) {
     else if (stdio.length === 2) processedStdio = [stdio[0], stdio[1], "pipe"];
     else if (stdio.length >= 3) processedStdio = [stdio[0], stdio[1], stdio[2]];
 
-    return processedStdio.map((item) => (!item ? "pipe" : item));
+    return processedStdio.map(item => (!item ? "pipe" : item));
   } else {
     throw new ERR_INVALID_OPT_VALUE("stdio", stdio);
   }
@@ -1323,21 +1271,13 @@ class ShimmedStdioOutStream extends EventEmitter {
 
 function validateMaxBuffer(maxBuffer) {
   if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw new ERR_OUT_OF_RANGE(
-      "options.maxBuffer",
-      "a positive number",
-      maxBuffer,
-    );
+    throw new ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
   }
 }
 
 function validateArgumentNullCheck(arg, propName) {
   if (typeof arg === "string" && StringPrototypeIncludes.call(arg, "\u0000")) {
-    throw new ERR_INVALID_ARG_VALUE(
-      propName,
-      arg,
-      "must be a string without null bytes",
-    );
+    throw new ERR_INVALID_ARG_VALUE(propName, arg, "must be a string without null bytes");
   }
 }
 
@@ -1354,8 +1294,7 @@ function validateTimeout(timeout) {
 }
 
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean")
-    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 /**
@@ -1367,8 +1306,7 @@ function validateBoolean(value, name) {
 
 /** @type {validateFunction} */
 function validateFunction(value, name) {
-  if (typeof value !== "function")
-    throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
 }
 
 /**
@@ -1379,10 +1317,7 @@ function validateFunction(value, name) {
 
 /** @type {validateAbortSignal} */
 const validateAbortSignal = (signal, name) => {
-  if (
-    signal !== undefined &&
-    (signal === null || typeof signal !== "object" || !("aborted" in signal))
-  ) {
+  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
     throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 };
@@ -1400,9 +1335,7 @@ const validateOneOf = (value, name, oneOf) => {
   // const validateOneOf = hideStackFrames((value, name, oneOf) => {
   if (!ArrayPrototypeIncludes.call(oneOf, value)) {
     const allowed = ArrayPrototypeJoin.call(
-      ArrayPrototypeMap.call(oneOf, (v) =>
-        typeof v === "string" ? `'${v}'` : String(v),
-      ),
+      ArrayPrototypeMap.call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
       ", ",
     );
     const reason = "must be one of: " + allowed;
@@ -1430,8 +1363,7 @@ const validateObject = (value, name, options = null) => {
   if (
     (!nullable && value === null) ||
     (!allowArray && ArrayIsArray.call(value)) ||
-    (typeof value !== "object" &&
-      (!allowFunction || typeof value !== "function"))
+    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
   }
@@ -1466,8 +1398,7 @@ const validateArray = (value, name, minLength = 0) => {
 
 /** @type {validateString} */
 function validateString(value, name) {
-  if (typeof value !== "string")
-    throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
 function nullCheck(path, propName, throwError = true) {
@@ -1483,11 +1414,7 @@ function nullCheck(path, propName, throwError = true) {
     return;
   }
 
-  const err = new ERR_INVALID_ARG_VALUE(
-    propName,
-    path,
-    "must be a string or Uint8Array without null bytes",
-  );
+  const err = new ERR_INVALID_ARG_VALUE(propName, path, "must be a string or Uint8Array without null bytes");
   if (throwError) {
     throw err;
   }
@@ -1550,9 +1477,7 @@ var StringPrototypeIncludes = String.prototype.includes;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 function isUint8Array(value) {
-  return (
-    typeof value === "object" && value !== null && value instanceof Uint8Array
-  );
+  return typeof value === "object" && value !== null && value instanceof Uint8Array;
 }
 
 //------------------------------------------------------------------------------
@@ -1746,9 +1671,7 @@ function ERR_OUT_OF_RANGE(str, range, input, replaceDefaultBoolean = false) {
   // }
   // msg += ` It must be ${range}. Received ${received}`;
   // return new RangeError(msg);
-  return new RangeError(
-    `The value of ${str} is out of range. It must be ${range}. Received ${input}`,
-  );
+  return new RangeError(`The value of ${str} is out of range. It must be ${range}. Received ${input}`);
 }
 
 function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
@@ -1762,9 +1685,7 @@ function ERR_UNKNOWN_SIGNAL(name) {
 }
 
 function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(
-    `The "${name}" argument must be of type ${type}. Received ${value}`,
-  );
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
   err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
@@ -1774,9 +1695,7 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 }
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  return new Error(
-    `The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`,
-  );
+  return new Error(`The value "${value}" is invalid for argument '${name}'. Reason: ${reason}`);
 }
 
 class SystemError extends Error {

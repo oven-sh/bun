@@ -2,9 +2,11 @@ import { Readable } from "stream";
 import { it, expect } from "bun:test";
 
 function makeUint8Array(str) {
-  return new Uint8Array([].map.call(str, function(ch) {
-    return ch.charCodeAt(0);
-  }));
+  return new Uint8Array(
+    [].map.call(str, function (ch) {
+      return ch.charCodeAt(0);
+    }),
+  );
 }
 
 it("should work with .clear()", () => {
@@ -23,13 +25,10 @@ it("should work with .concat()", () => {
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("foo"))).toBeUndefined();
   expect(list.length).toBe(1);
-  expect(list.concat(3)).toEqual(new Uint8Array([ 102, 111, 111 ]));
+  expect(list.concat(3)).toEqual(new Uint8Array([102, 111, 111]));
   expect(list.push(makeUint8Array("bar"))).toBeUndefined();
   expect(list.length).toBe(2);
-  expect(list.concat(10)).toEqual(new Uint8Array([
-    102, 111, 111, 98, 97,
-    114, 0, 0, 0, 0,
-  ]));
+  expect(list.concat(10)).toEqual(new Uint8Array([102, 111, 111, 98, 97, 114, 0, 0, 0, 0]));
 });
 
 it("should fail on .concat() with invalid items", () => {
@@ -90,10 +89,7 @@ it("should work with .consume() on buffers", () => {
   expect(list.length).toBe(4);
   expect(list.consume(4, false)).toEqual(makeUint8Array("rbaz"));
   expect(list.length).toBe(2);
-  expect(list.consume(10, false)).toEqual(new Uint8Array([
-    109, 111, 111, 109, 111,
-    122, 0, 0, 0, 0,
-  ]));
+  expect(list.consume(10, false)).toEqual(new Uint8Array([109, 111, 111, 109, 111, 122, 0, 0, 0, 0]));
   expect(list.length).toBe(0);
 });
 
@@ -114,7 +110,7 @@ it("should fail on .consume() with invalid items", () => {
   expect(() => {
     list.consume(1, true);
   }).toThrow(TypeError);
-  expect(list.consume(3, false)).toEqual(new Uint8Array([ 98, 97, 114 ]));
+  expect(list.consume(3, false)).toEqual(new Uint8Array([98, 97, 114]));
 });
 
 it("should work with .first()", () => {
@@ -216,16 +212,10 @@ it("should work with partial .consume() followed by .unshift()", () => {
   expect(list.push(makeUint8Array("😋😋😋"))).toBeUndefined();
   expect(list.push(makeUint8Array("📋📋📋"))).toBeUndefined();
   expect(list.length).toBe(2);
-  expect(list.consume(7, false)).toEqual(new Uint8Array([
-    61, 11, 61, 11, 61, 11,
-    61,
-  ]));
+  expect(list.consume(7, false)).toEqual(new Uint8Array([61, 11, 61, 11, 61, 11, 61]));
   expect(list.length).toBe(1);
   expect(list.unshift(makeUint8Array("👌👌👌"))).toBeUndefined();
   expect(list.length).toBe(2);
-  expect(list.consume(12, false)).toEqual(new Uint8Array([
-    61, 76, 61, 76, 61, 76,
-    203, 61, 203, 61, 203, 0,
-  ]));
+  expect(list.consume(12, false)).toEqual(new Uint8Array([61, 76, 61, 76, 61, 76, 203, 61, 203, 61, 203, 0]));
   expect(list.length).toBe(0);
 });

@@ -27,20 +27,18 @@ describe("concat", () => {
   }
 
   it("works with one element", () => {
-    expect(concatToString([new Uint8Array([123])])).toBe(
-      polyfillToString([new Uint8Array([123])]),
-    );
+    expect(concatToString([new Uint8Array([123])])).toBe(polyfillToString([new Uint8Array([123])]));
   });
 
   it("works with two elements", () => {
-    expect(
-      concatToString([Uint8Array.from([123]), Uint8Array.from([456])]),
-    ).toBe(polyfillToString([Uint8Array.from([123]), Uint8Array.from([456])]));
+    expect(concatToString([Uint8Array.from([123]), Uint8Array.from([456])])).toBe(
+      polyfillToString([Uint8Array.from([123]), Uint8Array.from([456])]),
+    );
   });
 
   it("works with mix of ArrayBuffer and TypedArray elements", () => {
-    expect(
-      concatToString([Uint8Array.from([123]).buffer, Uint8Array.from([456])]),
-    ).toBe(polyfillToString([Uint8Array.from([123]), Uint8Array.from([456])]));
+    expect(concatToString([Uint8Array.from([123]).buffer, Uint8Array.from([456])])).toBe(
+      polyfillToString([Uint8Array.from([123]), Uint8Array.from([456])]),
+    );
   });
 });

@@ -134,12 +134,7 @@ it(".params works on dynamic routes", () => {
 
 it("should support static routes", () => {
   // set up the test
-  const { dir } = make([
-    "index.tsx",
-    "posts/[id].tsx",
-    "posts.tsx",
-    "posts/hey.tsx",
-  ]);
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);
 
   const router = new Bun.FileSystemRouter({
     dir,
@@ -154,35 +149,18 @@ it("should support static routes", () => {
 
 it("should support optional catch-all routes", () => {
   // set up the test
-  const { dir } = make([
-    "index.tsx",
-    "posts/[id].tsx",
-    "posts.tsx",
-    "posts/hey.tsx",
-    "posts/[[...id]].tsx",
-  ]);
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx", "posts/[[...id]].tsx"]);
 
   const router = new Bun.FileSystemRouter({
     dir,
     style: "nextjs",
   });
 
-  for (let fixture of [
-    "/posts/123",
-    "/posts/hey",
-    "/posts/zorp",
-    "/posts",
-    "/index",
-    "/posts/",
-  ]) {
+  for (let fixture of ["/posts/123", "/posts/hey", "/posts/zorp", "/posts", "/index", "/posts/"]) {
     expect(router.match(fixture)?.name).not.toBe("/posts/[[...id]]");
   }
 
-  for (let fixture of [
-    "/posts/hey/there",
-    "/posts/hey/there/you",
-    "/posts/zorp/123",
-  ]) {
+  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123"]) {
     const { name, params, filePath } = router.match(fixture);
 
     expect(name).toBe("/posts/[[...id]]");
@@ -207,23 +185,11 @@ it("should support catch-all routes", () => {
     style: "nextjs",
   });
 
-  for (let fixture of [
-    "/posts/123",
-    "/posts/hey",
-    "/posts/zorp",
-    "/posts",
-    "/index",
-    "/posts/",
-  ]) {
+  for (let fixture of ["/posts/123", "/posts/hey", "/posts/zorp", "/posts", "/index", "/posts/"]) {
     expect(router.match(fixture)?.name).not.toBe("/posts/[...id]");
   }
 
-  for (let fixture of [
-    "/posts/hey/there",
-    "/posts/hey/there/you",
-    "/posts/zorp/123",
-    "/posts/wow/hey/there",
-  ]) {
+  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123", "/posts/wow/hey/there"]) {
     const { name, params, filePath } = router.match(fixture);
 
     expect(name).toBe("/posts/[...id]");
@@ -234,12 +200,7 @@ it("should support catch-all routes", () => {
 
 it("should support index routes", () => {
   // set up the test
-  const { dir } = make([
-    "index.tsx",
-    "posts/[id].tsx",
-    "posts.tsx",
-    "posts/hey.tsx",
-  ]);
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);
 
   const router = new Bun.FileSystemRouter({
     dir,
@@ -327,18 +288,14 @@ it(".query works", () => {
 
   for (let [current, object] of [
     [new URL("https://example.com/posts?hello=world").href, { hello: "world" }],
-    [
-      new URL("https://example.com/posts?hello=world&second=2").href,
-      { hello: "world", second: "2" },
-    ],
+    [new URL("https://example.com/posts?hello=world&second=2").href, { hello: "world", second: "2" }],
     [
       new URL("https://example.com/posts?hello=world&second=2&third=3").href,
       { hello: "world", second: "2", third: "3" },
     ],
     [new URL("https://example.com/posts").href, {}],
   ]) {
-    const { name, src, filePath, checkThisDoesntCrash, query } =
-      router.match(current);
+    const { name, src, filePath, checkThisDoesntCrash, query } = router.match(current);
     expect(name).toBe("/posts");
 
     // check nothing is weird on the MatchedRoute object
@@ -377,23 +334,15 @@ it(".query works with dynamic routes, including params", () => {
   });
 
   for (let [current, object] of [
+    [new URL("https://example.com/posts/123?hello=world").href, { id: "123", hello: "world" }],
+    [new URL("https://example.com/posts/123?hello=world&second=2").href, { id: "123", hello: "world", second: "2" }],
     [
-      new URL("https://example.com/posts/123?hello=world").href,
-      { id: "123", hello: "world" },
-    ],
-    [
-      new URL("https://example.com/posts/123?hello=world&second=2").href,
-      { id: "123", hello: "world", second: "2" },
-    ],
-    [
-      new URL("https://example.com/posts/123?hello=world&second=2&third=3")
-        .href,
+      new URL("https://example.com/posts/123?hello=world&second=2&third=3").href,
       { id: "123", hello: "world", second: "2", third: "3" },
     ],
     [new URL("https://example.com/posts/123").href, { id: "123" }],
   ]) {
-    const { name, src, filePath, checkThisDoesntCrash, query } =
-      router.match(current);
+    const { name, src, filePath, checkThisDoesntCrash, query } = router.match(current);
     expect(name).toBe("/posts/[id]");
 
     // check nothing is weird on the MatchedRoute object

@@ -22,7 +22,7 @@ describe("node:http", () => {
 
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
-        req.on("data", (chunk) => {
+        req.on("data", chunk => {
           res.write(chunk);
         });
 
@@ -49,7 +49,7 @@ describe("node:http", () => {
 
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
-        req.on("data", (chunk) => {
+        req.on("data", chunk => {
           res.write(chunk);
         });
 

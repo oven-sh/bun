@@ -1,19 +1,13 @@
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) =>
   function __require() {
-    return (
-      mod ||
-        (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod),
-      mod.exports
-    );
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 export function isBuffer(value) {
   return (
     Buffer.isBuffer(value) ||
     // incase it ends up as a browserify buffer
-    (typeof arg?.copy === "function" &&
-      typeof arg?.fill === "function" &&
-      typeof arg?.readUInt8 === "function")
+    (typeof arg?.copy === "function" && typeof arg?.fill === "function" && typeof arg?.readUInt8 === "function")
   );
 }
 
@@ -178,15 +172,7 @@ inspect.styles = {
 function stylizeWithColor(str, styleType) {
   var style = inspect.styles[styleType];
   if (style) {
-    return (
-      "\x1B[" +
-      inspect.colors[style][0] +
-      "m" +
-      str +
-      "\x1B[" +
-      inspect.colors[style][1] +
-      "m"
-    );
+    return "\x1B[" + inspect.colors[style][0] + "m" + str + "\x1B[" + inspect.colors[style][1] + "m";
   } else {
     return str;
   }
@@ -224,10 +210,7 @@ function formatValue(ctx, value, recurseTimes) {
   if (ctx.showHidden) {
     keys = Object.getOwnPropertyNames(value);
   }
-  if (
-    isError(value) &&
-    (keys.indexOf("message") >= 0 || keys.indexOf("description") >= 0)
-  ) {
+  if (isError(value) && (keys.indexOf("message") >= 0 || keys.indexOf("description") >= 0)) {
     return formatError(value);
   }
   if (keys.length === 0) {
@@ -290,13 +273,7 @@ function formatValue(ctx, value, recurseTimes) {
 function formatPrimitive(ctx, value) {
   if (isUndefined(value)) return ctx.stylize("undefined", "undefined");
   if (isString(value)) {
-    var simple =
-      "'" +
-      JSON.stringify(value)
-        .replace(/^"|"$/g, "")
-        .replace(/'/g, "\\'")
-        .replace(/\\"/g, '"') +
-      "'";
+    var simple = "'" + JSON.stringify(value).replace(/^"|"$/g, "").replace(/'/g, "\\'").replace(/\\"/g, '"') + "'";
     return ctx.stylize(simple, "string");
   }
   if (isNumber(value)) return ctx.stylize("" + value, "number");
@@ -310,18 +287,14 @@ function formatArray(ctx, value, recurseTimes, visibleKeys, keys) {
   var output = [];
   for (var i = 0, l = value.length; i < l; ++i) {
     if (hasOwnProperty(value, String(i))) {
-      output.push(
-        formatProperty(ctx, value, recurseTimes, visibleKeys, String(i), true),
-      );
+      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys, String(i), true));
     } else {
       output.push("");
     }
   }
   keys.forEach(function (key) {
     if (!key.match(/^\d+$/)) {
-      output.push(
-        formatProperty(ctx, value, recurseTimes, visibleKeys, key, true),
-      );
+      output.push(formatProperty(ctx, value, recurseTimes, visibleKeys, key, true));
     }
   });
   return output;
@@ -402,14 +375,7 @@ function reduceToSingleString(output, base, braces) {
     return prev + cur.replace(/\u001b\[\d\d?m/g, "").length + 1;
   }, 0);
   if (length > 60) {
-    return (
-      braces[0] +
-      (base === "" ? "" : base + "\n ") +
-      " " +
-      output.join(",\n  ") +
-      " " +
-      braces[1]
-    );
+    return braces[0] + (base === "" ? "" : base + "\n ") + " " + output.join(",\n  ") + " " + braces[1];
   }
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
@@ -473,25 +439,10 @@ exports.isBuffer = isBuffer;
 function pad(n) {
   return n < 10 ? "0" + n.toString(10) : n.toString(10);
 }
-var months = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function timestamp() {
   var d = new Date();
-  var time = [pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())].join(
-    ":",
-  );
+  var time = [pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())].join(":");
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = (exports.log = function () {
@@ -512,14 +463,11 @@ function hasOwnProperty(obj, prop) {
 }
 var kCustomPromisifiedSymbol = Symbol.for("util.promisify.custom");
 var promisify = (exports.promisify = function promisify(original) {
-  if (typeof original !== "function")
-    throw new TypeError('The "original" argument must be of type Function');
+  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
   if (kCustomPromisifiedSymbol && original[kCustomPromisifiedSymbol]) {
     var fn = original[kCustomPromisifiedSymbol];
     if (typeof fn !== "function") {
-      throw new TypeError(
-        'The "util.promisify.custom" argument must be of type Function',
-      );
+      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
     }
     Object.defineProperty(fn, kCustomPromisifiedSymbol, {
       value: fn,

@@ -2,11 +2,7 @@ import { beforeEach, describe, it } from "bun:test";
 import readline from "node:readline";
 import { Writable, PassThrough } from "node:stream";
 import { EventEmitter } from "node:events";
-import {
-  createDoneDotAll,
-  createCallCheckCtx,
-  assert,
-} from "./node-test-helpers";
+import { createDoneDotAll, createCallCheckCtx, assert } from "./node-test-helpers";
 
 var {
   CSI,
@@ -82,7 +78,7 @@ describe("CSI", () => {
 });
 
 describe("readline.clearScreenDown()", () => {
-  it("should put clear screen sequence into writable when called", (done) => {
+  it("should put clear screen sequence into writable when called", done => {
     const { mustCall } = createCallCheckCtx(done);
 
     assert.strictEqual(readline.clearScreenDown(writable), true);
@@ -97,12 +93,12 @@ describe("readline.clearScreenDown()", () => {
     }, /ERR_INVALID_ARG_TYPE/);
   });
 
-  it("should that clearScreenDown() does not throw on null or undefined stream", (done) => {
+  it("should that clearScreenDown() does not throw on null or undefined stream", done => {
     const { mustCall } = createCallCheckCtx(done);
     assert.strictEqual(
       readline.clearScreenDown(
         null,
-        mustCall((err) => {
+        mustCall(err => {
           assert.strictEqual(err, null);
         }),
       ),
@@ -132,7 +128,7 @@ describe("readline.clearLine()", () => {
     assert.deepStrictEqual(writable.data, CSI.kClearLine);
   });
 
-  it("should call callback after clearing line", (done) => {
+  it("should call callback after clearing line", done => {
     const { mustCall } = createCallCheckCtx(done);
     assert.strictEqual(readline.clearLine(writable, -1, mustCall()), true);
     assert.deepStrictEqual(writable.data, CSI.kClearToLineBeginning);
@@ -145,7 +141,7 @@ describe("readline.clearLine()", () => {
     }, /ERR_INVALID_ARG_TYPE/);
   });
 
-  it("shouldn't throw on on null or undefined stream", (done) => {
+  it("shouldn't throw on on null or undefined stream", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Verify that clearLine() does not throw on null or undefined stream.
     assert.strictEqual(readline.clearLine(null, 0), true);
@@ -154,7 +150,7 @@ describe("readline.clearLine()", () => {
       readline.clearLine(
         null,
         0,
-        mustCall((err) => {
+        mustCall(err => {
           assert.strictEqual(err, null);
         }),
       ),
@@ -165,7 +161,7 @@ describe("readline.clearLine()", () => {
 });
 
 describe("readline.moveCursor()", () => {
-  it("shouldn't write when moveCursor(0, 0) is called", (done) => {
+  it("shouldn't write when moveCursor(0, 0) is called", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Nothing is written when moveCursor 0, 0
     [
@@ -178,15 +174,12 @@ describe("readline.moveCursor()", () => {
       [-1, 1, "\x1b[1D\x1b[1B"],
       [-1, -1, "\x1b[1D\x1b[1A"],
       [1, -1, "\x1b[1C\x1b[1A"],
-    ].forEach((set) => {
+    ].forEach(set => {
       writable.data = "";
       assert.strictEqual(readline.moveCursor(writable, set[0], set[1]), true);
       assert.deepStrictEqual(writable.data, set[2]);
       writable.data = "";
-      assert.strictEqual(
-        readline.moveCursor(writable, set[0], set[1], mustCall()),
-        true,
-      );
+      assert.strictEqual(readline.moveCursor(writable, set[0], set[1], mustCall()), true);
       assert.deepStrictEqual(writable.data, set[2]);
     });
   });
@@ -198,7 +191,7 @@ describe("readline.moveCursor()", () => {
     }, /ERR_INVALID_ARG_TYPE/);
   });
 
-  it("should not throw on null or undefined stream", (done) => {
+  it("should not throw on null or undefined stream", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Verify that moveCursor() does not throw on null or undefined stream.
     assert.strictEqual(readline.moveCursor(null, 1, 1), true);
@@ -208,7 +201,7 @@ describe("readline.moveCursor()", () => {
         null,
         1,
         1,
-        mustCall((err) => {
+        mustCall(err => {
           assert.strictEqual(err, null);
         }),
       ),
@@ -223,7 +216,7 @@ describe("readline.cursorTo()", () => {
     writable.data = "";
   });
 
-  it("should not throw on undefined or null as stream", (done) => {
+  it("should not throw on undefined or null as stream", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Undefined or null as stream should not throw.
     assert.strictEqual(readline.cursorTo(null), true);
@@ -234,7 +227,7 @@ describe("readline.cursorTo()", () => {
         undefined,
         1,
         1,
-        mustCall((err) => {
+        mustCall(err => {
           assert.strictEqual(err, null);
         }),
       ),
@@ -261,7 +254,7 @@ describe("readline.cursorTo()", () => {
     assert.strictEqual(writable.data, "");
   });
 
-  it("should write when given value cursor positions", (done) => {
+  it("should write when given value cursor positions", done => {
     const { mustCall } = createCallCheckCtx(done);
 
     assert.strictEqual(readline.cursorTo(writable, 1, "a"), true);
@@ -389,7 +382,7 @@ describe("readline.Interface", () => {
   });
 
   it("should throw on invalid escapeCodeTimeout", () => {
-    [null, {}, NaN, "50"].forEach((invalidInput) => {
+    [null, {}, NaN, "50"].forEach(invalidInput => {
       assert.throws(
         () => {
           const fi = new FakeInput();
@@ -414,13 +407,13 @@ describe("readline.Interface", () => {
     assert.ok(rl instanceof readline.Interface);
   });
 
-  it("should call completer when input emits data", (done) => {
+  it("should call completer when input emits data", done => {
     const { mustCall } = createCallCheckCtx(done);
     const fi = new FakeInput();
     const rli = new readline.Interface(
       fi,
       fi,
-      mustCall((line) => [[], line]),
+      mustCall(line => [[], line]),
       true,
     );
 
@@ -430,7 +423,7 @@ describe("readline.Interface", () => {
   });
 
   it("should allow crlfDelay to be set", () => {
-    [undefined, 50, 0, 100.5, 5000].forEach((crlfDelay) => {
+    [undefined, 50, 0, 100.5, 5000].forEach(crlfDelay => {
       const [rli] = getInterface({ crlfDelay });
       assert.strictEqual(rli.crlfDelay, Math.max(crlfDelay || 100, 100));
       rli.close();
@@ -438,7 +431,7 @@ describe("readline.Interface", () => {
   });
 
   it("should throw if completer is not a function or is undefined", () => {
-    ["not an array", 123, 123n, {}, true, Symbol(), null].forEach((invalid) => {
+    ["not an array", 123, 123n, {}, true, Symbol(), null].forEach(invalid => {
       assert.throws(
         () => {
           readline.createInterface({
@@ -455,7 +448,7 @@ describe("readline.Interface", () => {
   });
 
   it("should throw if history is not an array", () => {
-    ["not an array", 123, 123, {}, true, Symbol(), null].forEach((history) => {
+    ["not an array", 123, 123, {}, true, Symbol(), null].forEach(history => {
       assert.throws(
         () => {
           readline.createInterface({
@@ -472,24 +465,22 @@ describe("readline.Interface", () => {
   });
 
   it("should throw if historySize is not a positive number", () => {
-    ["not a number", -1, NaN, {}, true, Symbol(), null].forEach(
-      (historySize) => {
-        assert.throws(
-          () => {
-            readline.createInterface({
-              input,
-              historySize,
-            });
-          },
-          {
-            // TODO: Revert to Range error when properly implemented errors with multiple bases
-            // name: "RangeError",
-            name: "TypeError",
-            code: "ERR_INVALID_ARG_VALUE",
-          },
-        );
-      },
-    );
+    ["not a number", -1, NaN, {}, true, Symbol(), null].forEach(historySize => {
+      assert.throws(
+        () => {
+          readline.createInterface({
+            input,
+            historySize,
+          });
+        },
+        {
+          // TODO: Revert to Range error when properly implemented errors with multiple bases
+          // name: "RangeError",
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+        },
+      );
+    });
   });
 
   it("should throw on invalid tabSize", () => {
@@ -528,7 +519,7 @@ describe("readline.Interface", () => {
   });
 
   // Sending a single character with no newline
-  it("should not emit line when only a single character sent with no newline", (done) => {
+  it("should not emit line when only a single character sent with no newline", done => {
     const { mustNotCall } = createCallCheckCtx(done);
     const fi = new FakeInput();
     const rli = new readline.Interface(fi, {});
@@ -537,7 +528,7 @@ describe("readline.Interface", () => {
     rli.close();
   });
 
-  it("should treat \\r like \\n when alone", (done) => {
+  it("should treat \\r like \\n when alone", done => {
     const { mustCall } = createCallCheckCtx(done);
     // Sending multiple newlines at once that does not end with a new line and a
     // `end` event(last line is). \r should behave like \n when alone.
@@ -545,7 +536,7 @@ describe("readline.Interface", () => {
     const expectedLines = ["foo", "bar", "baz", "bat"];
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, expectedLines.shift());
       }, expectedLines.length - 1),
     );
@@ -554,13 +545,13 @@ describe("readline.Interface", () => {
   });
 
   // \r at start of input should output blank line
-  it("should output blank line when \\r at start of input", (done) => {
+  it("should output blank line when \\r at start of input", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true });
     const expectedLines = ["", "foo"];
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, expectedLines.shift());
       }, expectedLines.length),
     );
@@ -569,13 +560,13 @@ describe("readline.Interface", () => {
   });
 
   // \t does not become part of the input when there is a completer function
-  it("should not include \\t in input when there is a completer function", (done) => {
+  it("should not include \\t in input when there is a completer function", done => {
     const { mustCall } = createCallCheckCtx(done);
-    const completer = (line) => [[], line];
+    const completer = line => [[], line];
     const [rli, fi] = getInterface({ terminal: true, completer });
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "foo");
       }),
     );
@@ -588,12 +579,12 @@ describe("readline.Interface", () => {
 
   // \t when there is no completer function should behave like an ordinary
   // character
-  it("should treat \\t as an ordinary character when there is no completer function", (done) => {
+  it("should treat \\t as an ordinary character when there is no completer function", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true });
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "\t");
       }),
     );
@@ -604,16 +595,14 @@ describe("readline.Interface", () => {
 
   // Adding history lines should emit the history event with
   // the history array
-  it("should emit history event when adding history lines", (done) => {
+  it("should emit history event when adding history lines", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true });
     const expectedLines = ["foo", "bar", "baz", "bat"];
     rli.on(
       "history",
-      mustCall((history) => {
-        const expectedHistory = expectedLines
-          .slice(0, history.length)
-          .reverse();
+      mustCall(history => {
+        const expectedHistory = expectedLines.slice(0, history.length).reverse();
         assert.deepStrictEqual(history, expectedHistory);
       }, expectedLines.length),
     );
@@ -625,20 +614,20 @@ describe("readline.Interface", () => {
 
   // Altering the history array in the listener should not alter
   // the line being processed
-  it("should not alter the line being processed when history is altered", (done) => {
+  it("should not alter the line being processed when history is altered", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true });
     const expectedLine = "foo";
     rli.on(
       "history",
-      mustCall((history) => {
+      mustCall(history => {
         assert.strictEqual(history[0], expectedLine);
         history.shift();
       }),
     );
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, expectedLine);
         assert.strictEqual(rli.history.length, 0);
       }),
@@ -657,7 +646,7 @@ describe("readline.Interface", () => {
     const expectedLines = ["foo", "bar", "baz", "bar", "bat", "bat"];
     // ['foo', 'baz', 'bar', bat'];
     let callCount = 0;
-    rli.on("line", (line) => {
+    rli.on("line", line => {
       assert.strictEqual(line, expectedLines[callCount]);
       callCount++;
     });
@@ -733,7 +722,7 @@ describe("readline.Interface", () => {
     });
     const expectedLines = ["foo", "bar", "baz", "bar", "bat", "bat"];
     let callCount = 0;
-    rli.on("line", (line) => {
+    rli.on("line", line => {
       assert.strictEqual(line, expectedLines[callCount]);
       callCount++;
     });
@@ -768,7 +757,7 @@ describe("readline.Interface", () => {
     });
     assert.throws(
       () => fi.emit("data", "fooX"),
-      (e) => {
+      e => {
         console.log("ERRROR!", e);
         assert.strictEqual(e, err);
         return true;
@@ -803,11 +792,7 @@ describe("readline.Interface", () => {
     const [rli] = getInterface({ terminal: true });
     const expectedLines = ["foo", "bar"];
     rli.question(expectedLines.join("\n"), () => rli.close());
-    assertCursorRowsAndCols(
-      rli,
-      expectedLines.length - 1,
-      expectedLines.slice(-1)[0].length,
-    );
+    assertCursorRowsAndCols(rli, expectedLines.length - 1, expectedLines.slice(-1)[0].length);
     rli.close();
   });
 
@@ -844,7 +829,7 @@ describe("readline.Interface", () => {
   });
 
   // Back and Forward one astral character
-  it("should handle going back and forward one astral character", (done) => {
+  it("should handle going back and forward one astral character", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "💻");
@@ -859,7 +844,7 @@ describe("readline.Interface", () => {
 
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "💻");
       }),
     );
@@ -868,7 +853,7 @@ describe("readline.Interface", () => {
   });
 
   // Two astral characters left
-  it("should handle two astral characters left", (done) => {
+  it("should handle two astral characters left", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "💻");
@@ -882,7 +867,7 @@ describe("readline.Interface", () => {
 
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "🐕💻");
       }),
     );
@@ -891,7 +876,7 @@ describe("readline.Interface", () => {
   });
 
   // Two astral characters right
-  it("should handle two astral characters right", (done) => {
+  it("should handle two astral characters right", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "💻");
@@ -905,7 +890,7 @@ describe("readline.Interface", () => {
 
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "💻🐕");
       }),
     );
@@ -929,19 +914,19 @@ describe("readline.Interface", () => {
   });
 
   // `deleteWordLeft`
-  it("should handle deleteWordLeft", (done) => {
+  it("should handle deleteWordLeft", done => {
     const { mustCall } = createCallCheckCtx(done);
     [
       { ctrl: true, name: "w" },
       { ctrl: true, name: "backspace" },
       { meta: true, name: "backspace" },
-    ].forEach((deleteWordLeftKey) => {
+    ].forEach(deleteWordLeftKey => {
       let [rli, fi] = getInterface({ terminal: true, prompt: "" });
       fi.emit("data", "the quick brown fox");
       fi.emit("keypress", ".", { ctrl: true, name: "left" });
       rli.on(
         "line",
-        mustCall((line) => {
+        mustCall(line => {
           assert.strictEqual(line, "the quick fox");
         }),
       );
@@ -955,7 +940,7 @@ describe("readline.Interface", () => {
       fi.emit("keypress", ".", { ctrl: true, name: "a" });
       rli.on(
         "line",
-        mustCall((line) => {
+        mustCall(line => {
           assert.strictEqual(line, "the quick brown fox");
         }),
       );
@@ -966,20 +951,20 @@ describe("readline.Interface", () => {
   });
 
   // `deleteWordRight`
-  it("should handle deleteWordRight", (done) => {
+  it("should handle deleteWordRight", done => {
     const { mustCall } = createCallCheckCtx(done);
     [
       { ctrl: true, name: "delete" },
       { meta: true, name: "delete" },
       { meta: true, name: "d" },
-    ].forEach((deleteWordRightKey) => {
+    ].forEach(deleteWordRightKey => {
       let [rli, fi] = getInterface({ terminal: true, prompt: "" });
       fi.emit("data", "the quick brown fox");
       fi.emit("keypress", ".", { ctrl: true, name: "left" });
       fi.emit("keypress", ".", { ctrl: true, name: "left" });
       rli.on(
         "line",
-        mustCall((line) => {
+        mustCall(line => {
           assert.strictEqual(line, "the quick fox");
         }),
       );
@@ -992,7 +977,7 @@ describe("readline.Interface", () => {
       fi.emit("data", "the quick brown fox");
       rli.on(
         "line",
-        mustCall((line) => {
+        mustCall(line => {
           assert.strictEqual(line, "the quick brown fox");
         }),
       );
@@ -1003,7 +988,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteLeft
-  it("should handle deleteLeft", (done) => {
+  it("should handle deleteLeft", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1014,7 +999,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 18);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "the quick brown fo");
       }),
     );
@@ -1023,7 +1008,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteLeft astral character
-  it("should handle deleteLeft astral character", (done) => {
+  it("should handle deleteLeft astral character", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "💻");
@@ -1033,7 +1018,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 0);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "");
       }),
     );
@@ -1042,7 +1027,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteRight
-  it("should handle deleteRight", (done) => {
+  it("should handle deleteRight", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1056,7 +1041,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 0);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "he quick brown fox");
       }),
     );
@@ -1065,7 +1050,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteRight astral character
-  it("should handle deleteRight of astral characters", (done) => {
+  it("should handle deleteRight of astral characters", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "💻");
@@ -1079,7 +1064,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 0);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "");
       }),
     );
@@ -1088,7 +1073,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteLineLeft
-  it("should handle deleteLineLeft", (done) => {
+  it("should handle deleteLineLeft", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1099,7 +1084,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 0);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "");
       }),
     );
@@ -1108,7 +1093,7 @@ describe("readline.Interface", () => {
   });
 
   // deleteLineRight
-  it("should handle deleteLineRight", (done) => {
+  it("should handle deleteLineRight", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1122,7 +1107,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 0);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "");
       }),
     );
@@ -1131,7 +1116,7 @@ describe("readline.Interface", () => {
   });
 
   // yank
-  it("should handle yank", (done) => {
+  it("should handle yank", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1151,7 +1136,7 @@ describe("readline.Interface", () => {
 
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "the quick brown fox");
       }),
     );
@@ -1161,7 +1146,7 @@ describe("readline.Interface", () => {
   });
 
   // yank pop
-  it("should handle yank pop", (done) => {
+  it("should handle yank pop", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     fi.emit("data", "the quick brown fox");
@@ -1200,7 +1185,7 @@ describe("readline.Interface", () => {
 
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "he quick brown foxthe ");
       }),
     );
@@ -1295,7 +1280,7 @@ describe("readline.Interface", () => {
   });
 
   // Clear the whole screen
-  it("should clear the whole screen", (done) => {
+  it("should clear the whole screen", done => {
     const { mustCall } = createCallCheckCtx(done);
     const [rli, fi] = getInterface({ terminal: true, prompt: "" });
     const lines = ["line 1", "line 2", "line 3"];
@@ -1304,7 +1289,7 @@ describe("readline.Interface", () => {
     assertCursorRowsAndCols(rli, 0, 6);
     rli.on(
       "line",
-      mustCall((line) => {
+      mustCall(line => {
         assert.strictEqual(line, "line 3");
       }),
     );
@@ -1845,7 +1830,7 @@ describe("readline.Interface", () => {
 });
 
 describe("readline.createInterface()", () => {
-  it("should emit line when input ends line", (done) => {
+  it("should emit line when input ends line", done => {
     const createDone = createDoneDotAll(done);
     const lineDone = createDone(2000);
     const { mustCall } = createCallCheckCtx(createDone(2000));
@@ -1857,7 +1842,7 @@ describe("readline.createInterface()", () => {
 
     rl.on(
       "line",
-      mustCall((data) => {
+      mustCall(data => {
         assert.strictEqual(data, "abc");
         lineDone();
       }),
@@ -1866,7 +1851,7 @@ describe("readline.createInterface()", () => {
     input.end("abc");
   });
 
-  it("should not emit line when input ends without newline", (done) => {
+  it("should not emit line when input ends without newline", done => {
     const { mustNotCall } = createCallCheckCtx(done);
 
     const input = new PassThrough();
@@ -1879,7 +1864,7 @@ describe("readline.createInterface()", () => {
     input.write("abc");
   });
 
-  it("should read line by line", (done) => {
+  it("should read line by line", done => {
     const createDone = createDoneDotAll(done);
     const { mustCall } = createCallCheckCtx(createDone(3000));
     const lineDone = createDone(2000);
@@ -1891,7 +1876,7 @@ describe("readline.createInterface()", () => {
 
     rl.on(
       "line",
-      mustCall((data) => {
+      mustCall(data => {
         assert.strictEqual(data, "abc");
         lineDone();
       }),
@@ -1929,7 +1914,7 @@ describe("readline.createInterface()", () => {
       },
     };
 
-    [key.xterm, key.gnome, key.rxvt, key.putty].forEach((key) => {
+    [key.xterm, key.gnome, key.rxvt, key.putty].forEach(key => {
       rl.write.apply(rl, key.home);
       assert.strictEqual(rl.cursor, 0);
       rl.write.apply(rl, key.end);
@@ -1989,9 +1974,7 @@ describe("readline.createInterface()", () => {
 
     rl.write("foo bar.hop/zoo");
     rl.write.apply(rl, key.xterm.home);
-    ["bar.hop/zoo", ".hop/zoo", "hop/zoo", "/zoo", "zoo", ""].forEach(function (
-      expectedLine,
-    ) {
+    ["bar.hop/zoo", ".hop/zoo", "hop/zoo", "/zoo", "zoo", ""].forEach(function (expectedLine) {
       rl.write.apply(rl, key.xterm.metad);
       assert.strictEqual(rl.cursor, 0);
       assert.strictEqual(rl.line, expectedLine);

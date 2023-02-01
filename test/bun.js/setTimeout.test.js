@@ -6,18 +6,22 @@ it("setTimeout", async () => {
     var numbers = [];
 
     for (let i = 0; i < 10; i++) {
-      const id = setTimeout((...args) => {
-        numbers.push(i);
-        if (i === 9) {
-          resolve(numbers);
-        }
-        try {
-          expect(args.length).toBe(1);
-          expect(args[0]).toBe("foo");
-        } catch (err) {
-          reject(err);
-        }
-      }, i, "foo");
+      const id = setTimeout(
+        (...args) => {
+          numbers.push(i);
+          if (i === 9) {
+            resolve(numbers);
+          }
+          try {
+            expect(args.length).toBe(1);
+            expect(args[0]).toBe("foo");
+          } catch (err) {
+            reject(err);
+          }
+        },
+        i,
+        "foo",
+      );
       expect(id > lastID).toBe(true);
       lastID = id;
     }

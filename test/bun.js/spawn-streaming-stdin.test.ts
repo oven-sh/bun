@@ -38,7 +38,7 @@ test("spawn can write to stdin multiple chunks", async () => {
         while (true) {
           proc.stdin.write("Wrote to stdin!\n");
           inCounter++;
-          await new Promise((resolve) => setTimeout(resolve, 8));
+          await new Promise(resolve => setTimeout(resolve, 8));
 
           if (inCounter === 4) break;
         }
@@ -46,9 +46,7 @@ test("spawn can write to stdin multiple chunks", async () => {
       })();
 
       await Promise.all([prom, prom2]);
-      expect(Buffer.concat(chunks).toString().trim()).toBe(
-        "Wrote to stdin!\n".repeat(4).trim(),
-      );
+      expect(Buffer.concat(chunks).toString().trim()).toBe("Wrote to stdin!\n".repeat(4).trim());
       await proc.exited;
     })();
   }

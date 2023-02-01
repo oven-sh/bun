@@ -57,10 +57,7 @@ await new Promise((resolve, reject) => {
     passed = exception instanceof TypeError;
   }
 
-  if (!passed)
-    throw new Error(
-      "queueMicrotask should throw a TypeError if the argument is not a function",
-    );
+  if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is not a function");
 }
 
 {
@@ -71,18 +68,14 @@ await new Promise((resolve, reject) => {
     passed = exception instanceof TypeError;
   }
 
-  if (!passed)
-    throw new Error(
-      "queueMicrotask should throw a TypeError if the argument is empty",
-    );
+  if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is empty");
 }
 
 await new Promise((resolve, reject) => {
   process.nextTick(
     (first, second) => {
       console.log(first, second);
-      if (first !== 12345 || second !== "hello")
-        reject(new Error("process.nextTick called with wrong arguments"));
+      if (first !== 12345 || second !== "hello") reject(new Error("process.nextTick called with wrong arguments"));
       resolve(true);
     },
     12345,

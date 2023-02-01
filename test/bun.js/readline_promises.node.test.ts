@@ -1,11 +1,7 @@
 import { describe, it } from "bun:test";
 import readlinePromises from "node:readline/promises";
 import { EventEmitter } from "node:events";
-import {
-  createDoneDotAll,
-  createCallCheckCtx,
-  assert,
-} from "./node-test-helpers";
+import { createDoneDotAll, createCallCheckCtx, assert } from "./node-test-helpers";
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -29,7 +25,7 @@ class FakeInput extends EventEmitter {
 // ----------------------------------------------------------------------------
 
 describe("readline/promises.createInterface()", () => {
-  it("should throw an error when failed completion", (done) => {
+  it("should throw an error when failed completion", done => {
     const createDone = createDoneDotAll(done);
     const { mustCall, mustNotCall } = createCallCheckCtx(createDone());
 

@@ -166,13 +166,7 @@ export const Socket = (function (InternalSocket) {
     #pendingRead;
 
     constructor(options) {
-      const {
-        signal,
-        write,
-        read,
-        allowHalfOpen = false,
-        ...opts
-      } = options || {};
+      const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -335,8 +329,7 @@ export const Socket = (function (InternalSocket) {
     }
 
     _write(chunk, encoding, callback) {
-      if (typeof chunk == "string" && encoding !== "utf8")
-        chunk = Buffer.from(chunk, encoding);
+      if (typeof chunk == "string" && encoding !== "utf8") chunk = Buffer.from(chunk, encoding);
       var written = this.#socket?.write(chunk);
       if (written == chunk.length) {
         callback();

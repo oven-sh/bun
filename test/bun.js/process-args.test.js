@@ -27,10 +27,10 @@ test("args exclude run", async () => {
   const t3 = JSON.parse(await new Response(s3).text());
   expect(t3[0]).toBe(arg0);
   expect(t3[1]).toBe(arg1);
-  const { stdout: s4 } = spawn(
-    [exe, "run", "print-process-args.js", "arg1", "arg2"],
-    { cwd: import.meta.dir, env: { BUN_DEBUG_QUIET_LOGS: "1" } },
-  );
+  const { stdout: s4 } = spawn([exe, "run", "print-process-args.js", "arg1", "arg2"], {
+    cwd: import.meta.dir,
+    env: { BUN_DEBUG_QUIET_LOGS: "1" },
+  });
   const t4 = JSON.parse(await new Response(s4).text());
   expect(t4[0]).toBe(arg0);
   expect(t4[1]).toBe(arg1);

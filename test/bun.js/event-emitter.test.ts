@@ -3,10 +3,7 @@ import fs from "node:fs";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
-import EventEmitter, {
-  getEventListeners,
-  captureRejectionSymbol,
-} from "node:events";
+import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
 import { heapStats } from "bun:jsc";
 
 describe("EventEmitter", () => {
@@ -42,7 +39,7 @@ describe("EventEmitter", () => {
   });
 
   // These are also tests for the done() function in the test runner.
-  test("EventEmitter emit (different tick)", (done) => {
+  test("EventEmitter emit (different tick)", done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     queueMicrotask(() => {
@@ -51,21 +48,21 @@ describe("EventEmitter", () => {
   });
 
   // Unlike Jest, bun supports async and done
-  test("async EventEmitter emit (microtask)", async (done) => {
+  test("async EventEmitter emit (microtask)", async done => {
     await 1;
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     emitter.emit("wow");
   });
 
-  test("async EventEmitter emit (microtask) after", async (done) => {
+  test("async EventEmitter emit (microtask) after", async done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     await 1;
     emitter.emit("wow");
   });
 
-  test("EventEmitter emit (same tick)", (done) => {
+  test("EventEmitter emit (same tick)", done => {
     var emitter = new EventEmitter();
 
     emitter.on("wow", () => done());
@@ -73,7 +70,7 @@ describe("EventEmitter", () => {
     emitter.emit("wow");
   });
 
-  test("EventEmitter emit (setTimeout task)", (done) => {
+  test("EventEmitter emit (setTimeout task)", done => {
     var emitter = new EventEmitter();
     emitter.on("wow", () => done());
     setTimeout(() => emitter.emit("wow"), 1);
@@ -117,11 +114,7 @@ const waysOfCreating = [
 ];
 
 for (let create of waysOfCreating) {
-  it(`${create
-    .toString()
-    .slice(10, 40)
-    .replaceAll("\n", "\\n")
-    .trim()} should work`, () => {
+  it(`${create.toString().slice(10, 40).replaceAll("\n", "\\n").trim()} should work`, () => {
     var myEmitter = create();
     var called = false;
     myEmitter.once("event", function () {
@@ -161,10 +154,7 @@ test("EventEmitter GCs", () => {
       EventEmitter.call(this);
     }
 
-    Object.setPrototypeOf(
-      EventEmitterSubclass.prototype,
-      EventEmitter.prototype,
-    );
+    Object.setPrototypeOf(EventEmitterSubclass.prototype, EventEmitter.prototype);
     Object.setPrototypeOf(EventEmitterSubclass, EventEmitter);
 
     var myEmitter = new EventEmitterSubclass();

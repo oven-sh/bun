@@ -68,7 +68,7 @@ function createOptions(type, message, closeOnDone) {
 }
 
 const server = Bun.listen(
-  createOptions("[Server]", "response", (socket) => {
+  createOptions("[Server]", "response", socket => {
     server.stop();
     socket.end();
   }),

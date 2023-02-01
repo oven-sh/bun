@@ -1,7 +1,7 @@
 import { expect, it, describe } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
-const getByteLength = (str) => {
+const getByteLength = str => {
   // returns the byte length of an utf8 string
   var s = str.length;
   for (var i = str.length - 1; i >= 0; i--) {
@@ -27,10 +27,7 @@ describe("TextEncoder", () => {
     expect(out.read).toBe(text.length);
 
     expect(encoded instanceof Uint8Array).toBe(true);
-    const result = [
-      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
-      108, 100, 33,
-    ];
+    const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
       expect(into[i]).toBe(result[i]);
@@ -83,7 +80,7 @@ describe("TextEncoder", () => {
     const decoded = new TextDecoder().decode(encoded);
     expect(decoded).toBe(text);
     gcTrace();
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise(resolve => setTimeout(resolve, 1));
     gcTrace();
     expect(decoded).toBe(text);
   });
@@ -126,10 +123,7 @@ describe("TextEncoder", () => {
     expect(out.read).toBe(text.length);
 
     expect(encoded instanceof Uint8Array).toBe(true);
-    const result = [
-      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
-      108, 100, 33,
-    ];
+    const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
 
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(into[i]);
@@ -195,14 +189,8 @@ describe("TextEncoder", () => {
     bad.forEach(function (t) {
       it(t.encoding + " - " + t.name, () => {
         gcTrace(true);
-        expect(
-          new TextDecoder(t.encoding).decode(new Uint8Array(t.input)),
-        ).toBe(t.expected);
-        expect(
-          new TextDecoder(t.encoding).decode(
-            new Uint16Array(new Uint8Array(t.input).buffer),
-          ),
-        ).toBe(t.expected);
+        expect(new TextDecoder(t.encoding).decode(new Uint8Array(t.input))).toBe(t.expected);
+        expect(new TextDecoder(t.encoding).decode(new Uint16Array(new Uint8Array(t.input).buffer))).toBe(t.expected);
         gcTrace(true);
       });
       //   test(function () {

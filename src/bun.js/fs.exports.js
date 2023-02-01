@@ -171,15 +171,11 @@ function callbackify(fsFunction, args) {
 // _eventsCount
 // _maxListener
 var _lazyReadStream;
-var readStreamPathFastPathSymbol = Symbol.for(
-  "Bun.Node.readStreamPathFastPath",
-);
+var readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath");
 const readStreamSymbol = Symbol.for("Bun.NodeReadStream");
 const readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd");
 var writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
-var writeStreamPathFastPathCallSymbol = Symbol.for(
-  "Bun.NodeWriteStreamFastPathCall",
-);
+var writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall");
 var kIoDone = Symbol.for("kIoDone");
 
 function getLazyReadStream() {
@@ -187,11 +183,7 @@ function getLazyReadStream() {
     return _lazyReadStream;
   }
 
-  var {
-    Readable,
-    _getNativeReadableStreamPrototype,
-    eos: eos_,
-  } = import.meta.require("node:stream");
+  var { Readable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
   var defaultReadStreamOptions = {
     file: undefined,
     fd: undefined,
@@ -255,10 +247,7 @@ function getLazyReadStream() {
         if (pathOrFd.length === 0) {
           throw new TypeError("Expected path to be a non-empty string");
         }
-        tempThis.path =
-          tempThis.file =
-          tempThis[readStreamPathOrFdSymbol] =
-            pathOrFd;
+        tempThis.path = tempThis.file = tempThis[readStreamPathOrFdSymbol] = pathOrFd;
       } else if (typeof pathOrFd === "number") {
         pathOrFd |= 0;
         if (pathOrFd < 0) {
@@ -364,7 +353,7 @@ function getLazyReadStream() {
         if (!fd) {
           cb(err);
         } else {
-          this.#fs.close(fd, (er) => {
+          this.#fs.close(fd, er => {
             cb(er || err);
           });
           this.fd = null;
@@ -474,7 +463,7 @@ function getLazyReadStream() {
                 this.emit(kIoDone);
               }
             },
-            (er) => {
+            er => {
               this[kIoDone] = true;
               this.#errorOrDestroy(er);
             },
@@ -520,15 +509,8 @@ function getLazyReadStream() {
     }
 
     pipe(dest, pipeOpts) {
-      if (
-        this[readStreamPathFastPathSymbol] &&
-        (pipeOpts?.end ?? true) &&
-        this._readableState?.pipes?.length === 0
-      ) {
-        if (
-          writeStreamPathFastPathSymbol in dest &&
-          dest[writeStreamPathFastPathSymbol]
-        ) {
+      if (this[readStreamPathFastPathSymbol] && (pipeOpts?.end ?? true) && this._readableState?.pipes?.length === 0) {
+        if (writeStreamPathFastPathSymbol in dest && dest[writeStreamPathFastPathSymbol]) {
           if (dest[writeStreamPathFastPathCallSymbol](this, pipeOpts)) {
             return this;
           }
@@ -657,12 +639,7 @@ function getLazyWriteStream() {
 
       if (encoding !== defaultWriteStreamOptions.encoding) {
         this.setDefaultEncoding(encoding);
-        if (
-          encoding !== "buffer" &&
-          encoding !== "utf8" &&
-          encoding !== "utf-8" &&
-          encoding !== "binary"
-        ) {
+        if (encoding !== "buffer" && encoding !== "utf8" && encoding !== "utf-8" && encoding !== "binary") {
           this[writeStreamPathFastPathSymbol] = false;
         }
       }
@@ -703,18 +680,15 @@ function getLazyWriteStream() {
 
       this[kIoDone] = false;
       readStream[kIoDone] = false;
-      return Bun.write(
-        this[writeStreamPathFastPathSymbol],
-        readStream[readStreamPathOrFdSymbol],
-      ).then(
-        (bytesWritten) => {
+      return Bun.write(this[writeStreamPathFastPathSymbol], readStream[readStreamPathOrFdSymbol]).then(
+        bytesWritten => {
           readStream[kIoDone] = this[kIoDone] = true;
           this.bytesWritten += bytesWritten;
           readStream.bytesRead += bytesWritten;
           this.end();
           readStream.close();
         },
-        (err) => {
+        err => {
           readStream[kIoDone] = this[kIoDone] = true;
           this.#errorOrDestroy(err);
           readStream.emit("error", err);
@@ -741,7 +715,7 @@ function getLazyWriteStream() {
     #internalClose(err, cb) {
       this[writeStreamPathFastPathSymbol] = false;
       var fd = this.fd;
-      this.#fs.close(fd, (er) => {
+      this.#fs.close(fd, er => {
         this.fd = null;
         cb(err || er);
       });
@@ -818,20 +792,13 @@ function getLazyWriteStream() {
     }
 
     #internalWriteSlow(chunk, encoding, cb) {
-      this.#fs.write(
-        this.fd,
-        chunk,
-        0,
-        chunk.length,
-        this.pos,
-        (err, bytes) => {
-          this[kIoDone] = false;
-          this.#handleWrite(err, bytes);
-          this.emit(kIoDone);
+      this.#fs.write(this.fd, chunk, 0, chunk.length, this.pos, (err, bytes) => {
+        this[kIoDone] = false;
+        this.#handleWrite(err, bytes);
+        this.emit(kIoDone);
 
-          !err ? cb() : cb(err);
-        },
-      );
+        !err ? cb() : cb(err);
+      });
     }
 
     end(chunk, encoding, cb) {

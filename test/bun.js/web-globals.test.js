@@ -55,9 +55,7 @@ it("crypto.getRandomValues", () => {
   {
     var array = crypto.getRandomValues(foo);
     expect(array).toBe(foo);
-    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true,
-    );
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
   }
 
   // disable it for this block because it tends to get stuck here running the GC forever
@@ -70,17 +68,13 @@ it("crypto.getRandomValues", () => {
   });
 
   // run it on a large input
-  expect(
-    !!crypto.getRandomValues(new Uint8Array(8096)).find((a) => a > 0),
-  ).toBe(true);
+  expect(!!crypto.getRandomValues(new Uint8Array(8096)).find(a => a > 0)).toBe(true);
 
   {
     // any additional input into getRandomValues() makes it unbuffered
     var array = crypto.getRandomValues(foo, "unbuffered");
     expect(array).toBe(foo);
-    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true,
-    );
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
   }
 });
 

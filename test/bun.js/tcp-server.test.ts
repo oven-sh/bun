@@ -1,10 +1,4 @@
-import {
-  listen,
-  connect,
-  TCPSocketListener,
-  TCPSocketOptions,
-  SocketHandler,
-} from "bun";
+import { listen, connect, TCPSocketListener, TCPSocketOptions, SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
 import * as JSC from "bun:jsc";
 
@@ -45,9 +39,7 @@ it("echo server 1 on 1", async () => {
         if (serverData) serverData.other = clientData;
       },
       data(socket, buffer) {
-        const msg = `${
-          socket.data.isServer ? "server:" : "client:"
-        } Hello World! ${socket.data.counter++}`;
+        const msg = `${socket.data.isServer ? "server:" : "client:"} Hello World! ${socket.data.counter++}`;
         socket.data.sendQueue.push(msg);
 
         expect(decoder.decode(buffer)).toBe(socket.data.other.sendQueue.pop());
@@ -155,14 +147,10 @@ describe("tcp socket binaryType", () => {
                   ? Buffer
                   : Error),
             ).toBe(true);
-            const msg = `${
-              socket.data.isServer ? "server:" : "client:"
-            } Hello World! ${socket.data.counter++}`;
+            const msg = `${socket.data.isServer ? "server:" : "client:"} Hello World! ${socket.data.counter++}`;
             socket.data.sendQueue.push(msg);
 
-            expect(decoder.decode(buffer)).toBe(
-              socket.data.other.sendQueue.pop(),
-            );
+            expect(decoder.decode(buffer)).toBe(socket.data.other.sendQueue.pop());
 
             if (socket.data.counter > 10) {
               if (!socket.data.finished) {

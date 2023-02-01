@@ -2,13 +2,7 @@ import { spawn } from "bun";
 import { expect, it } from "bun:test";
 import { bunEnv } from "bunEnv";
 import { bunExe } from "bunExe";
-import {
-  readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
+import { readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
 it("should hot reload when file is overwritten", async () => {
   const root = import.meta.dir + "/hot-runner.js";

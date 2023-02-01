@@ -8,7 +8,7 @@ export function gcTick(trace = false) {
   trace && console.trace("");
   // console.trace("hello");
   gc();
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     setTimeout(resolve, 0);
   });
 }

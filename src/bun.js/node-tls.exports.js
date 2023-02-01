@@ -11,8 +11,7 @@ function createSecureContext(options) {
   return new SecureContext();
 }
 
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket } =
-  import.meta.require("net");
+const { [Symbol.for("::bunternal::")]: InternalTCPSocket } = import.meta.require("net");
 
 const buntls = Symbol.for("::buntls::");
 

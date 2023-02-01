@@ -10,17 +10,13 @@ it("primordials are not here!", () => {
 });
 
 it("import.meta.resolveSync", () => {
-  expect(
-    import.meta.resolveSync("./" + import.meta.file, import.meta.path),
-  ).toBe(path);
+  expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
   expect(require.resolve("./" + import.meta.file)).toBe(path);
 
   // check it works with URL objects
-  expect(
-    Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path),
-  ).toBe(import.meta.path);
+  expect(Module.createRequire(new URL(import.meta.url)).resolve(import.meta.path)).toBe(import.meta.path);
 });
 
 it("require with a query string works on dynamically created content", () => {
@@ -29,9 +25,7 @@ it("require with a query string works on dynamically created content", () => {
     force: true,
   });
   try {
-    const require = Module.createRequire(
-      "/tmp/bun-test-import-meta-dynamic-dir/foo.js",
-    );
+    const require = Module.createRequire("/tmp/bun-test-import-meta-dynamic-dir/foo.js");
     try {
       require("./bar.js?query=123");
     } catch (e) {
@@ -40,11 +34,7 @@ it("require with a query string works on dynamically created content", () => {
 
     mkdirSync("/tmp/bun-test-import-meta-dynamic-dir", { recursive: true });
 
-    writeFileSync(
-      "/tmp/bun-test-import-meta-dynamic-dir/bar.js",
-      "export default 'hello';",
-      "utf8",
-    );
+    writeFileSync("/tmp/bun-test-import-meta-dynamic-dir/bar.js", "export default 'hello';", "utf8");
 
     expect(require("./bar.js?query=123").default).toBe("hello");
   } catch (e) {
@@ -132,9 +122,7 @@ it("import.meta.require (javascript, live bindings)", () => {
   var ReExport = require("./import.live.rexport.js");
 
   // dynamic require (string interpolation that way forces it to be dynamic)
-  var ReExportDynamic = require(`./import.live.${"rexport"
-    .split("")
-    .join("")}.js`);
+  var ReExportDynamic = require(`./import.live.${"rexport".split("").join("")}.js`);
 
   expect(Source.foo).toBe(1);
   Source.setFoo(Source.foo + 1);

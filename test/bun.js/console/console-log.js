@@ -36,20 +36,10 @@ console.log(/FooRegex/);
 console.error("uh oh");
 console.time("Check");
 
-console.log(
-  "Is it a bug or a feature that formatting numbers like %d is colored",
-  123,
-);
+console.log("Is it a bug or a feature that formatting numbers like %d is colored", 123);
 //console.log(globalThis);
 
-console.log(
-  "String %s should be 2nd word, 456 == %s and percent s %s == %s",
-  "123",
-  "456",
-  "%s",
-  "What",
-  "okay",
-);
+console.log("String %s should be 2nd word, 456 == %s and percent s %s == %s", "123", "456", "%s", "What", "okay");
 
 const infinteLoop = {
   foo: {

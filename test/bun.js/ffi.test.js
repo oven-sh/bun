@@ -384,9 +384,7 @@ function ffiRunner(fast) {
       if (fast) expect(returns_42_uint64_t().valueOf()).toBe(42);
       else expect(returns_42_uint64_t().valueOf()).toBe(42n);
       Bun.gc(true);
-      expect(Math.fround(returns_42_float())).toBe(
-        Math.fround(42.41999804973602),
-      );
+      expect(Math.fround(returns_42_float())).toBe(Math.fround(42.41999804973602));
       expect(returns_42_double()).toBe(42.42);
       expect(returns_42_uint8_t()).toBe(42);
       expect(returns_neg_42_int8_t()).toBe(-42);
@@ -425,19 +423,13 @@ function ffiRunner(fast) {
       new Uint8Array(bigArray.buffer).fill(255);
       var bigIntArray = new BigInt64Array(bigArray.buffer);
       expect(identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
-      expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(
-        bigArray[0] - BigInt(1),
-      );
+      expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(bigArray[0] - BigInt(1));
       if (fast) {
         expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0);
-        expect(
-          add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0]),
-        ).toBe(10);
+        expect(add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10);
       } else {
         expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0n);
-        expect(
-          add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0]),
-        ).toBe(10n);
+        expect(add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(10n);
       }
       if (fast) {
         expect(identity_uint64_t(0)).toBe(0);
@@ -452,9 +444,7 @@ function ffiRunner(fast) {
         expect(identity_uint64_t(BigInt(100))).toBe(100n);
 
         expect(identity_int64_t(bigIntArray[0])).toBe(bigIntArray[0]);
-        expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(
-          bigIntArray[0] - BigInt(1),
-        );
+        expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(bigIntArray[0] - BigInt(1));
       }
       Bun.gc(true);
       expect(add_char.native(1, 1)).toBe(2);
@@ -477,9 +467,7 @@ function ffiRunner(fast) {
       expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
       const buffer = toBuffer(cptr, 0, 4);
       expect(buffer.readInt32(0)).toBe(42);
-      expect(
-        new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true),
-      ).toBe(42);
+      expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(42);
       expect(ptr(buffer)).toBe(cptr);
       expect(new CString(cptr, 0, 1).toString()).toBe("*");
       expect(identity_ptr(cptr)).toBe(cptr);
@@ -512,7 +500,7 @@ function ffiRunner(fast) {
 
     it("JSCallback", () => {
       var toClose = new JSCallback(
-        (input) => {
+        input => {
           return input;
         },
         {
@@ -531,7 +519,7 @@ function ffiRunner(fast) {
         it("fn(" + returnName + ") " + returnName, () => {
           var roundtripFunction = new CFunction({
             ptr: new JSCallback(
-              (input) => {
+              input => {
                 return input;
               },
               {
@@ -559,12 +547,12 @@ function ffiRunner(fast) {
       }
     });
 
-    describe("threadsafe callback", (done) => {
+    describe("threadsafe callback", done => {
       // 1 arg, threadsafe
       for (let [name, value] of Object.entries(typeMap)) {
         it("fn(" + name + ") " + name, async () => {
           const cb = new JSCallback(
-            (arg1) => {
+            arg1 => {
               expect(arg1).toBe(value);
             },
             {
@@ -596,12 +584,8 @@ it("read", () => {
 
   for (let i = 0; i < buffer.length; i++) {
     buffer[i] = BigInt(i);
-    expect(read.intptr(addr, i * 8)).toBe(
-      Number(dataView.getBigInt64(i * 8, true)),
-    );
-    expect(read.ptr(addr, i * 8)).toBe(
-      Number(dataView.getBigUint64(i * 8, true)),
-    );
+    expect(read.intptr(addr, i * 8)).toBe(Number(dataView.getBigInt64(i * 8, true)));
+    expect(read.ptr(addr, i * 8)).toBe(Number(dataView.getBigUint64(i * 8, true)));
     expect(read.f64(addr, i + 8)).toBe(dataView.getFloat64(i + 8, true));
     expect(read.i64(addr, i * 8)).toBe(dataView.getBigInt64(i * 8, true));
     expect(read.u64(addr, i * 8)).toBe(dataView.getBigUint64(i * 8, true));

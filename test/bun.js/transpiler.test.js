@@ -66,18 +66,12 @@ describe("Bun.Transpiler", () => {
   };
 
   it("normalizes \\r\\n", () => {
-    ts.expectPrinted_(
-      "console.log(`\r\n\r\n\r\n`)",
-      "console.log(`\n\n\n`);\n",
-    );
+    ts.expectPrinted_("console.log(`\r\n\r\n\r\n`)", "console.log(`\n\n\n`);\n");
   });
 
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
-      ts.expectPrinted_(
-        "import Foo = Baz.Bar;\nexport default Foo;",
-        "const Foo = Baz.Bar;\nexport default Foo",
-      );
+      ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
     it("modifiers", () => {
@@ -90,56 +84,23 @@ describe("Bun.Transpiler", () => {
       exp("class Foo { declare public foo: number }", "class Foo {\n}");
       exp("class Foo { public declare foo: number }", "class Foo {\n}");
       exp("class Foo { override foo: number }", "class Foo {\n  foo;\n}");
-      exp(
-        "class Foo { override public foo: number }",
-        "class Foo {\n  foo;\n}",
-      );
-      exp(
-        "class Foo { public override foo: number }",
-        "class Foo {\n  foo;\n}",
-      );
-      exp(
-        "class Foo { declare override public foo: number }",
-        "class Foo {\n}",
-      );
+      exp("class Foo { override public foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { public override foo: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { declare override public foo: number }", "class Foo {\n}");
       exp("class Foo { declare foo = 123 }", "class Foo {\n}");
 
-      exp(
-        "class Foo { public static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { private static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { protected static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
+      exp("class Foo { public static foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { private static foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { protected static foo: number }", "class Foo {\n  static foo;\n}");
       exp("class Foo { declare static foo: number }", "class Foo {\n}");
       exp("class Foo { declare public static foo: number }", "class Foo {\n}");
       exp("class Foo { public declare static foo: number }", "class Foo {\n}");
       exp("class Foo { public static declare foo: number }", "class Foo {\n}");
-      exp(
-        "class Foo { override static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { override public static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { public override static foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { public static override foo: number }",
-        "class Foo {\n  static foo;\n}",
-      );
-      exp(
-        "class Foo { declare override public static foo: number }",
-        "class Foo {\n}",
-      );
+      exp("class Foo { override static foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { override public static foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { public override static foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { public static override foo: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { declare override public static foo: number }", "class Foo {\n}");
       exp("class Foo { declare static foo = 123 }", "class Foo {\n}");
       exp("class Foo { static declare foo = 123 }", "class Foo {\n}");
 
@@ -225,19 +186,12 @@ class Test extends Bar {
             .trim()
             .replaceAll("\n", "")
             .replaceAll("  ", ""),
-        ).toBe(
-          ("var Test = " + out.trim() + ";\n")
-            .replaceAll("\n", "")
-            .replaceAll("  ", ""),
-        );
+        ).toBe(("var Test = " + out.trim() + ";\n").replaceAll("\n", "").replaceAll("  ", ""));
       }
     });
 
     it("import Foo = require('bar')", () => {
-      ts.expectPrinted_(
-        "import React = require('react')",
-        'const React = require("react")',
-      );
+      ts.expectPrinted_("import React = require('react')", 'const React = require("react")');
     });
 
     it("import type Foo = require('bar')", () => {
@@ -249,10 +203,7 @@ class Test extends Bar {
     });
 
     it("export import Foo = Baz.Bar", () => {
-      ts.expectPrinted_(
-        "export import Foo = Baz.Bar;",
-        "export const Foo = Baz.Bar",
-      );
+      ts.expectPrinted_("export import Foo = Baz.Bar;", "export const Foo = Baz.Bar");
     });
 
     it("export = {foo: 123}", () => {
@@ -285,43 +236,16 @@ export default class {
     });
 
     it("satisfies", () => {
-      ts.expectPrinted_(
-        "const t1 = { a: 1 } satisfies I1;",
-        "const t1 = { a: 1 };\n",
-      );
-      ts.expectPrinted_(
-        "const t2 = { a: 1, b: 1 } satisfies I1;",
-        "const t2 = { a: 1, b: 1 };\n",
-      );
+      ts.expectPrinted_("const t1 = { a: 1 } satisfies I1;", "const t1 = { a: 1 };\n");
+      ts.expectPrinted_("const t2 = { a: 1, b: 1 } satisfies I1;", "const t2 = { a: 1, b: 1 };\n");
       ts.expectPrinted_("const t3 = { } satisfies I1;", "const t3 = {};\n");
-      ts.expectPrinted_(
-        "const t4: T1 = { a: 'a' } satisfies T1;",
-        'const t4 = { a: "a" };\n',
-      );
-      ts.expectPrinted_(
-        "const t5 = (m => m.substring(0)) satisfies T2;",
-        "const t5 = (m) => m.substring(0);\n",
-      );
-      ts.expectPrinted_(
-        "const t6 = [1, 2] satisfies [number, number];",
-        "const t6 = [1, 2];\n",
-      );
-      ts.expectPrinted_(
-        "let t7 = { a: 'test' } satisfies A;",
-        'let t7 = { a: "test" };\n',
-      );
-      ts.expectPrinted_(
-        "let t8 = { a: 'test', b: 'test' } satisfies A;",
-        'let t8 = { a: "test", b: "test" };\n',
-      );
-      ts.expectPrinted_(
-        "export default {} satisfies Foo;",
-        "export default {};\n",
-      );
-      ts.expectPrinted_(
-        "export default { a: 1 } satisfies Foo;",
-        "export default { a: 1 };\n",
-      );
+      ts.expectPrinted_("const t4: T1 = { a: 'a' } satisfies T1;", 'const t4 = { a: "a" };\n');
+      ts.expectPrinted_("const t5 = (m => m.substring(0)) satisfies T2;", "const t5 = (m) => m.substring(0);\n");
+      ts.expectPrinted_("const t6 = [1, 2] satisfies [number, number];", "const t6 = [1, 2];\n");
+      ts.expectPrinted_("let t7 = { a: 'test' } satisfies A;", 'let t7 = { a: "test" };\n');
+      ts.expectPrinted_("let t8 = { a: 'test', b: 'test' } satisfies A;", 'let t8 = { a: "test", b: "test" };\n');
+      ts.expectPrinted_("export default {} satisfies Foo;", "export default {};\n");
+      ts.expectPrinted_("export default { a: 1 } satisfies Foo;", "export default { a: 1 };\n");
       ts.expectPrinted_(
         "const p = { isEven: n => n % 2 === 0, isOdd: n => n % 2 === 1 } satisfies Predicates;",
         "const p = { isEven: (n) => n % 2 === 0, isOdd: (n) => n % 2 === 1 };\n",
@@ -334,14 +258,8 @@ export default class {
         "const car = { start() { }, move(d) { }, stop() { } } satisfies Movable & Record<string, unknown>;",
         "const car = { start() {\n}, move(d) {\n}, stop() {\n} };\n",
       );
-      ts.expectPrinted_(
-        "var v = undefined satisfies 1;",
-        "var v = undefined;\n",
-      );
-      ts.expectPrinted_(
-        "const a = { x: 10 } satisfies Partial<Point2d>;",
-        "const a = { x: 10 };\n",
-      );
+      ts.expectPrinted_("var v = undefined satisfies 1;", "var v = undefined;\n");
+      ts.expectPrinted_("const a = { x: 10 } satisfies Partial<Point2d>;", "const a = { x: 10 };\n");
       ts.expectPrinted_(
         'const p = { a: 0, b: "hello", x: 8 } satisfies Partial<Record<Keys, unknown>>;',
         'const p = { a: 0, b: "hello", x: 8 };\n',
@@ -350,18 +268,12 @@ export default class {
         'const p = { a: 0, b: "hello", x: 8 } satisfies Record<Keys, unknown>;',
         'const p = { a: 0, b: "hello", x: 8 };\n',
       );
-      ts.expectPrinted_(
-        'const x2 = { m: true, s: "false" } satisfies Facts;',
-        'const x2 = { m: true, s: "false" };\n',
-      );
+      ts.expectPrinted_('const x2 = { m: true, s: "false" } satisfies Facts;', 'const x2 = { m: true, s: "false" };\n');
       ts.expectPrinted_(
         "export const Palette = { white: { r: 255, g: 255, b: 255 }, black: { r: 0, g: 0, d: 0 }, blue: { r: 0, g: 0, b: 255 }, } satisfies Record<string, Color>;",
         "export const Palette = { white: { r: 255, g: 255, b: 255 }, black: { r: 0, g: 0, d: 0 }, blue: { r: 0, g: 0, b: 255 } };\n",
       );
-      ts.expectPrinted_(
-        'const a: "baz" = "foo" satisfies "foo" | "bar";',
-        'const a = "foo";\n',
-      );
+      ts.expectPrinted_('const a: "baz" = "foo" satisfies "foo" | "bar";', 'const a = "foo";\n');
       ts.expectPrinted_(
         'const b: { xyz: "baz" } = { xyz: "foo" } satisfies { xyz: "foo" | "bar" };',
         'const b = { xyz: "foo" };\n',
@@ -685,9 +597,7 @@ export default <>hi</>
 }, undefined, false, undefined, this);
 `,
     );
-    expect(
-      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
       `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
@@ -695,28 +605,20 @@ export default <>hi</>
     );
 
     // cursed
-    expect(
-      bun.transformSync(
-        "export var hi = <div {foo[{name: () => true}.name].hi} />",
-      ),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <div {foo[{name: () => true}.name].hi} />")).toBe(
       `export var hi = $jsx("div", {
   hi: foo[{ name: () => true }.name].hi
 }, undefined, false, undefined, this);
 `,
     );
-    expect(
-      bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />"),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <Foo {process.env.NODE_ENV} />")).toBe(
       `export var hi = $jsx(Foo, {
   NODE_ENV: "development"
 }, undefined, false, undefined, this);
 `,
     );
 
-    expect(
-      bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />"),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <div {foo['baz'].bar?.baz} />")).toBe(
       `export var hi = $jsx("div", {
   baz: foo["baz"].bar?.baz
 }, undefined, false, undefined, this);
@@ -729,18 +631,14 @@ export default <>hi</>
       expect(e.errors[0].message.includes('Expected ">"')).toBe(true);
     }
 
-    expect(
-      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
       `export var hi = $jsx("div", {
   Foo,
   children: $jsx(Foo, {}, undefined, false, undefined, this)
 }, undefined, false, undefined, this);
 `,
     );
-    expect(
-      bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>"),
-    ).toBe(
+    expect(bun.transformSync("export var hi = <div {Foo}><Foo></Foo></div>")).toBe(
       `export var hi = $jsx("div", {
   Foo,
   children: $jsx(Foo, {}, undefined, false, undefined, this)
@@ -841,27 +739,19 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
 
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
-    expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(
-      'require("hi" + bar);\n',
-    );
+    expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');
   });
 
   it("CommonJS", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
-    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe(
-      'require("hi" + 123);\n',
-    );
+    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi" + 123);\n');
 
-    expect(
-      nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')"),
-    ).toBe('require("foo");\n');
-    expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe(
-      'require("foo");\n',
-    );
+    expect(nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
+    expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
 
-    expect(
-      nodeTranspiler.transformSync("module.require(unknown ? 'foo' : 'bar')"),
-    ).toBe('unknown ? require("foo") : require("bar");\n');
+    expect(nodeTranspiler.transformSync("module.require(unknown ? 'foo' : 'bar')")).toBe(
+      'unknown ? require("foo") : require("bar");\n',
+    );
   });
 
   describe("regressions", () => {
@@ -908,12 +798,7 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
     });
   });
 
-  const parsed = (
-    code,
-    trim = true,
-    autoExport = false,
-    transpiler_ = transpiler,
-  ) => {
+  const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {
     if (autoExport) {
       code = "export default (" + code + ")";
     }
@@ -1058,10 +943,7 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
       expectPrinted("await (x * y)", "await (x * y)");
       expectPrinted("await (x ** y)", "await (x ** y)");
 
-      expectPrinted_(
-        "async function f() { await delete x }",
-        "async function f() {\n  await delete x;\n}",
-      );
+      expectPrinted_("async function f() { await delete x }", "async function f() {\n  await delete x;\n}");
 
       // expectParseError(
       //   "await delete x",
@@ -1070,25 +952,13 @@ export var ComponentThatHasSpreadCausesDeopt = $jsx(Hello, {
     });
 
     it("import assert", () => {
-      expectPrinted_(
-        `import json from "./foo.json" assert { type: "json" };`,
-        `import json from "./foo.json"`,
-      );
-      expectPrinted_(
-        `import json from "./foo.json";`,
-        `import json from "./foo.json"`,
-      );
-      expectPrinted_(
-        `import("./foo.json", { type: "json" });`,
-        `import("./foo.json")`,
-      );
+      expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
+      expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
+      expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json")`);
     });
 
     it("import with unicode escape", () => {
-      expectPrinted_(
-        `import { name } from 'mod\\u1011';`,
-        `import {name} from "mod\\u1011"`,
-      );
+      expectPrinted_(`import { name } from 'mod\\u1011';`, `import {name} from "mod\\u1011"`);
     });
 
     it("fold string addition", () => {
@@ -1105,26 +975,14 @@ console.log(a)
         `.trim(),
       );
 
-      expectPrinted_(
-        `export const foo = "a" + "b";`,
-        `export const foo = "ab"`,
-      );
+      expectPrinted_(`export const foo = "a" + "b";`, `export const foo = "ab"`);
       expectPrinted_(
         `export const foo = "F" + "0" + "F" + "0123456789" + "ABCDEF" + "0123456789ABCDEFF0123456789ABCDEF00" + "b";`,
         `export const foo = "F0F0123456789ABCDEF0123456789ABCDEFF0123456789ABCDEF00b"`,
       );
-      expectPrinted_(
-        `export const foo = "a" + 1 + "b";`,
-        `export const foo = "a" + 1 + "b"`,
-      );
-      expectPrinted_(
-        `export const foo = "a" + "b" + 1 + "b";`,
-        `export const foo = "ab" + 1 + "b"`,
-      );
-      expectPrinted_(
-        `export const foo = "a" + "b" + 1 + "b" + "c";`,
-        `export const foo = "ab" + 1 + "bc"`,
-      );
+      expectPrinted_(`export const foo = "a" + 1 + "b";`, `export const foo = "a" + 1 + "b"`);
+      expectPrinted_(`export const foo = "a" + "b" + 1 + "b";`, `export const foo = "ab" + 1 + "b"`);
+      expectPrinted_(`export const foo = "a" + "b" + 1 + "b" + "c";`, `export const foo = "ab" + 1 + "bc"`);
     });
 
     it("numeric constants", () => {
@@ -1242,14 +1100,8 @@ export const { dead } = { dead: "hello world!" };
     });
 
     it("rewrite string to length", () => {
-      expectPrinted_(
-        `export const foo = "a".length + "b".length;`,
-        `export const foo = 1 + 1`,
-      );
-      expectBunPrinted_(
-        `export const foo = "a".length + "b".length;`,
-        `export const foo = 2`,
-      );
+      expectPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 1 + 1`);
+      expectBunPrinted_(`export const foo = "a".length + "b".length;`, `export const foo = 2`);
     });
 
     describe("Bun.js", () => {
@@ -1296,35 +1148,20 @@ console.log(resolve.length)
       it('require.resolve("my-module") -> "/resolved/my-module"', () => {
         // the module resolver & linker doesn't run with Bun.Transpiler
         // so in this test, it becomes the same path string
-        expectPrinted_(
-          `export const foo = require.resolve('my-module')`,
-          `export const foo = "my-module"`,
-        );
+        expectPrinted_(`export const foo = require.resolve('my-module')`, `export const foo = "my-module"`);
       });
     });
 
     it("define", () => {
-      expectPrinted_(
-        `export default typeof user_undefined === 'undefined';`,
-        `export default true`,
-      );
-      expectPrinted_(
-        `export default typeof user_undefined !== 'undefined';`,
-        `export default false`,
-      );
+      expectPrinted_(`export default typeof user_undefined === 'undefined';`, `export default true`);
+      expectPrinted_(`export default typeof user_undefined !== 'undefined';`, `export default false`);
 
-      expectPrinted_(
-        `export default typeof user_undefined !== 'undefined';`,
-        `export default false`,
-      );
+      expectPrinted_(`export default typeof user_undefined !== 'undefined';`, `export default false`);
       expectPrinted_(`export default !user_undefined;`, `export default true`);
     });
 
     it("jsx symbol should work", () => {
-      expectBunPrinted_(
-        `var x = jsx; export default x;`,
-        "var x = jsx;\nexport default x",
-      );
+      expectBunPrinted_(`var x = jsx; export default x;`, "var x = jsx;\nexport default x");
     });
 
     it("decls", () => {
@@ -1349,18 +1186,9 @@ console.log(resolve.length)
       expectParseError("const []", "This constant must be initialized");
       // expectParseError("for (var x;;) ;", "");
       // expectParseError("for (let x;;) ;", "");
-      expectParseError(
-        "for (const x;;) ;",
-        'The constant "x" must be initialized',
-      );
-      expectParseError(
-        "for (const {};;) ;",
-        "This constant must be initialized",
-      );
-      expectParseError(
-        "for (const [];;) ;",
-        "This constant must be initialized",
-      );
+      expectParseError("for (const x;;) ;", 'The constant "x" must be initialized');
+      expectParseError("for (const {};;) ;", "This constant must be initialized");
+      expectParseError("for (const [];;) ;", "This constant must be initialized");
 
       // Make sure bindings are visited during parsing
       expectPrinted_("var {[x]: y} = {}", "var { [x]: y } = {}");
@@ -1370,15 +1198,9 @@ console.log(resolve.length)
       expectPrinted_("var [...x] = []", "var [...x] = []");
       expectPrinted_("var {...x} = {}", "var { ...x } = {}");
 
-      expectPrinted_(
-        "export var foo = ([...x] = []) => {}",
-        "export var foo = ([...x] = []) => {\n}",
-      );
+      expectPrinted_("export var foo = ([...x] = []) => {}", "export var foo = ([...x] = []) => {\n}");
 
-      expectPrinted_(
-        "export var foo = ({...x} = {}) => {}",
-        "export var foo = ({ ...x } = {}) => {\n}",
-      );
+      expectPrinted_("export var foo = ({...x} = {}) => {}", "export var foo = ({ ...x } = {}) => {\n}");
 
       expectParseError("var [...x,] = []", 'Unexpected "," after rest pattern');
       expectParseError("var {...x,} = {}", 'Unexpected "," after rest pattern');
@@ -1386,10 +1208,7 @@ console.log(resolve.length)
         "export default function() { return ([...x,] = []) => {} }",
         "Unexpected trailing comma after rest element",
       );
-      expectParseError(
-        "({...x,} = {}) => {}",
-        "Unexpected trailing comma after rest element",
-      );
+      expectParseError("({...x,} = {}) => {}", "Unexpected trailing comma after rest element");
 
       expectPrinted_("[b, ...c] = d", "[b, ...c] = d");
       expectPrinted_("([b, ...c] = d)", "[b, ...c] = d");
@@ -1417,14 +1236,8 @@ console.log(resolve.length)
       expectParseError("({}) = {}", "Invalid assignment target");
       expectParseError("[([])] = [[]]", "Invalid assignment target");
       expectParseError("({x: ({})} = {x: {}})", "Invalid assignment target");
-      expectParseError(
-        "(([]) = []) => {}",
-        "Unexpected parentheses in binding pattern",
-      );
-      expectParseError(
-        "(({}) = {}) => {}",
-        "Unexpected parentheses in binding pattern",
-      );
+      expectParseError("(([]) = []) => {}", "Unexpected parentheses in binding pattern");
+      expectParseError("(({}) = {}) => {}", "Unexpected parentheses in binding pattern");
       expectParseError("function f(([]) = []) {}", "Parse error");
       expectParseError(
         "function f(({}) = {}) {}",
@@ -1448,14 +1261,8 @@ console.log(resolve.length)
 
       expectParseError("[[...a, b]] = c", 'Unexpected "," after rest pattern');
       expectParseError("[{...a, b}] = c", 'Unexpected "," after rest pattern');
-      expectParseError(
-        "({x: [...a, b]} = c)",
-        'Unexpected "," after rest pattern',
-      );
-      expectParseError(
-        "({x: {...a, b}} = c)",
-        'Unexpected "," after rest pattern',
-      );
+      expectParseError("({x: [...a, b]} = c)", 'Unexpected "," after rest pattern');
+      expectParseError("({x: {...a, b}} = c)", 'Unexpected "," after rest pattern');
       expectParseError("[b, ...c,] = d", 'Unexpected "," after rest pattern');
       expectParseError("([b, ...c,] = d)", 'Unexpected "," after rest pattern');
       expectParseError("({b, ...c,} = d)", 'Unexpected "," after rest pattern');
@@ -1463,27 +1270,15 @@ console.log(resolve.length)
       expectParseError("({x = {a = b}} = c)", 'Unexpected "="');
       expectParseError("[a = {b = c}] = d", 'Unexpected "="');
 
-      expectPrinted_(
-        "for ([{a = {}}] in b) {}",
-        "for ([{ a = {} }] in b) {\n}",
-      );
-      expectPrinted_(
-        "for ([{a = {}}] of b) {}",
-        "for ([{ a = {} }] of b) {\n}",
-      );
+      expectPrinted_("for ([{a = {}}] in b) {}", "for ([{ a = {} }] in b) {\n}");
+      expectPrinted_("for ([{a = {}}] of b) {}", "for ([{ a = {} }] of b) {\n}");
       expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b) {\n}");
       expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b) {\n}");
 
       expectParseError("({a = {}} in b)", 'Unexpected "="');
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');
-      expectParseError(
-        "for ([...a, b] in c) {}",
-        'Unexpected "," after rest pattern',
-      );
-      expectParseError(
-        "for ([...a, b] of c) {}",
-        'Unexpected "," after rest pattern',
-      );
+      expectParseError("for ([...a, b] in c) {}", 'Unexpected "," after rest pattern');
+      expectParseError("for ([...a, b] of c) {}", 'Unexpected "," after rest pattern');
     });
 
     it("regexp", () => {
@@ -1496,22 +1291,13 @@ console.log(resolve.length)
       expectPrinted("/gimme/g", "/gimme/g");
       expectPrinted("/gimgim/g", "/gimgim/g");
 
-      expectParseError(
-        "/x/msuygig",
-        'Duplicate flag "g" in regular expression',
-      );
+      expectParseError("/x/msuygig", 'Duplicate flag "g" in regular expression');
     });
 
     it("identifier escapes", () => {
       expectPrinted_("var _\u0076\u0061\u0072", "var _var");
-      expectParseError(
-        "var \u0076\u0061\u0072",
-        'Expected identifier but found "\u0076\u0061\u0072"',
-      );
-      expectParseError(
-        "\\u0076\\u0061\\u0072 foo",
-        "Unexpected \\u0076\\u0061\\u0072",
-      );
+      expectParseError("var \u0076\u0061\u0072", 'Expected identifier but found "\u0076\u0061\u0072"');
+      expectParseError("\\u0076\\u0061\\u0072 foo", "Unexpected \\u0076\\u0061\\u0072");
 
       expectPrinted_("foo._\u0076\u0061\u0072", "foo._var");
       expectPrinted_("foo.\u0076\u0061\u0072", "foo.var");
@@ -1527,111 +1313,42 @@ console.log(resolve.length)
     expectParseError("this.#foo", 'Expected identifier but found "#foo"');
     expectParseError("this?.#foo", 'Expected identifier but found "#foo"');
     expectParseError("({ #foo: 1 })", 'Expected identifier but found "#foo"');
-    expectParseError(
-      "class Foo { x = { #foo: 1 } }",
-      'Expected identifier but found "#foo"',
-    );
+    expectParseError("class Foo { x = { #foo: 1 } }", 'Expected identifier but found "#foo"');
     expectParseError("class Foo { x = #foo }", 'Expected "in" but found "}"');
-    expectParseError(
-      "class Foo { #foo; foo() { delete this.#foo } }",
-      'Deleting the private name "#foo" is forbidden',
-    );
+    expectParseError("class Foo { #foo; foo() { delete this.#foo } }", 'Deleting the private name "#foo" is forbidden');
     expectParseError(
       "class Foo { #foo; foo() { delete this?.#foo } }",
       'Deleting the private name "#foo" is forbidden',
     );
-    expectParseError(
-      "class Foo extends Bar { #foo; foo() { super.#foo } }",
-      'Expected identifier but found "#foo"',
-    );
-    expectParseError(
-      "class Foo { #foo = () => { for (#foo in this) ; } }",
-      "Unexpected #foo",
-    );
-    expectParseError(
-      "class Foo { #foo = () => { for (x = #foo in this) ; } }",
-      "Unexpected #foo",
-    );
+    expectParseError("class Foo extends Bar { #foo; foo() { super.#foo } }", 'Expected identifier but found "#foo"');
+    expectParseError("class Foo { #foo = () => { for (#foo in this) ; } }", "Unexpected #foo");
+    expectParseError("class Foo { #foo = () => { for (x = #foo in this) ; } }", "Unexpected #foo");
     expectPrinted_("class Foo { #foo }", "class Foo {\n  #foo;\n}");
     expectPrinted_("class Foo { #foo = 1 }", "class Foo {\n  #foo = 1;\n}");
-    expectPrinted_(
-      "class Foo { #foo = #foo in this }",
-      "class Foo {\n  #foo = #foo in this;\n}",
-    );
+    expectPrinted_("class Foo { #foo = #foo in this }", "class Foo {\n  #foo = #foo in this;\n}");
     expectPrinted_(
       "class Foo { #foo = #foo in (#bar in this); #bar }",
       "class Foo {\n  #foo = #foo in (#bar in this);\n  #bar;\n}",
     );
-    expectPrinted_(
-      "class Foo { #foo() {} }",
-      "class Foo {\n  #foo() {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { get #foo() {} }",
-      "class Foo {\n  get #foo() {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { set #foo(x) {} }",
-      "class Foo {\n  set #foo(x) {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { static #foo }",
-      "class Foo {\n  static #foo;\n}",
-    );
-    expectPrinted_(
-      "class Foo { static #foo = 1 }",
-      "class Foo {\n  static #foo = 1;\n}",
-    );
-    expectPrinted_(
-      "class Foo { static #foo() {} }",
-      "class Foo {\n  static #foo() {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { static get #foo() {} }",
-      "class Foo {\n  static get #foo() {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { static set #foo(x) {} }",
-      "class Foo {\n  static set #foo(x) {\n  }\n}",
-    );
+    expectPrinted_("class Foo { #foo() {} }", "class Foo {\n  #foo() {\n  }\n}");
+    expectPrinted_("class Foo { get #foo() {} }", "class Foo {\n  get #foo() {\n  }\n}");
+    expectPrinted_("class Foo { set #foo(x) {} }", "class Foo {\n  set #foo(x) {\n  }\n}");
+    expectPrinted_("class Foo { static #foo }", "class Foo {\n  static #foo;\n}");
+    expectPrinted_("class Foo { static #foo = 1 }", "class Foo {\n  static #foo = 1;\n}");
+    expectPrinted_("class Foo { static #foo() {} }", "class Foo {\n  static #foo() {\n  }\n}");
+    expectPrinted_("class Foo { static get #foo() {} }", "class Foo {\n  static get #foo() {\n  }\n}");
+    expectPrinted_("class Foo { static set #foo(x) {} }", "class Foo {\n  static set #foo(x) {\n  }\n}");
 
-    expectParseError(
-      "class Foo { #foo = #foo in #bar in this; #bar }",
-      "Unexpected #bar",
-    );
+    expectParseError("class Foo { #foo = #foo in #bar in this; #bar }", "Unexpected #bar");
 
-    expectParseError(
-      "class Foo { #constructor }",
-      'Invalid field name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { #constructor() {} }",
-      'Invalid method name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { static #constructor }",
-      'Invalid field name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { static #constructor() {} }",
-      'Invalid method name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { #\\u0063onstructor }",
-      'Invalid field name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { #\\u0063onstructor() {} }",
-      'Invalid method name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { static #\\u0063onstructor }",
-      'Invalid field name "#constructor"',
-    );
-    expectParseError(
-      "class Foo { static #\\u0063onstructor() {} }",
-      'Invalid method name "#constructor"',
-    );
+    expectParseError("class Foo { #constructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #constructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #constructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #constructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #\\u0063onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #\\u0063onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
     const errorText = '"#foo" has already been declared';
     expectParseError("class Foo { #foo; #foo }", errorText);
     expectParseError("class Foo { #foo; static #foo }", errorText);
@@ -1644,14 +1361,8 @@ console.log(resolve.length)
     expectParseError("class Foo { set #foo(x) {} #foo }", errorText);
     expectParseError("class Foo { get #foo() {} get #foo() {} }", errorText);
     expectParseError("class Foo { set #foo(x) {} set #foo(x) {} }", errorText);
-    expectParseError(
-      "class Foo { get #foo() {} set #foo(x) {} #foo }",
-      errorText,
-    );
-    expectParseError(
-      "class Foo { set #foo(x) {} get #foo() {} #foo }",
-      errorText,
-    );
+    expectParseError("class Foo { get #foo() {} set #foo(x) {} #foo }", errorText);
+    expectParseError("class Foo { set #foo(x) {} get #foo() {} #foo }", errorText);
 
     expectPrinted_(
       "class Foo { get #foo() {} set #foo(x) { this.#foo } }",
@@ -1661,18 +1372,9 @@ console.log(resolve.length)
       "class Foo { set #foo(x) { this.#foo } get #foo() {} }",
       "class Foo {\n  set #foo(x) {\n    this.#foo;\n  }\n  get #foo() {\n  }\n}",
     );
-    expectPrinted_(
-      "class Foo { #foo } class Bar { #foo }",
-      "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}",
-    );
-    expectPrinted_(
-      "class Foo { foo = this.#foo; #foo }",
-      "class Foo {\n  foo = this.#foo;\n  #foo;\n}",
-    );
-    expectPrinted_(
-      "class Foo { foo = this?.#foo; #foo }",
-      "class Foo {\n  foo = this?.#foo;\n  #foo;\n}",
-    );
+    expectPrinted_("class Foo { #foo } class Bar { #foo }", "class Foo {\n  #foo;\n}\n\nclass Bar {\n  #foo;\n}");
+    expectPrinted_("class Foo { foo = this.#foo; #foo }", "class Foo {\n  foo = this.#foo;\n  #foo;\n}");
+    expectPrinted_("class Foo { foo = this?.#foo; #foo }", "class Foo {\n  foo = this?.#foo;\n  #foo;\n}");
     expectParseError(
       "class Foo { #foo } class Bar { foo = this.#foo }",
       'Private name "#foo" must be declared in an enclosing class',
@@ -1728,66 +1430,21 @@ console.log(resolve.length)
     expectPrinted_("export type {foo} from 'bar'; x", "x");
     expectPrinted_("export type {foo} from 'bar'\nx", "x");
     expectPrinted_("export type {default} from 'bar'", "");
-    expectPrinted_(
-      "export { type } from 'mod'; type",
-      'export { type } from "mod";\ntype',
-    );
-    expectPrinted_(
-      "export { type, as } from 'mod'",
-      'export { type, as } from "mod"',
-    );
-    expectPrinted_(
-      "export { x, type foo } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, type as } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, type foo as bar } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, type foo as as } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { type as as } from 'mod'; as",
-      'export { type as as } from "mod";\nas',
-    );
-    expectPrinted_(
-      "export { type as foo } from 'mod'; foo",
-      'export { type as foo } from "mod";\nfoo',
-    );
-    expectPrinted_(
-      "export { type as type } from 'mod'; type",
-      'export { type } from "mod";\ntype',
-    );
-    expectPrinted_(
-      "export { x, type as as foo } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, type as as as } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, type type as as } from 'mod'; x",
-      'export { x } from "mod";\nx',
-    );
-    expectPrinted_(
-      "export { x, \\u0074ype y }; let x, y",
-      "export { x };\nlet x, y",
-    );
-    expectPrinted_(
-      "export { x, \\u0074ype y } from 'mod'",
-      'export { x } from "mod"',
-    );
-    expectPrinted_(
-      "export { x, type if } from 'mod'",
-      'export { x } from "mod"',
-    );
+    expectPrinted_("export { type } from 'mod'; type", 'export { type } from "mod";\ntype');
+    expectPrinted_("export { type, as } from 'mod'", 'export { type, as } from "mod"');
+    expectPrinted_("export { x, type foo } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, type as } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, type foo as bar } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, type foo as as } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { type as as } from 'mod'; as", 'export { type as as } from "mod";\nas');
+    expectPrinted_("export { type as foo } from 'mod'; foo", 'export { type as foo } from "mod";\nfoo');
+    expectPrinted_("export { type as type } from 'mod'; type", 'export { type } from "mod";\ntype');
+    expectPrinted_("export { x, type as as foo } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, type as as as } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, type type as as } from 'mod'; x", 'export { x } from "mod";\nx');
+    expectPrinted_("export { x, \\u0074ype y }; let x, y", "export { x };\nlet x, y");
+    expectPrinted_("export { x, \\u0074ype y } from 'mod'", 'export { x } from "mod"');
+    expectPrinted_("export { x, type if } from 'mod'", 'export { x } from "mod"');
     expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
     expectPrinted_("export { type x };", "");
   });
@@ -1820,74 +1477,26 @@ class Foo {
   });
 
   it("class static blocks", () => {
-    expectPrinted_(
-      "class Foo { static {} }",
-      "class Foo {\n  static {\n  }\n}",
-    );
-    expectPrinted_(
-      "class Foo { static {} x = 1 }",
-      "class Foo {\n  static {\n  }\n  x = 1;\n}",
-    );
-    expectPrinted_(
-      "class Foo { static { this.foo() } }",
-      "class Foo {\n  static {\n    this.foo();\n  }\n}",
-    );
+    expectPrinted_("class Foo { static {} }", "class Foo {\n  static {\n  }\n}");
+    expectPrinted_("class Foo { static {} x = 1 }", "class Foo {\n  static {\n  }\n  x = 1;\n}");
+    expectPrinted_("class Foo { static { this.foo() } }", "class Foo {\n  static {\n    this.foo();\n  }\n}");
 
-    expectParseError(
-      "class Foo { static { yield } }",
-      '"yield" is a reserved word and cannot be used in strict mode',
-    );
-    expectParseError(
-      "class Foo { static { await } }",
-      'The keyword "await" cannot be used here',
-    );
-    expectParseError(
-      "class Foo { static { return } }",
-      "A return statement cannot be used here",
-    );
-    expectParseError(
-      "class Foo { static { break } }",
-      'Cannot use "break" here',
-    );
-    expectParseError(
-      "class Foo { static { continue } }",
-      'Cannot use "continue" here',
-    );
-    expectParseError(
-      "x: { class Foo { static { break x } } }",
-      'There is no containing label named "x"',
-    );
-    expectParseError(
-      "x: { class Foo { static { continue x } } }",
-      'There is no containing label named "x"',
-    );
+    expectParseError("class Foo { static { yield } }", '"yield" is a reserved word and cannot be used in strict mode');
+    expectParseError("class Foo { static { await } }", 'The keyword "await" cannot be used here');
+    expectParseError("class Foo { static { return } }", "A return statement cannot be used here");
+    expectParseError("class Foo { static { break } }", 'Cannot use "break" here');
+    expectParseError("class Foo { static { continue } }", 'Cannot use "continue" here');
+    expectParseError("x: { class Foo { static { break x } } }", 'There is no containing label named "x"');
+    expectParseError("x: { class Foo { static { continue x } } }", 'There is no containing label named "x"');
 
-    expectParseError(
-      "class Foo { get #x() { this.#x = 1 } }",
-      'Writing to getter-only property "#x" will throw',
-    );
-    expectParseError(
-      "class Foo { get #x() { this.#x += 1 } }",
-      'Writing to getter-only property "#x" will throw',
-    );
-    expectParseError(
-      "class Foo { set #x(x) { this.#x } }",
-      'Reading from setter-only property "#x" will throw',
-    );
-    expectParseError(
-      "class Foo { set #x(x) { this.#x += 1 } }",
-      'Reading from setter-only property "#x" will throw',
-    );
+    expectParseError("class Foo { get #x() { this.#x = 1 } }", 'Writing to getter-only property "#x" will throw');
+    expectParseError("class Foo { get #x() { this.#x += 1 } }", 'Writing to getter-only property "#x" will throw');
+    expectParseError("class Foo { set #x(x) { this.#x } }", 'Reading from setter-only property "#x" will throw');
+    expectParseError("class Foo { set #x(x) { this.#x += 1 } }", 'Reading from setter-only property "#x" will throw');
 
     // Writing to method warnings
-    expectParseError(
-      "class Foo { #x() { this.#x = 1 } }",
-      'Writing to read-only method "#x" will throw',
-    );
-    expectParseError(
-      "class Foo { #x() { this.#x += 1 } }",
-      'Writing to read-only method "#x" will throw',
-    );
+    expectParseError("class Foo { #x() { this.#x = 1 } }", 'Writing to read-only method "#x" will throw');
+    expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
   describe("simplification", () => {
@@ -1908,11 +1517,7 @@ class Foo {
             .transformSync("export function hello() {\n" + input + "\n}")
             .trim()
             .replaceAll(/^  /gm, ""),
-        ).toBe(
-          "export function hello() {\n" +
-            output +
-            "\n}".replaceAll(/^  /gm, ""),
-        );
+        ).toBe("export function hello() {\n" + output + "\n}".replaceAll(/^  /gm, ""));
       }
 
       check("const x = 1; return x", "return 1;");
@@ -1920,10 +1525,7 @@ class Foo {
       check("const x = 1; return x + x", "return 2;");
       check("const x = 1; return x + x + 1", "return 3;");
       check("const x = 1; return x + x + x", "return 3;");
-      check(
-        `const foo = "foo"; const bar = "bar"; return foo + bar`,
-        `return "foobar";`,
-      );
+      check(`const foo = "foo"; const bar = "bar"; return foo + bar`, `return "foobar";`);
 
       check(
         `
@@ -2055,11 +1657,7 @@ console.log(foo, array);
             .transformSync("export function hello() {\n" + input + "\n}")
             .trim()
             .replaceAll(/^  /gm, ""),
-        ).toBe(
-          "export function hello() {\n" +
-            output +
-            "\n}".replaceAll(/^  /gm, ""),
-        );
+        ).toBe("export function hello() {\n" + output + "\n}".replaceAll(/^  /gm, ""));
       }
       check("var x = 1; return x", "var x = 1;\nreturn x;");
       check("let x = 1; return x", "return 1;");
@@ -2102,15 +1700,9 @@ console.log(foo, array);
       check("let x = fn(); return x + arg0", "return fn() + arg0;");
       check("let x = fn(); return arg0 + x", "let x = fn();\nreturn arg0 + x;");
       check("let x = fn(); return x + fn2()", "return fn() + fn2();");
-      check(
-        "let x = fn(); return fn2() + x",
-        "let x = fn();\nreturn fn2() + x;",
-      );
+      check("let x = fn(); return fn2() + x", "let x = fn();\nreturn fn2() + x;");
       check("let x = fn(); return x + undef", "return fn() + undef;");
-      check(
-        "let x = fn(); return undef + x",
-        "let x = fn();\nreturn undef + x;",
-      );
+      check("let x = fn(); return undef + x", "let x = fn();\nreturn undef + x;");
 
       // Cannot substitute into mutating unary operators
       check("let x = 1; ++x", "let x = 1;\n++x;");
@@ -2188,48 +1780,24 @@ console.log(foo, array);
 
       // Cannot substitute code with side effects into branches
       check("let x = fn(); return x ? arg0 : y;", "return fn() ? arg0 : y;");
-      check(
-        "let x = fn(); return arg0 ? x : y;",
-        "let x = fn();\nreturn arg0 ? x : y;",
-      );
-      check(
-        "let x = fn(); return arg0 ? y : x;",
-        "let x = fn();\nreturn arg0 ? y : x;",
-      );
+      check("let x = fn(); return arg0 ? x : y;", "let x = fn();\nreturn arg0 ? x : y;");
+      check("let x = fn(); return arg0 ? y : x;", "let x = fn();\nreturn arg0 ? y : x;");
       check("let x = fn(); return x || arg0;", "return fn() || arg0;");
       check("let x = fn(); return x && arg0;", "return fn() && arg0;");
       check("let x = fn(); return x ?? arg0;", "return fn() ?? arg0;");
-      check(
-        "let x = fn(); return arg0 || x;",
-        "let x = fn();\nreturn arg0 || x;",
-      );
-      check(
-        "let x = fn(); return arg0 && x;",
-        "let x = fn();\nreturn arg0 && x;",
-      );
-      check(
-        "let x = fn(); return arg0 ?? x;",
-        "let x = fn();\nreturn arg0 ?? x;",
-      );
+      check("let x = fn(); return arg0 || x;", "let x = fn();\nreturn arg0 || x;");
+      check("let x = fn(); return arg0 && x;", "let x = fn();\nreturn arg0 && x;");
+      check("let x = fn(); return arg0 ?? x;", "let x = fn();\nreturn arg0 ?? x;");
 
       // Test chaining
-      check(
-        "let x = fn(); let y = x[prop]; let z = y.val; throw z",
-        "throw fn()[prop].val;",
-      );
-      check(
-        "let x = fn(), y = x[prop], z = y.val; throw z",
-        "throw fn()[prop].val;",
-      );
+      check("let x = fn(); let y = x[prop]; let z = y.val; throw z", "throw fn()[prop].val;");
+      check("let x = fn(), y = x[prop], z = y.val; throw z", "throw fn()[prop].val;");
 
       // Can substitute an initializer with side effects
       check("let x = 0; let y = ++x; return y", "let x = 0;\nreturn ++x;");
 
       // Can substitute an initializer without side effects past an expression without side effects
-      check(
-        "let x = 0; let y = x; return [x, y]",
-        "let x = 0;\nreturn [x, x];",
-      );
+      check("let x = 0; let y = x; return [x, y]", "let x = 0;\nreturn [x, x];");
 
       // TODO: merge s_local
       // Cannot substitute an initializer with side effects past an expression without side effects
@@ -2248,20 +1816,14 @@ console.log(foo, array);
       // Cannot inline past a spread operator, since that evaluates code
       check("let x = arg0; return [...x];", "return [...arg0];");
       check("let x = arg0; return [x, ...arg1];", "return [arg0, ...arg1];");
-      check(
-        "let x = arg0; return [...arg1, x];",
-        "let x = arg0;\nreturn [...arg1, x];",
-      );
+      check("let x = arg0; return [...arg1, x];", "let x = arg0;\nreturn [...arg1, x];");
       // TODO: preserve call here
       // check("let x = arg0; return arg1(...x);", "return arg1(...arg0);");
       // check(
       //   "let x = arg0; return arg1(x, ...arg1);",
       //   "return arg1(arg0, ...arg1);",
       // );
-      check(
-        "let x = arg0; return arg1(...arg1, x);",
-        "let x = arg0;\nreturn arg1(...arg1, x);",
-      );
+      check("let x = arg0; return arg1(...arg1, x);", "let x = arg0;\nreturn arg1(...arg1, x);");
 
       // Test various statement kinds
       // TODO:
@@ -2270,20 +1832,11 @@ console.log(foo, array);
       check("let x = arg0; throw x;", "throw arg0;");
       check("let x = arg0; return x;", "return arg0;");
       check("let x = arg0; if (x) return 1;", "if (arg0)\n  return 1;");
-      check(
-        "let x = arg0; switch (x) { case 0: return 1; }",
-        "switch (arg0) {\n  case 0:\n    return 1;\n}",
-      );
-      check(
-        "let x = arg0; let y = x; return y + y;",
-        "let y = arg0;\nreturn y + y;",
-      );
+      check("let x = arg0; switch (x) { case 0: return 1; }", "switch (arg0) {\n  case 0:\n    return 1;\n}");
+      check("let x = arg0; let y = x; return y + y;", "let y = arg0;\nreturn y + y;");
 
       // Loops must not be substituted into because they evaluate multiple times
-      check(
-        "let x = arg0; do {} while (x);",
-        "let x = arg0;\ndo\n  ;\nwhile (x);",
-      );
+      check("let x = arg0; do {} while (x);", "let x = arg0;\ndo\n  ;\nwhile (x);");
 
       // TODO: convert while(x) to for (;x;)
       check(
@@ -2291,10 +1844,7 @@ console.log(foo, array);
         "let x = arg0;\nwhile (x)\n  return 1;",
         // "let x = arg0;\nfor (; x; )\n  return 1;",
       );
-      check(
-        "let x = arg0; for (; x; ) return 1;",
-        "let x = arg0;\nfor (;x; )\n  return 1;",
-      );
+      check("let x = arg0; for (; x; ) return 1;", "let x = arg0;\nfor (;x; )\n  return 1;");
 
       // Can substitute an expression without side effects into a branch due to optional chaining
       // TODO:
@@ -2304,92 +1854,47 @@ console.log(foo, array);
       // Cannot substitute an expression with side effects into a branch due to optional chaining,
       // since that would change the expression with side effects from being unconditionally
       // evaluated to being conditionally evaluated, which is a behavior change
-      check(
-        "let x = fn(); return arg1?.[x];",
-        "let x = fn();\nreturn arg1?.[x];",
-      );
-      check(
-        "let x = fn(); return arg1?.(x);",
-        "let x = fn();\nreturn arg1?.(x);",
-      );
+      check("let x = fn(); return arg1?.[x];", "let x = fn();\nreturn arg1?.[x];");
+      check("let x = fn(); return arg1?.(x);", "let x = fn();\nreturn arg1?.(x);");
 
       // Can substitute an expression past an optional chaining operation, since it has side effects
-      check(
-        "let x = arg0; return arg1?.a === x;",
-        "let x = arg0;\nreturn arg1?.a === x;",
-      );
-      check(
-        "let x = arg0; return arg1?.[0] === x;",
-        "let x = arg0;\nreturn arg1?.[0] === x;",
-      );
-      check(
-        "let x = arg0; return arg1?.(0) === x;",
-        "let x = arg0;\nreturn arg1?.(0) === x;",
-      );
-      check(
-        "let x = arg0; return arg1?.a[x];",
-        "let x = arg0;\nreturn arg1?.a[x];",
-      );
-      check(
-        "let x = arg0; return arg1?.a(x);",
-        "let x = arg0;\nreturn arg1?.a(x);",
-      );
+      check("let x = arg0; return arg1?.a === x;", "let x = arg0;\nreturn arg1?.a === x;");
+      check("let x = arg0; return arg1?.[0] === x;", "let x = arg0;\nreturn arg1?.[0] === x;");
+      check("let x = arg0; return arg1?.(0) === x;", "let x = arg0;\nreturn arg1?.(0) === x;");
+      check("let x = arg0; return arg1?.a[x];", "let x = arg0;\nreturn arg1?.a[x];");
+      check("let x = arg0; return arg1?.a(x);", "let x = arg0;\nreturn arg1?.a(x);");
       // TODO:
       // check(
       //   "let x = arg0; return arg1?.[a][x];",
       //   "let x = arg0;\nreturn arg1?.[a][x];",
       // );
-      check(
-        "let x = arg0; return arg1?.[a](x);",
-        "let x = arg0;\nreturn (arg1?.[a])(x);",
-      );
-      check(
-        "let x = arg0; return arg1?.(a)[x];",
-        "let x = arg0;\nreturn (arg1?.(a))[x];",
-      );
-      check(
-        "let x = arg0; return arg1?.(a)(x);",
-        "let x = arg0;\nreturn (arg1?.(a))(x);",
-      );
+      check("let x = arg0; return arg1?.[a](x);", "let x = arg0;\nreturn (arg1?.[a])(x);");
+      check("let x = arg0; return arg1?.(a)[x];", "let x = arg0;\nreturn (arg1?.(a))[x];");
+      check("let x = arg0; return arg1?.(a)(x);", "let x = arg0;\nreturn (arg1?.(a))(x);");
 
       // Can substitute into an object as long as there are no side effects
       // beforehand. Note that computed properties must call "toString()" which
       // can have side effects.
       check("let x = arg0; return {x};", "return { x: arg0 };");
-      check(
-        "let x = arg0; return {x: y, y: x};",
-        "let x = arg0;\nreturn { x: y, y: x };",
-      );
+      check("let x = arg0; return {x: y, y: x};", "let x = arg0;\nreturn { x: y, y: x };");
       // TODO:
       // check(
       //   "let x = arg0; return {x: arg1, y: x};",
       //   "return { x: arg1, y: arg0 };",
       // );
       check("let x = arg0; return {[x]: 0};", "return { [arg0]: 0 };");
-      check(
-        "let x = arg0; return {[y]: x};",
-        "let x = arg0;\nreturn { [y]: x };",
-      );
-      check(
-        "let x = arg0; return {[arg1]: x};",
-        "let x = arg0;\nreturn { [arg1]: x };",
-      );
+      check("let x = arg0; return {[y]: x};", "let x = arg0;\nreturn { [y]: x };");
+      check("let x = arg0; return {[arg1]: x};", "let x = arg0;\nreturn { [arg1]: x };");
       // TODO:
       // check(
       //   "let x = arg0; return {y() {}, x};",
       //   "return { y() {\n}, x: arg0 };",
       // );
-      check(
-        "let x = arg0; return {[y]() {}, x};",
-        "let x = arg0;\nreturn { [y]() {\n}, x };",
-      );
+      check("let x = arg0; return {[y]() {}, x};", "let x = arg0;\nreturn { [y]() {\n}, x };");
       check("let x = arg0; return {...x};", "return { ...arg0 };");
       check("let x = arg0; return {...x, y};", "return { ...arg0, y };");
       check("let x = arg0; return {x, ...y};", "return { x: arg0, ...y };");
-      check(
-        "let x = arg0; return {...y, x};",
-        "let x = arg0;\nreturn { ...y, x };",
-      );
+      check("let x = arg0; return {...y, x};", "let x = arg0;\nreturn { ...y, x };");
 
       // TODO:
       // Check substitutions into template literals
@@ -2423,10 +1928,7 @@ console.log(foo, array);
       // );
 
       // Check substitutions into await expressions
-      check(
-        "return async () => { let x = arg0; await x; };",
-        "return async () => {\n  await arg0;\n};",
-      );
+      check("return async () => { let x = arg0; await x; };", "return async () => {\n  await arg0;\n};");
 
       // TODO: combine with comma operator
       // check(
@@ -2439,10 +1941,7 @@ console.log(foo, array);
       // );
 
       // Check substitutions into yield expressions
-      check(
-        "return function* () { let x = arg0; yield x; };",
-        "return function* () {\n  yield arg0;\n};",
-      );
+      check("return function* () { let x = arg0; yield x; };", "return function* () {\n  yield arg0;\n};");
       // TODO: combine with comma operator
       // check(
       //   "return function* () { let x = arg0; yield; return x; };",
@@ -2658,8 +2157,7 @@ console.log(foo, array);
           }
 
           if (line.includes("should_be_false")) {
-            if (!line.includes("= false"))
-              throw new Error(`Expected false in "${line}"`);
+            if (!line.includes("= false")) throw new Error(`Expected false in "${line}"`);
             expect(line.includes("= false")).toBe(true);
           }
 
@@ -2690,9 +2188,7 @@ console.log(foo, array);
   describe("transform", () => {
     it("supports macros", async () => {
       const out = await transpiler.transform(`
-        import {keepSecondArgument} from 'macro:${
-          import.meta.dir
-        }/macro-check.js';
+        import {keepSecondArgument} from 'macro:${import.meta.dir}/macro-check.js';
 
         export default keepSecondArgument("Test failed", "Test passed");
         export function otherNamesStillWork() {}
@@ -2707,9 +2203,7 @@ console.log(foo, array);
 
     it("sync supports macros", () => {
       const out = transpiler.transformSync(`
-        import {keepSecondArgument} from 'macro:${
-          import.meta.dir
-        }/macro-check.js';
+        import {keepSecondArgument} from 'macro:${import.meta.dir}/macro-check.js';
 
         export default keepSecondArgument("Test failed", "Test passed");
         export function otherNamesStillWork() {
@@ -2731,10 +2225,7 @@ console.log(foo, array);
       expect(out).toBe('import {ɵtest} from "foo";\n');
     });
 
-    const importLines = [
-      "import {createElement, bacon} from 'react';",
-      "import {bacon, createElement} from 'react';",
-    ];
+    const importLines = ["import {createElement, bacon} from 'react';", "import {bacon, createElement} from 'react';"];
     describe("sync supports macros remap", () => {
       for (let importLine of importLines) {
         it(importLine, () => {

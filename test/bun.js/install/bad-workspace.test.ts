@@ -29,9 +29,7 @@ test("bad workspace path", () => {
   const text = stderr!.toString();
 
   expect(text).toContain('Workspace not found "i-dont-exist"');
-  expect(text).toContain(
-    'Workspace not found "*/i-have-a-star-and-i-dont-exist"',
-  );
+  expect(text).toContain('Workspace not found "*/i-have-a-star-and-i-dont-exist"');
   expect(exitCode).toBe(1);
   rmSync(cwd, { recursive: true, force: true });
 });

@@ -2,7 +2,7 @@ import { it, expect } from "bun:test";
 import * as os from "node:os";
 
 it("arch", () => {
-  expect(["x64", "x86", "arm64"].some((arch) => os.arch() === arch)).toBe(true);
+  expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
 });
 
 it("endianness", () => {
@@ -40,13 +40,9 @@ it("homedir", () => {
 it("tmpdir", () => {
   if (process.platform === "win32") {
     expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
-    expect(os.tmpdir()).toBe(
-      `${process.env.SystemRoot || process.env.windir}\\temp`,
-    );
+    expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
   } else {
-    expect(os.tmpdir()).toBe(
-      process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp",
-    );
+    expect(os.tmpdir()).toBe(process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp");
   }
 });
 
@@ -55,11 +51,7 @@ it("hostname", () => {
 });
 
 it("platform", () => {
-  expect(
-    ["win32", "darwin", "linux", "wasm"].some(
-      (platform) => os.platform() === platform,
-    ),
-  ).toBe(true);
+  expect(["win32", "darwin", "linux", "wasm"].some(platform => os.platform() === platform)).toBe(true);
 });
 
 it("release", () => {
@@ -67,9 +59,7 @@ it("release", () => {
 });
 
 it("type", () => {
-  expect(
-    ["Windows_NT", "Darwin", "Linux"].some((type) => os.type() === type),
-  ).toBe(true);
+  expect(["Windows_NT", "Darwin", "Linux"].some(type => os.type() === type)).toBe(true);
 });
 
 it("uptime", () => {

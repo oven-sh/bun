@@ -25,7 +25,7 @@
 
 function getStdioWriteStream(fd_, rawRequire) {
   var module = { path: "node:process", require: rawRequire };
-  var require = (path) => module.require(path);
+  var require = path => module.require(path);
 
   function createStdioWriteStream(fd_) {
     var { Duplex, eos, destroy } = require("node:stream");
@@ -72,18 +72,9 @@ function getStdioWriteStream(fd_, rawRequire) {
       _destroy(err, callback) {
         if (!err && this.#onClose !== null) {
           var AbortError = class AbortError extends Error {
-            constructor(
-              message = "The operation was aborted",
-              options = void 0,
-            ) {
+            constructor(message = "The operation was aborted", options = void 0) {
               if (options !== void 0 && typeof options !== "object") {
-                throw new Error(
-                  `Invalid AbortError options:\n\n${JSON.stringify(
-                    options,
-                    null,
-                    2,
-                  )}`,
-                );
+                throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
               }
               super(message, options);
               this.code = "ABORT_ERR";
@@ -125,7 +116,7 @@ function getStdioWriteStream(fd_, rawRequire) {
             }
           });
 
-          eos(stream, (err) => {
+          eos(stream, err => {
             this.#writable = false;
             if (err) {
               destroy(stream, err);
@@ -164,7 +155,7 @@ function getStdioWriteStream(fd_, rawRequire) {
           this.push(null);
         });
 
-        eos(readStream, (err) => {
+        eos(readStream, err => {
           this.#readable = false;
           if (err) {
             destroy(readStream, err);
@@ -197,12 +188,7 @@ function getStdioWriteStream(fd_, rawRequire) {
     if (!encoding) return true;
 
     var normalied = encoding.toLowerCase();
-    return (
-      normalied === "utf8" ||
-      normalied === "utf-8" ||
-      normalied === "buffer" ||
-      normalied === "binary"
-    );
+    return normalied === "utf8" || normalied === "utf-8" || normalied === "buffer" || normalied === "binary";
   }
 
   var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {
@@ -356,7 +342,7 @@ function getStdioWriteStream(fd_, rawRequire) {
             this.#performCallback(callback);
             this.emit("drain");
           },
-          (err) => this.#performCallback(callback, err),
+          err => this.#performCallback(callback, err),
         );
         return false;
       }
@@ -437,7 +423,7 @@ function getStdioWriteStream(fd_, rawRequire) {
 
 function getStdinStream(fd_, rawRequire, Bun) {
   var module = { path: "node:process", require: rawRequire };
-  var require = (path) => module.require(path);
+  var require = path => module.require(path);
 
   var { Duplex, eos, destroy } = require("node:stream");
 
@@ -486,13 +472,7 @@ function getStdinStream(fd_, rawRequire, Bun) {
         var AbortError = class AbortError extends Error {
           constructor(message = "The operation was aborted", options = void 0) {
             if (options !== void 0 && typeof options !== "object") {
-              throw new Error(
-                `Invalid AbortError options:\n\n${JSON.stringify(
-                  options,
-                  null,
-                  2,
-                )}`,
-              );
+              throw new Error(`Invalid AbortError options:\n\n${JSON.stringify(options, null, 2)}`);
             }
             super(message, options);
             this.code = "ABORT_ERR";
@@ -610,7 +590,7 @@ function getStdinStream(fd_, rawRequire, Bun) {
         }
       });
 
-      eos(writeStream, (err) => {
+      eos(writeStream, err => {
         this.#writable = false;
         if (err) {
           destroy(writeStream, err);

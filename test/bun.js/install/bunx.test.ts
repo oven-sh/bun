@@ -1,10 +1,5 @@
 import { spawn } from "bun";
-import {
-  afterEach,
-  beforeEach,
-  expect,
-  it,
-} from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
 import { realpathSync } from "fs";
@@ -35,10 +30,7 @@ it("should install and run default (latest) version", async () => {
   expect(err).not.toContain("error");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.split(/\r?\n/)).toEqual([
-    "console.log(42);",
-    "",
-  ]);
+  expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
 });
 
@@ -56,9 +48,6 @@ it("should install and run specified version", async () => {
   expect(err).not.toContain("error");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
-  expect(out.split(/\r?\n/)).toEqual([
-    "uglify-js 3.14.1",
-    "",
-  ]);
+  expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
   expect(await exited).toBe(0);
 });

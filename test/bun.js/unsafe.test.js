@@ -7,7 +7,7 @@ it("arrayBufferToString u8", async () => {
   gc(true);
   expect(Bun.unsafe.arrayBufferToString(bytes)).toBe("hello world");
   gc(true);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, 0));
   gc(true);
 });
 
@@ -18,7 +18,7 @@ it("arrayBufferToString ArrayBuffer", async () => {
   const out = Bun.unsafe.arrayBufferToString(bytes.buffer);
   expect(out).toBe("hello world");
   gc(true);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, 0));
   globalThis.bytes = bytes;
   gc(true);
   expect(out).toBe("hello world");
@@ -32,7 +32,7 @@ it("arrayBufferToString u16", () => {
   const charCodes = Bun.unsafe
     .arrayBufferToString(uint16)
     .split("")
-    .map((a) => a.charCodeAt(0));
+    .map(a => a.charCodeAt(0));
   gc(true);
   for (let i = 0; i < charCodes.length; i++) {
     expect("hello world"[i]).toBe(String.fromCharCode(charCodes[i]));

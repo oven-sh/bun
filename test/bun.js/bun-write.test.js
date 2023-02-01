@@ -4,26 +4,17 @@ import path from "path";
 import { gcTick, withoutAggressiveGC } from "./gc";
 
 it("Bun.write blob", async () => {
-  await Bun.write(
-    Bun.file("/tmp/response-file.test.txt"),
-    Bun.file(path.join(import.meta.dir, "fetch.js.txt")),
-  );
+  await Bun.write(Bun.file("/tmp/response-file.test.txt"), Bun.file(path.join(import.meta.dir, "fetch.js.txt")));
   await gcTick();
   await Bun.write(Bun.file("/tmp/response-file.test.txt"), "blah blah blha");
   await gcTick();
-  await Bun.write(
-    Bun.file("/tmp/response-file.test.txt"),
-    new Uint32Array(1024),
-  );
+  await Bun.write(Bun.file("/tmp/response-file.test.txt"), new Uint32Array(1024));
   await gcTick();
   await Bun.write("/tmp/response-file.test.txt", new Uint32Array(1024));
   await gcTick();
-  expect(
-    await Bun.write(
-      new TextEncoder().encode("/tmp/response-file.test.txt"),
-      new Uint32Array(1024),
-    ),
-  ).toBe(new Uint32Array(1024).byteLength);
+  expect(await Bun.write(new TextEncoder().encode("/tmp/response-file.test.txt"), new Uint32Array(1024))).toBe(
+    new Uint32Array(1024).byteLength,
+  );
   await gcTick();
 });
 
@@ -31,9 +22,7 @@ describe("large file", () => {
   const fixtures = [
     [
       `/tmp/bun-test-large-file-${Date.now()}.txt`,
-      "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(
-        10000,
-      ),
+      "https://www.iana.org/assignments/media-types/media-types.xhtml,".repeat(10000),
     ],
   ];
 
@@ -57,11 +46,7 @@ describe("large file", () => {
       var bytes = new TextEncoder().encode(content);
       const written = await Bun.write(filename + ".bytes", bytes);
       expect(written).toBe(bytes.byteLength);
-      expect(
-        new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(
-          bytes,
-        ),
-      ).toBe(true);
+      expect(new Buffer(await Bun.file(filename + ".bytes").arrayBuffer()).equals(bytes)).toBe(true);
 
       try {
         unlinkSync(filename + ".bytes");
@@ -128,23 +113,15 @@ it("Bun.file -> Bun.file", async () => {
   fs.writeFileSync("/tmp/fetch.js.in", text);
   await gcTick();
   {
-    const result = await Bun.write(
-      Bun.file("/tmp/fetch.js.out"),
-      Bun.file("/tmp/fetch.js.in"),
-    );
+    const result = await Bun.write(Bun.file("/tmp/fetch.js.out"), Bun.file("/tmp/fetch.js.in"));
     await gcTick();
     expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
     await gcTick();
   }
 
   {
-    await Bun.write(
-      Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0),
-      Bun.file("/tmp/fetch.js.out"),
-    );
-    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(
-      text.substring(0, (text.length / 2) | 0),
-    );
+    await Bun.write(Bun.file("/tmp/fetch.js.in").slice(0, (text.length / 2) | 0), Bun.file("/tmp/fetch.js.out"));
+    expect(await Bun.file("/tmp/fetch.js.in").text()).toBe(text.substring(0, (text.length / 2) | 0));
   }
 
   {
@@ -197,7 +174,7 @@ it("Bun.file as a Blob", async () => {
   expect(blob.size).toBe(fixture.length);
   blob = null;
   await gcTick();
-  await new Promise((resolve) => setTimeout(resolve, 1));
+  await new Promise(resolve => setTimeout(resolve, 1));
   var blob = Bun.file(filePath);
   expect(blob.size).toBe(fixture.length);
 });
@@ -262,26 +239,16 @@ it("Bun.write(Bun.stderr, 'Bun.write STDERR TEST')", async () => {
 });
 
 it("Bun.write(Bun.stdout, new TextEncoder().encode('Bun.write STDOUT TEST'))", async () => {
-  expect(
-    await Bun.write(
-      Bun.stdout,
-      new TextEncoder().encode("\nBun.write STDOUT TEST\n\n"),
-    ),
-  ).toBe(24);
+  expect(await Bun.write(Bun.stdout, new TextEncoder().encode("\nBun.write STDOUT TEST\n\n"))).toBe(24);
 });
 
 it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", async () => {
-  expect(
-    await Bun.write(
-      Bun.stderr,
-      new TextEncoder().encode("\nBun.write STDERR TEST\n\n"),
-    ),
-  ).toBe(24);
+  expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
 });
 
 // FLAKY TEST
 // Since Bun.file is resolved lazily, this needs to specifically be checked
-it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async (done) => {
+it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async done => {
   var rewriter = new HTMLRewriter();
 
   rewriter.on("div", {
@@ -294,8 +261,6 @@ it.skip("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async (do
   var output = rewriter.transform(input);
   const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
   await Bun.write(outpath, output);
-  expect(await Bun.file(outpath).text()).toBe(
-    "<div><blink>it worked!</blink></div>",
-  );
+  expect(await Bun.file(outpath).text()).toBe("<div><blink>it worked!</blink></div>");
   done();
 });

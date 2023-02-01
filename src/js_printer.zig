@@ -5203,7 +5203,7 @@ pub fn printAst(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
@@ -5297,7 +5297,7 @@ pub fn printCommonJS(
             }
         }
     }
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);
@@ -5368,7 +5368,7 @@ pub fn printCommonJSThreaded(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             printer.printSemicolonIfNeeded();
             try printer.printStmt(stmt);

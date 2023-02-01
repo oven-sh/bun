@@ -91,3 +91,32 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+  homebrew:
+    name: Release to Homebrew
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: oven-sh/homebrew-bun
+      - id: environment
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-ruby
+        name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "2.6"
+      - id: update-tap
+        name: Update Tap
+        run: ruby scripts/release.rb "${{ env.TAG }}"
+      - id: commit-tap
+        name: Commit Tap
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: Release ${{ env.TAG }}

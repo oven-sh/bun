@@ -4,7 +4,6 @@ on:
   release:
     types:
       - published
-      - edited # canary only
   workflow_dispatch:
     inputs:
       tag:
@@ -17,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/bun-npm
+        working-directory: packages/bun-release
     steps:
       - id: checkout
         name: Checkout
@@ -41,7 +40,7 @@ jobs:
         run: bun install
       - id: bun-run
         name: Release
-        run: bun run npm -- "${{ env.TAG }}" publish
+        run: bun upload-npm -- "${{ env.TAG }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -73,7 +72,6 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: oven/bun
-          flavor: latest=false # TODO
           tags: |
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}

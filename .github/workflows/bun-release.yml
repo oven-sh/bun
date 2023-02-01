@@ -100,6 +100,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           repository: oven-sh/homebrew-bun
+          token: ${{ secrets.ROBOBUN_TOKEN }}
       - id: environment
         name: Setup Environment
         run: |
@@ -120,3 +121,6 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: Release ${{ env.TAG }}
+          commit_user_name: robobun
+          commit_user_email: robobun@oven.sh
+          commit_author: robobun <robobun@oven.sh>

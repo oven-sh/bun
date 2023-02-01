@@ -44,6 +44,7 @@ RUN apt-get update -qq \
       gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "$key" \
       || gpg --batch --keyserver keyserver.ubuntu.com --recv-keys "$key" ; \
     done \
+    && gpg --update-trustdb \
     && curl "https://github.com/oven-sh/bun/releases/$release/SHASUMS256.txt.asc" \
       -fsSLO \
       --compressed \

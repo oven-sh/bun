@@ -330,7 +330,7 @@ export class IncomingMessage extends Readable {
     this.complete = !!this.#noBody;
 
     this.#bodyStream = null;
-    this.#socket = undefined;
+    this.#fakeSocket = undefined;
 
     this.url = url.pathname;
     assignHeaders(this, req);
@@ -341,7 +341,7 @@ export class IncomingMessage extends Readable {
   _consuming = false;
   _dumped = false;
   #bodyStream = null;
-  #socket = undefined;
+  #fakeSocket = undefined;
   #noBody = false;
   #aborted = false;
   #req;
@@ -428,7 +428,7 @@ export class IncomingMessage extends Readable {
   }
 
   get connection() {
-    return this.#socket;
+    return this.#fakeSocket;
   }
 
   get statusCode() {
@@ -460,14 +460,7 @@ export class IncomingMessage extends Readable {
   }
 
   get socket() {
-    var _socket = this.#socket;
-    if (_socket) return _socket;
-
-    this.#socket = _socket = new EventEmitter();
-    this.on("end", () => _socket.emit("end"));
-    this.on("close", () => _socket.emit("close"));
-
-    return _socket;
+    return (this.#fakeSocket ??= new FakeSocket());
   }
 
   setTimeout(msecs, callback) {
@@ -554,7 +547,7 @@ export class OutgoingMessage extends Writable {
   #finished = false;
   [kEndCalled] = false;
 
-  #socket;
+  #fakeSocket;
   #timeoutTimer = null;
 
   // So that headers are accessible outside of `OutgoingMessage`
@@ -592,14 +585,7 @@ export class OutgoingMessage extends Writable {
   }
 
   get socket() {
-    var _socket = this.#socket;
-    if (_socket) return _socket;
-
-    this.#socket = _socket = new EventEmitter();
-    this.on("end", () => _socket.emit("end"));
-    this.on("close", () => _socket.emit("close"));
-
-    return _socket;
+    return (this.#fakeSocket ??= new FakeSocket());
   }
 
   get connection() {

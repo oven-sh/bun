@@ -85,14 +85,28 @@ export async function getSha(tag: string, format?: "short" | "long") {
   return format === "short" ? sha.substring(0, 7) : sha;
 }
 
+export async function getBuild(): Promise<number> {
+  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const response = await fetch("https://registry.npmjs.org/-/package/bun/dist-tags");
+  const { canary }: { canary: string } = await response.json();
+  if (!canary.includes(date)) {
+    return 1;
+  }
+  const match = /canary.[0-9]{8}\.([0-9]+)+?/.exec(canary);
+  return match ? 1 + parseInt(match[1]) : 1;
+}
+
 export async function getSemver(tag?: string, build?: number): Promise<string> {
   const { tag_name } = await getRelease(tag);
   if (tag_name !== "canary") {
     return tag_name.replace("bun-v", "");
   }
+  if (build === undefined) {
+    build = await getBuild();
+  }
   const sha = await getSha(tag_name, "short");
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  return `${Bun.version}-canary.${date}.${build ?? 1}+${sha}`;
+  return `${Bun.version}-canary.${date}.${build}+${sha}`;
 }
 
 export function formatTag(tag: string): string {

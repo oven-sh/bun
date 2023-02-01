@@ -29,11 +29,7 @@ process.exit(0); // HACK
 
 async function build(tag?: string): Promise<void> {
   const release = await getRelease(tag);
-  if (release.tag_name === "canary") {
-    version = await getCanarySemver();
-  } else {
-    version = release.tag_name.replace("bun-v", "");
-  }
+  version = await getSemver(release.tag_name);
   await buildRootModule();
   for (const platform of platforms) {
     await buildModule(release, platform);
@@ -145,22 +141,6 @@ async function extractFromZip(url: string, filename: string): Promise<JSZipObjec
   }
   debug("Found files:", Object.keys(zip.files));
   throw new Error(`File not found: ${filename}`);
-}
-
-async function getCanarySemver(): Promise<string> {
-  const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
-  try {
-    const response = await fetch(`https://registry.npmjs.org/-/package/${module}/dist-tags`);
-    const { canary }: { canary: string } = await response.json();
-    if (canary.includes(date)) {
-      const match = /canary.[0-9]{8}\.([0-9]+)+?/.exec(canary);
-      const build = 1 + (match ? parseInt(match[1]) : 0);
-      return getSemver("canary", build);
-    }
-  } catch (error) {
-    debug("getCanarySemver failed", error);
-  }
-  return getSemver("canary");
 }
 
 function bundle(src: string, dst: string, options: BuildOptions = {}): void {

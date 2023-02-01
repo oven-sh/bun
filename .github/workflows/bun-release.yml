@@ -117,7 +117,6 @@ jobs:
           tags: |
             type=match,pattern=(bun-v)?(\d.\d.\d),group=2,value=${{ env.TAG }}
             type=match,pattern=(bun-v)?(\d.\d),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(\d),group=2,value=${{ env.TAG }}
       - id: login
         name: Login to Docker
         uses: docker/login-action@v2

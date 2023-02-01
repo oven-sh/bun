@@ -539,7 +539,7 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
 const kClearTimeout = Symbol("kClearTimeout");
 
 export class OutgoingMessage extends Writable {
-  #headers = new Headers();
+  #headers;
   headersSent = false;
   sendDate = true;
   req;
@@ -552,7 +552,7 @@ export class OutgoingMessage extends Writable {
 
   // For compat with IncomingRequest
   get headers() {
-    if (!this.#headers) return {};
+    if (!this.#headers) return kEmptyObject;
     return this.#headers.toJSON();
   }
 
@@ -593,35 +593,41 @@ export class OutgoingMessage extends Writable {
   }
 
   appendHeader(name, value) {
-    this.#headers.append(name, value);
+    var headers = (this.#headers ??= new Headers());
+    headers.append(name, value);
   }
 
   flushHeaders() {}
 
   getHeader(name) {
+    if (!this.#headers) return;
     return this.#headers.get(name);
   }
 
   getHeaders() {
-    if (!this.#headers) return {};
+    if (!this.#headers) return kEmptyObject;
     return this.#headers.toJSON();
   }
 
   getHeaderNames() {
     var headers = this.#headers;
+    if (!headers) return [];
     return Array.from(headers.keys());
   }
 
   removeHeader(name) {
+    if (!this.#headers) return;
     this.#headers.delete(name);
   }
 
   setHeader(name, value) {
-    this.#headers.set(name, value);
+    var headers = (this.#headers ??= new Headers());
+    headers.set(name, value);
     return this;
   }
 
   hasHeader(name) {
+    if (!this.#headers) return false;
     return this.#headers.has(name);
   }
 
@@ -659,7 +665,6 @@ export class ServerResponse extends Writable {
     this._reply = reply;
     this.sendDate = true;
     this.statusCode = 200;
-    this.#headers = new Headers();
     this.headersSent = false;
     this.statusMessage = undefined;
     this.#controller = undefined;
@@ -821,45 +826,49 @@ export class ServerResponse extends Writable {
     // throw new Error('not implemented');
   }
 
+  appendHeader(name, value) {
+    var headers = (this.#headers ??= new Headers());
+    headers.append(name, value);
+  }
+
   flushHeaders() {}
 
-  removeHeader(name) {
-    var headers = this.#headers;
-    headers.delete(name);
-  }
-
   getHeader(name) {
-    var headers = this.#headers;
-    return headers.get(name);
+    if (!this.#headers) return;
+    return this.#headers.get(name);
   }
 
-  hasHeader(name) {
-    var headers = this.#headers;
-    return headers.has(name);
+  getHeaders() {
+    if (!this.#headers) return kEmptyObject;
+    return this.#headers.toJSON();
   }
 
   getHeaderNames() {
     var headers = this.#headers;
+    if (!headers) return [];
     return Array.from(headers.keys());
   }
 
+  removeHeader(name) {
+    if (!this.#headers) return;
+    this.#headers.delete(name);
+  }
+
   setHeader(name, value) {
-    var headers = this.#headers;
-
+    var headers = (this.#headers ??= new Headers());
     headers.set(name, value);
-
     return this;
+  }
+
+  hasHeader(name) {
+    if (!this.#headers) return false;
+    return this.#headers.has(name);
   }
 
   writeHead(statusCode, statusMessage, headers) {
     _writeHead(statusCode, statusMessage, headers, this);
 
     return this;
-  }
-
-  getHeaders() {
-    if (!this.#headers) return {};
-    return this.#headers.toJSON();
   }
 }
 

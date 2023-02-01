@@ -1,16 +1,7 @@
 import { define } from "../scripts/class-definitions";
 
-const names = [
-  "SHA1",
-  "MD5",
-  "MD4",
-  "SHA224",
-  "SHA512",
-  "SHA384",
-  "SHA256",
-  "SHA512_256",
-];
-const named = names.map((name) => {
+const names = ["SHA1", "MD5", "MD4", "SHA224", "SHA512", "SHA384", "SHA256", "SHA512_256"];
+const named = names.map(name => {
   return define({
     name: name,
     construct: true,

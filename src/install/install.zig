@@ -2230,7 +2230,7 @@ pub const PackageManager = struct {
 
         const preinstall = this.determinePreinstallState(package, this.lockfile);
 
-        if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(package.meta.id != invalid_package_id);
+        if (comptime Environment.allow_assert) std.debug.assert(package.meta.id != invalid_package_id);
         defer successFn(this, dependency_id, package.meta.id);
         switch (preinstall) {
             // Is this package already in the cache?
@@ -4270,17 +4270,17 @@ pub const PackageManager = struct {
             // 3. There is a "dependencies" (or equivalent list), and the package name exists in multiple lists
             ast_modifier: {
                 // Try to use the existing spot in the dependencies list if possible
-                for (updates) |update, i| {
+                for (updates) |*update| {
                     outer: for (dependency_lists_to_check) |list| {
                         if (current_package_json.asProperty(list)) |query| {
                             if (query.expr.data == .e_object) {
                                 if (query.expr.asProperty(update.name)) |value| {
                                     if (value.expr.data == .e_string) {
-                                        if (update.resolved_name.isEmpty()) {
-                                            updates[i].e_string = value.expr.data.e_string;
-                                            remaining -= 1;
-                                        } else {
+                                        if (!update.resolved_name.isEmpty() and strings.eql(list, dependency_list)) {
                                             replacing += 1;
+                                        } else {
+                                            update.e_string = value.expr.data.e_string;
+                                            remaining -= 1;
                                         }
                                     }
                                     break :outer;
@@ -4304,11 +4304,11 @@ pub const PackageManager = struct {
                 std.mem.copy(G.Property, new_dependencies, dependencies);
                 std.mem.set(G.Property, new_dependencies[dependencies.len..], G.Property{});
 
-                outer: for (updates) |update, j| {
+                outer: for (updates) |*update| {
                     if (update.e_string != null) continue;
+                    defer if (comptime Environment.allow_assert) std.debug.assert(update.e_string != null);
 
                     var k: usize = 0;
-
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
                             if (key.data.e_string.eql(string, update.name)) {
@@ -4329,7 +4329,7 @@ pub const PackageManager = struct {
                         }
 
                         if (new_dependencies[k].key == null) {
-                            new_dependencies[k].key = JSAst.Expr.init(
+                            new_dependencies[k].key = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
                                     .data = try allocator.dupe(u8, if (update.is_aliased or update.resolved_name.isEmpty())
@@ -4338,17 +4338,17 @@ pub const PackageManager = struct {
                                         update.resolved_name.slice(update.version_buf)),
                                 },
                                 logger.Loc.Empty,
-                            );
+                            ).clone(allocator);
 
-                            new_dependencies[k].value = JSAst.Expr.init(
+                            new_dependencies[k].value = try JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
                                     // we set it later
                                     .data = "",
                                 },
                                 logger.Loc.Empty,
-                            );
-                            updates[j].e_string = new_dependencies[k].value.?.data.e_string;
+                            ).clone(allocator);
+                            update.e_string = new_dependencies[k].value.?.data.e_string;
                             continue :outer;
                         }
                     }
@@ -4414,19 +4414,21 @@ pub const PackageManager = struct {
             }
 
             for (updates) |*update| {
-                update.e_string.?.data = switch (update.resolution.tag) {
-                    .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
-                        std.fmt.allocPrint(allocator, "^{}", .{
-                            update.resolution.value.npm.version.fmt(update.version_buf),
-                        }) catch unreachable
-                    else
-                        null,
-                    .uninitialized => switch (update.version.tag) {
-                        .uninitialized => try allocator.dupe(u8, latest),
+                if (update.e_string) |e_string| {
+                    e_string.data = switch (update.resolution.tag) {
+                        .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
+                            std.fmt.allocPrint(allocator, "^{}", .{
+                                update.resolution.value.npm.version.fmt(update.version_buf),
+                            }) catch unreachable
+                        else
+                            null,
+                        .uninitialized => switch (update.version.tag) {
+                            .uninitialized => try allocator.dupe(u8, latest),
+                            else => null,
+                        },
                         else => null,
-                    },
-                    else => null,
-                } orelse try allocator.dupe(u8, update.version.literal.slice(update.version_buf));
+                    } orelse try allocator.dupe(u8, update.version.literal.slice(update.version_buf));
+                }
             }
         }
     };

@@ -6,7 +6,7 @@ import assertNode from "node:assert";
 type DoneCb = (err?: Error) => any;
 function noop() {}
 
-const expect = (actual) => {
+const expect = actual => {
   gcTick();
   const ret = expect_(actual);
   gcTick();
@@ -14,23 +14,17 @@ const expect = (actual) => {
 };
 
 // Assert
-export const strictEqual = (
-  ...args: Parameters<typeof assertNode.strictEqual>
-) => {
+export const strictEqual = (...args: Parameters<typeof assertNode.strictEqual>) => {
   assertNode.strictEqual.apply(this, args);
   expect(true).toBe(true);
 };
 
-export const notStrictEqual = (
-  ...args: Parameters<typeof assertNode.notStrictEqual>
-) => {
+export const notStrictEqual = (...args: Parameters<typeof assertNode.notStrictEqual>) => {
   assertNode.notStrictEqual.apply(this, args);
   expect(true).toBe(true);
 };
 
-export const deepStrictEqual = (
-  ...args: Parameters<typeof assertNode.deepStrictEqual>
-) => {
+export const deepStrictEqual = (...args: Parameters<typeof assertNode.deepStrictEqual>) => {
   assertNode.deepStrictEqual.apply(this, args);
   expect(true).toBe(true);
 };
@@ -92,9 +86,7 @@ export const createCallCheckCtx = (done: DoneCb) => {
     return mustCallAtLeast(fn, exact);
   }
 
-  function mustNotCall(
-    reason: string = "function should not have been called",
-  ) {
+  function mustNotCall(reason: string = "function should not have been called") {
     const localDone = createDone();
     setTimeout(() => localDone(), 200);
     return () => {
@@ -115,8 +107,7 @@ export const createCallCheckCtx = (done: DoneCb) => {
   }
 
   function _mustCallInner(fn, criteria = 1, field) {
-    if (process._exiting)
-      throw new Error("Cannot use common.mustCall*() in process exit handler");
+    if (process._exiting) throw new Error("Cannot use common.mustCall*() in process exit handler");
     if (typeof fn === "number") {
       criteria = fn;
       fn = noop;
@@ -124,8 +115,7 @@ export const createCallCheckCtx = (done: DoneCb) => {
       fn = noop;
     }
 
-    if (typeof criteria !== "number")
-      throw new TypeError(`Invalid ${field} value: ${criteria}`);
+    if (typeof criteria !== "number") throw new TypeError(`Invalid ${field} value: ${criteria}`);
 
     let actual = 0;
     let expected = criteria;

@@ -1,10 +1,5 @@
 import { spawn } from "bun";
-import {
-  afterEach,
-  beforeEach,
-  expect,
-  it,
-} from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
 import { mkdtemp, rm, writeFile } from "fs/promises";
@@ -24,16 +19,26 @@ afterEach(async () => {
 
 it("should link package", async () => {
   var link_name = basename(link_dir).slice("bun-link.".length);
-  await writeFile(join(link_dir, "package.json"), JSON.stringify({
-    name: link_name,
-    version: "0.0.1",
-  }));
-  await writeFile(join(package_dir, "package.json"), JSON.stringify({
-    name: "foo",
-    version: "0.0.2",
-  }));
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.2",
+    }),
+  );
 
-  const { stdout: stdout1, stderr: stderr1, exited: exited1 } = spawn({
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
     stdout: null,
@@ -43,15 +48,16 @@ it("should link package", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun link",
-    "",
-  ]);
+  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout1).toBeDefined();
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
-  const { stdout: stdout2, stderr: stderr2, exited: exited2 } = spawn({
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
     stdout: null,
@@ -61,10 +67,7 @@ it("should link package", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun link",
-    "",
-  ]);
+  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -76,7 +79,11 @@ it("should link package", async () => {
   ]);
   expect(await exited2).toBe(0);
 
-  const { stdout: stdout3, stderr: stderr3, exited: exited3 } = spawn({
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
     stdout: null,
@@ -86,15 +93,16 @@ it("should link package", async () => {
   });
   expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
-  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun unlink",
-    "",
-  ]);
+  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
   expect(stdout3).toBeDefined();
   expect(await new Response(stdout3).text()).toContain(`success: unlinked package "${link_name}"`);
   expect(await exited3).toBe(0);
 
-  const { stdout: stdout4, stderr: stderr4, exited: exited4 } = spawn({
+  const {
+    stdout: stdout4,
+    stderr: stderr4,
+    exited: exited4,
+  } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
     stdout: null,
@@ -113,16 +121,26 @@ it("should link package", async () => {
 
 it("should link scoped package", async () => {
   var link_name = `@${basename(link_dir).slice("bun-link.".length)}/foo`;
-  await writeFile(join(link_dir, "package.json"), JSON.stringify({
-    name: link_name,
-    version: "0.0.1",
-  }));
-  await writeFile(join(package_dir, "package.json"), JSON.stringify({
-    name: "bar",
-    version: "0.0.2",
-  }));
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
 
-  const { stdout: stdout1, stderr: stderr1, exited: exited1 } = spawn({
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
     cmd: [bunExe(), "link"],
     cwd: link_dir,
     stdout: null,
@@ -132,15 +150,16 @@ it("should link scoped package", async () => {
   });
   expect(stderr1).toBeDefined();
   const err1 = await new Response(stderr1).text();
-  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun link",
-    "",
-  ]);
+  expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout1).toBeDefined();
   expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
   expect(await exited1).toBe(0);
 
-  const { stdout: stdout2, stderr: stderr2, exited: exited2 } = spawn({
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
     stdout: null,
@@ -150,10 +169,7 @@ it("should link scoped package", async () => {
   });
   expect(stderr2).toBeDefined();
   const err2 = await new Response(stderr2).text();
-  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun link",
-    "",
-  ]);
+  expect(err2.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
@@ -165,7 +181,11 @@ it("should link scoped package", async () => {
   ]);
   expect(await exited2).toBe(0);
 
-  const { stdout: stdout3, stderr: stderr3, exited: exited3 } = spawn({
+  const {
+    stdout: stdout3,
+    stderr: stderr3,
+    exited: exited3,
+  } = spawn({
     cmd: [bunExe(), "unlink"],
     cwd: link_dir,
     stdout: null,
@@ -175,15 +195,16 @@ it("should link scoped package", async () => {
   });
   expect(stderr3).toBeDefined();
   const err3 = await new Response(stderr3).text();
-  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
-    "bun unlink",
-    "",
-  ]);
+  expect(err3.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun unlink", ""]);
   expect(stdout3).toBeDefined();
   expect(await new Response(stdout3).text()).toContain(`success: unlinked package "${link_name}"`);
   expect(await exited3).toBe(0);
 
-  const { stdout: stdout4, stderr: stderr4, exited: exited4 } = spawn({
+  const {
+    stdout: stdout4,
+    stderr: stderr4,
+    exited: exited4,
+  } = spawn({
     cmd: [bunExe(), "link", link_name],
     cwd: package_dir,
     stdout: null,

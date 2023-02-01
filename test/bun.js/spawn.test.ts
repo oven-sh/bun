@@ -1,10 +1,4 @@
-import {
-  ArrayBufferSink,
-  readableStreamToText,
-  spawn,
-  spawnSync,
-  write,
-} from "bun";
+import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick } from "./gc";
 import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
@@ -99,9 +93,7 @@ for (let [gcTick, label] of [
         });
         gcTick();
         await exited;
-        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(
-          hugeString,
-        );
+        expect(require("fs").readFileSync("/tmp/out.123.txt", "utf8")).toBe(hugeString);
         gcTick();
       });
 
@@ -133,7 +125,7 @@ for (let [gcTick, label] of [
       it("check exit code from onExit", async () => {
         for (let i = 0; i < 1000; i++) {
           var exitCode1, exitCode2;
-          await new Promise<void>((resolve) => {
+          await new Promise<void>(resolve => {
             var counter = 0;
             spawn({
               cmd: ["ls"],
@@ -343,10 +335,10 @@ for (let [gcTick, label] of [
                   var reader = process.stdout?.getReader();
 
                   reader?.closed.then(
-                    (a) => {
+                    a => {
                       console.log("Closed!");
                     },
-                    (err) => {
+                    err => {
                       console.log("Closed!", err);
                     },
                   );

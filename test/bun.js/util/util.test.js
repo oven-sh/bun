@@ -234,10 +234,7 @@ describe("util", () => {
       //     true
       //   );
       strictEqual(util.types.isNativeError({}), false);
-      strictEqual(
-        util.types.isNativeError({ name: "Error", message: "" }),
-        false,
-      );
+      strictEqual(util.types.isNativeError({ name: "Error", message: "" }), false);
       strictEqual(util.types.isNativeError([]), false);
       //   strictEqual( // FIXME: failing test
       //     util.types.isNativeError(Object.create(Error.prototype)),

@@ -1205,25 +1205,15 @@ test("toHaveProperty() - with string or array", () => {
   expect(houseForSale).toHaveProperty("bedrooms", 4);
   expect(houseForSale).toHaveProperty(["sunroom"], "yes");
   expect(houseForSale).toHaveProperty("kitchen.area", 20);
-  expect(houseForSale).toHaveProperty("kitchen.amenities", [
-    "oven",
-    "stove",
-    "washer",
-  ]);
+  expect(houseForSale).toHaveProperty("kitchen.amenities", ["oven", "stove", "washer"]);
   expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 21);
   expect(houseForSale).toHaveProperty(["kitchen", "area"], 20);
   expect(houseForSale).not.toHaveProperty(["kitchen", "area"], 29);
-  expect(houseForSale).toHaveProperty(
-    ["kitchen", "amenities"],
-    ["oven", "stove", "washer"],
-  );
+  expect(houseForSale).toHaveProperty(["kitchen", "amenities"], ["oven", "stove", "washer"]);
   expect(houseForSale).toHaveProperty("kitchen.amenities[2]", "washer");
   expect(houseForSale).toHaveProperty(["kitchen", "amenities", 1], "stove");
   expect(houseForSale).toHaveProperty(["kitchen", "amenities", 0], "oven");
-  expect(houseForSale).toHaveProperty(
-    "livingroom.amenities[0].couch[0][1].dimensions[0]",
-    20,
-  );
+  expect(houseForSale).toHaveProperty("livingroom.amenities[0].couch[0][1].dimensions[0]", 20);
   expect(houseForSale).toHaveProperty(["kitchen", "nice.oven"]);
   expect(houseForSale).not.toHaveProperty(["kitchen", "open"]);
   expect(houseForSale).toHaveProperty(["ceiling.height"], 20);
@@ -1327,10 +1317,7 @@ test("toHaveProperty() - all", () => {
 
   // test object with property "a" with value set, map, string
   expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([3, 2, 1]));
-  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty(
-    "a",
-    new Map([{ c: 3 }, { b: 2 }, { a: 1 }]),
-  );
+  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty("a", new Map([{ c: 3 }, { b: 2 }, { a: 1 }]));
   expect({ a: new String("a") }).toHaveProperty("a", new String("a"));
   expect({ a: new String("a") }).not.toHaveProperty("a", "a");
   expect({ a: new String("a") }).not.toHaveProperty("a", "b");
@@ -1350,10 +1337,7 @@ test("toHaveProperty() - all", () => {
   expect({ a: new String("a") }).not.toHaveProperty("a", Symbol("a"));
   expect({ a: new String("a") }).not.toHaveProperty("a", new Int8Array());
   expect({ a: new String("a") }).not.toHaveProperty("a", new Uint8Array());
-  expect({ a: new String("a") }).not.toHaveProperty(
-    "a",
-    new Uint8ClampedArray(),
-  );
+  expect({ a: new String("a") }).not.toHaveProperty("a", new Uint8ClampedArray());
   expect({ a: new String("a") }).not.toHaveProperty("a", new Int16Array());
   expect({ a: new String("a") }).not.toHaveProperty("a", new Uint16Array());
   expect({ a: new String("a") }).not.toHaveProperty("a", new Int32Array());
@@ -1363,21 +1347,12 @@ test("toHaveProperty() - all", () => {
   expect({ a: new String("a") }).not.toHaveProperty("a", new BigInt64Array());
   expect({ a: new String("a") }).not.toHaveProperty("a", new BigUint64Array());
   expect({ a: new String("a") }).not.toHaveProperty("a", new ArrayBuffer());
-  expect({ a: new String("a") }).not.toHaveProperty(
-    "a",
-    new SharedArrayBuffer(),
-  );
-  expect({ a: new String("a") }).not.toHaveProperty(
-    "a",
-    new DataView(new ArrayBuffer(1)),
-  );
+  expect({ a: new String("a") }).not.toHaveProperty("a", new SharedArrayBuffer());
+  expect({ a: new String("a") }).not.toHaveProperty("a", new DataView(new ArrayBuffer(1)));
 
   // test property equality with sets, maps, objects, arrays, and String
   expect({ a: new Set([1, 2, 3]) }).toHaveProperty("a", new Set([1, 2, 3]));
-  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty(
-    "a",
-    new Map([{ a: 1 }, { b: 2 }, { c: 3 }]),
-  );
+  expect({ a: new Map([{ a: 1 }, { b: 2 }, { c: 3 }]) }).toHaveProperty("a", new Map([{ a: 1 }, { b: 2 }, { c: 3 }]));
   expect({ a: { a: 1, b: 2, c: 3 } }).toHaveProperty("a", { a: 1, b: 2, c: 3 });
   expect({ a: [1, 2, 3] }).toHaveProperty("a", [1, 2, 3]);
   expect({ a: "a" }).toHaveProperty("a", "a");
@@ -1412,9 +1387,7 @@ test("toBe()", () => {
 });
 
 test("toHaveLength()", () => {
-  expect({ length: Number.MAX_SAFE_INTEGER }).toHaveLength(
-    Number.MAX_SAFE_INTEGER,
-  );
+  expect({ length: Number.MAX_SAFE_INTEGER }).toHaveLength(Number.MAX_SAFE_INTEGER);
   expect("123").toHaveLength(3);
   expect([1, 2, 3]).toHaveLength(3);
   expect([1, 2, 3]).not.toHaveLength(2);
@@ -1422,9 +1395,7 @@ test("toHaveLength()", () => {
   expect({ length: 3 }).toHaveLength(3);
   expect({ length: 3 }).not.toHaveLength(2);
   expect({ length: 3 }).not.toHaveLength(Number.MAX_SAFE_INTEGER);
-  expect({ length: Number.MAX_SAFE_INTEGER }).not.toHaveLength(
-    Number.MAX_SAFE_INTEGER - 1,
-  );
+  expect({ length: Number.MAX_SAFE_INTEGER }).not.toHaveLength(Number.MAX_SAFE_INTEGER - 1);
   expect({ length: 3.3 }).not.toHaveLength(3);
   expect("123").not.toHaveLength(-0);
 });
@@ -1544,9 +1515,7 @@ test("toBeGreaterThan()", () => {
   expect(1).not.toBeGreaterThan(Number.MAX_SAFE_INTEGER);
   expect(1).not.toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER));
   expect(Number.MAX_SAFE_INTEGER).not.toBeGreaterThan(Number.MAX_SAFE_INTEGER);
-  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeGreaterThan(
-    BigInt(Number.MAX_SAFE_INTEGER),
-  );
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER));
 
   expect(Infinity).toBeGreaterThan(-Infinity);
   expect(-Infinity).not.toBeGreaterThan(Infinity);
@@ -1656,12 +1625,8 @@ test("toBeGreaterThanOrEqual()", () => {
   expect(1).not.toBeGreaterThanOrEqual(Number.MAX_SAFE_INTEGER);
   expect(1).not.toBeGreaterThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
   expect(1).not.toBeGreaterThanOrEqual(BigInt(Number.MAX_VALUE));
-  expect(Number.MAX_SAFE_INTEGER).toBeGreaterThanOrEqual(
-    Number.MAX_SAFE_INTEGER,
-  );
-  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeGreaterThanOrEqual(
-    BigInt(Number.MAX_SAFE_INTEGER),
-  );
+  expect(Number.MAX_SAFE_INTEGER).toBeGreaterThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeGreaterThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
 
   expect(Infinity).toBeGreaterThanOrEqual(-Infinity);
   expect(-Infinity).not.toBeGreaterThanOrEqual(Infinity);
@@ -1766,9 +1731,7 @@ test("toBeLessThan()", () => {
   expect(1).toBeLessThan(Number.MAX_SAFE_INTEGER);
   expect(1).toBeLessThan(BigInt(Number.MAX_SAFE_INTEGER));
   expect(Number.MAX_SAFE_INTEGER).not.toBeLessThan(Number.MAX_SAFE_INTEGER);
-  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThan(
-    BigInt(Number.MAX_SAFE_INTEGER),
-  );
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).not.toBeLessThan(BigInt(Number.MAX_SAFE_INTEGER));
 
   expect(Number.MAX_VALUE).not.toBeLessThan(BigInt(Number.MAX_VALUE));
 
@@ -1879,9 +1842,7 @@ test("toBeLessThanOrEqual()", () => {
   expect(1).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
   expect(1).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
   expect(Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
-  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeLessThanOrEqual(
-    BigInt(Number.MAX_SAFE_INTEGER),
-  );
+  expect(BigInt(Number.MAX_SAFE_INTEGER)).toBeLessThanOrEqual(BigInt(Number.MAX_SAFE_INTEGER));
 
   expect(Number.MAX_VALUE).toBeLessThanOrEqual(BigInt(Number.MAX_VALUE));
   expect(BigInt(Number.MAX_VALUE)).toBeLessThanOrEqual(Number.MAX_VALUE);
@@ -2085,18 +2046,12 @@ test("test async exceptions fail tests", () => {
   try {
     mkdirSync("/tmp/test-throwing-bun", { recursive: true });
   } catch (e) {}
-  writeFileSync(
-    "/tmp/test-throwing-bun/test-throwing-eventemitter.test.js",
-    code,
-  );
+  writeFileSync("/tmp/test-throwing-bun/test-throwing-eventemitter.test.js", code);
 
-  const { stderr, exitCode } = spawnSync(
-    [bunExe(), "wiptest", "test-throwing-eventemitter"],
-    {
-      cwd: realpathSync("/tmp/test-throwing-bun"),
-      env: bunEnv,
-    },
-  );
+  const { stderr, exitCode } = spawnSync([bunExe(), "wiptest", "test-throwing-eventemitter"], {
+    cwd: realpathSync("/tmp/test-throwing-bun"),
+    env: bunEnv,
+  });
 
   const str = stderr!.toString();
   expect(str).toContain("#FAIL001");
@@ -2111,7 +2066,7 @@ test("test async exceptions fail tests", () => {
   expect(exitCode).toBe(1);
 });
 
-it("should return non-zero exit code for invalid syntax", async() => {
+it("should return non-zero exit code for invalid syntax", async () => {
   const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
   try {
     await writeFile(join(test_dir, "bad.test.js"), "!!!");

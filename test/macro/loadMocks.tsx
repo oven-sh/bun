@@ -1,7 +1,6 @@
 import { unreachable } from "macro:./assert";
 
-if (process.env.NODE_ENV !== "test")
-  unreachable("This module should only be imported in tests");
+if (process.env.NODE_ENV !== "test") unreachable("This module should only be imported in tests");
 
 export const mockData = {
   Copilot: {

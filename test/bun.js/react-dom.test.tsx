@@ -103,10 +103,7 @@ describe("React", () => {
 });
 
 describe("ReactDOM", () => {
-  for (let renderToReadableStream of [
-    renderToReadableStreamBun,
-    renderToReadableStreamBrowser,
-  ]) {
+  for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
     for (let [inputString, reactElement] of fixtures) {
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
         it("Response.text()", async () => {
@@ -208,9 +205,7 @@ describe("ReactDOM", () => {
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
-          const text = new TextDecoder().decode(
-            await new Response(chunks as any).arrayBuffer(),
-          );
+          const text = new TextDecoder().decode(await new Response(chunks as any).arrayBuffer());
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
@@ -218,10 +213,7 @@ describe("ReactDOM", () => {
       });
     }
   }
-  for (let renderToReadableStream of [
-    renderToReadableStreamBun,
-    renderToReadableStreamBrowser,
-  ]) {
+  for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
     // there is an event loop bug that causes deadlocks
     // the bug is with `fetch`, not with the HTTP server
     for (let [inputString, reactElement] of fixtures) {
@@ -233,15 +225,11 @@ describe("ReactDOM", () => {
               server = serve({
                 port: port++,
                 async fetch(req) {
-                  return new Response(
-                    await renderToReadableStream(reactElement),
-                  );
+                  return new Response(await renderToReadableStream(reactElement));
                 },
               });
               const resp = await fetch("http://localhost:" + server.port + "/");
-              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
-                inputString,
-              );
+              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(inputString);
               gc();
             } catch (e) {
               throw e;
@@ -251,10 +239,7 @@ describe("ReactDOM", () => {
             }
           })();
           gc();
-          expect(
-            heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ??
-              0,
-          ).toBe(1);
+          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBe(1);
         });
         const count = 4;
         it(`http server, ${count} requests`, async () => {
@@ -265,17 +250,13 @@ describe("ReactDOM", () => {
               server = serve({
                 port: port++,
                 async fetch(req) {
-                  return new Response(
-                    await renderToReadableStream(reactElement),
-                  );
+                  return new Response(await renderToReadableStream(reactElement));
                 },
               });
               gc();
               while (remain--) {
                 var attempt = remain + 1;
-                const response = await fetch(
-                  "http://localhost:" + server.port + "/",
-                );
+                const response = await fetch("http://localhost:" + server.port + "/");
                 gc();
                 const result = await response.text();
                 try {
@@ -294,8 +275,7 @@ describe("ReactDOM", () => {
             }
           })();
 
-          const { ReadableHTTPResponseSinkController = 0 } =
-            heapStats().objectTypeCounts;
+          const { ReadableHTTPResponseSinkController = 0 } = heapStats().objectTypeCounts;
           expect(ReadableHTTPResponseSinkController).toBe(1);
           expect(remain + 1).toBe(0);
         });

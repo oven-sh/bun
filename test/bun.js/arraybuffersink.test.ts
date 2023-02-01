@@ -11,44 +11,23 @@ describe("ArrayBufferSink", () => {
     ],
     [
       ["abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"],
-      new TextEncoder().encode(
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
-      ),
+      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
       "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
     ],
     [
       ["😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
-      new TextEncoder().encode(
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-      ),
+      new TextEncoder().encode("😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
       "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
     [
-      [
-        "abcdefghijklmnopqrstuvwxyz",
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-      ],
-      new TextEncoder().encode(
-        "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-      ),
-      "abcdefghijklmnopqrstuvwxyz" +
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
+      ["abcdefghijklmnopqrstuvwxyz", "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"],
+      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
+      "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
     [
-      [
-        "abcdefghijklmnopqrstuvwxyz",
-        "😋",
-        " Get Emoji — All Emojis",
-        " to ✂️ Copy and 📋 Paste 👌",
-      ],
-      new TextEncoder().encode(
-        "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-      ),
-      "(rope) " +
-        "abcdefghijklmnopqrstuvwxyz" +
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
+      ["abcdefghijklmnopqrstuvwxyz", "😋", " Get Emoji — All Emojis", " to ✂️ Copy and 📋 Paste 👌"],
+      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
+      "(rope) " + "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
     [
       [
@@ -57,13 +36,8 @@ describe("ArrayBufferSink", () => {
         " Get Emoji — All Emojis",
         " to ✂️ Copy and 📋 Paste 👌",
       ],
-      new TextEncoder().encode(
-        "abcdefghijklmnopqrstuvwxyz" +
-          "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
-      ),
-      "(array) " +
-        "abcdefghijklmnopqrstuvwxyz" +
-        "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
+      new TextEncoder().encode("abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌"),
+      "(array) " + "abcdefghijklmnopqrstuvwxyz" + "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌",
     ],
   ] as const;
 

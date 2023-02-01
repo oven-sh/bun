@@ -9,7 +9,7 @@ let handler, server;
 export let package_dir, requested, root_url;
 
 export function dummyRegistry(urls, version = "0.0.2", props = {}) {
-  return async (request) => {
+  return async request => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {

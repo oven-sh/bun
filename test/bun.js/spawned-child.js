@@ -12,7 +12,7 @@ if (TARGET === "STDIN") {
       }
     });
   } else {
-    process.stdin.on("data", (chunk) => {
+    process.stdin.on("data", chunk => {
       data += chunk;
     });
   }

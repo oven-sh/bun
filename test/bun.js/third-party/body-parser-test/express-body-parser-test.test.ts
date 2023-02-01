@@ -7,10 +7,7 @@ test("iconv works", () => {
   var iconv = require("iconv-lite");
 
   // Convert from an encoded buffer to a js string.
-  var str = iconv.decode(
-    Buffer.from([0x68, 0x65, 0x6c, 0x6c, 0x6f]),
-    "win1251",
-  );
+  var str = iconv.decode(Buffer.from([0x68, 0x65, 0x6c, 0x6c, 0x6f]), "win1251");
 
   // Convert from a js string to an encoded buffer.
   var buf = iconv.encode("Sample input string", "win1251");
@@ -22,7 +19,7 @@ test("iconv works", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/1913
-test("httpServer", async (done) => {
+test("httpServer", async done => {
   // Constants
   const PORT = 8412;
 
@@ -30,7 +27,7 @@ test("httpServer", async (done) => {
   const app: Application = express();
   const httpServer = require("http").createServer(app);
 
-  app.on("error", (err) => {
+  app.on("error", err => {
     done(err);
   });
   app.use(json());

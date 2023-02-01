@@ -3,14 +3,9 @@
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
     "paths": {
-      "foo/bar": [
-        "baz.js"
-      ]
+      "foo/bar": ["baz.js"]
     },
     "baseUrl": "."
   },
-  "exclude": [
-    "solid-dom-fixtures",
-    "bundled"
-  ]
+  "exclude": ["solid-dom-fixtures", "bundled"]
 }

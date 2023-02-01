@@ -1,8 +1,7 @@
 // --- FFIType ---
 
 var ffi = globalThis.Bun.FFI;
-export const ptr = (arg1, arg2) =>
-  typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
+export const ptr = (arg1, arg2) => (typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2));
 export const toBuffer = ffi.toBuffer;
 export const toArrayBuffer = ffi.toArrayBuffer;
 export const viewSource = ffi.viewSource;
@@ -79,11 +78,7 @@ export class CString extends String {
       return (this.#cachedArrayBuffer = new ArrayBuffer(0));
     }
 
-    return (this.#cachedArrayBuffer = toArrayBuffer(
-      this.ptr,
-      this.byteOffset,
-      this.byteLength,
-    ));
+    return (this.#cachedArrayBuffer = toArrayBuffer(this.ptr, this.byteOffset, this.byteLength));
   }
 }
 Object.defineProperty(globalThis, "__GlobalBunCString", {
@@ -94,7 +89,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
 
 const ffiWrappers = new Array(18);
 
-var char = (val) => val | 0;
+var char = val => val | 0;
 ffiWrappers.fill(char);
 ffiWrappers[FFIType.uint8_t] = function uint8(val) {
   return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
@@ -114,10 +109,7 @@ ffiWrappers[FFIType.uint32_t] = function uint32(val) {
 };
 ffiWrappers[FFIType.i64_fast] = function int64(val) {
   if (typeof val === "bigint") {
-    if (
-      val <= BigInt(Number.MAX_SAFE_INTEGER) &&
-      val >= BigInt(-Number.MAX_SAFE_INTEGER)
-    ) {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
       return Number(val).valueOf() || 0;
     }
 
@@ -165,8 +157,7 @@ ffiWrappers[FFIType.uint64_t] = function uint64(val) {
 
 ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
   if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0))
-      return Number(val);
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
     return val;
   }
 
@@ -181,9 +172,7 @@ ffiWrappers[FFIType.uint16_t] = function uint16(val) {
 ffiWrappers[FFIType.double] = function double(val) {
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
-      return (
-        Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001
-      );
+      return Math.abs(Number(val).valueOf()) + 0.00000000000001 - 0.00000000000001;
     }
   }
 
@@ -208,9 +197,7 @@ Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
   configurable: true,
 });
 
-ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
-  val,
-) {
+ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(val) {
   if (typeof val === "number") return val;
   if (!val) {
     return null;
@@ -221,9 +208,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
   }
 
   if (typeof val === "string") {
-    throw new TypeError(
-      "To convert a string to a pointer, encode it as a buffer",
-    );
+    throw new TypeError("To convert a string to a pointer, encode it as a buffer");
   }
 
   throw new TypeError(`Unable to convert ${val} to a pointer`);
@@ -252,9 +237,7 @@ ffiWrappers[FFIType.function] = function functionType(val) {
 };
 
 function FFIBuilder(params, returnType, functionToCall, name) {
-  const hasReturnType =
-    typeof FFIType[returnType] === "number" &&
-    FFIType[returnType] !== FFIType.void;
+  const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType] !== FFIType.void;
   var paramNames = new Array(params.length);
   var args = new Array(params.length);
   for (let i = 0; i < params.length; i++) {
@@ -264,11 +247,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       // doing this inline benchmarked about 4x faster than referencing
       args[i] = `(${wrapper.toString()})(p${i})`;
     } else {
-      throw new TypeError(
-        `Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType)
-          .sort()
-          .join(", ")}`,
-      );
+      throw new TypeError(`Unsupported type ${params[i]}. Must be one of: ${Object.keys(FFIType).sort().join(", ")}`);
     }
   }
 
@@ -295,7 +274,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       wrap = () => func(functionToCall);
       break;
     case 1:
-      wrap = (arg1) => func(functionToCall, arg1);
+      wrap = arg1 => func(functionToCall, arg1);
       break;
     case 2:
       wrap = (arg1, arg2) => func(functionToCall, arg1, arg2);
@@ -304,16 +283,13 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       wrap = (arg1, arg2, arg3) => func(functionToCall, arg1, arg2, arg3);
       break;
     case 4:
-      wrap = (arg1, arg2, arg3, arg4) =>
-        func(functionToCall, arg1, arg2, arg3, arg4);
+      wrap = (arg1, arg2, arg3, arg4) => func(functionToCall, arg1, arg2, arg3, arg4);
       break;
     case 5:
-      wrap = (arg1, arg2, arg3, arg4, arg5) =>
-        func(functionToCall, arg1, arg2, arg3, arg4, arg5);
+      wrap = (arg1, arg2, arg3, arg4, arg5) => func(functionToCall, arg1, arg2, arg3, arg4, arg5);
       break;
     case 6:
-      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) =>
-        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) => func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
       break;
     case 7:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
@@ -325,18 +301,7 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       break;
     case 9:
       wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
-        func(
-          functionToCall,
-          arg1,
-          arg2,
-          arg3,
-          arg4,
-          arg5,
-          arg6,
-          arg7,
-          arg8,
-          arg9,
-        );
+        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9);
       break;
     default: {
       wrap = (...args) => func(functionToCall, ...args);
@@ -361,10 +326,7 @@ export function dlopen(path, options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (
-      options[key]?.args?.length ||
-      FFIType[options[key]?.returns] === FFIType.cstring
-    ) {
+    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
         options[key].args ?? [],
         options[key].returns ?? FFIType.void,
@@ -374,9 +336,7 @@ export function dlopen(path, options) {
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/")
-          ? `${key} (${path.split("/").pop()})`
-          : `${key} (${path})`,
+        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
       );
     } else {
       // consistentcy
@@ -392,16 +352,8 @@ export function linkSymbols(options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (
-      options[key]?.args?.length ||
-      FFIType[options[key]?.returns] === FFIType.cstring
-    ) {
-      result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
-        symbol,
-        key,
-      );
+    if (options[key]?.args?.length || FFIType[options[key]?.returns] === FFIType.cstring) {
+      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
     } else {
       // consistentcy
       result.symbols[key].native = result.symbols[key];
@@ -431,10 +383,7 @@ export function CFunction(options) {
   };
 
   cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
-  cFunctionRegistry.register(
-    result.symbols[identifier],
-    result.symbols[identifier].close,
-  );
+  cFunctionRegistry.register(result.symbols[identifier], result.symbols[identifier].close);
 
   return result.symbols[identifier];
 }

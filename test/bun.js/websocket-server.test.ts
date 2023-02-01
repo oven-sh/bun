@@ -12,7 +12,7 @@ function getPort() {
 }
 
 describe("websocket server", () => {
-  it("can do publish()", async (done) => {
+  it("can do publish()", async done => {
     var server = serve({
       port: getPort(),
       websocket: {
@@ -35,7 +35,7 @@ describe("websocket server", () => {
       var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       var clientCounter = 0;
 
-      socket.onmessage = (e) => {
+      socket.onmessage = e => {
         expect(e.data).toBe("hello");
         resolve2();
       };
@@ -49,7 +49,7 @@ describe("websocket server", () => {
     done();
   });
 
-  it("can do publish() with publishToSelf: false", async (done) => {
+  it("can do publish() with publishToSelf: false", async done => {
     var server = serve({
       port: getPort(),
       websocket: {
@@ -78,7 +78,7 @@ describe("websocket server", () => {
     await new Promise<void>((resolve2, reject2) => {
       var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
-      socket.onmessage = (e) => {
+      socket.onmessage = e => {
         expect(e.data).toBe("hello");
         resolve2();
       };
@@ -99,10 +99,7 @@ describe("websocket server", () => {
             },
             message(ws, msg) {},
             close(ws) {
-              ws[method](
-                "all",
-                method === "publishBinary" ? Buffer.from("bye!") : "bye!",
-              );
+              ws[method]("all", method === "publishBinary" ? Buffer.from("bye!") : "bye!");
               count++;
 
               if (count >= 2) {
@@ -121,20 +118,16 @@ describe("websocket server", () => {
 
         try {
           const first = await new Promise<WebSocket>((resolve2, reject2) => {
-            var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`,
-            );
+            var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
             socket.onopen = () => resolve2(socket);
           });
 
           await new Promise<WebSocket>((resolve2, reject2) => {
-            var socket = new WebSocket(
-              `ws://${server.hostname}:${server.port}`,
-            );
+            var socket = new WebSocket(`ws://${server.hostname}:${server.port}`);
             socket.onopen = () => {
               queueMicrotask(() => first.close());
             };
-            socket.onmessage = (ev) => {
+            socket.onmessage = ev => {
               var msg = ev.data;
               if (typeof msg !== "string") {
                 msg = new TextDecoder().decode(msg);
@@ -195,8 +188,8 @@ describe("websocket server", () => {
       websocket.onopen = () => {
         websocket.close();
       };
-      websocket.onmessage = (e) => {};
-      websocket.onerror = (e) => {};
+      websocket.onmessage = e => {};
+      websocket.onerror = e => {};
     });
   });
 
@@ -237,8 +230,8 @@ describe("websocket server", () => {
 
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
       websocket.onopen = () => websocket.close();
-      websocket.onmessage = (e) => {};
-      websocket.onerror = (e) => {};
+      websocket.onmessage = e => {};
+      websocket.onerror = e => {};
     });
   });
   it("can do hello world", async () => {
@@ -279,7 +272,7 @@ describe("websocket server", () => {
       websocket.onopen = () => {
         websocket.send("hello world");
       };
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
           resolve();
@@ -289,7 +282,7 @@ describe("websocket server", () => {
           websocket.close();
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -338,7 +331,7 @@ describe("websocket server", () => {
       websocket.onopen = () => {
         websocket.send("hello world");
       };
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
           resolve();
@@ -348,7 +341,7 @@ describe("websocket server", () => {
           websocket.close();
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -398,7 +391,7 @@ describe("websocket server", () => {
       websocket.onopen = () => {
         websocket.send("hello world");
       };
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
           resolve();
@@ -408,7 +401,7 @@ describe("websocket server", () => {
           websocket.close();
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -455,7 +448,7 @@ describe("websocket server", () => {
       websocket.onopen = () => {
         websocket.send(Buffer.from("hello world"));
       };
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
 
@@ -469,7 +462,7 @@ describe("websocket server", () => {
           reject(r);
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -509,9 +502,7 @@ describe("websocket server", () => {
           server.stop();
           expect(() => {
             server.upgrade(req);
-          }).toThrow(
-            'To enable websocket support, set the "websocket" object in Bun.serve({})',
-          );
+          }).toThrow('To enable websocket support, set the "websocket" object in Bun.serve({})');
           return new Response("success");
         },
       });
@@ -544,7 +535,7 @@ describe("websocket server", () => {
     await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
           resolve();
@@ -554,7 +545,7 @@ describe("websocket server", () => {
           websocket.close();
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -698,7 +689,7 @@ describe("websocket server", () => {
     await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
 
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           expect(e.data).toBe("hello world");
           resolve();
@@ -708,7 +699,7 @@ describe("websocket server", () => {
           websocket.close();
         }
       };
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
     });
@@ -744,13 +735,13 @@ describe("websocket server", () => {
 
     await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
 
       var counter = 0;
       websocket.onopen = () => websocket.send("first");
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           switch (counter++) {
             case 0: {
@@ -819,13 +810,13 @@ describe("websocket server", () => {
 
     await new Promise<void>((resolve, reject) => {
       const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
-      websocket.onerror = (e) => {
+      websocket.onerror = e => {
         reject(e);
       };
 
       var counter = 0;
       websocket.onopen = () => websocket.send("first");
-      websocket.onmessage = (e) => {
+      websocket.onmessage = e => {
         try {
           const expected = sendQueue[clientCounter++] + " ";
           expect(e.data).toBe(expected);
@@ -870,12 +861,10 @@ describe("websocket server", () => {
           }
           ws.subscribe("test");
           clientCount++;
-          if (clientCount === 10)
-            setTimeout(() => ws.publish("test", "hello world"), 1);
+          if (clientCount === 10) setTimeout(() => ws.publish("test", "hello world"), 1);
         },
         message(ws, msg) {
-          if (serverCounter < sendQueue.length)
-            ws.publish("test", sendQueue[serverCounter++] + " ");
+          if (serverCounter < sendQueue.length) ws.publish("test", sendQueue[serverCounter++] + " ");
         },
       },
       fetch(req) {
@@ -894,7 +883,7 @@ describe("websocket server", () => {
     const connections = new Array(10);
     const websockets = new Array(connections.length);
     var doneCounter = 0;
-    await new Promise<void>((done) => {
+    await new Promise<void>(done => {
       for (var i = 0; i < connections.length; i++) {
         var j = i;
         var resolve, reject, resolveConnection, rejectConnection;
@@ -907,10 +896,8 @@ describe("websocket server", () => {
           reject = rej;
         });
         gcTick();
-        const websocket = new WebSocket(
-          `ws://${server.hostname}:${server.port}`,
-        );
-        websocket.onerror = (e) => {
+        const websocket = new WebSocket(`ws://${server.hostname}:${server.port}`);
+        websocket.onerror = e => {
           reject(e);
         };
         websocket.onclose = () => {
@@ -930,7 +917,7 @@ describe("websocket server", () => {
         let clientCounter = -1;
         var hasSentThisTick = false;
 
-        websocket.onmessage = (e) => {
+        websocket.onmessage = e => {
           gcTick();
 
           if (!hasOpened) {
@@ -945,7 +932,7 @@ describe("websocket server", () => {
           }
 
           try {
-            expect(!!sendQueue.find((a) => a + " " === e.data)).toBe(true);
+            expect(!!sendQueue.find(a => a + " " === e.data)).toBe(true);
 
             if (!hasSentThisTick) {
               websocket.send("second");

@@ -13,12 +13,8 @@ describe("escapeHTML", () => {
   // 7. Works when the text to escape is in the end
   // 8. Returns the same string when there's no need to escape
   it("works", () => {
-    expect(escapeHTML("absolutely nothing to do here")).toBe(
-      "absolutely nothing to do here",
-    );
-    expect(escapeHTML("<script>alert(1)</script>")).toBe(
-      "&lt;script&gt;alert(1)&lt;/script&gt;",
-    );
+    expect(escapeHTML("absolutely nothing to do here")).toBe("absolutely nothing to do here");
+    expect(escapeHTML("<script>alert(1)</script>")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(escapeHTML("<")).toBe("&lt;");
     expect(escapeHTML(">")).toBe("&gt;");
     expect(escapeHTML("&")).toBe("&amp;");
@@ -39,64 +35,46 @@ describe("escapeHTML", () => {
       "lalala&lt;script&gt;alert(1)&lt;/script&gt;lalala",
     );
 
-    expect(escapeHTML("<script>alert(1)</script>" + "lalala")).toBe(
-      "&lt;script&gt;alert(1)&lt;/script&gt;lalala",
-    );
-    expect(escapeHTML("lalala" + "<script>alert(1)</script>")).toBe(
-      "lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;",
-    );
+    expect(escapeHTML("<script>alert(1)</script>" + "lalala")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;lalala");
+    expect(escapeHTML("lalala" + "<script>alert(1)</script>")).toBe("lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;");
 
     expect(escapeHTML("What does 😊 mean?")).toBe("What does 😊 mean?");
     const output = escapeHTML("<What does 😊");
     expect(output).toBe("&lt;What does 😊");
-    expect(escapeHTML("<div>What does 😊 mean in text?")).toBe(
-      "&lt;div&gt;What does 😊 mean in text?",
-    );
+    expect(escapeHTML("<div>What does 😊 mean in text?")).toBe("&lt;div&gt;What does 😊 mean in text?");
 
-    expect(
-      escapeHTML(
-        ("lalala" + "<script>alert(1)</script>" + "lalala").repeat(900),
-      ),
-    ).toBe("lalala&lt;script&gt;alert(1)&lt;/script&gt;lalala".repeat(900));
-    expect(
-      escapeHTML(("<script>alert(1)</script>" + "lalala").repeat(900)),
-    ).toBe("&lt;script&gt;alert(1)&lt;/script&gt;lalala".repeat(900));
-    expect(
-      escapeHTML(("lalala" + "<script>alert(1)</script>").repeat(900)),
-    ).toBe(("lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;").repeat(900));
+    expect(escapeHTML(("lalala" + "<script>alert(1)</script>" + "lalala").repeat(900))).toBe(
+      "lalala&lt;script&gt;alert(1)&lt;/script&gt;lalala".repeat(900),
+    );
+    expect(escapeHTML(("<script>alert(1)</script>" + "lalala").repeat(900))).toBe(
+      "&lt;script&gt;alert(1)&lt;/script&gt;lalala".repeat(900),
+    );
+    expect(escapeHTML(("lalala" + "<script>alert(1)</script>").repeat(900))).toBe(
+      ("lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;").repeat(900),
+    );
 
     // the positions of the unicode codepoint are important
     // our simd code for U16 is at 8 bytes, so we need to especially check the boundaries
-    expect(
-      escapeHTML("😊lalala" + "<script>alert(1)</script>" + "lalala"),
-    ).toBe("😊lalala&lt;script&gt;alert(1)&lt;/script&gt;lalala");
-    expect(escapeHTML("<script>😊alert(1)</script>" + "lalala")).toBe(
-      "&lt;script&gt;😊alert(1)&lt;/script&gt;lalala",
+    expect(escapeHTML("😊lalala" + "<script>alert(1)</script>" + "lalala")).toBe(
+      "😊lalala&lt;script&gt;alert(1)&lt;/script&gt;lalala",
     );
-    expect(escapeHTML("<script>alert(1)😊</script>" + "lalala")).toBe(
-      "&lt;script&gt;alert(1)😊&lt;/script&gt;lalala",
+    expect(escapeHTML("<script>😊alert(1)</script>" + "lalala")).toBe("&lt;script&gt;😊alert(1)&lt;/script&gt;lalala");
+    expect(escapeHTML("<script>alert(1)😊</script>" + "lalala")).toBe("&lt;script&gt;alert(1)😊&lt;/script&gt;lalala");
+    expect(escapeHTML("<script>alert(1)</script>" + "😊lalala")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;😊lalala");
+    expect(escapeHTML("<script>alert(1)</script>" + "lal😊ala")).toBe("&lt;script&gt;alert(1)&lt;/script&gt;lal😊ala");
+    expect(escapeHTML("<script>alert(1)</script>" + "lal😊ala".repeat(10))).toBe(
+      "&lt;script&gt;alert(1)&lt;/script&gt;" + "lal😊ala".repeat(10),
     );
-    expect(escapeHTML("<script>alert(1)</script>" + "😊lalala")).toBe(
-      "&lt;script&gt;alert(1)&lt;/script&gt;😊lalala",
-    );
-    expect(escapeHTML("<script>alert(1)</script>" + "lal😊ala")).toBe(
-      "&lt;script&gt;alert(1)&lt;/script&gt;lal😊ala",
-    );
-    expect(
-      escapeHTML("<script>alert(1)</script>" + "lal😊ala".repeat(10)),
-    ).toBe("&lt;script&gt;alert(1)&lt;/script&gt;" + "lal😊ala".repeat(10));
 
     for (let i = 1; i < 10; i++)
       expect(escapeHTML("<script>alert(1)</script>" + "la😊".repeat(i))).toBe(
         "&lt;script&gt;alert(1)&lt;/script&gt;" + "la😊".repeat(i),
       );
 
-    expect(escapeHTML("la😊" + "<script>alert(1)</script>")).toBe(
-      "la😊" + "&lt;script&gt;alert(1)&lt;/script&gt;",
+    expect(escapeHTML("la😊" + "<script>alert(1)</script>")).toBe("la😊" + "&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(escapeHTML(("lalala" + "<script>alert(1)</script>😊").repeat(1))).toBe(
+      ("lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;😊").repeat(1),
     );
-    expect(
-      escapeHTML(("lalala" + "<script>alert(1)</script>😊").repeat(1)),
-    ).toBe(("lalala" + "&lt;script&gt;alert(1)&lt;/script&gt;😊").repeat(1));
 
     expect(escapeHTML("😊".repeat(100))).toBe("😊".repeat(100));
     expect(escapeHTML("😊<".repeat(100))).toBe("😊&lt;".repeat(100));

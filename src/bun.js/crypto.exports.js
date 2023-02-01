@@ -5,7 +5,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
 
-var __require = (id) => import.meta.require(id);
+var __require = id => import.meta.require(id);
 
 var __esm = (fn, res) =>
   function () {
@@ -13,15 +13,10 @@ var __esm = (fn, res) =>
   };
 var __commonJS = (cb, mod) =>
   function () {
-    return (
-      mod ||
-        (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod),
-      mod.exports
-    );
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 var __export = (target, all) => {
-    for (var name in all)
-      __defProp(target, name, { get: all[name], enumerable: !0 });
+    for (var name in all) __defProp(target, name, { get: all[name], enumerable: !0 });
   },
   __copyProps = (to, from, except, desc) => {
     if ((from && typeof from == "object") || typeof from == "function")
@@ -30,21 +25,17 @@ var __export = (target, all) => {
           key !== except &&
           __defProp(to, key, {
             get: () => from[key],
-            enumerable:
-              !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+            enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
           });
     return to;
   },
   __reExport = (target, mod, secondTarget) => (
-    __copyProps(target, mod, "default"),
-    secondTarget && __copyProps(secondTarget, mod, "default")
+    __copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default")
   ),
   __toESM = (mod, isNodeMode, target) => (
     (target = mod != null ? __create(__getProtoOf(mod)) : {}),
     __copyProps(
-      isNodeMode || !mod || !mod.__esModule
-        ? __defProp(target, "default", { value: mod, enumerable: !0 })
-        : target,
+      isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: !0 }) : target,
       mod,
     )
   );
@@ -57,10 +48,7 @@ var require_safe_buffer = __commonJS({
     function copyProps(src, dst) {
       for (var key in src) dst[key] = src[key];
     }
-    Buffer2.from &&
-    Buffer2.alloc &&
-    Buffer2.allocUnsafe &&
-    Buffer2.allocUnsafeSlow
+    Buffer2.from && Buffer2.alloc && Buffer2.allocUnsafe && Buffer2.allocUnsafeSlow
       ? (module.exports = buffer)
       : (copyProps(buffer, exports), (exports.Buffer = SafeBuffer));
     function SafeBuffer(arg, encodingOrOffset, length) {
@@ -69,31 +57,22 @@ var require_safe_buffer = __commonJS({
     SafeBuffer.prototype = Object.create(Buffer2.prototype);
     copyProps(Buffer2, SafeBuffer);
     SafeBuffer.from = function (arg, encodingOrOffset, length) {
-      if (typeof arg == "number")
-        throw new TypeError("Argument must not be a number");
+      if (typeof arg == "number") throw new TypeError("Argument must not be a number");
       return Buffer2(arg, encodingOrOffset, length);
     };
     SafeBuffer.alloc = function (size, fill, encoding) {
-      if (typeof size != "number")
-        throw new TypeError("Argument must be a number");
+      if (typeof size != "number") throw new TypeError("Argument must be a number");
       var buf = Buffer2(size);
       return (
-        fill !== void 0
-          ? typeof encoding == "string"
-            ? buf.fill(fill, encoding)
-            : buf.fill(fill)
-          : buf.fill(0),
-        buf
+        fill !== void 0 ? (typeof encoding == "string" ? buf.fill(fill, encoding) : buf.fill(fill)) : buf.fill(0), buf
       );
     };
     SafeBuffer.allocUnsafe = function (size) {
-      if (typeof size != "number")
-        throw new TypeError("Argument must be a number");
+      if (typeof size != "number") throw new TypeError("Argument must be a number");
       return Buffer2(size);
     };
     SafeBuffer.allocUnsafeSlow = function (size) {
-      if (typeof size != "number")
-        throw new TypeError("Argument must be a number");
+      if (typeof size != "number") throw new TypeError("Argument must be a number");
       return buffer.SlowBuffer(size);
     };
   },
@@ -111,19 +90,14 @@ Use Chrome, Firefox or Internet Explorer 11`);
     }
     var Buffer2 = require_safe_buffer().Buffer,
       crypto2 = global.crypto || global.msCrypto;
-    crypto2 && crypto2.getRandomValues
-      ? (module.exports = randomBytes)
-      : (module.exports = oldBrowser);
+    crypto2 && crypto2.getRandomValues ? (module.exports = randomBytes) : (module.exports = oldBrowser);
     function randomBytes(size, cb) {
-      if (size > MAX_UINT32)
-        throw new RangeError("requested too many random bytes");
+      if (size > MAX_UINT32) throw new RangeError("requested too many random bytes");
       var bytes = Buffer2.allocUnsafe(size);
       if (size > 0)
         if (size > MAX_BYTES)
           for (var generated = 0; generated < size; generated += MAX_BYTES)
-            crypto2.getRandomValues(
-              bytes.slice(generated, generated + MAX_BYTES),
-            );
+            crypto2.getRandomValues(bytes.slice(generated, generated + MAX_BYTES));
         else crypto2.getRandomValues(bytes);
       return typeof cb == "function"
         ? process.nextTick(function () {
@@ -201,20 +175,13 @@ var require_hash_base = __commonJS({
       callback(error);
     };
     HashBase.prototype.update = function (data, encoding) {
-      if ((throwIfNotStringOrBuffer(data, "Data"), this._finalized))
-        throw new Error("Digest already called");
+      if ((throwIfNotStringOrBuffer(data, "Data"), this._finalized)) throw new Error("Digest already called");
       Buffer2.isBuffer(data) || (data = Buffer2.from(data, encoding));
-      for (
-        var block = this._block, offset = 0;
-        this._blockOffset + data.length - offset >= this._blockSize;
-
-      ) {
-        for (var i = this._blockOffset; i < this._blockSize; )
-          block[i++] = data[offset++];
+      for (var block = this._block, offset = 0; this._blockOffset + data.length - offset >= this._blockSize; ) {
+        for (var i = this._blockOffset; i < this._blockSize; ) block[i++] = data[offset++];
         this._update(), (this._blockOffset = 0);
       }
-      for (; offset < data.length; )
-        block[this._blockOffset++] = data[offset++];
+      for (; offset < data.length; ) block[this._blockOffset++] = data[offset++];
       for (var j = 0, carry = data.length * 8; carry > 0; ++j)
         (this._length[j] += carry),
           (carry = (this._length[j] / 4294967296) | 0),
@@ -228,9 +195,7 @@ var require_hash_base = __commonJS({
       if (this._finalized) throw new Error("Digest already called");
       this._finalized = !0;
       var digest = this._digest();
-      encoding !== void 0 && (digest = digest.toString(encoding)),
-        this._block.fill(0),
-        (this._blockOffset = 0);
+      encoding !== void 0 && (digest = digest.toString(encoding)), this._block.fill(0), (this._blockOffset = 0);
       for (var i = 0; i < 4; ++i) this._length[i] = 0;
       return digest;
     };
@@ -258,8 +223,7 @@ var require_md5 = __commonJS({
     }
     inherits(MD5, HashBase);
     MD5.prototype._update = function () {
-      for (var M = ARRAY16, i = 0; i < 16; ++i)
-        M[i] = this._block.readInt32LE(i * 4);
+      for (var M = ARRAY16, i = 0; i < 16; ++i) M[i] = this._block.readInt32LE(i * 4);
       var a = this._a,
         b = this._b,
         c = this._c,
@@ -335,10 +299,7 @@ var require_md5 = __commonJS({
     };
     MD5.prototype._digest = function () {
       (this._block[this._blockOffset++] = 128),
-        this._blockOffset > 56 &&
-          (this._block.fill(0, this._blockOffset, 64),
-          this._update(),
-          (this._blockOffset = 0)),
+        this._blockOffset > 56 && (this._block.fill(0, this._blockOffset, 64), this._update(), (this._blockOffset = 0)),
         this._block.fill(0, this._blockOffset, 56),
         this._block.writeUInt32LE(this._length[0], 56),
         this._block.writeUInt32LE(this._length[1], 60),
@@ -380,28 +341,24 @@ var require_ripemd160 = __commonJS({
       HashBase = require_hash_base(),
       ARRAY16 = new Array(16),
       zl = [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10,
-        6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0,
-        6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
-        4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3,
+        10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0,
+        5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
       ],
       zr = [
-        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0,
-        13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15, 5, 1, 3, 7, 14, 6, 9, 11, 8,
-        12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10,
-        14, 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
+        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15,
+        5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15,
+        10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
       ],
       sl = [
-        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11,
-        9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12, 11, 13, 6, 7, 14, 9, 13, 15, 14,
-        8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6,
-        5, 12, 9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
+        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
+        11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
+        9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
       ],
       sr = [
-        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7,
-        12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11, 9, 7, 15, 11, 8, 6, 6, 14, 12,
-        13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12,
-        5, 15, 8, 8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
+        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
+        9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
+        8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
       ],
       hl = [0, 1518500249, 1859775393, 2400959708, 2840853838],
       hr = [1352829926, 1548603684, 1836072691, 2053994217, 0];
@@ -415,8 +372,7 @@ var require_ripemd160 = __commonJS({
     }
     inherits(RIPEMD160, HashBase);
     RIPEMD160.prototype._update = function () {
-      for (var words = ARRAY16, j = 0; j < 16; ++j)
-        words[j] = this._block.readInt32LE(j * 4);
+      for (var words = ARRAY16, j = 0; j < 16; ++j) words[j] = this._block.readInt32LE(j * 4);
       for (
         var al = this._a | 0,
           bl = this._b | 0,
@@ -467,10 +423,7 @@ var require_ripemd160 = __commonJS({
     };
     RIPEMD160.prototype._digest = function () {
       (this._block[this._blockOffset++] = 128),
-        this._blockOffset > 56 &&
-          (this._block.fill(0, this._blockOffset, 64),
-          this._update(),
-          (this._blockOffset = 0)),
+        this._blockOffset > 56 && (this._block.fill(0, this._blockOffset, 64), this._update(), (this._blockOffset = 0)),
         this._block.fill(0, this._blockOffset, 56),
         this._block.writeUInt32LE(this._length[0], 56),
         this._block.writeUInt32LE(this._length[1], 60),
@@ -518,28 +471,19 @@ var require_hash = __commonJS({
         (this._len = 0);
     }
     Hash.prototype.update = function (data, enc) {
-      typeof data == "string" &&
-        ((enc = enc || "utf8"), (data = Buffer2.from(data, enc)));
+      typeof data == "string" && ((enc = enc || "utf8"), (data = Buffer2.from(data, enc)));
       for (
-        var block = this._block,
-          blockSize = this._blockSize,
-          length = data.length,
-          accum = this._len,
-          offset = 0;
+        var block = this._block, blockSize = this._blockSize, length = data.length, accum = this._len, offset = 0;
         offset < length;
 
       ) {
         for (
-          var assigned = accum % blockSize,
-            remainder = Math.min(length - offset, blockSize - assigned),
-            i = 0;
+          var assigned = accum % blockSize, remainder = Math.min(length - offset, blockSize - assigned), i = 0;
           i < remainder;
           i++
         )
           block[assigned + i] = data[offset + i];
-        (accum += remainder),
-          (offset += remainder),
-          accum % blockSize === 0 && this._update(block);
+        (accum += remainder), (offset += remainder), accum % blockSize === 0 && this._update(block);
       }
       return (this._len += length), this;
     };
@@ -547,11 +491,9 @@ var require_hash = __commonJS({
       var rem = this._len % this._blockSize;
       (this._block[rem] = 128),
         this._block.fill(0, rem + 1),
-        rem >= this._finalSize &&
-          (this._update(this._block), this._block.fill(0));
+        rem >= this._finalSize && (this._update(this._block), this._block.fill(0));
       var bits = this._len * 8;
-      if (bits <= 4294967295)
-        this._block.writeUInt32BE(bits, this._blockSize - 4);
+      if (bits <= 4294967295) this._block.writeUInt32BE(bits, this._blockSize - 4);
       else {
         var lowBits = (bits & 4294967295) >>> 0,
           highBits = (bits - lowBits) / 4294967296;
@@ -598,27 +540,16 @@ var require_sha = __commonJS({
       return (num << 30) | (num >>> 2);
     }
     function ft(s, b, c, d) {
-      return s === 0
-        ? (b & c) | (~b & d)
-        : s === 2
-        ? (b & c) | (b & d) | (c & d)
-        : b ^ c ^ d;
+      return s === 0 ? (b & c) | (~b & d) : s === 2 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
     }
     Sha.prototype._update = function (M) {
       for (
-        var W2 = this._w,
-          a = this._a | 0,
-          b = this._b | 0,
-          c = this._c | 0,
-          d = this._d | 0,
-          e = this._e | 0,
-          i = 0;
+        var W2 = this._w, a = this._a | 0, b = this._b | 0, c = this._c | 0, d = this._d | 0, e = this._e | 0, i = 0;
         i < 16;
         ++i
       )
         W2[i] = M.readInt32BE(i * 4);
-      for (; i < 80; ++i)
-        W2[i] = W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16];
+      for (; i < 80; ++i) W2[i] = W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16];
       for (var j = 0; j < 80; ++j) {
         var s = ~~(j / 20),
           t = (rotl5(a) + ft(s, b, c, d) + e + W2[j] + K[s]) | 0;
@@ -677,27 +608,16 @@ var require_sha1 = __commonJS({
       return (num << 30) | (num >>> 2);
     }
     function ft(s, b, c, d) {
-      return s === 0
-        ? (b & c) | (~b & d)
-        : s === 2
-        ? (b & c) | (b & d) | (c & d)
-        : b ^ c ^ d;
+      return s === 0 ? (b & c) | (~b & d) : s === 2 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
     }
     Sha1.prototype._update = function (M) {
       for (
-        var W2 = this._w,
-          a = this._a | 0,
-          b = this._b | 0,
-          c = this._c | 0,
-          d = this._d | 0,
-          e = this._e | 0,
-          i = 0;
+        var W2 = this._w, a = this._a | 0, b = this._b | 0, c = this._c | 0, d = this._d | 0, e = this._e | 0, i = 0;
         i < 16;
         ++i
       )
         W2[i] = M.readInt32BE(i * 4);
-      for (; i < 80; ++i)
-        W2[i] = rotl1(W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16]);
+      for (; i < 80; ++i) W2[i] = rotl1(W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16]);
       for (var j = 0; j < 80; ++j) {
         var s = ~~(j / 20),
           t = (rotl5(a) + ft(s, b, c, d) + e + W2[j] + K[s]) | 0;
@@ -731,17 +651,14 @@ var require_sha256 = __commonJS({
       Hash = require_hash(),
       Buffer2 = require_safe_buffer().Buffer,
       K = [
-        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993,
-        2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987,
-        1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774,
-        264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
-        2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711,
-        113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291,
-        1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411,
-        3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344,
-        430227734, 506948616, 659060556, 883997877, 958139571, 1322822218,
-        1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424,
-        2428436474, 2756734187, 3204031479, 3329325298,
+        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080,
+        310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774,
+        264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808,
+        3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291,
+        1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817,
+        3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218,
+        1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479,
+        3329325298,
       ],
       W = new Array(64);
     function Sha256() {
@@ -768,18 +685,10 @@ var require_sha256 = __commonJS({
       return (x & y) | (z & (x | y));
     }
     function sigma0(x) {
-      return (
-        ((x >>> 2) | (x << 30)) ^
-        ((x >>> 13) | (x << 19)) ^
-        ((x >>> 22) | (x << 10))
-      );
+      return ((x >>> 2) | (x << 30)) ^ ((x >>> 13) | (x << 19)) ^ ((x >>> 22) | (x << 10));
     }
     function sigma1(x) {
-      return (
-        ((x >>> 6) | (x << 26)) ^
-        ((x >>> 11) | (x << 21)) ^
-        ((x >>> 25) | (x << 7))
-      );
+      return ((x >>> 6) | (x << 26)) ^ ((x >>> 11) | (x << 21)) ^ ((x >>> 25) | (x << 7));
     }
     function gamma0(x) {
       return ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
@@ -803,20 +712,11 @@ var require_sha256 = __commonJS({
         ++i
       )
         W2[i] = M.readInt32BE(i * 4);
-      for (; i < 64; ++i)
-        W2[i] =
-          (gamma1(W2[i - 2]) + W2[i - 7] + gamma0(W2[i - 15]) + W2[i - 16]) | 0;
+      for (; i < 64; ++i) W2[i] = (gamma1(W2[i - 2]) + W2[i - 7] + gamma0(W2[i - 15]) + W2[i - 16]) | 0;
       for (var j = 0; j < 64; ++j) {
         var T1 = (h + sigma1(e) + ch(e, f, g) + K[j] + W2[j]) | 0,
           T2 = (sigma0(a) + maj(a, b, c)) | 0;
-        (h = g),
-          (g = f),
-          (f = e),
-          (e = (d + T1) | 0),
-          (d = c),
-          (c = b),
-          (b = a),
-          (a = (T1 + T2) | 0);
+        (h = g), (g = f), (f = e), (e = (d + T1) | 0), (d = c), (c = b), (b = a), (a = (T1 + T2) | 0);
       }
       (this._a = (a + this._a) | 0),
         (this._b = (b + this._b) | 0),
@@ -894,33 +794,24 @@ var require_sha512 = __commonJS({
       Hash = require_hash(),
       Buffer2 = require_safe_buffer().Buffer,
       K = [
-        1116352408, 3609767458, 1899447441, 602891725, 3049323471, 3964484399,
-        3921009573, 2173295548, 961987163, 4081628472, 1508970993, 3053834265,
-        2453635748, 2937671579, 2870763221, 3664609560, 3624381080, 2734883394,
-        310598401, 1164996542, 607225278, 1323610764, 1426881987, 3590304994,
-        1925078388, 4068182383, 2162078206, 991336113, 2614888103, 633803317,
-        3248222580, 3479774868, 3835390401, 2666613458, 4022224774, 944711139,
-        264347078, 2341262773, 604807628, 2007800933, 770255983, 1495990901,
-        1249150122, 1856431235, 1555081692, 3175218132, 1996064986, 2198950837,
-        2554220882, 3999719339, 2821834349, 766784016, 2952996808, 2566594879,
-        3210313671, 3203337956, 3336571891, 1034457026, 3584528711, 2466948901,
-        113926993, 3758326383, 338241895, 168717936, 666307205, 1188179964,
-        773529912, 1546045734, 1294757372, 1522805485, 1396182291, 2643833823,
-        1695183700, 2343527390, 1986661051, 1014477480, 2177026350, 1206759142,
-        2456956037, 344077627, 2730485921, 1290863460, 2820302411, 3158454273,
-        3259730800, 3505952657, 3345764771, 106217008, 3516065817, 3606008344,
-        3600352804, 1432725776, 4094571909, 1467031594, 275423344, 851169720,
-        430227734, 3100823752, 506948616, 1363258195, 659060556, 3750685593,
-        883997877, 3785050280, 958139571, 3318307427, 1322822218, 3812723403,
-        1537002063, 2003034995, 1747873779, 3602036899, 1955562222, 1575990012,
-        2024104815, 1125592928, 2227730452, 2716904306, 2361852424, 442776044,
-        2428436474, 593698344, 2756734187, 3733110249, 3204031479, 2999351573,
-        3329325298, 3815920427, 3391569614, 3928383900, 3515267271, 566280711,
-        3940187606, 3454069534, 4118630271, 4000239992, 116418474, 1914138554,
-        174292421, 2731055270, 289380356, 3203993006, 460393269, 320620315,
-        685471733, 587496836, 852142971, 1086792851, 1017036298, 365543100,
-        1126000580, 2618297676, 1288033470, 3409855158, 1501505948, 4234509866,
-        1607167915, 987167468, 1816402316, 1246189591,
+        1116352408, 3609767458, 1899447441, 602891725, 3049323471, 3964484399, 3921009573, 2173295548, 961987163,
+        4081628472, 1508970993, 3053834265, 2453635748, 2937671579, 2870763221, 3664609560, 3624381080, 2734883394,
+        310598401, 1164996542, 607225278, 1323610764, 1426881987, 3590304994, 1925078388, 4068182383, 2162078206,
+        991336113, 2614888103, 633803317, 3248222580, 3479774868, 3835390401, 2666613458, 4022224774, 944711139,
+        264347078, 2341262773, 604807628, 2007800933, 770255983, 1495990901, 1249150122, 1856431235, 1555081692,
+        3175218132, 1996064986, 2198950837, 2554220882, 3999719339, 2821834349, 766784016, 2952996808, 2566594879,
+        3210313671, 3203337956, 3336571891, 1034457026, 3584528711, 2466948901, 113926993, 3758326383, 338241895,
+        168717936, 666307205, 1188179964, 773529912, 1546045734, 1294757372, 1522805485, 1396182291, 2643833823,
+        1695183700, 2343527390, 1986661051, 1014477480, 2177026350, 1206759142, 2456956037, 344077627, 2730485921,
+        1290863460, 2820302411, 3158454273, 3259730800, 3505952657, 3345764771, 106217008, 3516065817, 3606008344,
+        3600352804, 1432725776, 4094571909, 1467031594, 275423344, 851169720, 430227734, 3100823752, 506948616,
+        1363258195, 659060556, 3750685593, 883997877, 3785050280, 958139571, 3318307427, 1322822218, 3812723403,
+        1537002063, 2003034995, 1747873779, 3602036899, 1955562222, 1575990012, 2024104815, 1125592928, 2227730452,
+        2716904306, 2361852424, 442776044, 2428436474, 593698344, 2756734187, 3733110249, 3204031479, 2999351573,
+        3329325298, 3815920427, 3391569614, 3928383900, 3515267271, 566280711, 3940187606, 3454069534, 4118630271,
+        4000239992, 116418474, 1914138554, 174292421, 2731055270, 289380356, 3203993006, 460393269, 320620315,
+        685471733, 587496836, 852142971, 1086792851, 1017036298, 365543100, 1126000580, 2618297676, 1288033470,
+        3409855158, 1501505948, 4234509866, 1607167915, 987167468, 1816402316, 1246189591,
       ],
       W = new Array(160);
     function Sha512() {
@@ -955,38 +846,22 @@ var require_sha512 = __commonJS({
       return (x & y) | (z & (x | y));
     }
     function sigma0(x, xl) {
-      return (
-        ((x >>> 28) | (xl << 4)) ^
-        ((xl >>> 2) | (x << 30)) ^
-        ((xl >>> 7) | (x << 25))
-      );
+      return ((x >>> 28) | (xl << 4)) ^ ((xl >>> 2) | (x << 30)) ^ ((xl >>> 7) | (x << 25));
     }
     function sigma1(x, xl) {
-      return (
-        ((x >>> 14) | (xl << 18)) ^
-        ((x >>> 18) | (xl << 14)) ^
-        ((xl >>> 9) | (x << 23))
-      );
+      return ((x >>> 14) | (xl << 18)) ^ ((x >>> 18) | (xl << 14)) ^ ((xl >>> 9) | (x << 23));
     }
     function Gamma0(x, xl) {
       return ((x >>> 1) | (xl << 31)) ^ ((x >>> 8) | (xl << 24)) ^ (x >>> 7);
     }
     function Gamma0l(x, xl) {
-      return (
-        ((x >>> 1) | (xl << 31)) ^
-        ((x >>> 8) | (xl << 24)) ^
-        ((x >>> 7) | (xl << 25))
-      );
+      return ((x >>> 1) | (xl << 31)) ^ ((x >>> 8) | (xl << 24)) ^ ((x >>> 7) | (xl << 25));
     }
     function Gamma1(x, xl) {
       return ((x >>> 19) | (xl << 13)) ^ ((xl >>> 29) | (x << 3)) ^ (x >>> 6);
     }
     function Gamma1l(x, xl) {
-      return (
-        ((x >>> 19) | (xl << 13)) ^
-        ((xl >>> 29) | (x << 3)) ^
-        ((x >>> 6) | (xl << 26))
-      );
+      return ((x >>> 19) | (xl << 13)) ^ ((xl >>> 29) | (x << 3)) ^ ((x >>> 6) | (xl << 26));
     }
     function getCarry(a, b) {
       return a >>> 0 < b >>> 0 ? 1 : 0;
@@ -1171,10 +1046,7 @@ var require_sha2 = __commonJS({
     var exports = (module.exports = function (algorithm) {
       algorithm = algorithm.toLowerCase();
       var Algorithm = exports[algorithm];
-      if (!Algorithm)
-        throw new Error(
-          algorithm + " is not supported (we accept pull requests)",
-        );
+      if (!Algorithm) throw new Error(algorithm + " is not supported (we accept pull requests)");
       return new Algorithm();
     });
     exports.sha = require_sha();
@@ -1199,9 +1071,7 @@ var require_cipher_base = __commonJS({
     function CipherBase(hashMode) {
       Transform.call(this),
         (this.hashMode = typeof hashMode == "string"),
-        this.hashMode
-          ? (this[hashMode] = this._finalOrDigest)
-          : (this.final = this._finalOrDigest),
+        this.hashMode ? (this[hashMode] = this._finalOrDigest) : (this.final = this._finalOrDigest),
         this._final && ((this.__final = this._final), (this._final = null)),
         (this._decoder = null),
         (this._encoding = null);
@@ -1210,10 +1080,7 @@ var require_cipher_base = __commonJS({
     CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
       typeof data == "string" && (data = Buffer2.from(data, inputEnc));
       var outData = this._update(data);
-      return this.hashMode
-        ? this
-        : (outputEnc && (outData = this._toString(outData, outputEnc)),
-          outData);
+      return this.hashMode ? this : (outputEnc && (outData = this._toString(outData, outputEnc)), outData);
     };
     CipherBase.prototype.setAutoPadding = function () {};
     CipherBase.prototype.getAuthTag = function () {
@@ -1246,16 +1113,10 @@ var require_cipher_base = __commonJS({
     };
     CipherBase.prototype._finalOrDigest = function (outputEnc) {
       var outData = this.__final() || Buffer2.alloc(0);
-      return (
-        outputEnc && (outData = this._toString(outData, outputEnc, !0)), outData
-      );
+      return outputEnc && (outData = this._toString(outData, outputEnc, !0)), outData;
     };
     CipherBase.prototype._toString = function (value, enc, fin) {
-      if (
-        (this._decoder ||
-          ((this._decoder = new StringDecoder(enc)), (this._encoding = enc)),
-        this._encoding !== enc)
-      )
+      if ((this._decoder || ((this._decoder = new StringDecoder(enc)), (this._encoding = enc)), this._encoding !== enc))
         throw new Error("can't switch encodings");
       var out = this._decoder.write(value);
       return fin && (out += this._decoder.end()), out;
@@ -1346,8 +1207,7 @@ var require_legacy = __commonJS({
         (this._key = key),
         key.length > blocksize
           ? (key = alg(key))
-          : key.length < blocksize &&
-            (key = Buffer2.concat([key, ZEROS], blocksize));
+          : key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
       for (
         var ipad = (this._ipad = Buffer2.allocUnsafe(blocksize)),
           opad = (this._opad = Buffer2.allocUnsafe(blocksize)),
@@ -1393,15 +1253,12 @@ var require_browser3 = __commonJS({
       sha = require_sha2(),
       ZEROS = Buffer2.alloc(128);
     function Hmac(alg, key) {
-      Base.call(this, "digest"),
-        typeof key == "string" && (key = Buffer2.from(key));
+      Base.call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
       var blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       if (((this._alg = alg), (this._key = key), key.length > blocksize)) {
         var hash = alg === "rmd160" ? new RIPEMD160() : sha(alg);
         key = hash.update(key).digest();
-      } else
-        key.length < blocksize &&
-          (key = Buffer2.concat([key, ZEROS], blocksize));
+      } else key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
       for (
         var ipad = (this._ipad = Buffer2.allocUnsafe(blocksize)),
           opad = (this._opad = Buffer2.allocUnsafe(blocksize)),
@@ -1410,8 +1267,7 @@ var require_browser3 = __commonJS({
         i++
       )
         (ipad[i] = key[i] ^ 54), (opad[i] = key[i] ^ 92);
-      (this._hash = alg === "rmd160" ? new RIPEMD160() : sha(alg)),
-        this._hash.update(ipad);
+      (this._hash = alg === "rmd160" ? new RIPEMD160() : sha(alg)), this._hash.update(ipad);
     }
     inherits(Hmac, Base);
     Hmac.prototype._update = function (data) {
@@ -1605,13 +1461,10 @@ var require_precondition = __commonJS({
   "node_modules/pbkdf2/lib/precondition.js"(exports, module) {
     var MAX_ALLOC = Math.pow(2, 30) - 1;
     module.exports = function (iterations, keylen) {
-      if (typeof iterations != "number")
-        throw new TypeError("Iterations not a number");
+      if (typeof iterations != "number") throw new TypeError("Iterations not a number");
       if (iterations < 0) throw new TypeError("Bad iterations");
-      if (typeof keylen != "number")
-        throw new TypeError("Key length not a number");
-      if (keylen < 0 || keylen > MAX_ALLOC || keylen !== keylen)
-        throw new TypeError("Bad key length");
+      if (typeof keylen != "number") throw new TypeError("Key length not a number");
+      if (keylen < 0 || keylen > MAX_ALLOC || keylen !== keylen) throw new TypeError("Bad key length");
     };
   },
 });
@@ -1639,9 +1492,7 @@ var require_to_buffer = __commonJS({
       if (Buffer2.isBuffer(thing)) return thing;
       if (typeof thing == "string") return Buffer2.from(thing, encoding);
       if (ArrayBuffer.isView(thing)) return Buffer2.from(thing.buffer);
-      throw new TypeError(
-        name + " must be a string, a Buffer, a typed array or a DataView",
-      );
+      throw new TypeError(name + " must be a string, a Buffer, a typed array or a DataView");
     };
   },
 });
@@ -1672,8 +1523,7 @@ var require_sync_browser = __commonJS({
         blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
       key.length > blocksize
         ? (key = hash(key))
-        : key.length < blocksize &&
-          (key = Buffer2.concat([key, ZEROS], blocksize));
+        : key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
       for (
         var ipad = Buffer2.allocUnsafe(blocksize + sizes[alg]),
           opad = Buffer2.allocUnsafe(blocksize + sizes[alg]),
@@ -1704,11 +1554,7 @@ var require_sync_browser = __commonJS({
       function rmd160Func(data) {
         return new RIPEMD160().update(data).digest();
       }
-      return alg === "rmd160" || alg === "ripemd160"
-        ? rmd160Func
-        : alg === "md5"
-        ? md5
-        : shaFunc;
+      return alg === "rmd160" || alg === "ripemd160" ? rmd160Func : alg === "md5" ? md5 : shaFunc;
     }
     function pbkdf2(password, salt, iterations, keylen, digest) {
       checkParameters(iterations, keylen),
@@ -1719,20 +1565,9 @@ var require_sync_browser = __commonJS({
         DK = Buffer2.allocUnsafe(keylen),
         block1 = Buffer2.allocUnsafe(salt.length + 4);
       salt.copy(block1, 0, 0, salt.length);
-      for (
-        var destPos = 0,
-          hLen = sizes[digest],
-          l = Math.ceil(keylen / hLen),
-          i = 1;
-        i <= l;
-        i++
-      ) {
+      for (var destPos = 0, hLen = sizes[digest], l = Math.ceil(keylen / hLen), i = 1; i <= l; i++) {
         block1.writeUInt32BE(i, salt.length);
-        for (
-          var T = hmac.run(block1, hmac.ipad1), U = T, j = 1;
-          j < iterations;
-          j++
-        ) {
+        for (var T = hmac.run(block1, hmac.ipad1), U = T, j = 1; j < iterations; j++) {
           U = hmac.run(U, hmac.ipad2);
           for (var k = 0; k < hLen; k++) T[k] ^= U[k];
         }
@@ -1767,12 +1602,7 @@ var require_async = __commonJS({
       },
       checks = [];
     function checkNative(algo) {
-      if (
-        (global.process && !global.process.browser) ||
-        !subtle ||
-        !subtle.importKey ||
-        !subtle.deriveBits
-      )
+      if ((global.process && !global.process.browser) || !subtle || !subtle.importKey || !subtle.deriveBits)
         return Promise.resolve(!1);
       if (checks[algo] !== void 0) return checks[algo];
       ZERO_BUF = ZERO_BUF || Buffer2.alloc(8);
@@ -1834,16 +1664,8 @@ var require_async = __commonJS({
         },
       );
     }
-    module.exports = function (
-      password,
-      salt,
-      iterations,
-      keylen,
-      digest,
-      callback,
-    ) {
-      typeof digest == "function" && ((callback = digest), (digest = void 0)),
-        (digest = digest || "sha1");
+    module.exports = function (password, salt, iterations, keylen, digest, callback) {
+      typeof digest == "function" && ((callback = digest), (digest = void 0)), (digest = digest || "sha1");
       var algo = toBrowser[digest.toLowerCase()];
       if (!algo || typeof global.Promise != "function") {
         getNextTick()(function () {
@@ -1889,11 +1711,7 @@ var require_utils = __commonJS({
   "node_modules/des.js/lib/des/utils.js"(exports) {
     "use strict";
     exports.readUInt32BE = function (bytes, off) {
-      var res =
-        (bytes[0 + off] << 24) |
-        (bytes[1 + off] << 16) |
-        (bytes[2 + off] << 8) |
-        bytes[3 + off];
+      var res = (bytes[0 + off] << 24) | (bytes[1 + off] << 16) | (bytes[2 + off] << 8) | bytes[3 + off];
       return res >>> 0;
     };
     exports.writeUInt32BE = function (bytes, value, off) {
@@ -1904,70 +1722,48 @@ var require_utils = __commonJS({
     };
     exports.ip = function (inL, inR, out, off) {
       for (var outL = 0, outR = 0, i = 6; i >= 0; i -= 2) {
-        for (var j = 0; j <= 24; j += 8)
-          (outL <<= 1), (outL |= (inR >>> (j + i)) & 1);
-        for (var j = 0; j <= 24; j += 8)
-          (outL <<= 1), (outL |= (inL >>> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outL <<= 1), (outL |= (inR >>> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outL <<= 1), (outL |= (inL >>> (j + i)) & 1);
       }
       for (var i = 6; i >= 0; i -= 2) {
-        for (var j = 1; j <= 25; j += 8)
-          (outR <<= 1), (outR |= (inR >>> (j + i)) & 1);
-        for (var j = 1; j <= 25; j += 8)
-          (outR <<= 1), (outR |= (inL >>> (j + i)) & 1);
+        for (var j = 1; j <= 25; j += 8) (outR <<= 1), (outR |= (inR >>> (j + i)) & 1);
+        for (var j = 1; j <= 25; j += 8) (outR <<= 1), (outR |= (inL >>> (j + i)) & 1);
       }
       (out[off + 0] = outL >>> 0), (out[off + 1] = outR >>> 0);
     };
     exports.rip = function (inL, inR, out, off) {
       for (var outL = 0, outR = 0, i = 0; i < 4; i++)
         for (var j = 24; j >= 0; j -= 8)
-          (outL <<= 1),
-            (outL |= (inR >>> (j + i)) & 1),
-            (outL <<= 1),
-            (outL |= (inL >>> (j + i)) & 1);
+          (outL <<= 1), (outL |= (inR >>> (j + i)) & 1), (outL <<= 1), (outL |= (inL >>> (j + i)) & 1);
       for (var i = 4; i < 8; i++)
         for (var j = 24; j >= 0; j -= 8)
-          (outR <<= 1),
-            (outR |= (inR >>> (j + i)) & 1),
-            (outR <<= 1),
-            (outR |= (inL >>> (j + i)) & 1);
+          (outR <<= 1), (outR |= (inR >>> (j + i)) & 1), (outR <<= 1), (outR |= (inL >>> (j + i)) & 1);
       (out[off + 0] = outL >>> 0), (out[off + 1] = outR >>> 0);
     };
     exports.pc1 = function (inL, inR, out, off) {
       for (var outL = 0, outR = 0, i = 7; i >= 5; i--) {
-        for (var j = 0; j <= 24; j += 8)
-          (outL <<= 1), (outL |= (inR >> (j + i)) & 1);
-        for (var j = 0; j <= 24; j += 8)
-          (outL <<= 1), (outL |= (inL >> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outL <<= 1), (outL |= (inR >> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outL <<= 1), (outL |= (inL >> (j + i)) & 1);
       }
-      for (var j = 0; j <= 24; j += 8)
-        (outL <<= 1), (outL |= (inR >> (j + i)) & 1);
+      for (var j = 0; j <= 24; j += 8) (outL <<= 1), (outL |= (inR >> (j + i)) & 1);
       for (var i = 1; i <= 3; i++) {
-        for (var j = 0; j <= 24; j += 8)
-          (outR <<= 1), (outR |= (inR >> (j + i)) & 1);
-        for (var j = 0; j <= 24; j += 8)
-          (outR <<= 1), (outR |= (inL >> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outR <<= 1), (outR |= (inR >> (j + i)) & 1);
+        for (var j = 0; j <= 24; j += 8) (outR <<= 1), (outR |= (inL >> (j + i)) & 1);
       }
-      for (var j = 0; j <= 24; j += 8)
-        (outR <<= 1), (outR |= (inL >> (j + i)) & 1);
+      for (var j = 0; j <= 24; j += 8) (outR <<= 1), (outR |= (inL >> (j + i)) & 1);
       (out[off + 0] = outL >>> 0), (out[off + 1] = outR >>> 0);
     };
     exports.r28shl = function (num, shift) {
       return ((num << shift) & 268435455) | (num >>> (28 - shift));
     };
     var pc2table = [
-      14, 11, 17, 4, 27, 23, 25, 0, 13, 22, 7, 18, 5, 9, 16, 24, 2, 20, 12, 21,
-      1, 8, 15, 26, 15, 4, 25, 19, 9, 1, 26, 16, 5, 11, 23, 8, 12, 7, 17, 0, 22,
-      3, 10, 14, 6, 20, 27, 24,
+      14, 11, 17, 4, 27, 23, 25, 0, 13, 22, 7, 18, 5, 9, 16, 24, 2, 20, 12, 21, 1, 8, 15, 26, 15, 4, 25, 19, 9, 1, 26,
+      16, 5, 11, 23, 8, 12, 7, 17, 0, 22, 3, 10, 14, 6, 20, 27, 24,
     ];
     exports.pc2 = function (inL, inR, out, off) {
-      for (
-        var outL = 0, outR = 0, len = pc2table.length >>> 1, i = 0;
-        i < len;
-        i++
-      )
+      for (var outL = 0, outR = 0, len = pc2table.length >>> 1, i = 0; i < len; i++)
         (outL <<= 1), (outL |= (inL >>> pc2table[i]) & 1);
-      for (var i = len; i < pc2table.length; i++)
-        (outR <<= 1), (outR |= (inR >>> pc2table[i]) & 1);
+      for (var i = len; i < pc2table.length; i++) (outR <<= 1), (outR |= (inR >>> pc2table[i]) & 1);
       (out[off + 0] = outL >>> 0), (out[off + 1] = outR >>> 0);
     };
     exports.expand = function (r, out, off) {
@@ -1976,35 +1772,25 @@ var require_utils = __commonJS({
       outL = ((r & 1) << 5) | (r >>> 27);
       for (var i = 23; i >= 15; i -= 4) (outL <<= 6), (outL |= (r >>> i) & 63);
       for (var i = 11; i >= 3; i -= 4) (outR |= (r >>> i) & 63), (outR <<= 6);
-      (outR |= ((r & 31) << 1) | (r >>> 31)),
-        (out[off + 0] = outL >>> 0),
-        (out[off + 1] = outR >>> 0);
+      (outR |= ((r & 31) << 1) | (r >>> 31)), (out[off + 0] = outL >>> 0), (out[off + 1] = outR >>> 0);
     };
     var sTable = [
-      14, 0, 4, 15, 13, 7, 1, 4, 2, 14, 15, 2, 11, 13, 8, 1, 3, 10, 10, 6, 6,
-      12, 12, 11, 5, 9, 9, 5, 0, 3, 7, 8, 4, 15, 1, 12, 14, 8, 8, 2, 13, 4, 6,
-      9, 2, 1, 11, 7, 15, 5, 12, 11, 9, 3, 7, 14, 3, 10, 10, 0, 5, 6, 0, 13, 15,
-      3, 1, 13, 8, 4, 14, 7, 6, 15, 11, 2, 3, 8, 4, 14, 9, 12, 7, 0, 2, 1, 13,
-      10, 12, 6, 0, 9, 5, 11, 10, 5, 0, 13, 14, 8, 7, 10, 11, 1, 10, 3, 4, 15,
-      13, 4, 1, 2, 5, 11, 8, 6, 12, 7, 6, 12, 9, 0, 3, 5, 2, 14, 15, 9, 10, 13,
-      0, 7, 9, 0, 14, 9, 6, 3, 3, 4, 15, 6, 5, 10, 1, 2, 13, 8, 12, 5, 7, 14,
-      11, 12, 4, 11, 2, 15, 8, 1, 13, 1, 6, 10, 4, 13, 9, 0, 8, 6, 15, 9, 3, 8,
-      0, 7, 11, 4, 1, 15, 2, 14, 12, 3, 5, 11, 10, 5, 14, 2, 7, 12, 7, 13, 13,
-      8, 14, 11, 3, 5, 0, 6, 6, 15, 9, 0, 10, 3, 1, 4, 2, 7, 8, 2, 5, 12, 11, 1,
-      12, 10, 4, 14, 15, 9, 10, 3, 6, 15, 9, 0, 0, 6, 12, 10, 11, 1, 7, 13, 13,
-      8, 15, 9, 1, 4, 3, 5, 14, 11, 5, 12, 2, 7, 8, 2, 4, 14, 2, 14, 12, 11, 4,
-      2, 1, 12, 7, 4, 10, 7, 11, 13, 6, 1, 8, 5, 5, 0, 3, 15, 15, 10, 13, 3, 0,
-      9, 14, 8, 9, 6, 4, 11, 2, 8, 1, 12, 11, 7, 10, 1, 13, 14, 7, 2, 8, 13, 15,
-      6, 9, 15, 12, 0, 5, 9, 6, 10, 3, 4, 0, 5, 14, 3, 12, 10, 1, 15, 10, 4, 15,
-      2, 9, 7, 2, 12, 6, 9, 8, 5, 0, 6, 13, 1, 3, 13, 4, 14, 14, 0, 7, 11, 5, 3,
-      11, 8, 9, 4, 14, 3, 15, 2, 5, 12, 2, 9, 8, 5, 12, 15, 3, 10, 7, 11, 0, 14,
-      4, 1, 10, 7, 1, 6, 13, 0, 11, 8, 6, 13, 4, 13, 11, 0, 2, 11, 14, 7, 15, 4,
-      0, 9, 8, 1, 13, 10, 3, 14, 12, 3, 9, 5, 7, 12, 5, 2, 10, 15, 6, 8, 1, 6,
-      1, 6, 4, 11, 11, 13, 13, 8, 12, 1, 3, 4, 7, 10, 14, 7, 10, 9, 15, 5, 6, 0,
-      8, 15, 0, 14, 5, 2, 9, 3, 2, 12, 13, 1, 2, 15, 8, 13, 4, 8, 6, 10, 15, 3,
-      11, 7, 1, 4, 10, 12, 9, 5, 3, 6, 14, 11, 5, 0, 0, 14, 12, 9, 7, 2, 7, 2,
-      11, 1, 4, 14, 1, 7, 9, 4, 12, 10, 14, 8, 2, 13, 0, 15, 6, 12, 10, 9, 13,
-      0, 15, 3, 3, 5, 5, 6, 8, 11,
+      14, 0, 4, 15, 13, 7, 1, 4, 2, 14, 15, 2, 11, 13, 8, 1, 3, 10, 10, 6, 6, 12, 12, 11, 5, 9, 9, 5, 0, 3, 7, 8, 4, 15,
+      1, 12, 14, 8, 8, 2, 13, 4, 6, 9, 2, 1, 11, 7, 15, 5, 12, 11, 9, 3, 7, 14, 3, 10, 10, 0, 5, 6, 0, 13, 15, 3, 1, 13,
+      8, 4, 14, 7, 6, 15, 11, 2, 3, 8, 4, 14, 9, 12, 7, 0, 2, 1, 13, 10, 12, 6, 0, 9, 5, 11, 10, 5, 0, 13, 14, 8, 7, 10,
+      11, 1, 10, 3, 4, 15, 13, 4, 1, 2, 5, 11, 8, 6, 12, 7, 6, 12, 9, 0, 3, 5, 2, 14, 15, 9, 10, 13, 0, 7, 9, 0, 14, 9,
+      6, 3, 3, 4, 15, 6, 5, 10, 1, 2, 13, 8, 12, 5, 7, 14, 11, 12, 4, 11, 2, 15, 8, 1, 13, 1, 6, 10, 4, 13, 9, 0, 8, 6,
+      15, 9, 3, 8, 0, 7, 11, 4, 1, 15, 2, 14, 12, 3, 5, 11, 10, 5, 14, 2, 7, 12, 7, 13, 13, 8, 14, 11, 3, 5, 0, 6, 6,
+      15, 9, 0, 10, 3, 1, 4, 2, 7, 8, 2, 5, 12, 11, 1, 12, 10, 4, 14, 15, 9, 10, 3, 6, 15, 9, 0, 0, 6, 12, 10, 11, 1, 7,
+      13, 13, 8, 15, 9, 1, 4, 3, 5, 14, 11, 5, 12, 2, 7, 8, 2, 4, 14, 2, 14, 12, 11, 4, 2, 1, 12, 7, 4, 10, 7, 11, 13,
+      6, 1, 8, 5, 5, 0, 3, 15, 15, 10, 13, 3, 0, 9, 14, 8, 9, 6, 4, 11, 2, 8, 1, 12, 11, 7, 10, 1, 13, 14, 7, 2, 8, 13,
+      15, 6, 9, 15, 12, 0, 5, 9, 6, 10, 3, 4, 0, 5, 14, 3, 12, 10, 1, 15, 10, 4, 15, 2, 9, 7, 2, 12, 6, 9, 8, 5, 0, 6,
+      13, 1, 3, 13, 4, 14, 14, 0, 7, 11, 5, 3, 11, 8, 9, 4, 14, 3, 15, 2, 5, 12, 2, 9, 8, 5, 12, 15, 3, 10, 7, 11, 0,
+      14, 4, 1, 10, 7, 1, 6, 13, 0, 11, 8, 6, 13, 4, 13, 11, 0, 2, 11, 14, 7, 15, 4, 0, 9, 8, 1, 13, 10, 3, 14, 12, 3,
+      9, 5, 7, 12, 5, 2, 10, 15, 6, 8, 1, 6, 1, 6, 4, 11, 11, 13, 13, 8, 12, 1, 3, 4, 7, 10, 14, 7, 10, 9, 15, 5, 6, 0,
+      8, 15, 0, 14, 5, 2, 9, 3, 2, 12, 13, 1, 2, 15, 8, 13, 4, 8, 6, 10, 15, 3, 11, 7, 1, 4, 10, 12, 9, 5, 3, 6, 14, 11,
+      5, 0, 0, 14, 12, 9, 7, 2, 7, 2, 11, 1, 4, 14, 1, 7, 9, 4, 12, 10, 14, 8, 2, 13, 0, 15, 6, 12, 10, 9, 13, 0, 15, 3,
+      3, 5, 5, 6, 8, 11,
     ];
     exports.substitute = function (inL, inR) {
       for (var out = 0, i = 0; i < 4; i++) {
@@ -2020,18 +1806,16 @@ var require_utils = __commonJS({
       return out >>> 0;
     };
     var permuteTable = [
-      16, 25, 12, 11, 3, 20, 4, 15, 31, 17, 9, 6, 27, 14, 1, 22, 30, 24, 8, 18,
-      0, 5, 29, 23, 13, 19, 2, 26, 10, 21, 28, 7,
+      16, 25, 12, 11, 3, 20, 4, 15, 31, 17, 9, 6, 27, 14, 1, 22, 30, 24, 8, 18, 0, 5, 29, 23, 13, 19, 2, 26, 10, 21, 28,
+      7,
     ];
     exports.permute = function (num) {
-      for (var out = 0, i = 0; i < permuteTable.length; i++)
-        (out <<= 1), (out |= (num >>> permuteTable[i]) & 1);
+      for (var out = 0, i = 0; i < permuteTable.length; i++) (out <<= 1), (out |= (num >>> permuteTable[i]) & 1);
       return out >>> 0;
     };
     exports.padSplit = function (num, size, group) {
       for (var str = num.toString(2); str.length < size; ) str = "0" + str;
-      for (var out = [], i = 0; i < size; i += group)
-        out.push(str.slice(i, i + group));
+      for (var out = [], i = 0; i < size; i += group) out.push(str.slice(i, i + group));
       return out.join(" ");
     };
   },
@@ -2066,31 +1850,15 @@ var require_cipher = __commonJS({
     module.exports = Cipher;
     Cipher.prototype._init = function () {};
     Cipher.prototype.update = function (data) {
-      return data.length === 0
-        ? []
-        : this.type === "decrypt"
-        ? this._updateDecrypt(data)
-        : this._updateEncrypt(data);
+      return data.length === 0 ? [] : this.type === "decrypt" ? this._updateDecrypt(data) : this._updateEncrypt(data);
     };
     Cipher.prototype._buffer = function (data, off) {
-      for (
-        var min = Math.min(
-            this.buffer.length - this.bufferOff,
-            data.length - off,
-          ),
-          i = 0;
-        i < min;
-        i++
-      )
+      for (var min = Math.min(this.buffer.length - this.bufferOff, data.length - off), i = 0; i < min; i++)
         this.buffer[this.bufferOff + i] = data[off + i];
       return (this.bufferOff += min), min;
     };
     Cipher.prototype._flushBuffer = function (out, off) {
-      return (
-        this._update(this.buffer, 0, out, off),
-        (this.bufferOff = 0),
-        this.blockSize
-      );
+      return this._update(this.buffer, 0, out, off), (this.bufferOff = 0), this.blockSize;
     };
     Cipher.prototype._updateEncrypt = function (data) {
       var inputOff = 0,
@@ -2099,31 +1867,26 @@ var require_cipher = __commonJS({
         out = new Array(count * this.blockSize);
       this.bufferOff !== 0 &&
         ((inputOff += this._buffer(data, inputOff)),
-        this.bufferOff === this.buffer.length &&
-          (outputOff += this._flushBuffer(out, outputOff)));
+        this.bufferOff === this.buffer.length && (outputOff += this._flushBuffer(out, outputOff)));
       for (
         var max = data.length - ((data.length - inputOff) % this.blockSize);
         inputOff < max;
         inputOff += this.blockSize
       )
-        this._update(data, inputOff, out, outputOff),
-          (outputOff += this.blockSize);
-      for (; inputOff < data.length; inputOff++, this.bufferOff++)
-        this.buffer[this.bufferOff] = data[inputOff];
+        this._update(data, inputOff, out, outputOff), (outputOff += this.blockSize);
+      for (; inputOff < data.length; inputOff++, this.bufferOff++) this.buffer[this.bufferOff] = data[inputOff];
       return out;
     };
     Cipher.prototype._updateDecrypt = function (data) {
       for (
         var inputOff = 0,
           outputOff = 0,
-          count =
-            Math.ceil((this.bufferOff + data.length) / this.blockSize) - 1,
+          count = Math.ceil((this.bufferOff + data.length) / this.blockSize) - 1,
           out = new Array(count * this.blockSize);
         count > 0;
         count--
       )
-        (inputOff += this._buffer(data, inputOff)),
-          (outputOff += this._flushBuffer(out, outputOff));
+        (inputOff += this._buffer(data, inputOff)), (outputOff += this._flushBuffer(out, outputOff));
       return (inputOff += this._buffer(data, inputOff)), out;
     };
     Cipher.prototype.final = function (buffer) {
@@ -2131,9 +1894,7 @@ var require_cipher = __commonJS({
       buffer && (first = this.update(buffer));
       var last;
       return (
-        this.type === "encrypt"
-          ? (last = this._finalEncrypt())
-          : (last = this._finalDecrypt()),
+        this.type === "encrypt" ? (last = this._finalEncrypt()) : (last = this._finalDecrypt()),
         first ? first.concat(last) : last
       );
     };
@@ -2151,11 +1912,7 @@ var require_cipher = __commonJS({
       return buffer;
     };
     Cipher.prototype._finalDecrypt = function () {
-      assert.equal(
-        this.bufferOff,
-        this.blockSize,
-        "Not enough data to decrypt",
-      );
+      assert.equal(this.bufferOff, this.blockSize, "Not enough data to decrypt");
       var out = new Array(this.blockSize);
       return this._flushBuffer(out, 0), this._unpad(out);
     };
@@ -2185,16 +1942,13 @@ var require_des = __commonJS({
     };
     var shiftTable = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1];
     DES.prototype.deriveKeys = function (state, key) {
-      (state.keys = new Array(16 * 2)),
-        assert.equal(key.length, this.blockSize, "Invalid key length");
+      (state.keys = new Array(16 * 2)), assert.equal(key.length, this.blockSize, "Invalid key length");
       var kL = utils.readUInt32BE(key, 0),
         kR = utils.readUInt32BE(key, 4);
       utils.pc1(kL, kR, state.tmp, 0), (kL = state.tmp[0]), (kR = state.tmp[1]);
       for (var i = 0; i < state.keys.length; i += 2) {
         var shift = shiftTable[i >>> 1];
-        (kL = utils.r28shl(kL, shift)),
-          (kR = utils.r28shl(kR, shift)),
-          utils.pc2(kL, kR, state.keys, i);
+        (kL = utils.r28shl(kL, shift)), (kR = utils.r28shl(kR, shift)), utils.pc2(kL, kR, state.keys, i);
       }
     };
     DES.prototype._update = function (inp, inOff, out, outOff) {
@@ -2204,25 +1958,18 @@ var require_des = __commonJS({
       utils.ip(l, r, state.tmp, 0),
         (l = state.tmp[0]),
         (r = state.tmp[1]),
-        this.type === "encrypt"
-          ? this._encrypt(state, l, r, state.tmp, 0)
-          : this._decrypt(state, l, r, state.tmp, 0),
+        this.type === "encrypt" ? this._encrypt(state, l, r, state.tmp, 0) : this._decrypt(state, l, r, state.tmp, 0),
         (l = state.tmp[0]),
         (r = state.tmp[1]),
         utils.writeUInt32BE(out, l, outOff),
         utils.writeUInt32BE(out, r, outOff + 4);
     };
     DES.prototype._pad = function (buffer, off) {
-      for (var value = buffer.length - off, i = off; i < buffer.length; i++)
-        buffer[i] = value;
+      for (var value = buffer.length - off, i = off; i < buffer.length; i++) buffer[i] = value;
       return !0;
     };
     DES.prototype._unpad = function (buffer) {
-      for (
-        var pad = buffer[buffer.length - 1], i = buffer.length - pad;
-        i < buffer.length;
-        i++
-      )
+      for (var pad = buffer[buffer.length - 1], i = buffer.length - pad; i < buffer.length; i++)
         assert.equal(buffer[i], pad);
       return buffer.slice(0, buffer.length - pad);
     };
@@ -2230,9 +1977,7 @@ var require_des = __commonJS({
       for (var l = lStart, r = rStart, i = 0; i < state.keys.length; i += 2) {
         var keyL = state.keys[i],
           keyR = state.keys[i + 1];
-        utils.expand(r, state.tmp, 0),
-          (keyL ^= state.tmp[0]),
-          (keyR ^= state.tmp[1]);
+        utils.expand(r, state.tmp, 0), (keyL ^= state.tmp[0]), (keyR ^= state.tmp[1]);
         var s = utils.substitute(keyL, keyR),
           f = utils.permute(s),
           t = r;
@@ -2241,16 +1986,10 @@ var require_des = __commonJS({
       utils.rip(r, l, out, off);
     };
     DES.prototype._decrypt = function (state, lStart, rStart, out, off) {
-      for (
-        var l = rStart, r = lStart, i = state.keys.length - 2;
-        i >= 0;
-        i -= 2
-      ) {
+      for (var l = rStart, r = lStart, i = state.keys.length - 2; i >= 0; i -= 2) {
         var keyL = state.keys[i],
           keyR = state.keys[i + 1];
-        utils.expand(l, state.tmp, 0),
-          (keyL ^= state.tmp[0]),
-          (keyR ^= state.tmp[1]);
+        utils.expand(l, state.tmp, 0), (keyL ^= state.tmp[0]), (keyR ^= state.tmp[1]);
         var s = utils.substitute(keyL, keyR),
           f = utils.permute(s),
           t = l;
@@ -2395,8 +2134,7 @@ var require_browserify_des = __commonJS({
       opts.decrypt ? (type = "decrypt") : (type = "encrypt");
       var key = opts.key;
       Buffer2.isBuffer(key) || (key = Buffer2.from(key)),
-        (modeName === "des-ede" || modeName === "des-ede-cbc") &&
-          (key = Buffer2.concat([key, key.slice(0, 8)]));
+        (modeName === "des-ede" || modeName === "des-ede-cbc") && (key = Buffer2.concat([key, key.slice(0, 8)]));
       var iv = opts.iv;
       Buffer2.isBuffer(iv) || (iv = Buffer2.from(iv)),
         (this._des = mode.create({
@@ -2430,13 +2168,7 @@ var require_ecb = __commonJS({
 var require_buffer_xor = __commonJS({
   "node_modules/buffer-xor/index.js"(exports, module) {
     module.exports = function (a, b) {
-      for (
-        var length = Math.min(a.length, b.length),
-          buffer = new Buffer(length),
-          i = 0;
-        i < length;
-        ++i
-      )
+      for (var length = Math.min(a.length, b.length), buffer = new Buffer(length), i = 0; i < length; ++i)
         buffer[i] = a[i] ^ b[i];
       return buffer;
     };
@@ -2478,15 +2210,11 @@ var require_cfb = __commonJS({
       for (var out = Buffer2.allocUnsafe(0), len; data.length; )
         if (
           (self2._cache.length === 0 &&
-            ((self2._cache = self2._cipher.encryptBlock(self2._prev)),
-            (self2._prev = Buffer2.allocUnsafe(0))),
+            ((self2._cache = self2._cipher.encryptBlock(self2._prev)), (self2._prev = Buffer2.allocUnsafe(0))),
           self2._cache.length <= data.length)
         )
           (len = self2._cache.length),
-            (out = Buffer2.concat([
-              out,
-              encryptStart(self2, data.slice(0, len), decrypt),
-            ])),
+            (out = Buffer2.concat([out, encryptStart(self2, data.slice(0, len), decrypt)])),
             (data = data.slice(len));
         else {
           out = Buffer2.concat([out, encryptStart(self2, data, decrypt)]);
@@ -2504,20 +2232,10 @@ var require_cfb8 = __commonJS({
     function encryptByte(self2, byteParam, decrypt) {
       var pad = self2._cipher.encryptBlock(self2._prev),
         out = pad[0] ^ byteParam;
-      return (
-        (self2._prev = Buffer2.concat([
-          self2._prev.slice(1),
-          Buffer2.from([decrypt ? byteParam : out]),
-        ])),
-        out
-      );
+      return (self2._prev = Buffer2.concat([self2._prev.slice(1), Buffer2.from([decrypt ? byteParam : out])])), out;
     }
     exports.encrypt = function (self2, chunk, decrypt) {
-      for (
-        var len = chunk.length, out = Buffer2.allocUnsafe(len), i = -1;
-        ++i < len;
-
-      )
+      for (var len = chunk.length, out = Buffer2.allocUnsafe(len), i = -1; ++i < len; )
         out[i] = encryptByte(self2, chunk[i], decrypt);
       return out;
     };
@@ -2541,20 +2259,12 @@ var require_cfb1 = __commonJS({
       var len = buffer.length,
         i = -1,
         out = Buffer2.allocUnsafe(buffer.length);
-      for (
-        buffer = Buffer2.concat([buffer, Buffer2.from([value])]);
-        ++i < len;
-
-      )
+      for (buffer = Buffer2.concat([buffer, Buffer2.from([value])]); ++i < len; )
         out[i] = (buffer[i] << 1) | (buffer[i + 1] >> 7);
       return out;
     }
     exports.encrypt = function (self2, chunk, decrypt) {
-      for (
-        var len = chunk.length, out = Buffer2.allocUnsafe(len), i = -1;
-        ++i < len;
-
-      )
+      for (var len = chunk.length, out = Buffer2.allocUnsafe(len), i = -1; ++i < len; )
         out[i] = encryptByte(self2, chunk[i], decrypt);
       return out;
     };
@@ -2566,13 +2276,10 @@ var require_ofb = __commonJS({
   "node_modules/browserify-aes/modes/ofb.js"(exports) {
     var xor = require_buffer_xor();
     function getBlock(self2) {
-      return (
-        (self2._prev = self2._cipher.encryptBlock(self2._prev)), self2._prev
-      );
+      return (self2._prev = self2._cipher.encryptBlock(self2._prev)), self2._prev;
     }
     exports.encrypt = function (self2, chunk) {
-      for (; self2._cache.length < chunk.length; )
-        self2._cache = Buffer.concat([self2._cache, getBlock(self2)]);
+      for (; self2._cache.length < chunk.length; ) self2._cache = Buffer.concat([self2._cache, getBlock(self2)]);
       var pad = self2._cache.slice(0, chunk.length);
       return (self2._cache = self2._cache.slice(chunk.length)), xor(chunk, pad);
     };
@@ -2608,10 +2315,7 @@ var require_ctr = __commonJS({
     exports.encrypt = function (self2, chunk) {
       var chunkNum = Math.ceil(chunk.length / blockSize),
         start = self2._cache.length;
-      self2._cache = Buffer2.concat([
-        self2._cache,
-        Buffer2.allocUnsafe(chunkNum * blockSize),
-      ]);
+      self2._cache = Buffer2.concat([self2._cache, Buffer2.allocUnsafe(chunkNum * blockSize)]);
       for (var i = 0; i < chunkNum; i++) {
         var out = getBlock(self2),
           offset = start + i * blockSize;
@@ -2849,12 +2553,7 @@ var require_aes = __commonJS({
     var Buffer2 = require_safe_buffer().Buffer;
     function asUInt32Array(buf) {
       Buffer2.isBuffer(buf) || (buf = Buffer2.from(buf));
-      for (
-        var len = (buf.length / 4) | 0, out = new Array(len), i = 0;
-        i < len;
-        i++
-      )
-        out[i] = buf.readUInt32BE(i * 4);
+      for (var len = (buf.length / 4) | 0, out = new Array(len), i = 0; i < len; i++) out[i] = buf.readUInt32BE(i * 4);
       return out;
     }
     function scrubVec(v) {
@@ -2909,28 +2608,16 @@ var require_aes = __commonJS({
           (s3 = t3);
       return (
         (t0 =
-          ((SBOX[s0 >>> 24] << 24) |
-            (SBOX[(s1 >>> 16) & 255] << 16) |
-            (SBOX[(s2 >>> 8) & 255] << 8) |
-            SBOX[s3 & 255]) ^
+          ((SBOX[s0 >>> 24] << 24) | (SBOX[(s1 >>> 16) & 255] << 16) | (SBOX[(s2 >>> 8) & 255] << 8) | SBOX[s3 & 255]) ^
           keySchedule[ksRow++]),
         (t1 =
-          ((SBOX[s1 >>> 24] << 24) |
-            (SBOX[(s2 >>> 16) & 255] << 16) |
-            (SBOX[(s3 >>> 8) & 255] << 8) |
-            SBOX[s0 & 255]) ^
+          ((SBOX[s1 >>> 24] << 24) | (SBOX[(s2 >>> 16) & 255] << 16) | (SBOX[(s3 >>> 8) & 255] << 8) | SBOX[s0 & 255]) ^
           keySchedule[ksRow++]),
         (t2 =
-          ((SBOX[s2 >>> 24] << 24) |
-            (SBOX[(s3 >>> 16) & 255] << 16) |
-            (SBOX[(s0 >>> 8) & 255] << 8) |
-            SBOX[s1 & 255]) ^
+          ((SBOX[s2 >>> 24] << 24) | (SBOX[(s3 >>> 16) & 255] << 16) | (SBOX[(s0 >>> 8) & 255] << 8) | SBOX[s1 & 255]) ^
           keySchedule[ksRow++]),
         (t3 =
-          ((SBOX[s3 >>> 24] << 24) |
-            (SBOX[(s0 >>> 16) & 255] << 16) |
-            (SBOX[(s1 >>> 8) & 255] << 8) |
-            SBOX[s2 & 255]) ^
+          ((SBOX[s3 >>> 24] << 24) | (SBOX[(s0 >>> 16) & 255] << 16) | (SBOX[(s1 >>> 8) & 255] << 8) | SBOX[s2 & 255]) ^
           keySchedule[ksRow++]),
         (t0 = t0 >>> 0),
         (t1 = t1 >>> 0),
@@ -2941,8 +2628,7 @@ var require_aes = __commonJS({
     }
     var RCON = [0, 1, 2, 4, 8, 16, 32, 64, 128, 27, 54],
       G = (function () {
-        for (var d = new Array(256), j = 0; j < 256; j++)
-          j < 128 ? (d[j] = j << 1) : (d[j] = (j << 1) ^ 283);
+        for (var d = new Array(256), j = 0; j < 256; j++) j < 128 ? (d[j] = j << 1) : (d[j] = (j << 1) ^ 283);
         for (
           var SBOX = [],
             INV_SBOX = [],
@@ -2955,9 +2641,7 @@ var require_aes = __commonJS({
           ++i
         ) {
           var sx = xi ^ (xi << 1) ^ (xi << 2) ^ (xi << 3) ^ (xi << 4);
-          (sx = (sx >>> 8) ^ (sx & 255) ^ 99),
-            (SBOX[x] = sx),
-            (INV_SBOX[sx] = x);
+          (sx = (sx >>> 8) ^ (sx & 255) ^ 99), (SBOX[x] = sx), (INV_SBOX[sx] = x);
           var x2 = d[x],
             x4 = d[x2],
             x8 = d[x4],
@@ -2971,9 +2655,7 @@ var require_aes = __commonJS({
             (INV_SUB_MIX[1][sx] = (t << 16) | (t >>> 16)),
             (INV_SUB_MIX[2][sx] = (t << 8) | (t >>> 24)),
             (INV_SUB_MIX[3][sx] = t),
-            x === 0
-              ? (x = xi = 1)
-              : ((x = x2 ^ d[d[d[x8 ^ x2]]]), (xi ^= d[d[xi]]));
+            x === 0 ? (x = xi = 1) : ((x = x2 ^ d[d[d[x8 ^ x2]]]), (xi ^= d[d[xi]]));
         }
         return {
           SBOX,
@@ -3031,15 +2713,10 @@ var require_aes = __commonJS({
               G.INV_SUB_MIX[2][G.SBOX[(tt >>> 8) & 255]] ^
               G.INV_SUB_MIX[3][G.SBOX[tt & 255]]);
       }
-      (this._nRounds = nRounds),
-        (this._keySchedule = keySchedule),
-        (this._invKeySchedule = invKeySchedule);
+      (this._nRounds = nRounds), (this._keySchedule = keySchedule), (this._invKeySchedule = invKeySchedule);
     };
     AES.prototype.encryptBlockRaw = function (M) {
-      return (
-        (M = asUInt32Array(M)),
-        cryptBlock(M, this._keySchedule, G.SUB_MIX, G.SBOX, this._nRounds)
-      );
+      return (M = asUInt32Array(M)), cryptBlock(M, this._keySchedule, G.SUB_MIX, G.SBOX, this._nRounds);
     };
     AES.prototype.encryptBlock = function (M) {
       var out = this.encryptBlockRaw(M),
@@ -3056,13 +2733,7 @@ var require_aes = __commonJS({
       M = asUInt32Array(M);
       var m1 = M[1];
       (M[1] = M[3]), (M[3] = m1);
-      var out = cryptBlock(
-          M,
-          this._invKeySchedule,
-          G.INV_SUB_MIX,
-          G.INV_SBOX,
-          this._nRounds,
-        ),
+      var out = cryptBlock(M, this._invKeySchedule, G.INV_SUB_MIX, G.INV_SBOX, this._nRounds),
         buf = Buffer2.allocUnsafe(16);
       return (
         buf.writeUInt32BE(out[0], 0),
@@ -3073,9 +2744,7 @@ var require_aes = __commonJS({
       );
     };
     AES.prototype.scrub = function () {
-      scrubVec(this._keySchedule),
-        scrubVec(this._invKeySchedule),
-        scrubVec(this._key);
+      scrubVec(this._keySchedule), scrubVec(this._invKeySchedule), scrubVec(this._key);
     };
     module.exports.AES = AES;
   },
@@ -3087,12 +2756,7 @@ var require_ghash = __commonJS({
     var Buffer2 = require_safe_buffer().Buffer,
       ZEROES = Buffer2.alloc(16, 0);
     function toArray(buf) {
-      return [
-        buf.readUInt32BE(0),
-        buf.readUInt32BE(4),
-        buf.readUInt32BE(8),
-        buf.readUInt32BE(12),
-      ];
+      return [buf.readUInt32BE(0), buf.readUInt32BE(4), buf.readUInt32BE(8), buf.readUInt32BE(12)];
     }
     function fromArray(out) {
       var buf = Buffer2.allocUnsafe(16);
@@ -3105,27 +2769,17 @@ var require_ghash = __commonJS({
       );
     }
     function GHASH(key) {
-      (this.h = key),
-        (this.state = Buffer2.alloc(16, 0)),
-        (this.cache = Buffer2.allocUnsafe(0));
+      (this.h = key), (this.state = Buffer2.alloc(16, 0)), (this.cache = Buffer2.allocUnsafe(0));
     }
     GHASH.prototype.ghash = function (block) {
       for (var i = -1; ++i < block.length; ) this.state[i] ^= block[i];
       this._multiply();
     };
     GHASH.prototype._multiply = function () {
-      for (
-        var Vi = toArray(this.h), Zi = [0, 0, 0, 0], j, xi, lsbVi, i = -1;
-        ++i < 128;
-
-      ) {
+      for (var Vi = toArray(this.h), Zi = [0, 0, 0, 0], j, xi, lsbVi, i = -1; ++i < 128; ) {
         for (
           xi = (this.state[~~(i / 8)] & (1 << (7 - (i % 8)))) !== 0,
-            xi &&
-              ((Zi[0] ^= Vi[0]),
-              (Zi[1] ^= Vi[1]),
-              (Zi[2] ^= Vi[2]),
-              (Zi[3] ^= Vi[3])),
+            xi && ((Zi[0] ^= Vi[0]), (Zi[1] ^= Vi[1]), (Zi[2] ^= Vi[2]), (Zi[3] ^= Vi[3])),
             lsbVi = (Vi[3] & 1) !== 0,
             j = 3;
           j > 0;
@@ -3139,14 +2793,11 @@ var require_ghash = __commonJS({
     GHASH.prototype.update = function (buf) {
       this.cache = Buffer2.concat([this.cache, buf]);
       for (var chunk; this.cache.length >= 16; )
-        (chunk = this.cache.slice(0, 16)),
-          (this.cache = this.cache.slice(16)),
-          this.ghash(chunk);
+        (chunk = this.cache.slice(0, 16)), (this.cache = this.cache.slice(16)), this.ghash(chunk);
     };
     GHASH.prototype.final = function (abl, bl) {
       return (
-        this.cache.length &&
-          this.ghash(Buffer2.concat([this.cache, ZEROES], 16)),
+        this.cache.length && this.ghash(Buffer2.concat([this.cache, ZEROES], 16)),
         this.ghash(fromArray([0, abl, 0, bl])),
         this.state
       );
@@ -3168,8 +2819,7 @@ var require_authCipher = __commonJS({
     function xorTest(a, b) {
       var out = 0;
       a.length !== b.length && out++;
-      for (var len = Math.min(a.length, b.length), i = 0; i < len; ++i)
-        out += a[i] ^ b[i];
+      for (var len = Math.min(a.length, b.length), i = 0; i < len; ++i) out += a[i] ^ b[i];
       return out;
     }
     function calcIv(self2, iv, ck) {
@@ -3186,9 +2836,7 @@ var require_authCipher = __commonJS({
         ghash.update(Buffer2.alloc(8, 0));
       var ivBits = len * 8,
         tail = Buffer2.alloc(8);
-      tail.writeUIntBE(ivBits, 0, 8),
-        ghash.update(tail),
-        (self2._finID = ghash.state);
+      tail.writeUIntBE(ivBits, 0, 8), ghash.update(tail), (self2._finID = ghash.state);
       var out = Buffer2.from(self2._finID);
       return incr32(out), out;
     }
@@ -3213,24 +2861,15 @@ var require_authCipher = __commonJS({
     StreamCipher.prototype._update = function (chunk) {
       if (!this._called && this._alen) {
         var rump = 16 - (this._alen % 16);
-        rump < 16 &&
-          ((rump = Buffer2.alloc(rump, 0)), this._ghash.update(rump));
+        rump < 16 && ((rump = Buffer2.alloc(rump, 0)), this._ghash.update(rump));
       }
       this._called = !0;
       var out = this._mode.encrypt(this, chunk);
-      return (
-        this._decrypt ? this._ghash.update(chunk) : this._ghash.update(out),
-        (this._len += chunk.length),
-        out
-      );
+      return this._decrypt ? this._ghash.update(chunk) : this._ghash.update(out), (this._len += chunk.length), out;
     };
     StreamCipher.prototype._final = function () {
-      if (this._decrypt && !this._authTag)
-        throw new Error("Unsupported state or unable to authenticate data");
-      var tag = xor(
-        this._ghash.final(this._alen * 8, this._len * 8),
-        this._cipher.encryptBlock(this._finID),
-      );
+      if (this._decrypt && !this._authTag) throw new Error("Unsupported state or unable to authenticate data");
+      var tag = xor(this._ghash.final(this._alen * 8, this._len * 8), this._cipher.encryptBlock(this._finID));
       if (this._decrypt && xorTest(tag, this._authTag))
         throw new Error("Unsupported state or unable to authenticate data");
       (this._authTag = tag), this._cipher.scrub();
@@ -3241,13 +2880,11 @@ var require_authCipher = __commonJS({
       return this._authTag;
     };
     StreamCipher.prototype.setAuthTag = function (tag) {
-      if (!this._decrypt)
-        throw new Error("Attempting to set auth tag in unsupported state");
+      if (!this._decrypt) throw new Error("Attempting to set auth tag in unsupported state");
       this._authTag = tag;
     };
     StreamCipher.prototype.setAAD = function (buf) {
-      if (this._called)
-        throw new Error("Attempting to set AAD in unsupported state");
+      if (this._called) throw new Error("Attempting to set AAD in unsupported state");
       this._ghash.update(buf), (this._alen += buf.length);
     };
     module.exports = StreamCipher;
@@ -3288,32 +2925,21 @@ var require_evp_bytestokey = __commonJS({
       MD5 = require_md5();
     function EVP_BytesToKey(password, salt, keyBits, ivLen) {
       if (
-        (Buffer2.isBuffer(password) ||
-          (password = Buffer2.from(password, "binary")),
-        salt &&
-          (Buffer2.isBuffer(salt) || (salt = Buffer2.from(salt, "binary")),
-          salt.length !== 8))
+        (Buffer2.isBuffer(password) || (password = Buffer2.from(password, "binary")),
+        salt && (Buffer2.isBuffer(salt) || (salt = Buffer2.from(salt, "binary")), salt.length !== 8))
       )
         throw new RangeError("salt should be Buffer with 8 byte length");
       for (
-        var keyLen = keyBits / 8,
-          key = Buffer2.alloc(keyLen),
-          iv = Buffer2.alloc(ivLen || 0),
-          tmp = Buffer2.alloc(0);
+        var keyLen = keyBits / 8, key = Buffer2.alloc(keyLen), iv = Buffer2.alloc(ivLen || 0), tmp = Buffer2.alloc(0);
         keyLen > 0 || ivLen > 0;
 
       ) {
         var hash = new MD5();
-        hash.update(tmp),
-          hash.update(password),
-          salt && hash.update(salt),
-          (tmp = hash.digest());
+        hash.update(tmp), hash.update(password), salt && hash.update(salt), (tmp = hash.digest());
         var used = 0;
         if (keyLen > 0) {
           var keyStart = key.length - keyLen;
-          (used = Math.min(keyLen, tmp.length)),
-            tmp.copy(key, keyStart, 0, used),
-            (keyLen -= used);
+          (used = Math.min(keyLen, tmp.length)), tmp.copy(key, keyStart, 0, used), (keyLen -= used);
         }
         if (used < tmp.length && ivLen > 0) {
           var ivStart = iv.length - ivLen,
@@ -3356,14 +2982,8 @@ var require_encrypter = __commonJS({
     var PADDING = Buffer2.alloc(16, 16);
     Cipher.prototype._final = function () {
       var chunk = this._cache.flush();
-      if (this._autopadding)
-        return (
-          (chunk = this._mode.encrypt(this, chunk)), this._cipher.scrub(), chunk
-        );
-      if (!chunk.equals(PADDING))
-        throw (
-          (this._cipher.scrub(), new Error("data not multiple of block length"))
-        );
+      if (this._autopadding) return (chunk = this._mode.encrypt(this, chunk)), this._cipher.scrub(), chunk;
+      if (!chunk.equals(PADDING)) throw (this._cipher.scrub(), new Error("data not multiple of block length"));
     };
     Cipher.prototype.setAutoPadding = function (setTo) {
       return (this._autopadding = !!setTo), this;
@@ -3382,28 +3002,16 @@ var require_encrypter = __commonJS({
       return null;
     };
     Splitter.prototype.flush = function () {
-      for (
-        var len = 16 - this.cache.length,
-          padBuff = Buffer2.allocUnsafe(len),
-          i = -1;
-        ++i < len;
-
-      )
+      for (var len = 16 - this.cache.length, padBuff = Buffer2.allocUnsafe(len), i = -1; ++i < len; )
         padBuff.writeUInt8(len, i);
       return Buffer2.concat([this.cache, padBuff]);
     };
     function createCipheriv(suite, password, iv) {
       var config = MODES[suite.toLowerCase()];
       if (!config) throw new TypeError("invalid suite type");
-      if (
-        (typeof password == "string" && (password = Buffer2.from(password)),
-        password.length !== config.key / 8)
-      )
+      if ((typeof password == "string" && (password = Buffer2.from(password)), password.length !== config.key / 8))
         throw new TypeError("invalid key length " + password.length);
-      if (
-        (typeof iv == "string" && (iv = Buffer2.from(iv)),
-        config.mode !== "GCM" && iv.length !== config.iv)
-      )
+      if ((typeof iv == "string" && (iv = Buffer2.from(iv)), config.mode !== "GCM" && iv.length !== config.iv))
         throw new TypeError("invalid iv length " + iv.length);
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv)
@@ -3445,11 +3053,7 @@ var require_decrypter = __commonJS({
     inherits(Decipher, Transform);
     Decipher.prototype._update = function (data) {
       this._cache.add(data);
-      for (
-        var chunk, thing, out = [];
-        (chunk = this._cache.get(this._autopadding));
-
-      )
+      for (var chunk, thing, out = []; (chunk = this._cache.get(this._autopadding)); )
         (thing = this._mode.decrypt(this, chunk)), out.push(thing);
       return Buffer2.concat(out);
     };
@@ -3470,18 +3074,9 @@ var require_decrypter = __commonJS({
     Splitter.prototype.get = function (autoPadding) {
       var out;
       if (autoPadding) {
-        if (this.cache.length > 16)
-          return (
-            (out = this.cache.slice(0, 16)),
-            (this.cache = this.cache.slice(16)),
-            out
-          );
+        if (this.cache.length > 16) return (out = this.cache.slice(0, 16)), (this.cache = this.cache.slice(16)), out;
       } else if (this.cache.length >= 16)
-        return (
-          (out = this.cache.slice(0, 16)),
-          (this.cache = this.cache.slice(16)),
-          out
-        );
+        return (out = this.cache.slice(0, 16)), (this.cache = this.cache.slice(16)), out;
       return null;
     };
     Splitter.prototype.flush = function () {
@@ -3491,22 +3086,15 @@ var require_decrypter = __commonJS({
       var padded = last[15];
       if (padded < 1 || padded > 16) throw new Error("unable to decrypt data");
       for (var i = -1; ++i < padded; )
-        if (last[i + (16 - padded)] !== padded)
-          throw new Error("unable to decrypt data");
+        if (last[i + (16 - padded)] !== padded) throw new Error("unable to decrypt data");
       if (padded !== 16) return last.slice(0, 16 - padded);
     }
     function createDecipheriv(suite, password, iv) {
       var config = MODES[suite.toLowerCase()];
       if (!config) throw new TypeError("invalid suite type");
-      if (
-        (typeof iv == "string" && (iv = Buffer2.from(iv)),
-        config.mode !== "GCM" && iv.length !== config.iv)
-      )
+      if ((typeof iv == "string" && (iv = Buffer2.from(iv)), config.mode !== "GCM" && iv.length !== config.iv))
         throw new TypeError("invalid iv length " + iv.length);
-      if (
-        (typeof password == "string" && (password = Buffer2.from(password)),
-        password.length !== config.key / 8)
-      )
+      if ((typeof password == "string" && (password = Buffer2.from(password)), password.length !== config.key / 8))
         throw new TypeError("invalid key length " + password.length);
       return config.type === "stream"
         ? new StreamCipher(config.module, password, iv, !0)
@@ -3583,10 +3171,8 @@ var require_browser6 = __commonJS({
     function createCipher(suite, password) {
       suite = suite.toLowerCase();
       var keyLen, ivLen;
-      if (aesModes[suite])
-        (keyLen = aesModes[suite].key), (ivLen = aesModes[suite].iv);
-      else if (desModes[suite])
-        (keyLen = desModes[suite].key * 8), (ivLen = desModes[suite].iv);
+      if (aesModes[suite]) (keyLen = aesModes[suite].key), (ivLen = aesModes[suite].iv);
+      else if (desModes[suite]) (keyLen = desModes[suite].key * 8), (ivLen = desModes[suite].iv);
       else throw new TypeError("invalid suite type");
       var keys = ebtk(password, !1, keyLen, ivLen);
       return createCipheriv(suite, keys.key, keys.iv);
@@ -3594,25 +3180,20 @@ var require_browser6 = __commonJS({
     function createDecipher(suite, password) {
       suite = suite.toLowerCase();
       var keyLen, ivLen;
-      if (aesModes[suite])
-        (keyLen = aesModes[suite].key), (ivLen = aesModes[suite].iv);
-      else if (desModes[suite])
-        (keyLen = desModes[suite].key * 8), (ivLen = desModes[suite].iv);
+      if (aesModes[suite]) (keyLen = aesModes[suite].key), (ivLen = aesModes[suite].iv);
+      else if (desModes[suite]) (keyLen = desModes[suite].key * 8), (ivLen = desModes[suite].iv);
       else throw new TypeError("invalid suite type");
       var keys = ebtk(password, !1, keyLen, ivLen);
       return createDecipheriv(suite, keys.key, keys.iv);
     }
     function createCipheriv(suite, key, iv) {
-      if (((suite = suite.toLowerCase()), aesModes[suite]))
-        return aes.createCipheriv(suite, key, iv);
+      if (((suite = suite.toLowerCase()), aesModes[suite])) return aes.createCipheriv(suite, key, iv);
       if (desModes[suite]) return new DES({ key, iv, mode: suite });
       throw new TypeError("invalid suite type");
     }
     function createDecipheriv(suite, key, iv) {
-      if (((suite = suite.toLowerCase()), aesModes[suite]))
-        return aes.createDecipheriv(suite, key, iv);
-      if (desModes[suite])
-        return new DES({ key, iv, mode: suite, decrypt: !0 });
+      if (((suite = suite.toLowerCase()), aesModes[suite])) return aes.createDecipheriv(suite, key, iv);
+      if (desModes[suite]) return new DES({ key, iv, mode: suite, decrypt: !0 });
       throw new TypeError("invalid suite type");
     }
     function getCiphers() {
@@ -3651,9 +3232,7 @@ var require_bn = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -3675,10 +3254,8 @@ var require_bn = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -3688,33 +3265,23 @@ var require_bn = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -3737,23 +3304,14 @@ var require_bn = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -3762,44 +3320,26 @@ var require_bn = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -3812,30 +3352,18 @@ var require_bn = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -3846,15 +3374,11 @@ var require_bn = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -3888,15 +3412,13 @@ var require_bn = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -3908,18 +3430,11 @@ var require_bn = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -3929,13 +3444,9 @@ var require_bn = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -3947,8 +3458,7 @@ var require_bn = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -3956,10 +3466,7 @@ var require_bn = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -3967,10 +3474,7 @@ var require_bn = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -3979,13 +3483,11 @@ var require_bn = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -4023,11 +3525,7 @@ var require_bn = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -4046,14 +3544,10 @@ var require_bn = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -4066,50 +3560,37 @@ var require_bn = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -4117,27 +3598,18 @@ var require_bn = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -4157,49 +3629,25 @@ var require_bn = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -4210,34 +3658,17 @@ var require_bn = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -4270,9 +3701,7 @@ var require_bn = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -4827,15 +4256,12 @@ var require_bn = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -4877,32 +4303,22 @@ var require_bn = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -4919,9 +4335,7 @@ var require_bn = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -4944,12 +4358,8 @@ var require_bn = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -4999,17 +4409,11 @@ var require_bn = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -5019,10 +4423,7 @@ var require_bn = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -5038,14 +4439,8 @@ var require_bn = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -5064,8 +4459,7 @@ var require_bn = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -5087,20 +4481,15 @@ var require_bn = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -5133,17 +4522,8 @@ var require_bn = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -5160,32 +4540,20 @@ var require_bn = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -5219,14 +4587,10 @@ var require_bn = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -5236,33 +4600,19 @@ var require_bn = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -5285,9 +4635,7 @@ var require_bn = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -5301,9 +4649,7 @@ var require_bn = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -5354,11 +4700,7 @@ var require_bn = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -5378,40 +4720,18 @@ var require_bn = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -5424,35 +4744,15 @@ var require_bn = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -5460,8 +4760,7 @@ var require_bn = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -5491,14 +4790,10 @@ var require_bn = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -5513,8 +4808,7 @@ var require_bn = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -5580,52 +4874,28 @@ var require_bn = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -5642,46 +4912,22 @@ var require_bn = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -5703,11 +4949,7 @@ var require_bn = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -5728,78 +4970,45 @@ var require_bn = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -5824,26 +5033,17 @@ var require_bn = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -5890,29 +5090,19 @@ var require_bn = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -5921,9 +5111,7 @@ var require_bn = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -5939,10 +5127,7 @@ var require_bn = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -5950,9 +5135,7 @@ var require_bn = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -5989,38 +5172,23 @@ var require_bn = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -6056,9 +5224,7 @@ var require_bn2 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -6080,10 +5246,8 @@ var require_bn2 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -6093,33 +5257,23 @@ var require_bn2 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -6142,23 +5296,14 @@ var require_bn2 = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -6167,44 +5312,26 @@ var require_bn2 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -6217,30 +5344,18 @@ var require_bn2 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -6251,15 +5366,11 @@ var require_bn2 = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -6293,15 +5404,13 @@ var require_bn2 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -6313,18 +5422,11 @@ var require_bn2 = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -6334,13 +5436,9 @@ var require_bn2 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -6352,8 +5450,7 @@ var require_bn2 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -6361,10 +5458,7 @@ var require_bn2 = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -6372,10 +5466,7 @@ var require_bn2 = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -6384,13 +5475,11 @@ var require_bn2 = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -6428,11 +5517,7 @@ var require_bn2 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -6451,14 +5536,10 @@ var require_bn2 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -6471,50 +5552,37 @@ var require_bn2 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -6522,27 +5590,18 @@ var require_bn2 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -6562,49 +5621,25 @@ var require_bn2 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -6615,34 +5650,17 @@ var require_bn2 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -6675,9 +5693,7 @@ var require_bn2 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -7232,15 +6248,12 @@ var require_bn2 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -7282,32 +6295,22 @@ var require_bn2 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -7324,9 +6327,7 @@ var require_bn2 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -7349,12 +6350,8 @@ var require_bn2 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -7404,17 +6401,11 @@ var require_bn2 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -7424,10 +6415,7 @@ var require_bn2 = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -7443,14 +6431,8 @@ var require_bn2 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -7469,8 +6451,7 @@ var require_bn2 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -7492,20 +6473,15 @@ var require_bn2 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -7538,17 +6514,8 @@ var require_bn2 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -7565,32 +6532,20 @@ var require_bn2 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -7624,14 +6579,10 @@ var require_bn2 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -7641,33 +6592,19 @@ var require_bn2 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -7690,9 +6627,7 @@ var require_bn2 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -7706,9 +6641,7 @@ var require_bn2 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -7759,11 +6692,7 @@ var require_bn2 = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -7783,40 +6712,18 @@ var require_bn2 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -7829,35 +6736,15 @@ var require_bn2 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -7865,8 +6752,7 @@ var require_bn2 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -7896,14 +6782,10 @@ var require_bn2 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -7918,8 +6800,7 @@ var require_bn2 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -7985,52 +6866,28 @@ var require_bn2 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -8047,46 +6904,22 @@ var require_bn2 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -8108,11 +6941,7 @@ var require_bn2 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -8133,78 +6962,45 @@ var require_bn2 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -8229,26 +7025,17 @@ var require_bn2 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -8295,29 +7082,19 @@ var require_bn2 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -8326,9 +7103,7 @@ var require_bn2 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -8344,10 +7119,7 @@ var require_bn2 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -8355,9 +7127,7 @@ var require_bn2 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -8394,38 +7164,23 @@ var require_bn2 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -8519,8 +7274,7 @@ var require_mr = __commonJS({
         var x = a.toRed(red).redPow(d);
         if (!(x.cmp(rone) === 0 || x.cmp(rn1) === 0)) {
           for (var i = 1; i < s; i++) {
-            if (((x = x.redSqr()), x.cmp(rone) === 0))
-              return x.fromRed().subn(1).gcd(n);
+            if (((x = x.redSqr()), x.cmp(rone) === 0)) return x.fromRed().subn(1).gcd(n);
             if (x.cmp(rn1) === 0) break;
           }
           if (i === s) return (x = x.redSqr()), x.fromRed().subn(1).gcd(n);
@@ -8560,11 +7314,7 @@ var require_generatePrime = __commonJS({
         res = [];
       res[0] = 2;
       for (var i = 1, k = 3; k < limit; k += 2) {
-        for (
-          var sqrt = Math.ceil(Math.sqrt(k)), j = 0;
-          j < i && res[j] <= sqrt && k % res[j] !== 0;
-          j++
-        );
+        for (var sqrt = Math.ceil(Math.sqrt(k)), j = 0; j < i && res[j] <= sqrt && k % res[j] !== 0; j++);
         (i !== j && res[j] <= sqrt) || (res[i++] = k);
       }
       return (primes = res), res;
@@ -8579,21 +7329,11 @@ var require_generatePrime = __commonJS({
       return TWO.toRed(red).redPow(p.subn(1)).fromRed().cmpn(1) === 0;
     }
     function findPrime(bits, gen) {
-      if (bits < 16)
-        return gen === 2 || gen === 5 ? new BN([140, 123]) : new BN([140, 39]);
+      if (bits < 16) return gen === 2 || gen === 5 ? new BN([140, 123]) : new BN([140, 39]);
       gen = new BN(gen);
       for (var num, n2; ; ) {
-        for (
-          num = new BN(randomBytes(Math.ceil(bits / 8)));
-          num.bitLength() > bits;
-
-        )
-          num.ishrn(1);
-        if (
-          (num.isEven() && num.iadd(ONE),
-          num.testn(1) || num.iadd(TWO),
-          gen.cmp(TWO))
-        ) {
+        for (num = new BN(randomBytes(Math.ceil(bits / 8))); num.bitLength() > bits; ) num.ishrn(1);
+        if ((num.isEven() && num.iadd(ONE), num.testn(1) || num.iadd(TWO), gen.cmp(TWO))) {
           if (!gen.cmp(FIVE)) for (; num.mod(TEN).cmp(THREE); ) num.iadd(FOUR);
         } else for (; num.mod(TWENTYFOUR).cmp(ELEVEN); ) num.iadd(FOUR);
         if (
@@ -8675,10 +7415,7 @@ var require_dh = __commonJS({
     module.exports = DH;
     function setPublicKey(pub, enc) {
       return (
-        (enc = enc || "utf8"),
-        Buffer.isBuffer(pub) || (pub = new Buffer(pub, enc)),
-        (this._pub = new BN(pub)),
-        this
+        (enc = enc || "utf8"), Buffer.isBuffer(pub) || (pub = new Buffer(pub, enc)), (this._pub = new BN(pub)), this
       );
     }
     function setPrivateKey(priv, enc) {
@@ -8695,17 +7432,9 @@ var require_dh = __commonJS({
         hex = [gen, prime.toString(16)].join("_");
       if (hex in primeCache) return primeCache[hex];
       var error = 0;
-      if (
-        prime.isEven() ||
-        !primes.simpleSieve ||
-        !primes.fermatTest(prime) ||
-        !millerRabin.test(prime)
-      )
+      if (prime.isEven() || !primes.simpleSieve || !primes.fermatTest(prime) || !millerRabin.test(prime))
         return (
-          (error += 1),
-          gen === "02" || gen === "05" ? (error += 8) : (error += 4),
-          (primeCache[hex] = error),
-          error
+          (error += 1), gen === "02" || gen === "05" ? (error += 8) : (error += 4), (primeCache[hex] = error), error
         );
       millerRabin.test(prime.shrn(1)) || (error += 2);
       var rem;
@@ -8714,8 +7443,7 @@ var require_dh = __commonJS({
           prime.mod(TWENTYFOUR).cmp(ELEVEN) && (error += 8);
           break;
         case "05":
-          (rem = prime.mod(TEN)),
-            rem.cmp(THREE) && rem.cmp(SEVEN) && (error += 8);
+          (rem = prime.mod(TEN)), rem.cmp(THREE) && rem.cmp(SEVEN) && (error += 8);
           break;
         default:
           error += 4;
@@ -8730,17 +7458,13 @@ var require_dh = __commonJS({
         (this._pub = void 0),
         (this._priv = void 0),
         (this._primeCode = void 0),
-        malleable
-          ? ((this.setPublicKey = setPublicKey),
-            (this.setPrivateKey = setPrivateKey))
-          : (this._primeCode = 8);
+        malleable ? ((this.setPublicKey = setPublicKey), (this.setPrivateKey = setPrivateKey)) : (this._primeCode = 8);
     }
     Object.defineProperty(DH.prototype, "verifyError", {
       enumerable: !0,
       get: function () {
         return (
-          typeof this._primeCode != "number" &&
-            (this._primeCode = checkPrime(this.__prime, this.__gen)),
+          typeof this._primeCode != "number" && (this._primeCode = checkPrime(this.__prime, this.__gen)),
           this._primeCode
         );
       },
@@ -8813,17 +7537,12 @@ var require_browser7 = __commonJS({
         : ((enc = enc || "binary"),
           (genc = genc || "binary"),
           (generator = generator || new Buffer([2])),
-          Buffer.isBuffer(generator) ||
-            (generator = new Buffer(generator, genc)),
+          Buffer.isBuffer(generator) || (generator = new Buffer(generator, genc)),
           typeof prime == "number"
             ? new DH(generatePrime(prime, generator), generator, !0)
-            : (Buffer.isBuffer(prime) || (prime = new Buffer(prime, enc)),
-              new DH(prime, generator, !0)));
+            : (Buffer.isBuffer(prime) || (prime = new Buffer(prime, enc)), new DH(prime, generator, !0)));
     }
-    exports.DiffieHellmanGroup =
-      exports.createDiffieHellmanGroup =
-      exports.getDiffieHellman =
-        getDiffieHellman;
+    exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
   },
 });
@@ -8853,9 +7572,7 @@ var require_bn3 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -8877,10 +7594,8 @@ var require_bn3 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -8890,33 +7605,23 @@ var require_bn3 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -8946,15 +7651,10 @@ var require_bn3 = __commonJS({
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -8963,30 +7663,18 @@ var require_bn3 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this._strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, b = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, b = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
           (r *= mul),
             c >= 49 ? (b = c - 49 + 10) : c >= 17 ? (b = c - 17 + 10) : (b = c),
@@ -8997,8 +7685,7 @@ var require_bn3 = __commonJS({
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -9011,36 +7698,21 @@ var require_bn3 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this._strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         });
       function move(dest, src) {
-        (dest.words = src.words),
-          (dest.length = src.length),
-          (dest.negative = src.negative),
-          (dest.red = src.red);
+        (dest.words = src.words), (dest.length = src.length), (dest.negative = src.negative), (dest.red = src.red);
       }
       if (
         ((BN.prototype._move = function (dest) {
@@ -9055,15 +7727,11 @@ var require_bn3 = __commonJS({
           return this;
         }),
         (BN.prototype._strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         typeof Symbol < "u" && typeof Symbol.for == "function")
       )
@@ -9105,15 +7773,13 @@ var require_bn3 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -9127,16 +7793,9 @@ var require_bn3 = __commonJS({
             (carry = (w >>> (24 - off)) & 16777215),
               (off += 2),
               off >= 26 && ((off -= 26), i--),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out);
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -9146,13 +7805,9 @@ var require_bn3 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modrn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -9164,8 +7819,7 @@ var require_bn3 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -9180,62 +7834,41 @@ var require_bn3 = __commonJS({
           return this.toArrayLike(Array, endian, length);
         });
       var allocate = function (ArrayType, size) {
-        return ArrayType.allocUnsafe
-          ? ArrayType.allocUnsafe(size)
-          : new ArrayType(size);
+        return ArrayType.allocUnsafe ? ArrayType.allocUnsafe(size) : new ArrayType(size);
       };
       (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
         this._strip();
         var byteLength = this.byteLength(),
           reqLength = length || Math.max(1, byteLength);
-        assert(
-          byteLength <= reqLength,
-          "byte array longer than desired length",
-        ),
+        assert(byteLength <= reqLength, "byte array longer than desired length"),
           assert(reqLength > 0, "Requested array length <= 0");
         var res = allocate(ArrayType, reqLength),
           postfix = endian === "le" ? "LE" : "BE";
         return this["_toArrayLike" + postfix](res, byteLength), res;
       }),
         (BN.prototype._toArrayLikeLE = function (res, byteLength) {
-          for (
-            var position = 0, carry = 0, i = 0, shift = 0;
-            i < this.length;
-            i++
-          ) {
+          for (var position = 0, carry = 0, i = 0, shift = 0; i < this.length; i++) {
             var word = (this.words[i] << shift) | carry;
             (res[position++] = word & 255),
               position < res.length && (res[position++] = (word >> 8) & 255),
               position < res.length && (res[position++] = (word >> 16) & 255),
               shift === 6
-                ? (position < res.length &&
-                    (res[position++] = (word >> 24) & 255),
-                  (carry = 0),
-                  (shift = 0))
+                ? (position < res.length && (res[position++] = (word >> 24) & 255), (carry = 0), (shift = 0))
                 : ((carry = word >>> 24), (shift += 2));
           }
-          if (position < res.length)
-            for (res[position++] = carry; position < res.length; )
-              res[position++] = 0;
+          if (position < res.length) for (res[position++] = carry; position < res.length; ) res[position++] = 0;
         }),
         (BN.prototype._toArrayLikeBE = function (res, byteLength) {
-          for (
-            var position = res.length - 1, carry = 0, i = 0, shift = 0;
-            i < this.length;
-            i++
-          ) {
+          for (var position = res.length - 1, carry = 0, i = 0, shift = 0; i < this.length; i++) {
             var word = (this.words[i] << shift) | carry;
             (res[position--] = word & 255),
               position >= 0 && (res[position--] = (word >> 8) & 255),
               position >= 0 && (res[position--] = (word >> 16) & 255),
               shift === 6
-                ? (position >= 0 && (res[position--] = (word >> 24) & 255),
-                  (carry = 0),
-                  (shift = 0))
+                ? (position >= 0 && (res[position--] = (word >> 24) & 255), (carry = 0), (shift = 0))
                 : ((carry = word >>> 24), (shift += 2));
           }
-          if (position >= 0)
-            for (res[position--] = carry; position >= 0; ) res[position--] = 0;
+          if (position >= 0) for (res[position--] = carry; position >= 0; ) res[position--] = 0;
         }),
         Math.clz32
           ? (BN.prototype._countBits = function (w) {
@@ -9271,11 +7904,7 @@ var require_bn3 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] >>> wbit) & 1;
@@ -9294,14 +7923,10 @@ var require_bn3 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -9314,50 +7939,37 @@ var require_bn3 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this._strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this._strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this._strip();
         }),
@@ -9365,27 +7977,18 @@ var require_bn3 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this._strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this._strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -9405,49 +8008,25 @@ var require_bn3 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -9458,34 +8037,17 @@ var require_bn3 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this._strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this._strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -9518,9 +8080,7 @@ var require_bn3 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out._strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out._strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -10075,15 +8635,12 @@ var require_bn3 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -10101,9 +8658,7 @@ var require_bn3 = __commonJS({
           }
           (out.words[k] = rword), (carry = ncarry), (ncarry = hncarry);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry) : out.length--, out._strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry) : out.length--, out._strip();
       }
       function jumboMulTo(self2, num, out) {
         return bigMulTo(self2, num, out);
@@ -10126,32 +8681,22 @@ var require_bn3 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -10168,9 +8713,7 @@ var require_bn3 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -10193,12 +8736,8 @@ var require_bn3 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -10248,38 +8787,24 @@ var require_bn3 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
         }),
         (BN.prototype.imuln = function (num) {
           var isNegNum = num < 0;
-          isNegNum && (num = -num),
-            assert(typeof num == "number"),
-            assert(num < 67108864);
+          isNegNum && (num = -num), assert(typeof num == "number"), assert(num < 67108864);
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
-          return (
-            carry !== 0 && ((this.words[i] = carry), this.length++),
-            isNegNum ? this.ineg() : this
-          );
+          return carry !== 0 && ((this.words[i] = carry), this.length++), isNegNum ? this.ineg() : this;
         }),
         (BN.prototype.muln = function (num) {
           return this.clone().imuln(num);
@@ -10293,14 +8818,8 @@ var require_bn3 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -10319,8 +8838,7 @@ var require_bn3 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -10342,20 +8860,15 @@ var require_bn3 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this._strip()
           );
@@ -10388,17 +8901,8 @@ var require_bn3 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -10415,32 +8919,20 @@ var require_bn3 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) <= num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -10474,14 +8966,10 @@ var require_bn3 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this._strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this._strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -10491,33 +8979,19 @@ var require_bn3 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -10540,9 +9014,7 @@ var require_bn3 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -10556,9 +9028,7 @@ var require_bn3 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -10610,11 +9080,7 @@ var require_bn3 = __commonJS({
         (BN.prototype.modrn = function (num) {
           var isNegNum = num < 0;
           isNegNum && (num = -num), assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return isNegNum ? -acc : acc;
         }),
@@ -10638,40 +9104,18 @@ var require_bn3 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -10684,35 +9128,15 @@ var require_bn3 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -10720,8 +9144,7 @@ var require_bn3 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -10751,14 +9174,10 @@ var require_bn3 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -10773,8 +9192,7 @@ var require_bn3 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -10840,52 +9258,28 @@ var require_bn3 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -10902,46 +9296,22 @@ var require_bn3 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -10963,11 +9333,7 @@ var require_bn3 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -10988,78 +9354,45 @@ var require_bn3 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -11084,26 +9417,17 @@ var require_bn3 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : (move(a, a.umod(this.m)._forceRed(this)), a);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : (move(a, a.umod(this.m)._forceRed(this)), a);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -11150,29 +9474,19 @@ var require_bn3 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -11181,9 +9495,7 @@ var require_bn3 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -11199,10 +9511,7 @@ var require_bn3 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -11210,9 +9519,7 @@ var require_bn3 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -11249,38 +9556,23 @@ var require_bn3 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -11298,21 +9590,14 @@ var require_browserify_rsa = __commonJS({
       randomBytes = require_browser();
     function blind(priv) {
       var r = getr(priv),
-        blinder = r
-          .toRed(BN.mont(priv.modulus))
-          .redPow(new BN(priv.publicExponent))
-          .fromRed();
+        blinder = r.toRed(BN.mont(priv.modulus)).redPow(new BN(priv.publicExponent)).fromRed();
       return { blinder, unblinder: r.invm(priv.modulus) };
     }
     function getr(priv) {
       var len = priv.modulus.byteLength(),
         r;
       do r = new BN(randomBytes(len));
-      while (
-        r.cmp(priv.modulus) >= 0 ||
-        !r.umod(priv.prime1) ||
-        !r.umod(priv.prime2)
-      );
+      while (r.cmp(priv.modulus) >= 0 || !r.umod(priv.prime1) || !r.umod(priv.prime2));
       return r;
     }
     function crt(msg, priv) {
@@ -11327,11 +9612,7 @@ var require_browserify_rsa = __commonJS({
         m1 = c1.redPow(priv.exponent1).fromRed(),
         m2 = c2.redPow(priv.exponent2).fromRed(),
         h = m1.isub(m2).imul(qinv).umod(p).imul(q);
-      return m2
-        .iadd(h)
-        .imul(blinds.unblinder)
-        .umod(priv.modulus)
-        .toArrayLike(Buffer, "be", len);
+      return m2.iadd(h).imul(blinds.unblinder).umod(priv.modulus).toArrayLike(Buffer, "be", len);
     }
     crt.getr = getr;
     module.exports = crt;
@@ -11418,9 +9699,7 @@ var require_bn4 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -11442,10 +9721,8 @@ var require_bn4 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -11455,33 +9732,23 @@ var require_bn4 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -11504,23 +9771,14 @@ var require_bn4 = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -11529,44 +9787,26 @@ var require_bn4 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -11579,30 +9819,18 @@ var require_bn4 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -11613,15 +9841,11 @@ var require_bn4 = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -11655,15 +9879,13 @@ var require_bn4 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -11675,18 +9897,11 @@ var require_bn4 = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -11696,13 +9911,9 @@ var require_bn4 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -11714,8 +9925,7 @@ var require_bn4 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -11723,10 +9933,7 @@ var require_bn4 = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -11734,10 +9941,7 @@ var require_bn4 = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -11746,13 +9950,11 @@ var require_bn4 = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -11790,11 +9992,7 @@ var require_bn4 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -11813,14 +10011,10 @@ var require_bn4 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -11833,50 +10027,37 @@ var require_bn4 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -11884,27 +10065,18 @@ var require_bn4 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -11924,49 +10096,25 @@ var require_bn4 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -11977,34 +10125,17 @@ var require_bn4 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -12037,9 +10168,7 @@ var require_bn4 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -12594,15 +10723,12 @@ var require_bn4 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -12644,32 +10770,22 @@ var require_bn4 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -12686,9 +10802,7 @@ var require_bn4 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -12711,12 +10825,8 @@ var require_bn4 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -12766,17 +10876,11 @@ var require_bn4 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -12786,10 +10890,7 @@ var require_bn4 = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -12805,14 +10906,8 @@ var require_bn4 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -12831,8 +10926,7 @@ var require_bn4 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -12854,20 +10948,15 @@ var require_bn4 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -12900,17 +10989,8 @@ var require_bn4 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -12927,32 +11007,20 @@ var require_bn4 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -12986,14 +11054,10 @@ var require_bn4 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -13003,33 +11067,19 @@ var require_bn4 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -13052,9 +11102,7 @@ var require_bn4 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -13068,9 +11116,7 @@ var require_bn4 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -13121,11 +11167,7 @@ var require_bn4 = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -13145,40 +11187,18 @@ var require_bn4 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -13191,35 +11211,15 @@ var require_bn4 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -13227,8 +11227,7 @@ var require_bn4 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -13258,14 +11257,10 @@ var require_bn4 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -13280,8 +11275,7 @@ var require_bn4 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -13347,52 +11341,28 @@ var require_bn4 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -13409,46 +11379,22 @@ var require_bn4 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -13470,11 +11416,7 @@ var require_bn4 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -13495,78 +11437,45 @@ var require_bn4 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -13591,26 +11500,17 @@ var require_bn4 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -13657,29 +11557,19 @@ var require_bn4 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -13688,9 +11578,7 @@ var require_bn4 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -13706,10 +11594,7 @@ var require_bn4 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -13717,9 +11602,7 @@ var require_bn4 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -13756,38 +11639,23 @@ var require_bn4 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -13812,10 +11680,8 @@ var require_utils2 = __commonJS({
         return res;
       }
       if (enc === "hex") {
-        (msg = msg.replace(/[^a-z0-9]+/gi, "")),
-          msg.length % 2 !== 0 && (msg = "0" + msg);
-        for (var i = 0; i < msg.length; i += 2)
-          res.push(parseInt(msg[i] + msg[i + 1], 16));
+        (msg = msg.replace(/[^a-z0-9]+/gi, "")), msg.length % 2 !== 0 && (msg = "0" + msg);
+        for (var i = 0; i < msg.length; i += 2) res.push(parseInt(msg[i] + msg[i + 1], 16));
       } else
         for (var i = 0; i < msg.length; i++) {
           var c = msg.charCodeAt(i),
@@ -13831,8 +11697,7 @@ var require_utils2 = __commonJS({
     }
     utils.zero2 = zero2;
     function toHex(msg) {
-      for (var res = "", i = 0; i < msg.length; i++)
-        res += zero2(msg[i].toString(16));
+      for (var res = "", i = 0; i < msg.length; i++) res += zero2(msg[i].toString(16));
       return res;
     }
     utils.toHex = toHex;
@@ -13861,10 +11726,7 @@ var require_utils3 = __commonJS({
       for (var ws = 1 << (w + 1), k = num.clone(), i = 0; i < naf.length; i++) {
         var z,
           mod = k.andln(ws - 1);
-        k.isOdd()
-          ? (mod > (ws >> 1) - 1 ? (z = (ws >> 1) - mod) : (z = mod),
-            k.isubn(z))
-          : (z = 0),
+        k.isOdd() ? (mod > (ws >> 1) - 1 ? (z = (ws >> 1) - mod) : (z = mod), k.isubn(z)) : (z = 0),
           (naf[i] = z),
           k.iushrn(1);
       }
@@ -13881,14 +11743,12 @@ var require_utils3 = __commonJS({
         var u1;
         (m14 & 1) === 0
           ? (u1 = 0)
-          : ((m8 = (k1.andln(7) + d1) & 7),
-            (m8 === 3 || m8 === 5) && m24 === 2 ? (u1 = -m14) : (u1 = m14)),
+          : ((m8 = (k1.andln(7) + d1) & 7), (m8 === 3 || m8 === 5) && m24 === 2 ? (u1 = -m14) : (u1 = m14)),
           jsf[0].push(u1);
         var u2;
         (m24 & 1) === 0
           ? (u2 = 0)
-          : ((m8 = (k2.andln(7) + d2) & 7),
-            (m8 === 3 || m8 === 5) && m14 === 2 ? (u2 = -m24) : (u2 = m24)),
+          : ((m8 = (k2.andln(7) + d2) & 7), (m8 === 3 || m8 === 5) && m14 === 2 ? (u2 = -m24) : (u2 = m24)),
           jsf[1].push(u2),
           2 * d1 === u1 + 1 && (d1 = 1 - d1),
           2 * d2 === u2 + 1 && (d2 = 1 - d2),
@@ -13901,9 +11761,7 @@ var require_utils3 = __commonJS({
     function cachedProperty(obj, name, computer) {
       var key = "_" + name;
       obj.prototype[name] = function () {
-        return this[key] !== void 0
-          ? this[key]
-          : (this[key] = computer.call(this));
+        return this[key] !== void 0 ? this[key] : (this[key] = computer.call(this));
       };
     }
     utils.cachedProperty = cachedProperty;
@@ -13964,22 +11822,13 @@ var require_base = __commonJS({
         nafW;
       for (j = 0; j < naf.length; j += doubles.step) {
         nafW = 0;
-        for (var l = j + doubles.step - 1; l >= j; l--)
-          nafW = (nafW << 1) + naf[l];
+        for (var l = j + doubles.step - 1; l >= j; l--) nafW = (nafW << 1) + naf[l];
         repr.push(nafW);
       }
-      for (
-        var a = this.jpoint(null, null, null),
-          b = this.jpoint(null, null, null),
-          i = I;
-        i > 0;
-        i--
-      ) {
+      for (var a = this.jpoint(null, null, null), b = this.jpoint(null, null, null), i = I; i > 0; i--) {
         for (j = 0; j < repr.length; j++)
           (nafW = repr[j]),
-            nafW === i
-              ? (b = b.mixedAdd(doubles.points[j]))
-              : nafW === -i && (b = b.mixedAdd(doubles.points[j].neg()));
+            nafW === i ? (b = b.mixedAdd(doubles.points[j])) : nafW === -i && (b = b.mixedAdd(doubles.points[j].neg()));
         a = a.add(b);
       }
       return a.toP();
@@ -14010,13 +11859,7 @@ var require_base = __commonJS({
       }
       return p.type === "affine" ? acc.toP() : acc;
     };
-    BaseCurve.prototype._wnafMulAdd = function (
-      defW,
-      points,
-      coeffs,
-      len,
-      jacobianResult,
-    ) {
+    BaseCurve.prototype._wnafMulAdd = function (defW, points, coeffs, len, jacobianResult) {
       var wndWidth = this._wnafT1,
         wnd = this._wnafT2,
         naf = this._wnafT3,
@@ -14041,28 +11884,20 @@ var require_base = __commonJS({
         }
         var comb = [points[a], null, null, points[b]];
         points[a].y.cmp(points[b].y) === 0
-          ? ((comb[1] = points[a].add(points[b])),
-            (comb[2] = points[a].toJ().mixedAdd(points[b].neg())))
+          ? ((comb[1] = points[a].add(points[b])), (comb[2] = points[a].toJ().mixedAdd(points[b].neg())))
           : points[a].y.cmp(points[b].y.redNeg()) === 0
-          ? ((comb[1] = points[a].toJ().mixedAdd(points[b])),
-            (comb[2] = points[a].add(points[b].neg())))
-          : ((comb[1] = points[a].toJ().mixedAdd(points[b])),
-            (comb[2] = points[a].toJ().mixedAdd(points[b].neg())));
+          ? ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].add(points[b].neg())))
+          : ((comb[1] = points[a].toJ().mixedAdd(points[b])), (comb[2] = points[a].toJ().mixedAdd(points[b].neg())));
         var index = [-3, -1, -5, -7, 0, 7, 5, 1, 3],
           jsf = getJSF(coeffs[a], coeffs[b]);
         for (
-          max = Math.max(jsf[0].length, max),
-            naf[a] = new Array(max),
-            naf[b] = new Array(max),
-            j = 0;
+          max = Math.max(jsf[0].length, max), naf[a] = new Array(max), naf[b] = new Array(max), j = 0;
           j < max;
           j++
         ) {
           var ja = jsf[0][j] | 0,
             jb = jsf[1][j] | 0;
-          (naf[a][j] = index[(ja + 1) * 3 + (jb + 1)]),
-            (naf[b][j] = 0),
-            (wnd[a] = comb);
+          (naf[a][j] = index[(ja + 1) * 3 + (jb + 1)]), (naf[b][j] = 0), (wnd[a] = comb);
         }
       }
       var acc = this.jpoint(null, null, null),
@@ -14070,8 +11905,7 @@ var require_base = __commonJS({
       for (i = max; i >= 0; i--) {
         for (var k = 0; i >= 0; ) {
           var zero = !0;
-          for (j = 0; j < len; j++)
-            (tmp[j] = naf[j][i] | 0), tmp[j] !== 0 && (zero = !1);
+          for (j = 0; j < len; j++) (tmp[j] = naf[j][i] | 0), tmp[j] !== 0 && (zero = !1);
           if (!zero) break;
           k++, i--;
         }
@@ -14079,9 +11913,7 @@ var require_base = __commonJS({
         for (j = 0; j < len; j++) {
           var z = tmp[j];
           z !== 0 &&
-            (z > 0
-              ? (p = wnd[j][(z - 1) >> 1])
-              : z < 0 && (p = wnd[j][(-z - 1) >> 1].neg()),
+            (z > 0 ? (p = wnd[j][(z - 1) >> 1]) : z < 0 && (p = wnd[j][(-z - 1) >> 1].neg()),
             p.type === "affine" ? (acc = acc.mixedAdd(p)) : (acc = acc.add(p)));
         }
       }
@@ -14101,17 +11933,11 @@ var require_base = __commonJS({
     BaseCurve.prototype.decodePoint = function (bytes, enc) {
       bytes = utils.toArray(bytes, enc);
       var len = this.p.byteLength();
-      if (
-        (bytes[0] === 4 || bytes[0] === 6 || bytes[0] === 7) &&
-        bytes.length - 1 === 2 * len
-      ) {
+      if ((bytes[0] === 4 || bytes[0] === 6 || bytes[0] === 7) && bytes.length - 1 === 2 * len) {
         bytes[0] === 6
           ? assert(bytes[bytes.length - 1] % 2 === 0)
           : bytes[0] === 7 && assert(bytes[bytes.length - 1] % 2 === 1);
-        var res = this.point(
-          bytes.slice(1, 1 + len),
-          bytes.slice(1 + len, 1 + 2 * len),
-        );
+        var res = this.point(bytes.slice(1, 1 + len), bytes.slice(1 + len, 1 + 2 * len));
         return res;
       } else if ((bytes[0] === 2 || bytes[0] === 3) && bytes.length - 1 === len)
         return this.pointFromX(bytes.slice(1, 1 + len), bytes[0] === 3);
@@ -14123,9 +11949,7 @@ var require_base = __commonJS({
     BasePoint.prototype._encode = function (compact) {
       var len = this.curve.p.byteLength(),
         x = this.getX().toArray("be", len);
-      return compact
-        ? [this.getY().isEven() ? 2 : 3].concat(x)
-        : [4].concat(x, this.getY().toArray("be", len));
+      return compact ? [this.getY().isEven() ? 2 : 3].concat(x) : [4].concat(x, this.getY().toArray("be", len));
     };
     BasePoint.prototype.encode = function (enc, compact) {
       return utils.encode(this._encode(compact), enc);
@@ -14148,13 +11972,10 @@ var require_base = __commonJS({
     BasePoint.prototype._hasDoubles = function (k) {
       if (!this.precomputed) return !1;
       var doubles = this.precomputed.doubles;
-      return doubles
-        ? doubles.points.length >= Math.ceil((k.bitLength() + 1) / doubles.step)
-        : !1;
+      return doubles ? doubles.points.length >= Math.ceil((k.bitLength() + 1) / doubles.step) : !1;
     };
     BasePoint.prototype._getDoubles = function (step, power) {
-      if (this.precomputed && this.precomputed.doubles)
-        return this.precomputed.doubles;
+      if (this.precomputed && this.precomputed.doubles) return this.precomputed.doubles;
       for (var doubles = [this], acc = this, i = 0; i < power; i += step) {
         for (var j = 0; j < step; j++) acc = acc.dbl();
         doubles.push(acc);
@@ -14166,14 +11987,7 @@ var require_base = __commonJS({
     };
     BasePoint.prototype._getNAFPoints = function (wnd) {
       if (this.precomputed && this.precomputed.naf) return this.precomputed.naf;
-      for (
-        var res = [this],
-          max = (1 << wnd) - 1,
-          dbl = max === 1 ? null : this.dbl(),
-          i = 1;
-        i < max;
-        i++
-      )
+      for (var res = [this], max = (1 << wnd) - 1, dbl = max === 1 ? null : this.dbl(), i = 1; i < max; i++)
         res[i] = res[i - 1].add(dbl);
       return {
         wnd,
@@ -14218,16 +12032,14 @@ var require_short = __commonJS({
         if (conf.beta) beta = new BN(conf.beta, 16).toRed(this.red);
         else {
           var betas = this._getEndoRoots(this.p);
-          (beta = betas[0].cmp(betas[1]) < 0 ? betas[0] : betas[1]),
-            (beta = beta.toRed(this.red));
+          (beta = betas[0].cmp(betas[1]) < 0 ? betas[0] : betas[1]), (beta = beta.toRed(this.red));
         }
         if (conf.lambda) lambda = new BN(conf.lambda, 16);
         else {
           var lambdas = this._getEndoRoots(this.n);
           this.g.mul(lambdas[0]).x.cmp(this.g.x.redMul(beta)) === 0
             ? (lambda = lambdas[0])
-            : ((lambda = lambdas[1]),
-              assert(this.g.mul(lambda).x.cmp(this.g.x.redMul(beta)) === 0));
+            : ((lambda = lambdas[1]), assert(this.g.mul(lambda).x.cmp(this.g.x.redMul(beta)) === 0));
         }
         var basis;
         return (
@@ -14281,8 +12093,7 @@ var require_short = __commonJS({
         var q = v.div(u);
         (r = v.sub(q.mul(u))), (x = x2.sub(q.mul(x1)));
         var y = y2.sub(q.mul(y1));
-        if (!a1 && r.cmp(aprxSqrt) < 0)
-          (a0 = prevR.neg()), (b0 = x1), (a1 = r.neg()), (b1 = x);
+        if (!a1 && r.cmp(aprxSqrt) < 0) (a0 = prevR.neg()), (b0 = x1), (a1 = r.neg()), (b1 = x);
         else if (a1 && ++i === 2) break;
         (prevR = r), (v = u), (u = r), (x2 = x1), (x1 = x), (y2 = y1), (y1 = y);
       }
@@ -14317,13 +12128,9 @@ var require_short = __commonJS({
       (x = new BN(x, 16)), x.red || (x = x.toRed(this.red));
       var y2 = x.redSqr().redMul(x).redIAdd(x.redMul(this.a)).redIAdd(this.b),
         y = y2.redSqrt();
-      if (y.redSqr().redSub(y2).cmp(this.zero) !== 0)
-        throw new Error("invalid point");
+      if (y.redSqr().redSub(y2).cmp(this.zero) !== 0) throw new Error("invalid point");
       var isOdd = y.fromRed().isOdd();
-      return (
-        ((odd && !isOdd) || (!odd && isOdd)) && (y = y.redNeg()),
-        this.point(x, y)
-      );
+      return ((odd && !isOdd) || (!odd && isOdd)) && (y = y.redNeg()), this.point(x, y);
     };
     ShortCurve.prototype.validate = function (point) {
       if (point.inf) return !0;
@@ -14333,16 +12140,8 @@ var require_short = __commonJS({
         rhs = x.redSqr().redMul(x).redIAdd(ax).redIAdd(this.b);
       return y.redSqr().redISub(rhs).cmpn(0) === 0;
     };
-    ShortCurve.prototype._endoWnafMulAdd = function (
-      points,
-      coeffs,
-      jacobianResult,
-    ) {
-      for (
-        var npoints = this._endoWnafT1, ncoeffs = this._endoWnafT2, i = 0;
-        i < points.length;
-        i++
-      ) {
+    ShortCurve.prototype._endoWnafMulAdd = function (points, coeffs, jacobianResult) {
+      for (var npoints = this._endoWnafT1, ncoeffs = this._endoWnafT2, i = 0; i < points.length; i++) {
         var split = this._endoSplit(coeffs[i]),
           p = points[i],
           beta = p._getBeta();
@@ -14353,12 +12152,7 @@ var require_short = __commonJS({
           (ncoeffs[i * 2] = split.k1),
           (ncoeffs[i * 2 + 1] = split.k2);
       }
-      for (
-        var res = this._wnafMulAdd(1, npoints, ncoeffs, i * 2, jacobianResult),
-          j = 0;
-        j < i * 2;
-        j++
-      )
+      for (var res = this._wnafMulAdd(1, npoints, ncoeffs, i * 2, jacobianResult), j = 0; j < i * 2; j++)
         (npoints[j] = null), (ncoeffs[j] = null);
       return res;
     };
@@ -14368,9 +12162,7 @@ var require_short = __commonJS({
           ? ((this.x = null), (this.y = null), (this.inf = !0))
           : ((this.x = new BN(x, 16)),
             (this.y = new BN(y, 16)),
-            isRed &&
-              (this.x.forceRed(this.curve.red),
-              this.y.forceRed(this.curve.red)),
+            isRed && (this.x.forceRed(this.curve.red), this.y.forceRed(this.curve.red)),
             this.x.red || (this.x = this.x.toRed(this.curve.red)),
             this.y.red || (this.y = this.y.toRed(this.curve.red)),
             (this.inf = !1));
@@ -14386,10 +12178,7 @@ var require_short = __commonJS({
       if (!!this.curve.endo) {
         var pre = this.precomputed;
         if (pre && pre.beta) return pre.beta;
-        var beta = this.curve.point(
-          this.x.redMul(this.curve.endo.beta),
-          this.y,
-        );
+        var beta = this.curve.point(this.x.redMul(this.curve.endo.beta), this.y);
         if (pre) {
           var curve = this.curve,
             endoMul = function (p) {
@@ -14455,11 +12244,7 @@ var require_short = __commonJS({
     Point.prototype.inspect = function () {
       return this.isInfinity()
         ? "<EC Point Infinity>"
-        : "<EC Point x: " +
-            this.x.fromRed().toString(16, 2) +
-            " y: " +
-            this.y.fromRed().toString(16, 2) +
-            ">";
+        : "<EC Point x: " + this.x.fromRed().toString(16, 2) + " y: " + this.y.fromRed().toString(16, 2) + ">";
     };
     Point.prototype.isInfinity = function () {
       return this.inf;
@@ -14521,11 +12306,7 @@ var require_short = __commonJS({
         : this.curve._wnafMulAdd(1, points, coeffs, 2, !0);
     };
     Point.prototype.eq = function (p) {
-      return (
-        this === p ||
-        (this.inf === p.inf &&
-          (this.inf || (this.x.cmp(p.x) === 0 && this.y.cmp(p.y) === 0)))
-      );
+      return this === p || (this.inf === p.inf && (this.inf || (this.x.cmp(p.x) === 0 && this.y.cmp(p.y) === 0)));
     };
     Point.prototype.neg = function (_precompute) {
       if (this.inf) return this;
@@ -14556,12 +12337,8 @@ var require_short = __commonJS({
     function JPoint(curve, x, y, z) {
       Base.BasePoint.call(this, curve, "jacobian"),
         x === null && y === null && z === null
-          ? ((this.x = this.curve.one),
-            (this.y = this.curve.one),
-            (this.z = new BN(0)))
-          : ((this.x = new BN(x, 16)),
-            (this.y = new BN(y, 16)),
-            (this.z = new BN(z, 16))),
+          ? ((this.x = this.curve.one), (this.y = this.curve.one), (this.z = new BN(0)))
+          : ((this.x = new BN(x, 16)), (this.y = new BN(y, 16)), (this.z = new BN(z, 16))),
         this.x.red || (this.x = this.x.toRed(this.curve.red)),
         this.y.red || (this.y = this.y.toRed(this.curve.red)),
         this.z.red || (this.z = this.z.toRed(this.curve.red)),
@@ -14593,10 +12370,7 @@ var require_short = __commonJS({
         s2 = p.y.redMul(z2.redMul(this.z)),
         h = u1.redSub(u2),
         r = s1.redSub(s2);
-      if (h.cmpn(0) === 0)
-        return r.cmpn(0) !== 0
-          ? this.curve.jpoint(null, null, null)
-          : this.dbl();
+      if (h.cmpn(0) === 0) return r.cmpn(0) !== 0 ? this.curve.jpoint(null, null, null) : this.dbl();
       var h2 = h.redSqr(),
         h3 = h2.redMul(h),
         v = u1.redMul(h2),
@@ -14615,10 +12389,7 @@ var require_short = __commonJS({
         s2 = p.y.redMul(z2).redMul(this.z),
         h = u1.redSub(u2),
         r = s1.redSub(s2);
-      if (h.cmpn(0) === 0)
-        return r.cmpn(0) !== 0
-          ? this.curve.jpoint(null, null, null)
-          : this.dbl();
+      if (h.cmpn(0) === 0) return r.cmpn(0) !== 0 ? this.curve.jpoint(null, null, null) : this.dbl();
       var h2 = h.redSqr(),
         h3 = h2.redMul(h),
         v = u1.redMul(h2),
@@ -14655,10 +12426,7 @@ var require_short = __commonJS({
           dny = c.redMul(t2);
         dny = dny.redIAdd(dny).redISub(jyd4);
         var nz = jyd.redMul(jz);
-        i + 1 < pow && (jz4 = jz4.redMul(jyd4)),
-          (jx = nx),
-          (jz = nz),
-          (jyd = dny);
+        i + 1 < pow && (jz4 = jz4.redMul(jyd4)), (jx = nx), (jz = nz), (jyd = dny);
       }
       return this.curve.jpoint(jx, jyd.redMul(tinv), jz);
     };
@@ -14730,8 +12498,7 @@ var require_short = __commonJS({
         var beta4 = beta.redIAdd(beta);
         beta4 = beta4.redIAdd(beta4);
         var beta8 = beta4.redAdd(beta4);
-        (nx = alpha.redSqr().redISub(beta8)),
-          (nz = this.y.redAdd(this.z).redSqr().redISub(gamma).redISub(delta));
+        (nx = alpha.redSqr().redISub(beta8)), (nz = this.y.redAdd(this.z).redSqr().redISub(gamma).redISub(delta));
         var ggamma8 = gamma.redSqr();
         (ggamma8 = ggamma8.redIAdd(ggamma8)),
           (ggamma8 = ggamma8.redIAdd(ggamma8)),
@@ -14755,9 +12522,7 @@ var require_short = __commonJS({
         nx = c.redSqr().redISub(t1.redAdd(t1)),
         t2 = t1.redISub(nx),
         jyd8 = jy2.redSqr();
-      (jyd8 = jyd8.redIAdd(jyd8)),
-        (jyd8 = jyd8.redIAdd(jyd8)),
-        (jyd8 = jyd8.redIAdd(jyd8));
+      (jyd8 = jyd8.redIAdd(jyd8)), (jyd8 = jyd8.redIAdd(jyd8)), (jyd8 = jyd8.redIAdd(jyd8));
       var ny = c.redMul(t2).redISub(jyd8),
         nz = jy.redAdd(jy).redMul(jz);
       return this.curve.jpoint(nx, ny, nz);
@@ -14878,11 +12643,7 @@ var require_mont = __commonJS({
     Point.prototype.inspect = function () {
       return this.isInfinity()
         ? "<EC Point Infinity>"
-        : "<EC Point x: " +
-            this.x.fromRed().toString(16, 2) +
-            " z: " +
-            this.z.fromRed().toString(16, 2) +
-            ">";
+        : "<EC Point x: " + this.x.fromRed().toString(16, 2) + " z: " + this.z.fromRed().toString(16, 2) + ">";
     };
     Point.prototype.isInfinity = function () {
       return this.z.cmpn(0) === 0;
@@ -14913,19 +12674,13 @@ var require_mont = __commonJS({
     };
     Point.prototype.mul = function (k) {
       for (
-        var t = k.clone(),
-          a = this,
-          b = this.curve.point(null, null),
-          c = this,
-          bits = [];
+        var t = k.clone(), a = this, b = this.curve.point(null, null), c = this, bits = [];
         t.cmpn(0) !== 0;
         t.iushrn(1)
       )
         bits.push(t.andln(1));
       for (var i = bits.length - 1; i >= 0; i--)
-        bits[i] === 0
-          ? ((a = a.diffAdd(b, c)), (b = b.dbl()))
-          : ((b = a.diffAdd(b, c)), (a = a.dbl()));
+        bits[i] === 0 ? ((a = a.diffAdd(b, c)), (b = b.dbl())) : ((b = a.diffAdd(b, c)), (a = a.dbl()));
       return b;
     };
     Point.prototype.mulAdd = function () {
@@ -14938,11 +12693,7 @@ var require_mont = __commonJS({
       return this.getX().cmp(other.getX()) === 0;
     };
     Point.prototype.normalize = function () {
-      return (
-        (this.x = this.x.redMul(this.z.redInvm())),
-        (this.z = this.curve.one),
-        this
-      );
+      return (this.x = this.x.redMul(this.z.redInvm())), (this.z = this.curve.one), this;
     };
     Point.prototype.getX = function () {
       return this.normalize(), this.x.fromRed();
@@ -14991,13 +12742,9 @@ var require_edwards = __commonJS({
         lhs = this.one.redSub(this.c2.redMul(this.d).redMul(x2)),
         y2 = rhs.redMul(lhs.redInvm()),
         y = y2.redSqrt();
-      if (y.redSqr().redSub(y2).cmp(this.zero) !== 0)
-        throw new Error("invalid point");
+      if (y.redSqr().redSub(y2).cmp(this.zero) !== 0) throw new Error("invalid point");
       var isOdd = y.fromRed().isOdd();
-      return (
-        ((odd && !isOdd) || (!odd && isOdd)) && (y = y.redNeg()),
-        this.point(x, y)
-      );
+      return ((odd && !isOdd) || (!odd && isOdd)) && (y = y.redNeg()), this.point(x, y);
     };
     EdwardsCurve.prototype.pointFromY = function (y, odd) {
       (y = new BN(y, 16)), y.red || (y = y.toRed(this.red));
@@ -15010,8 +12757,7 @@ var require_edwards = __commonJS({
         return this.point(this.zero, y);
       }
       var x = x2.redSqrt();
-      if (x.redSqr().redSub(x2).cmp(this.zero) !== 0)
-        throw new Error("invalid point");
+      if (x.redSqr().redSub(x2).cmp(this.zero) !== 0) throw new Error("invalid point");
       return x.fromRed().isOdd() !== odd && (x = x.redNeg()), this.point(x, y);
     };
     EdwardsCurve.prototype.validate = function (point) {
@@ -15042,8 +12788,7 @@ var require_edwards = __commonJS({
             (this.zOne = this.z === this.curve.one),
             this.curve.extended &&
               !this.t &&
-              ((this.t = this.x.redMul(this.y)),
-              this.zOne || (this.t = this.t.redMul(this.z.redInvm()))));
+              ((this.t = this.x.redMul(this.y)), this.zOne || (this.t = this.t.redMul(this.z.redInvm()))));
     }
     inherits(Point, Base.BasePoint);
     EdwardsCurve.prototype.pointFromJSON = function (obj) {
@@ -15067,11 +12812,7 @@ var require_edwards = __commonJS({
             ">";
     };
     Point.prototype.isInfinity = function () {
-      return (
-        this.x.cmpn(0) === 0 &&
-        (this.y.cmp(this.z) === 0 ||
-          (this.zOne && this.y.cmp(this.curve.c) === 0))
-      );
+      return this.x.cmpn(0) === 0 && (this.y.cmp(this.z) === 0 || (this.zOne && this.y.cmp(this.curve.c) === 0));
     };
     Point.prototype._extDbl = function () {
       var a = this.x.redSqr(),
@@ -15121,11 +12862,7 @@ var require_edwards = __commonJS({
       return this.curve.point(nx, ny, nz);
     };
     Point.prototype.dbl = function () {
-      return this.isInfinity()
-        ? this
-        : this.curve.extended
-        ? this._extDbl()
-        : this._projDbl();
+      return this.isInfinity() ? this : this.curve.extended ? this._extDbl() : this._projDbl();
     };
     Point.prototype._extAdd = function (p) {
       var a = this.y.redSub(this.x).redMul(p.y.redSub(p.x)),
@@ -15150,36 +12887,22 @@ var require_edwards = __commonJS({
         e = this.curve.d.redMul(c).redMul(d),
         f = b.redSub(e),
         g = b.redAdd(e),
-        tmp = this.x
-          .redAdd(this.y)
-          .redMul(p.x.redAdd(p.y))
-          .redISub(c)
-          .redISub(d),
+        tmp = this.x.redAdd(this.y).redMul(p.x.redAdd(p.y)).redISub(c).redISub(d),
         nx = a.redMul(f).redMul(tmp),
         ny,
         nz;
       return (
         this.curve.twisted
-          ? ((ny = a.redMul(g).redMul(d.redSub(this.curve._mulA(c)))),
-            (nz = f.redMul(g)))
-          : ((ny = a.redMul(g).redMul(d.redSub(c))),
-            (nz = this.curve._mulC(f).redMul(g))),
+          ? ((ny = a.redMul(g).redMul(d.redSub(this.curve._mulA(c)))), (nz = f.redMul(g)))
+          : ((ny = a.redMul(g).redMul(d.redSub(c))), (nz = this.curve._mulC(f).redMul(g))),
         this.curve.point(nx, ny, nz)
       );
     };
     Point.prototype.add = function (p) {
-      return this.isInfinity()
-        ? p
-        : p.isInfinity()
-        ? this
-        : this.curve.extended
-        ? this._extAdd(p)
-        : this._projAdd(p);
+      return this.isInfinity() ? p : p.isInfinity() ? this : this.curve.extended ? this._extAdd(p) : this._projAdd(p);
     };
     Point.prototype.mul = function (k) {
-      return this._hasDoubles(k)
-        ? this.curve._fixedNafMul(this, k)
-        : this.curve._wnafMul(this, k);
+      return this._hasDoubles(k) ? this.curve._fixedNafMul(this, k) : this.curve._wnafMul(this, k);
     };
     Point.prototype.mulAdd = function (k1, p, k2) {
       return this.curve._wnafMulAdd(1, [this, p], [k1, k2], 2, !1);
@@ -15200,12 +12923,7 @@ var require_edwards = __commonJS({
       );
     };
     Point.prototype.neg = function () {
-      return this.curve.point(
-        this.x.redNeg(),
-        this.y,
-        this.z,
-        this.t && this.t.redNeg(),
-      );
+      return this.curve.point(this.x.redNeg(), this.y, this.z, this.t && this.t.redNeg());
     };
     Point.prototype.getX = function () {
       return this.normalize(), this.x.fromRed();
@@ -15214,11 +12932,7 @@ var require_edwards = __commonJS({
       return this.normalize(), this.y.fromRed();
     };
     Point.prototype.eq = function (other) {
-      return (
-        this === other ||
-        (this.getX().cmp(other.getX()) === 0 &&
-          this.getY().cmp(other.getY()) === 0)
-      );
+      return this === other || (this.getX().cmp(other.getX()) === 0 && this.getY().cmp(other.getY()) === 0);
     };
     Point.prototype.eqXToP = function (x) {
       var rx = x.toRed(this.curve.red).redMul(this.z);
@@ -15253,9 +12967,7 @@ var require_utils4 = __commonJS({
       inherits = require_inherits_browser();
     exports.inherits = inherits;
     function isSurrogatePair(msg, i) {
-      return (msg.charCodeAt(i) & 64512) !== 55296 ||
-        i < 0 ||
-        i + 1 >= msg.length
+      return (msg.charCodeAt(i) & 64512) !== 55296 || i < 0 || i + 1 >= msg.length
         ? !1
         : (msg.charCodeAt(i + 1) & 64512) === 56320;
     }
@@ -15267,9 +12979,7 @@ var require_utils4 = __commonJS({
         if (enc) {
           if (enc === "hex")
             for (
-              msg = msg.replace(/[^a-z0-9]+/gi, ""),
-                msg.length % 2 !== 0 && (msg = "0" + msg),
-                i = 0;
+              msg = msg.replace(/[^a-z0-9]+/gi, ""), msg.length % 2 !== 0 && (msg = "0" + msg), i = 0;
               i < msg.length;
               i += 2
             )
@@ -15282,32 +12992,24 @@ var require_utils4 = __commonJS({
               : c < 2048
               ? ((res[p++] = (c >> 6) | 192), (res[p++] = (c & 63) | 128))
               : isSurrogatePair(msg, i)
-              ? ((c =
-                  65536 + ((c & 1023) << 10) + (msg.charCodeAt(++i) & 1023)),
+              ? ((c = 65536 + ((c & 1023) << 10) + (msg.charCodeAt(++i) & 1023)),
                 (res[p++] = (c >> 18) | 240),
                 (res[p++] = ((c >> 12) & 63) | 128),
                 (res[p++] = ((c >> 6) & 63) | 128),
                 (res[p++] = (c & 63) | 128))
-              : ((res[p++] = (c >> 12) | 224),
-                (res[p++] = ((c >> 6) & 63) | 128),
-                (res[p++] = (c & 63) | 128));
+              : ((res[p++] = (c >> 12) | 224), (res[p++] = ((c >> 6) & 63) | 128), (res[p++] = (c & 63) | 128));
           }
       else for (i = 0; i < msg.length; i++) res[i] = msg[i] | 0;
       return res;
     }
     exports.toArray = toArray;
     function toHex(msg) {
-      for (var res = "", i = 0; i < msg.length; i++)
-        res += zero2(msg[i].toString(16));
+      for (var res = "", i = 0; i < msg.length; i++) res += zero2(msg[i].toString(16));
       return res;
     }
     exports.toHex = toHex;
     function htonl(w) {
-      var res =
-        (w >>> 24) |
-        ((w >>> 8) & 65280) |
-        ((w << 8) & 16711680) |
-        ((w & 255) << 24);
+      var res = (w >>> 24) | ((w >>> 8) & 65280) | ((w << 8) & 16711680) | ((w & 255) << 24);
       return res >>> 0;
     }
     exports.htonl = htonl;
@@ -15344,34 +13046,18 @@ var require_utils4 = __commonJS({
     function join32(msg, start, end, endian) {
       var len = end - start;
       assert(len % 4 === 0);
-      for (
-        var res = new Array(len / 4), i = 0, k = start;
-        i < res.length;
-        i++, k += 4
-      ) {
+      for (var res = new Array(len / 4), i = 0, k = start; i < res.length; i++, k += 4) {
         var w;
         endian === "big"
-          ? (w =
-              (msg[k] << 24) |
-              (msg[k + 1] << 16) |
-              (msg[k + 2] << 8) |
-              msg[k + 3])
-          : (w =
-              (msg[k + 3] << 24) |
-              (msg[k + 2] << 16) |
-              (msg[k + 1] << 8) |
-              msg[k]),
+          ? (w = (msg[k] << 24) | (msg[k + 1] << 16) | (msg[k + 2] << 8) | msg[k + 3])
+          : (w = (msg[k + 3] << 24) | (msg[k + 2] << 16) | (msg[k + 1] << 8) | msg[k]),
           (res[i] = w >>> 0);
       }
       return res;
     }
     exports.join32 = join32;
     function split32(msg, endian) {
-      for (
-        var res = new Array(msg.length * 4), i = 0, k = 0;
-        i < msg.length;
-        i++, k += 4
-      ) {
+      for (var res = new Array(msg.length * 4), i = 0, k = 0; i < msg.length; i++, k += 4) {
         var m = msg[i];
         endian === "big"
           ? ((res[k] = m >>> 24),
@@ -15510,9 +13196,7 @@ var require_common = __commonJS({
     BlockHash.prototype.update = function (msg, enc) {
       if (
         ((msg = utils.toArray(msg, enc)),
-        this.pending
-          ? (this.pending = this.pending.concat(msg))
-          : (this.pending = msg),
+        this.pending ? (this.pending = this.pending.concat(msg)) : (this.pending = msg),
         (this.pendingTotal += msg.length),
         this.pending.length >= this._delta8)
       ) {
@@ -15521,17 +13205,12 @@ var require_common = __commonJS({
         (this.pending = msg.slice(msg.length - r, msg.length)),
           this.pending.length === 0 && (this.pending = null),
           (msg = utils.join32(msg, 0, msg.length - r, this.endian));
-        for (var i = 0; i < msg.length; i += this._delta32)
-          this._update(msg, i, i + this._delta32);
+        for (var i = 0; i < msg.length; i += this._delta32) this._update(msg, i, i + this._delta32);
       }
       return this;
     };
     BlockHash.prototype.digest = function (enc) {
-      return (
-        this.update(this._pad()),
-        assert(this.pending === null),
-        this._digest(enc)
-      );
+      return this.update(this._pad()), assert(this.pending === null), this._digest(enc);
     };
     BlockHash.prototype._pad = function () {
       var len = this.pendingTotal,
@@ -15640,8 +13319,7 @@ var require__ = __commonJS({
     SHA1.padLength = 64;
     SHA1.prototype._update = function (msg, start) {
       for (var W = this.W, i = 0; i < 16; i++) W[i] = msg[start + i];
-      for (; i < W.length; i++)
-        W[i] = rotl32(W[i - 3] ^ W[i - 8] ^ W[i - 14] ^ W[i - 16], 1);
+      for (; i < W.length; i++) W[i] = rotl32(W[i - 3] ^ W[i - 8] ^ W[i - 14] ^ W[i - 16], 1);
       var a = this.h[0],
         b = this.h[1],
         c = this.h[2],
@@ -15659,9 +13337,7 @@ var require__ = __commonJS({
         (this.h[4] = sum32(this.h[4], e));
     };
     SHA1.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h, "big")
-        : utils.split32(this.h, "big");
+      return enc === "hex" ? utils.toHex32(this.h, "big") : utils.split32(this.h, "big");
     };
   },
 });
@@ -15685,25 +13361,19 @@ var require__2 = __commonJS({
       g1_256 = shaCommon.g1_256,
       BlockHash = common.BlockHash,
       sha256_K = [
-        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993,
-        2453635748, 2870763221, 3624381080, 310598401, 607225278, 1426881987,
-        1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774,
-        264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986,
-        2554220882, 2821834349, 2952996808, 3210313671, 3336571891, 3584528711,
-        113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291,
-        1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411,
-        3259730800, 3345764771, 3516065817, 3600352804, 4094571909, 275423344,
-        430227734, 506948616, 659060556, 883997877, 958139571, 1322822218,
-        1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424,
-        2428436474, 2756734187, 3204031479, 3329325298,
+        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080,
+        310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774,
+        264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808,
+        3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291,
+        1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817,
+        3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218,
+        1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479,
+        3329325298,
       ];
     function SHA256() {
       if (!(this instanceof SHA256)) return new SHA256();
       BlockHash.call(this),
-        (this.h = [
-          1779033703, 3144134277, 1013904242, 2773480762, 1359893119,
-          2600822924, 528734635, 1541459225,
-        ]),
+        (this.h = [1779033703, 3144134277, 1013904242, 2773480762, 1359893119, 2600822924, 528734635, 1541459225]),
         (this.k = sha256_K),
         (this.W = new Array(64));
     }
@@ -15715,13 +13385,7 @@ var require__2 = __commonJS({
     SHA256.padLength = 64;
     SHA256.prototype._update = function (msg, start) {
       for (var W = this.W, i = 0; i < 16; i++) W[i] = msg[start + i];
-      for (; i < W.length; i++)
-        W[i] = sum32_4(
-          g1_256(W[i - 2]),
-          W[i - 7],
-          g0_256(W[i - 15]),
-          W[i - 16],
-        );
+      for (; i < W.length; i++) W[i] = sum32_4(g1_256(W[i - 2]), W[i - 7], g0_256(W[i - 15]), W[i - 16]);
       var a = this.h[0],
         b = this.h[1],
         c = this.h[2],
@@ -15733,14 +13397,7 @@ var require__2 = __commonJS({
       for (assert(this.k.length === W.length), i = 0; i < W.length; i++) {
         var T1 = sum32_5(h, s1_256(e), ch32(e, f, g), this.k[i], W[i]),
           T2 = sum32(s0_256(a), maj32(a, b, c));
-        (h = g),
-          (g = f),
-          (f = e),
-          (e = sum32(d, T1)),
-          (d = c),
-          (c = b),
-          (b = a),
-          (a = sum32(T1, T2));
+        (h = g), (g = f), (f = e), (e = sum32(d, T1)), (d = c), (c = b), (b = a), (a = sum32(T1, T2));
       }
       (this.h[0] = sum32(this.h[0], a)),
         (this.h[1] = sum32(this.h[1], b)),
@@ -15752,9 +13409,7 @@ var require__2 = __commonJS({
         (this.h[7] = sum32(this.h[7], h));
     };
     SHA256.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h, "big")
-        : utils.split32(this.h, "big");
+      return enc === "hex" ? utils.toHex32(this.h, "big") : utils.split32(this.h, "big");
     };
   },
 });
@@ -15768,10 +13423,7 @@ var require__3 = __commonJS({
     function SHA224() {
       if (!(this instanceof SHA224)) return new SHA224();
       SHA256.call(this),
-        (this.h = [
-          3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025,
-          1694076839, 3204075428,
-        ]);
+        (this.h = [3238371032, 914150663, 812702999, 4144912697, 4290775857, 1750603025, 1694076839, 3204075428]);
     }
     utils.inherits(SHA224, SHA256);
     module.exports = SHA224;
@@ -15780,9 +13432,7 @@ var require__3 = __commonJS({
     SHA224.hmacStrength = 192;
     SHA224.padLength = 64;
     SHA224.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h.slice(0, 7), "big")
-        : utils.split32(this.h.slice(0, 7), "big");
+      return enc === "hex" ? utils.toHex32(this.h.slice(0, 7), "big") : utils.split32(this.h.slice(0, 7), "big");
     };
   },
 });
@@ -15807,41 +13457,31 @@ var require__4 = __commonJS({
       sum64_5_lo = utils.sum64_5_lo,
       BlockHash = common.BlockHash,
       sha512_K = [
-        1116352408, 3609767458, 1899447441, 602891725, 3049323471, 3964484399,
-        3921009573, 2173295548, 961987163, 4081628472, 1508970993, 3053834265,
-        2453635748, 2937671579, 2870763221, 3664609560, 3624381080, 2734883394,
-        310598401, 1164996542, 607225278, 1323610764, 1426881987, 3590304994,
-        1925078388, 4068182383, 2162078206, 991336113, 2614888103, 633803317,
-        3248222580, 3479774868, 3835390401, 2666613458, 4022224774, 944711139,
-        264347078, 2341262773, 604807628, 2007800933, 770255983, 1495990901,
-        1249150122, 1856431235, 1555081692, 3175218132, 1996064986, 2198950837,
-        2554220882, 3999719339, 2821834349, 766784016, 2952996808, 2566594879,
-        3210313671, 3203337956, 3336571891, 1034457026, 3584528711, 2466948901,
-        113926993, 3758326383, 338241895, 168717936, 666307205, 1188179964,
-        773529912, 1546045734, 1294757372, 1522805485, 1396182291, 2643833823,
-        1695183700, 2343527390, 1986661051, 1014477480, 2177026350, 1206759142,
-        2456956037, 344077627, 2730485921, 1290863460, 2820302411, 3158454273,
-        3259730800, 3505952657, 3345764771, 106217008, 3516065817, 3606008344,
-        3600352804, 1432725776, 4094571909, 1467031594, 275423344, 851169720,
-        430227734, 3100823752, 506948616, 1363258195, 659060556, 3750685593,
-        883997877, 3785050280, 958139571, 3318307427, 1322822218, 3812723403,
-        1537002063, 2003034995, 1747873779, 3602036899, 1955562222, 1575990012,
-        2024104815, 1125592928, 2227730452, 2716904306, 2361852424, 442776044,
-        2428436474, 593698344, 2756734187, 3733110249, 3204031479, 2999351573,
-        3329325298, 3815920427, 3391569614, 3928383900, 3515267271, 566280711,
-        3940187606, 3454069534, 4118630271, 4000239992, 116418474, 1914138554,
-        174292421, 2731055270, 289380356, 3203993006, 460393269, 320620315,
-        685471733, 587496836, 852142971, 1086792851, 1017036298, 365543100,
-        1126000580, 2618297676, 1288033470, 3409855158, 1501505948, 4234509866,
-        1607167915, 987167468, 1816402316, 1246189591,
+        1116352408, 3609767458, 1899447441, 602891725, 3049323471, 3964484399, 3921009573, 2173295548, 961987163,
+        4081628472, 1508970993, 3053834265, 2453635748, 2937671579, 2870763221, 3664609560, 3624381080, 2734883394,
+        310598401, 1164996542, 607225278, 1323610764, 1426881987, 3590304994, 1925078388, 4068182383, 2162078206,
+        991336113, 2614888103, 633803317, 3248222580, 3479774868, 3835390401, 2666613458, 4022224774, 944711139,
+        264347078, 2341262773, 604807628, 2007800933, 770255983, 1495990901, 1249150122, 1856431235, 1555081692,
+        3175218132, 1996064986, 2198950837, 2554220882, 3999719339, 2821834349, 766784016, 2952996808, 2566594879,
+        3210313671, 3203337956, 3336571891, 1034457026, 3584528711, 2466948901, 113926993, 3758326383, 338241895,
+        168717936, 666307205, 1188179964, 773529912, 1546045734, 1294757372, 1522805485, 1396182291, 2643833823,
+        1695183700, 2343527390, 1986661051, 1014477480, 2177026350, 1206759142, 2456956037, 344077627, 2730485921,
+        1290863460, 2820302411, 3158454273, 3259730800, 3505952657, 3345764771, 106217008, 3516065817, 3606008344,
+        3600352804, 1432725776, 4094571909, 1467031594, 275423344, 851169720, 430227734, 3100823752, 506948616,
+        1363258195, 659060556, 3750685593, 883997877, 3785050280, 958139571, 3318307427, 1322822218, 3812723403,
+        1537002063, 2003034995, 1747873779, 3602036899, 1955562222, 1575990012, 2024104815, 1125592928, 2227730452,
+        2716904306, 2361852424, 442776044, 2428436474, 593698344, 2756734187, 3733110249, 3204031479, 2999351573,
+        3329325298, 3815920427, 3391569614, 3928383900, 3515267271, 566280711, 3940187606, 3454069534, 4118630271,
+        4000239992, 116418474, 1914138554, 174292421, 2731055270, 289380356, 3203993006, 460393269, 320620315,
+        685471733, 587496836, 852142971, 1086792851, 1017036298, 365543100, 1126000580, 2618297676, 1288033470,
+        3409855158, 1501505948, 4234509866, 1607167915, 987167468, 1816402316, 1246189591,
       ];
     function SHA512() {
       if (!(this instanceof SHA512)) return new SHA512();
       BlockHash.call(this),
         (this.h = [
-          1779033703, 4089235720, 3144134277, 2227873595, 1013904242,
-          4271175723, 2773480762, 1595750129, 1359893119, 2917565137,
-          2600822924, 725511199, 528734635, 4215389547, 1541459225, 327033209,
+          1779033703, 4089235720, 3144134277, 2227873595, 1013904242, 4271175723, 2773480762, 1595750129, 1359893119,
+          2917565137, 2600822924, 725511199, 528734635, 4215389547, 1541459225, 327033209,
         ]),
         (this.k = sha512_K),
         (this.W = new Array(160));
@@ -15863,26 +13503,8 @@ var require__4 = __commonJS({
           c2_lo = g0_512_lo(W[i - 30], W[i - 29]),
           c3_hi = W[i - 32],
           c3_lo = W[i - 31];
-        (W[i] = sum64_4_hi(
-          c0_hi,
-          c0_lo,
-          c1_hi,
-          c1_lo,
-          c2_hi,
-          c2_lo,
-          c3_hi,
-          c3_lo,
-        )),
-          (W[i + 1] = sum64_4_lo(
-            c0_hi,
-            c0_lo,
-            c1_hi,
-            c1_lo,
-            c2_hi,
-            c2_lo,
-            c3_hi,
-            c3_lo,
-          ));
+        (W[i] = sum64_4_hi(c0_hi, c0_lo, c1_hi, c1_lo, c2_hi, c2_lo, c3_hi, c3_lo)),
+          (W[i + 1] = sum64_4_lo(c0_hi, c0_lo, c1_hi, c1_lo, c2_hi, c2_lo, c3_hi, c3_lo));
       }
     };
     SHA512.prototype._update = function (msg, start) {
@@ -15916,30 +13538,8 @@ var require__4 = __commonJS({
           c3_lo = this.k[i + 1],
           c4_hi = W[i],
           c4_lo = W[i + 1],
-          T1_hi = sum64_5_hi(
-            c0_hi,
-            c0_lo,
-            c1_hi,
-            c1_lo,
-            c2_hi,
-            c2_lo,
-            c3_hi,
-            c3_lo,
-            c4_hi,
-            c4_lo,
-          ),
-          T1_lo = sum64_5_lo(
-            c0_hi,
-            c0_lo,
-            c1_hi,
-            c1_lo,
-            c2_hi,
-            c2_lo,
-            c3_hi,
-            c3_lo,
-            c4_hi,
-            c4_lo,
-          );
+          T1_hi = sum64_5_hi(c0_hi, c0_lo, c1_hi, c1_lo, c2_hi, c2_lo, c3_hi, c3_lo, c4_hi, c4_lo),
+          T1_lo = sum64_5_lo(c0_hi, c0_lo, c1_hi, c1_lo, c2_hi, c2_lo, c3_hi, c3_lo, c4_hi, c4_lo);
         (c0_hi = s0_512_hi(ah, al)),
           (c0_lo = s0_512_lo(ah, al)),
           (c1_hi = maj64_hi(ah, al, bh, bl, ch, cl)),
@@ -15973,9 +13573,7 @@ var require__4 = __commonJS({
         sum64(this.h, 14, hh, hl);
     };
     SHA512.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h, "big")
-        : utils.split32(this.h, "big");
+      return enc === "hex" ? utils.toHex32(this.h, "big") : utils.split32(this.h, "big");
     };
     function ch64_hi(xh, xl, yh, yl, zh) {
       var r = (xh & yh) ^ (~xh & zh);
@@ -16062,9 +13660,8 @@ var require__5 = __commonJS({
       if (!(this instanceof SHA384)) return new SHA384();
       SHA512.call(this),
         (this.h = [
-          3418070365, 3238371032, 1654270250, 914150663, 2438529370, 812702999,
-          355462360, 4144912697, 1731405415, 4290775857, 2394180231, 1750603025,
-          3675008525, 1694076839, 1203062813, 3204075428,
+          3418070365, 3238371032, 1654270250, 914150663, 2438529370, 812702999, 355462360, 4144912697, 1731405415,
+          4290775857, 2394180231, 1750603025, 3675008525, 1694076839, 1203062813, 3204075428,
         ]);
     }
     utils.inherits(SHA384, SHA512);
@@ -16074,9 +13671,7 @@ var require__5 = __commonJS({
     SHA384.hmacStrength = 192;
     SHA384.padLength = 128;
     SHA384.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h.slice(0, 12), "big")
-        : utils.split32(this.h.slice(0, 12), "big");
+      return enc === "hex" ? utils.toHex32(this.h.slice(0, 12), "big") : utils.split32(this.h.slice(0, 12), "big");
     };
   },
 });
@@ -16132,22 +13727,13 @@ var require_ripemd = __commonJS({
         j < 80;
         j++
       ) {
-        var T = sum32(
-          rotl32(sum32_4(A, f(j, B, C, D), msg[r[j] + start], K(j)), s[j]),
-          E,
-        );
+        var T = sum32(rotl32(sum32_4(A, f(j, B, C, D), msg[r[j] + start], K(j)), s[j]), E);
         (A = E),
           (E = D),
           (D = rotl32(C, 10)),
           (C = B),
           (B = T),
-          (T = sum32(
-            rotl32(
-              sum32_4(Ah, f(79 - j, Bh, Ch, Dh), msg[rh[j] + start], Kh(j)),
-              sh[j],
-            ),
-            Eh,
-          )),
+          (T = sum32(rotl32(sum32_4(Ah, f(79 - j, Bh, Ch, Dh), msg[rh[j] + start], Kh(j)), sh[j]), Eh)),
           (Ah = Eh),
           (Eh = Dh),
           (Dh = rotl32(Ch, 10)),
@@ -16162,9 +13748,7 @@ var require_ripemd = __commonJS({
         (this.h[0] = T);
     };
     RIPEMD160.prototype._digest = function (enc) {
-      return enc === "hex"
-        ? utils.toHex32(this.h, "little")
-        : utils.split32(this.h, "little");
+      return enc === "hex" ? utils.toHex32(this.h, "little") : utils.split32(this.h, "little");
     };
     function f(j, x, y, z) {
       return j <= 15
@@ -16178,50 +13762,30 @@ var require_ripemd = __commonJS({
         : x ^ (y | ~z);
     }
     function K(j) {
-      return j <= 15
-        ? 0
-        : j <= 31
-        ? 1518500249
-        : j <= 47
-        ? 1859775393
-        : j <= 63
-        ? 2400959708
-        : 2840853838;
+      return j <= 15 ? 0 : j <= 31 ? 1518500249 : j <= 47 ? 1859775393 : j <= 63 ? 2400959708 : 2840853838;
     }
     function Kh(j) {
-      return j <= 15
-        ? 1352829926
-        : j <= 31
-        ? 1548603684
-        : j <= 47
-        ? 1836072691
-        : j <= 63
-        ? 2053994217
-        : 0;
+      return j <= 15 ? 1352829926 : j <= 31 ? 1548603684 : j <= 47 ? 1836072691 : j <= 63 ? 2053994217 : 0;
     }
     var r = [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10,
-        6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0,
-        6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2,
-        4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3,
+        10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0,
+        5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
       ],
       rh = [
-        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0,
-        13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15, 5, 1, 3, 7, 14, 6, 9, 11, 8,
-        12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10,
-        14, 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
+        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15,
+        5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15,
+        10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
       ],
       s = [
-        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11,
-        9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12, 11, 13, 6, 7, 14, 9, 13, 15, 14,
-        8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6,
-        5, 12, 9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
+        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
+        11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
+        9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
       ],
       sh = [
-        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7,
-        12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11, 9, 7, 15, 11, 8, 6, 6, 14, 12,
-        13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12,
-        5, 15, 8, 8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
+        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
+        9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
+        8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
       ];
   },
 });
@@ -16243,13 +13807,10 @@ var require_hmac = __commonJS({
     }
     module.exports = Hmac;
     Hmac.prototype._init = function (key) {
-      key.length > this.blockSize &&
-        (key = new this.Hash().update(key).digest()),
-        assert(key.length <= this.blockSize);
+      key.length > this.blockSize && (key = new this.Hash().update(key).digest()), assert(key.length <= this.blockSize);
       for (var i = key.length; i < this.blockSize; i++) key.push(0);
       for (i = 0; i < key.length; i++) key[i] ^= 54;
-      for (this.inner = new this.Hash().update(key), i = 0; i < key.length; i++)
-        key[i] ^= 106;
+      for (this.inner = new this.Hash().update(key), i = 0; i < key.length; i++) key[i] ^= 106;
       this.outer = new this.Hash().update(key);
     };
     Hmac.prototype.update = function (msg, enc) {
@@ -16281,10 +13842,7 @@ var require_hash2 = __commonJS({
 
 // node_modules/elliptic/lib/elliptic/precomputed/secp256k1.js
 var require_secp256k1 = __commonJS({
-  "node_modules/elliptic/lib/elliptic/precomputed/secp256k1.js"(
-    exports,
-    module,
-  ) {
+  "node_modules/elliptic/lib/elliptic/precomputed/secp256k1.js"(exports, module) {
     module.exports = {
       doubles: {
         step: 4,
@@ -17219,8 +14777,7 @@ var require_curves = __commonJS({
       h: "1",
       hash: hash.sha256,
       beta: "7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee",
-      lambda:
-        "5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72",
+      lambda: "5363ad4cc05c30e0a5261c028812645a122e22ea20816678df02967c1b23bd72",
       basis: [
         {
           a: "3086d221a7d46bcde86c90e49284eb15",
@@ -17261,21 +14818,15 @@ var require_hmac_drbg = __commonJS({
       var entropy = utils.toArray(options.entropy, options.entropyEnc || "hex"),
         nonce = utils.toArray(options.nonce, options.nonceEnc || "hex"),
         pers = utils.toArray(options.pers, options.persEnc || "hex");
-      assert(
-        entropy.length >= this.minEntropy / 8,
-        "Not enough entropy. Minimum is: " + this.minEntropy + " bits",
-      ),
+      assert(entropy.length >= this.minEntropy / 8, "Not enough entropy. Minimum is: " + this.minEntropy + " bits"),
         this._init(entropy, nonce, pers);
     }
     module.exports = HmacDRBG;
     HmacDRBG.prototype._init = function (entropy, nonce, pers) {
       var seed = entropy.concat(nonce).concat(pers);
-      (this.K = new Array(this.outLen / 8)),
-        (this.V = new Array(this.outLen / 8));
+      (this.K = new Array(this.outLen / 8)), (this.V = new Array(this.outLen / 8));
       for (var i = 0; i < this.V.length; i++) (this.K[i] = 0), (this.V[i] = 1);
-      this._update(seed),
-        (this._reseed = 1),
-        (this.reseedInterval = 281474976710656);
+      this._update(seed), (this._reseed = 1), (this.reseedInterval = 281474976710656);
     };
     HmacDRBG.prototype._hmac = function () {
       return new hash.hmac(this.hash, this.K);
@@ -17286,33 +14837,23 @@ var require_hmac_drbg = __commonJS({
         (this.K = kmac.digest()),
         (this.V = this._hmac().update(this.V).digest()),
         seed &&
-          ((this.K = this._hmac()
-            .update(this.V)
-            .update([1])
-            .update(seed)
-            .digest()),
+          ((this.K = this._hmac().update(this.V).update([1]).update(seed).digest()),
           (this.V = this._hmac().update(this.V).digest()));
     };
     HmacDRBG.prototype.reseed = function (entropy, entropyEnc, add, addEnc) {
-      typeof entropyEnc != "string" &&
-        ((addEnc = add), (add = entropyEnc), (entropyEnc = null)),
+      typeof entropyEnc != "string" && ((addEnc = add), (add = entropyEnc), (entropyEnc = null)),
         (entropy = utils.toArray(entropy, entropyEnc)),
         (add = utils.toArray(add, addEnc)),
-        assert(
-          entropy.length >= this.minEntropy / 8,
-          "Not enough entropy. Minimum is: " + this.minEntropy + " bits",
-        ),
+        assert(entropy.length >= this.minEntropy / 8, "Not enough entropy. Minimum is: " + this.minEntropy + " bits"),
         this._update(entropy.concat(add || [])),
         (this._reseed = 1);
     };
     HmacDRBG.prototype.generate = function (len, enc, add, addEnc) {
-      if (this._reseed > this.reseedInterval)
-        throw new Error("Reseed is required");
+      if (this._reseed > this.reseedInterval) throw new Error("Reseed is required");
       typeof enc != "string" && ((addEnc = add), (add = enc), (enc = null)),
         add && ((add = utils.toArray(add, addEnc || "hex")), this._update(add));
       for (var temp = []; temp.length < len; )
-        (this.V = this._hmac().update(this.V).digest()),
-          (temp = temp.concat(this.V));
+        (this.V = this._hmac().update(this.V).digest()), (temp = temp.concat(this.V));
       var res = temp.slice(0, len);
       return this._update(add), this._reseed++, utils.encode(res, enc);
     };
@@ -17371,15 +14912,13 @@ var require_key = __commonJS({
       return enc === "hex" ? this.priv.toString(16, 2) : this.priv;
     };
     KeyPair.prototype._importPrivate = function (key, enc) {
-      (this.priv = new BN(key, enc || 16)),
-        (this.priv = this.priv.umod(this.ec.curve.n));
+      (this.priv = new BN(key, enc || 16)), (this.priv = this.priv.umod(this.ec.curve.n));
     };
     KeyPair.prototype._importPublic = function (key, enc) {
       if (key.x || key.y) {
         this.ec.curve.type === "mont"
           ? assert(key.x, "Need x coordinate")
-          : (this.ec.curve.type === "short" ||
-              this.ec.curve.type === "edwards") &&
+          : (this.ec.curve.type === "short" || this.ec.curve.type === "edwards") &&
             assert(key.x && key.y, "Need both x and y coordinate"),
           (this.pub = this.ec.curve.point(key.x, key.y));
         return;
@@ -17387,10 +14926,7 @@ var require_key = __commonJS({
       this.pub = this.ec.curve.decodePoint(key, enc);
     };
     KeyPair.prototype.derive = function (pub) {
-      return (
-        pub.validate() || assert(pub.validate(), "public point not validated"),
-        pub.mul(this.priv).getX()
-      );
+      return pub.validate() || assert(pub.validate(), "public point not validated"), pub.mul(this.priv).getX();
     };
     KeyPair.prototype.sign = function (msg, enc, options) {
       return this.ec.sign(msg, this, enc, options);
@@ -17400,11 +14936,7 @@ var require_key = __commonJS({
     };
     KeyPair.prototype.inspect = function () {
       return (
-        "<Key priv: " +
-        (this.priv && this.priv.toString(16, 2)) +
-        " pub: " +
-        (this.pub && this.pub.inspect()) +
-        " >"
+        "<Key priv: " + (this.priv && this.priv.toString(16, 2)) + " pub: " + (this.pub && this.pub.inspect()) + " >"
       );
     };
   },
@@ -17423,9 +14955,7 @@ var require_signature = __commonJS({
         (assert(options.r && options.s, "Signature without r or s"),
         (this.r = new BN(options.r, 16)),
         (this.s = new BN(options.s, 16)),
-        options.recoveryParam === void 0
-          ? (this.recoveryParam = null)
-          : (this.recoveryParam = options.recoveryParam));
+        options.recoveryParam === void 0 ? (this.recoveryParam = null) : (this.recoveryParam = options.recoveryParam));
     }
     module.exports = Signature;
     function Position() {
@@ -17436,17 +14966,11 @@ var require_signature = __commonJS({
       if (!(initial & 128)) return initial;
       var octetLen = initial & 15;
       if (octetLen === 0 || octetLen > 4) return !1;
-      for (var val = 0, i = 0, off = p.place; i < octetLen; i++, off++)
-        (val <<= 8), (val |= buf[off]), (val >>>= 0);
+      for (var val = 0, i = 0, off = p.place; i < octetLen; i++, off++) (val <<= 8), (val |= buf[off]), (val >>>= 0);
       return val <= 127 ? !1 : ((p.place = off), val);
     }
     function rmPadding(buf) {
-      for (
-        var i = 0, len = buf.length - 1;
-        !buf[i] && !(buf[i + 1] & 128) && i < len;
-
-      )
-        i++;
+      for (var i = 0, len = buf.length - 1; !buf[i] && !(buf[i + 1] & 128) && i < len; ) i++;
       return i === 0 ? buf : buf.slice(i);
     }
     Signature.prototype._importDER = function (data, enc) {
@@ -17454,8 +14978,7 @@ var require_signature = __commonJS({
       var p = new Position();
       if (data[p.place++] !== 48) return !1;
       var len = getLength(data, p);
-      if (len === !1 || len + p.place !== data.length || data[p.place++] !== 2)
-        return !1;
+      if (len === !1 || len + p.place !== data.length || data[p.place++] !== 2) return !1;
       var rlen = getLength(data, p);
       if (rlen === !1) return !1;
       var r = data.slice(p.place, rlen + p.place);
@@ -17469,12 +14992,7 @@ var require_signature = __commonJS({
       if (s[0] === 0)
         if (s[1] & 128) s = s.slice(1);
         else return !1;
-      return (
-        (this.r = new BN(r)),
-        (this.s = new BN(s)),
-        (this.recoveryParam = null),
-        !0
-      );
+      return (this.r = new BN(r)), (this.s = new BN(s)), (this.recoveryParam = null), !0;
     };
     function constructLength(arr, len) {
       if (len < 128) {
@@ -17482,34 +15000,23 @@ var require_signature = __commonJS({
         return;
       }
       var octets = 1 + ((Math.log(len) / Math.LN2) >>> 3);
-      for (arr.push(octets | 128); --octets; )
-        arr.push((len >>> (octets << 3)) & 255);
+      for (arr.push(octets | 128); --octets; ) arr.push((len >>> (octets << 3)) & 255);
       arr.push(len);
     }
     Signature.prototype.toDER = function (enc) {
       var r = this.r.toArray(),
         s = this.s.toArray();
       for (
-        r[0] & 128 && (r = [0].concat(r)),
-          s[0] & 128 && (s = [0].concat(s)),
-          r = rmPadding(r),
-          s = rmPadding(s);
+        r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s)), r = rmPadding(r), s = rmPadding(s);
         !s[0] && !(s[1] & 128);
 
       )
         s = s.slice(1);
       var arr = [2];
-      constructLength(arr, r.length),
-        (arr = arr.concat(r)),
-        arr.push(2),
-        constructLength(arr, s.length);
+      constructLength(arr, r.length), (arr = arr.concat(r)), arr.push(2), constructLength(arr, s.length);
       var backHalf = arr.concat(s),
         res = [48];
-      return (
-        constructLength(res, backHalf.length),
-        (res = res.concat(backHalf)),
-        utils.encode(res, enc)
-      );
+      return constructLength(res, backHalf.length), (res = res.concat(backHalf)), utils.encode(res, enc);
     };
   },
 });
@@ -17529,10 +15036,7 @@ var require_ec = __commonJS({
     function EC(options) {
       if (!(this instanceof EC)) return new EC(options);
       typeof options == "string" &&
-        (assert(
-          Object.prototype.hasOwnProperty.call(curves, options),
-          "Unknown curve " + options,
-        ),
+        (assert(Object.prototype.hasOwnProperty.call(curves, options), "Unknown curve " + options),
         (options = curves[options])),
         options instanceof curves.PresetCurve && (options = { curve: options }),
         (this.curve = options.curve.curve),
@@ -17570,16 +15074,12 @@ var require_ec = __commonJS({
 
       ) {
         var priv = new BN(drbg.generate(bytes));
-        if (!(priv.cmp(ns2) > 0))
-          return priv.iaddn(1), this.keyFromPrivate(priv);
+        if (!(priv.cmp(ns2) > 0)) return priv.iaddn(1), this.keyFromPrivate(priv);
       }
     };
     EC.prototype._truncateToN = function (msg, truncOnly) {
       var delta = msg.byteLength() * 8 - this.n.bitLength();
-      return (
-        delta > 0 && (msg = msg.ushrn(delta)),
-        !truncOnly && msg.cmp(this.n) >= 0 ? msg.sub(this.n) : msg
-      );
+      return delta > 0 && (msg = msg.ushrn(delta)), !truncOnly && msg.cmp(this.n) >= 0 ? msg.sub(this.n) : msg;
     };
     EC.prototype.sign = function (msg, key, enc, options) {
       typeof enc == "object" && ((options = enc), (enc = null)),
@@ -17602,12 +15102,8 @@ var require_ec = __commonJS({
         ;
         iter++
       ) {
-        var k = options.k
-          ? options.k(iter)
-          : new BN(drbg.generate(this.n.byteLength()));
-        if (
-          ((k = this._truncateToN(k, !0)), !(k.cmpn(1) <= 0 || k.cmp(ns1) >= 0))
-        ) {
+        var k = options.k ? options.k(iter) : new BN(drbg.generate(this.n.byteLength()));
+        if (((k = this._truncateToN(k, !0)), !(k.cmpn(1) <= 0 || k.cmp(ns1) >= 0))) {
           var kp = this.g.mul(k);
           if (!kp.isInfinity()) {
             var kpX = kp.getX(),
@@ -17615,12 +15111,9 @@ var require_ec = __commonJS({
             if (r.cmpn(0) !== 0) {
               var s = k.invm(this.n).mul(r.mul(key.getPrivate()).iadd(msg));
               if (((s = s.umod(this.n)), s.cmpn(0) !== 0)) {
-                var recoveryParam =
-                  (kp.getY().isOdd() ? 1 : 0) | (kpX.cmp(r) !== 0 ? 2 : 0);
+                var recoveryParam = (kp.getY().isOdd() ? 1 : 0) | (kpX.cmp(r) !== 0 ? 2 : 0);
                 return (
-                  options.canonical &&
-                    s.cmp(this.nh) > 0 &&
-                    ((s = this.n.sub(s)), (recoveryParam ^= 1)),
+                  options.canonical && s.cmp(this.nh) > 0 && ((s = this.n.sub(s)), (recoveryParam ^= 1)),
                   new Signature({ r, s, recoveryParam })
                 );
               }
@@ -17635,26 +15128,17 @@ var require_ec = __commonJS({
         (signature = new Signature(signature, "hex"));
       var r = signature.r,
         s = signature.s;
-      if (
-        r.cmpn(1) < 0 ||
-        r.cmp(this.n) >= 0 ||
-        s.cmpn(1) < 0 ||
-        s.cmp(this.n) >= 0
-      )
-        return !1;
+      if (r.cmpn(1) < 0 || r.cmp(this.n) >= 0 || s.cmpn(1) < 0 || s.cmp(this.n) >= 0) return !1;
       var sinv = s.invm(this.n),
         u1 = sinv.mul(msg).umod(this.n),
         u2 = sinv.mul(r).umod(this.n),
         p;
       return this.curve._maxwellTrick
-        ? ((p = this.g.jmulAdd(u1, key.getPublic(), u2)),
-          p.isInfinity() ? !1 : p.eqXToP(r))
-        : ((p = this.g.mulAdd(u1, key.getPublic(), u2)),
-          p.isInfinity() ? !1 : p.getX().umod(this.n).cmp(r) === 0);
+        ? ((p = this.g.jmulAdd(u1, key.getPublic(), u2)), p.isInfinity() ? !1 : p.eqXToP(r))
+        : ((p = this.g.mulAdd(u1, key.getPublic(), u2)), p.isInfinity() ? !1 : p.getX().umod(this.n).cmp(r) === 0);
     };
     EC.prototype.recoverPubKey = function (msg, signature, j, enc) {
-      assert((3 & j) === j, "The recovery param is more than two bits"),
-        (signature = new Signature(signature, enc));
+      assert((3 & j) === j, "The recovery param is more than two bits"), (signature = new Signature(signature, enc));
       var n = this.n,
         e = new BN(msg),
         r = signature.r,
@@ -17663,19 +15147,14 @@ var require_ec = __commonJS({
         isSecondKey = j >> 1;
       if (r.cmp(this.curve.p.umod(this.curve.n)) >= 0 && isSecondKey)
         throw new Error("Unable to find sencond key candinate");
-      isSecondKey
-        ? (r = this.curve.pointFromX(r.add(this.curve.n), isYOdd))
-        : (r = this.curve.pointFromX(r, isYOdd));
+      isSecondKey ? (r = this.curve.pointFromX(r.add(this.curve.n), isYOdd)) : (r = this.curve.pointFromX(r, isYOdd));
       var rInv = signature.r.invm(n),
         s1 = n.sub(e).mul(rInv).umod(n),
         s2 = s.mul(rInv).umod(n);
       return this.g.mulAdd(s1, r, s2);
     };
     EC.prototype.getKeyRecoveryParam = function (e, signature, Q, enc) {
-      if (
-        ((signature = new Signature(signature, enc)),
-        signature.recoveryParam !== null)
-      )
+      if (((signature = new Signature(signature, enc)), signature.recoveryParam !== null))
         return signature.recoveryParam;
       for (var i = 0; i < 4; i++) {
         var Qprime;
@@ -17702,17 +15181,13 @@ var require_key2 = __commonJS({
     function KeyPair(eddsa, params) {
       (this.eddsa = eddsa),
         (this._secret = parseBytes(params.secret)),
-        eddsa.isPoint(params.pub)
-          ? (this._pub = params.pub)
-          : (this._pubBytes = parseBytes(params.pub));
+        eddsa.isPoint(params.pub) ? (this._pub = params.pub) : (this._pubBytes = parseBytes(params.pub));
     }
     KeyPair.fromPublic = function (eddsa, pub) {
       return pub instanceof KeyPair ? pub : new KeyPair(eddsa, { pub });
     };
     KeyPair.fromSecret = function (eddsa, secret) {
-      return secret instanceof KeyPair
-        ? secret
-        : new KeyPair(eddsa, { secret });
+      return secret instanceof KeyPair ? secret : new KeyPair(eddsa, { secret });
     };
     KeyPair.prototype.secret = function () {
       return this._secret;
@@ -17721,9 +15196,7 @@ var require_key2 = __commonJS({
       return this.eddsa.encodePoint(this.pub());
     });
     cachedProperty(KeyPair, "pub", function () {
-      return this._pubBytes
-        ? this.eddsa.decodePoint(this._pubBytes)
-        : this.eddsa.g.mul(this.priv());
+      return this._pubBytes ? this.eddsa.decodePoint(this._pubBytes) : this.eddsa.g.mul(this.priv());
     });
     cachedProperty(KeyPair, "privBytes", function () {
       var eddsa = this.eddsa,
@@ -17742,19 +15215,13 @@ var require_key2 = __commonJS({
       return this.hash().slice(this.eddsa.encodingLength);
     });
     KeyPair.prototype.sign = function (message) {
-      return (
-        assert(this._secret, "KeyPair can only verify"),
-        this.eddsa.sign(message, this)
-      );
+      return assert(this._secret, "KeyPair can only verify"), this.eddsa.sign(message, this);
     };
     KeyPair.prototype.verify = function (message, sig) {
       return this.eddsa.verify(message, sig, this);
     };
     KeyPair.prototype.getSecret = function (enc) {
-      return (
-        assert(this._secret, "KeyPair is public only"),
-        utils.encode(this.secret(), enc)
-      );
+      return assert(this._secret, "KeyPair is public only"), utils.encode(this.secret(), enc);
     };
     KeyPair.prototype.getPublic = function (enc) {
       return utils.encode(this.pubBytes(), enc);
@@ -17820,10 +15287,7 @@ var require_eddsa = __commonJS({
       KeyPair = require_key2(),
       Signature = require_signature2();
     function EDDSA(curve) {
-      if (
-        (assert(curve === "ed25519", "only tested with ed25519 so far"),
-        !(this instanceof EDDSA))
-      )
+      if ((assert(curve === "ed25519", "only tested with ed25519 so far"), !(this instanceof EDDSA)))
         return new EDDSA(curve);
       (curve = curves[curve].curve),
         (this.curve = curve),
@@ -17853,8 +15317,7 @@ var require_eddsa = __commonJS({
       return RplusAh.eq(SG);
     };
     EDDSA.prototype.hashInt = function () {
-      for (var hash2 = this.hash(), i = 0; i < arguments.length; i++)
-        hash2.update(arguments[i]);
+      for (var hash2 = this.hash(), i = 0; i < arguments.length; i++) hash2.update(arguments[i]);
       return utils.intFromLE(hash2.digest()).umod(this.curve.n);
     };
     EDDSA.prototype.keyFromPublic = function (pub) {
@@ -17868,9 +15331,7 @@ var require_eddsa = __commonJS({
     };
     EDDSA.prototype.encodePoint = function (point) {
       var enc = point.getY().toArray("le", this.encodingLength);
-      return (
-        (enc[this.encodingLength - 1] |= point.getX().isOdd() ? 128 : 0), enc
-      );
+      return (enc[this.encodingLength - 1] |= point.getX().isOdd() ? 128 : 0), enc;
     };
     EDDSA.prototype.decodePoint = function (bytes) {
       bytes = utils.parseBytes(bytes);
@@ -17932,9 +15393,7 @@ var require_bn5 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -17956,10 +15415,8 @@ var require_bn5 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -17969,33 +15426,23 @@ var require_bn5 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -18018,23 +15465,14 @@ var require_bn5 = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -18043,44 +15481,26 @@ var require_bn5 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -18093,30 +15513,18 @@ var require_bn5 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -18127,15 +15535,11 @@ var require_bn5 = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -18169,15 +15573,13 @@ var require_bn5 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -18189,18 +15591,11 @@ var require_bn5 = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -18210,13 +15605,9 @@ var require_bn5 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -18228,8 +15619,7 @@ var require_bn5 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -18237,10 +15627,7 @@ var require_bn5 = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -18248,10 +15635,7 @@ var require_bn5 = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -18260,13 +15644,11 @@ var require_bn5 = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -18304,11 +15686,7 @@ var require_bn5 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -18327,14 +15705,10 @@ var require_bn5 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -18347,50 +15721,37 @@ var require_bn5 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -18398,27 +15759,18 @@ var require_bn5 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -18438,49 +15790,25 @@ var require_bn5 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -18491,34 +15819,17 @@ var require_bn5 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -18551,9 +15862,7 @@ var require_bn5 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -19108,15 +16417,12 @@ var require_bn5 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -19158,32 +16464,22 @@ var require_bn5 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -19200,9 +16496,7 @@ var require_bn5 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -19225,12 +16519,8 @@ var require_bn5 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -19280,17 +16570,11 @@ var require_bn5 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -19300,10 +16584,7 @@ var require_bn5 = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -19319,14 +16600,8 @@ var require_bn5 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -19345,8 +16620,7 @@ var require_bn5 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -19368,20 +16642,15 @@ var require_bn5 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -19414,17 +16683,8 @@ var require_bn5 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -19441,32 +16701,20 @@ var require_bn5 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -19500,14 +16748,10 @@ var require_bn5 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -19517,33 +16761,19 @@ var require_bn5 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -19566,9 +16796,7 @@ var require_bn5 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -19582,9 +16810,7 @@ var require_bn5 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -19635,11 +16861,7 @@ var require_bn5 = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -19659,40 +16881,18 @@ var require_bn5 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -19705,35 +16905,15 @@ var require_bn5 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -19741,8 +16921,7 @@ var require_bn5 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -19772,14 +16951,10 @@ var require_bn5 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -19794,8 +16969,7 @@ var require_bn5 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -19861,52 +17035,28 @@ var require_bn5 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -19923,46 +17073,22 @@ var require_bn5 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -19984,11 +17110,7 @@ var require_bn5 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -20009,78 +17131,45 @@ var require_bn5 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -20105,26 +17194,17 @@ var require_bn5 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -20171,29 +17251,19 @@ var require_bn5 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -20202,9 +17272,7 @@ var require_bn5 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -20220,10 +17288,7 @@ var require_bn5 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -20231,9 +17296,7 @@ var require_bn5 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -20270,38 +17333,23 @@ var require_bn5 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -20321,24 +17369,15 @@ var require_safer = __commonJS({
       safer = {},
       key;
     for (key in buffer)
-      !buffer.hasOwnProperty(key) ||
-        key === "SlowBuffer" ||
-        key === "Buffer" ||
-        (safer[key] = buffer[key]);
+      !buffer.hasOwnProperty(key) || key === "SlowBuffer" || key === "Buffer" || (safer[key] = buffer[key]);
     var Safer = (safer.Buffer = {});
     for (key in Buffer2)
-      !Buffer2.hasOwnProperty(key) ||
-        key === "allocUnsafe" ||
-        key === "allocUnsafeSlow" ||
-        (Safer[key] = Buffer2[key]);
+      !Buffer2.hasOwnProperty(key) || key === "allocUnsafe" || key === "allocUnsafeSlow" || (Safer[key] = Buffer2[key]);
     safer.Buffer.prototype = Buffer2.prototype;
     (!Safer.from || Safer.from === Uint8Array.from) &&
       (Safer.from = function (value, encodingOrOffset, length) {
         if (typeof value == "number")
-          throw new TypeError(
-            'The "value" argument must not be of type number. Received type ' +
-              typeof value,
-          );
+          throw new TypeError('The "value" argument must not be of type number. Received type ' + typeof value);
         if (value && typeof value.length > "u")
           throw new TypeError(
             "The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object. Received type " +
@@ -20349,14 +17388,9 @@ var require_safer = __commonJS({
     Safer.alloc ||
       (Safer.alloc = function (size, fill, encoding) {
         if (typeof size != "number")
-          throw new TypeError(
-            'The "size" argument must be of type number. Received type ' +
-              typeof size,
-          );
+          throw new TypeError('The "size" argument must be of type number. Received type ' + typeof size);
         if (size < 0 || size >= 2 * (1 << 30))
-          throw new RangeError(
-            'The value "' + size + '" is invalid for option "size"',
-          );
+          throw new RangeError('The value "' + size + '" is invalid for option "size"');
         var buf = Buffer2(size);
         return (
           !fill || fill.length === 0
@@ -20375,8 +17409,7 @@ var require_safer = __commonJS({
       ((safer.constants = {
         MAX_LENGTH: safer.kMaxLength,
       }),
-      safer.kStringMaxLength &&
-        (safer.constants.MAX_STRING_LENGTH = safer.kStringMaxLength));
+      safer.kStringMaxLength && (safer.constants.MAX_STRING_LENGTH = safer.kStringMaxLength));
     module.exports = safer;
   },
 });
@@ -20536,8 +17569,7 @@ var require_buffer = __commonJS({
         : this.error(fail || "DecoderBuffer overrun");
     };
     DecoderBuffer.prototype.skip = function (bytes, fail) {
-      if (!(this.offset + bytes <= this.length))
-        return this.error(fail || "DecoderBuffer overrun");
+      if (!(this.offset + bytes <= this.length)) return this.error(fail || "DecoderBuffer overrun");
       let res = new DecoderBuffer(this.base);
       return (
         (res._reporterState = this._reporterState),
@@ -20555,20 +17587,16 @@ var require_buffer = __commonJS({
         (this.length = 0),
           (this.value = value.map(function (item) {
             return (
-              EncoderBuffer.isEncoderBuffer(item) ||
-                (item = new EncoderBuffer(item, reporter)),
+              EncoderBuffer.isEncoderBuffer(item) || (item = new EncoderBuffer(item, reporter)),
               (this.length += item.length),
               item
             );
           }, this));
       else if (typeof value == "number") {
-        if (!(0 <= value && value <= 255))
-          return reporter.error("non-byte EncoderBuffer value");
+        if (!(0 <= value && value <= 255)) return reporter.error("non-byte EncoderBuffer value");
         (this.value = value), (this.length = 1);
-      } else if (typeof value == "string")
-        (this.value = value), (this.length = Buffer2.byteLength(value));
-      else if (Buffer2.isBuffer(value))
-        (this.value = value), (this.length = value.length);
+      } else if (typeof value == "string") (this.value = value), (this.length = Buffer2.byteLength(value));
+      else if (Buffer2.isBuffer(value)) (this.value = value), (this.length = value.length);
       else return reporter.error("Unsupported type: " + typeof value);
     }
     exports.EncoderBuffer = EncoderBuffer;
@@ -20637,18 +17665,9 @@ var require_node = __commonJS({
         "utf8str",
         "videostr",
       ],
-      methods = [
-        "key",
-        "obj",
-        "use",
-        "optional",
-        "explicit",
-        "implicit",
-        "def",
-        "choice",
-        "any",
-        "contains",
-      ].concat(tags),
+      methods = ["key", "obj", "use", "optional", "explicit", "implicit", "def", "choice", "any", "contains"].concat(
+        tags,
+      ),
       overrided = [
         "_peekTag",
         "_decodeTag",
@@ -20725,9 +17744,7 @@ var require_node = __commonJS({
       methods.forEach(function (method) {
         this[method] = function () {
           let clone = new this.constructor(this);
-          return (
-            state.children.push(clone), clone[method].apply(clone, arguments)
-          );
+          return state.children.push(clone), clone[method].apply(clone, arguments);
         };
       }, this);
     };
@@ -20738,11 +17755,7 @@ var require_node = __commonJS({
         (state.children = state.children.filter(function (child) {
           return child._baseState.parent === this;
         }, this)),
-        assert.equal(
-          state.children.length,
-          1,
-          "Root node can have only one child",
-        );
+        assert.equal(state.children.length, 1, "Root node can have only one child");
     };
     Node.prototype._useArgs = function (args) {
       let state = this._baseState,
@@ -20762,8 +17775,7 @@ var require_node = __commonJS({
           (assert(state.args === null),
           (state.args = args),
           (state.reverseArgs = args.map(function (arg) {
-            if (typeof arg != "object" || arg.constructor !== Object)
-              return arg;
+            if (typeof arg != "object" || arg.constructor !== Object) return arg;
             let res = {};
             return (
               Object.keys(arg).forEach(function (key) {
@@ -20785,12 +17797,7 @@ var require_node = __commonJS({
       Node.prototype[tag] = function () {
         let state = this._baseState,
           args = Array.prototype.slice.call(arguments);
-        return (
-          assert(state.tag === null),
-          (state.tag = tag),
-          this._useArgs(args),
-          this
-        );
+        return assert(state.tag === null), (state.tag = tag), this._useArgs(args), this;
       };
     });
     Node.prototype.use = function (item) {
@@ -20804,28 +17811,15 @@ var require_node = __commonJS({
     };
     Node.prototype.def = function (val) {
       let state = this._baseState;
-      return (
-        assert(state.default === null),
-        (state.default = val),
-        (state.optional = !0),
-        this
-      );
+      return assert(state.default === null), (state.default = val), (state.optional = !0), this;
     };
     Node.prototype.explicit = function (num) {
       let state = this._baseState;
-      return (
-        assert(state.explicit === null && state.implicit === null),
-        (state.explicit = num),
-        this
-      );
+      return assert(state.explicit === null && state.implicit === null), (state.explicit = num), this;
     };
     Node.prototype.implicit = function (num) {
       let state = this._baseState;
-      return (
-        assert(state.explicit === null && state.implicit === null),
-        (state.implicit = num),
-        this
-      );
+      return assert(state.explicit === null && state.implicit === null), (state.implicit = num), this;
     };
     Node.prototype.obj = function () {
       let state = this._baseState,
@@ -20859,15 +17853,11 @@ var require_node = __commonJS({
     };
     Node.prototype._decode = function (input, options) {
       let state = this._baseState;
-      if (state.parent === null)
-        return input.wrapResult(state.children[0]._decode(input, options));
+      if (state.parent === null) return input.wrapResult(state.children[0]._decode(input, options));
       let result = state.default,
         present = !0,
         prevKey = null;
-      if (
-        (state.key !== null && (prevKey = input.enterKey(state.key)),
-        state.optional)
-      ) {
+      if ((state.key !== null && (prevKey = input.enterKey(state.key)), state.optional)) {
         let tag = null;
         if (
           (state.explicit !== null
@@ -20879,19 +17869,13 @@ var require_node = __commonJS({
         ) {
           let save = input.save();
           try {
-            state.choice === null
-              ? this._decodeGeneric(state.tag, input, options)
-              : this._decodeChoice(input, options),
+            state.choice === null ? this._decodeGeneric(state.tag, input, options) : this._decodeChoice(input, options),
               (present = !0);
           } catch {
             present = !1;
           }
           input.restore(save);
-        } else if (
-          ((present = this._peekTag(input, tag, state.any)),
-          input.isError(present))
-        )
-          return present;
+        } else if (((present = this._peekTag(input, tag, state.any)), input.isError(present))) return present;
       }
       let prevObj;
       if ((state.obj && present && (prevObj = input.enterObject()), present)) {
@@ -20904,19 +17888,12 @@ var require_node = __commonJS({
         if (state.use === null && state.choice === null) {
           let save;
           state.any && (save = input.save());
-          let body = this._decodeTag(
-            input,
-            state.implicit !== null ? state.implicit : state.tag,
-            state.any,
-          );
+          let body = this._decodeTag(input, state.implicit !== null ? state.implicit : state.tag, state.any);
           if (input.isError(body)) return body;
           state.any ? (result = input.raw(save)) : (input = body);
         }
         if (
-          (options &&
-            options.track &&
-            state.tag !== null &&
-            options.track(input.path(), start, input.length, "tagged"),
+          (options && options.track && state.tag !== null && options.track(input.path(), start, input.length, "tagged"),
           options &&
             options.track &&
             state.tag !== null &&
@@ -20938,10 +17915,7 @@ var require_node = __commonJS({
           state.contains && (state.tag === "octstr" || state.tag === "bitstr"))
         ) {
           let data = new DecoderBuffer(result);
-          result = this._getUse(
-            state.contains,
-            input._reporterState.obj,
-          )._decode(data, options);
+          result = this._getUse(state.contains, input._reporterState.obj)._decode(data, options);
         }
       }
       return (
@@ -20975,10 +17949,7 @@ var require_node = __commonJS({
         : tag === "int" || tag === "enum"
         ? this._decodeInt(input, state.args && state.args[0], options)
         : state.use !== null
-        ? this._getUse(state.use, input._reporterState.obj)._decode(
-            input,
-            options,
-          )
+        ? this._getUse(state.use, input._reporterState.obj)._decode(input, options)
         : input.error("unknown tag: " + tag);
     };
     Node.prototype._getUse = function (entity, obj) {
@@ -20988,8 +17959,7 @@ var require_node = __commonJS({
         assert(state.useDecoder._baseState.parent === null),
         (state.useDecoder = state.useDecoder._baseState.children[0]),
         state.implicit !== state.useDecoder._baseState.implicit &&
-          ((state.useDecoder = state.useDecoder.clone()),
-          (state.useDecoder._baseState.implicit = state.implicit)),
+          ((state.useDecoder = state.useDecoder.clone()), (state.useDecoder._baseState.implicit = state.implicit)),
         state.useDecoder
       );
     };
@@ -21020,13 +17990,11 @@ var require_node = __commonJS({
       let state = this._baseState;
       if (state.default !== null && state.default === data) return;
       let result = this._encodeValue(data, reporter, parent);
-      if (result !== void 0 && !this._skipDefault(result, reporter, parent))
-        return result;
+      if (result !== void 0 && !this._skipDefault(result, reporter, parent)) return result;
     };
     Node.prototype._encodeValue = function (data, reporter, parent) {
       let state = this._baseState;
-      if (state.parent === null)
-        return state.children[0]._encode(data, reporter || new Reporter());
+      if (state.parent === null) return state.children[0]._encode(data, reporter || new Reporter());
       let result = null;
       if (((this.reporter = reporter), state.optional && data === void 0))
         if (state.default !== null) data = state.default;
@@ -21036,21 +18004,14 @@ var require_node = __commonJS({
       if (state.any) result = this._createEncoderBuffer(data);
       else if (state.choice) result = this._encodeChoice(data, reporter);
       else if (state.contains)
-        (content = this._getUse(state.contains, parent)._encode(
-          data,
-          reporter,
-        )),
-          (primitive = !0);
+        (content = this._getUse(state.contains, parent)._encode(data, reporter)), (primitive = !0);
       else if (state.children)
         (content = state.children
           .map(function (child) {
-            if (child._baseState.tag === "null_")
-              return child._encode(null, reporter, data);
-            if (child._baseState.key === null)
-              return reporter.error("Child should have a key");
+            if (child._baseState.tag === "null_") return child._encode(null, reporter, data);
+            if (child._baseState.key === null) return reporter.error("Child should have a key");
             let prevKey = reporter.enterKey(child._baseState.key);
-            if (typeof data != "object")
-              return reporter.error("Child expected, but input is not object");
+            if (typeof data != "object") return reporter.error("Child expected, but input is not object");
             let res = child._encode(data[child._baseState.key], reporter, data);
             return reporter.leaveKey(prevKey), res;
           }, this)
@@ -21059,10 +18020,8 @@ var require_node = __commonJS({
           })),
           (content = this._createEncoderBuffer(content));
       else if (state.tag === "seqof" || state.tag === "setof") {
-        if (!(state.args && state.args.length === 1))
-          return reporter.error("Too many args for : " + state.tag);
-        if (!Array.isArray(data))
-          return reporter.error("seqof/setof, but data is not Array");
+        if (!(state.args && state.args.length === 1)) return reporter.error("Too many args for : " + state.tag);
+        if (!Array.isArray(data)) return reporter.error("seqof/setof, but data is not Array");
         let child = this.clone();
         (child._baseState.implicit = null),
           (content = this._createEncoderBuffer(
@@ -21074,53 +18033,32 @@ var require_node = __commonJS({
       } else
         state.use !== null
           ? (result = this._getUse(state.use, parent)._encode(data, reporter))
-          : ((content = this._encodePrimitive(state.tag, data)),
-            (primitive = !0));
+          : ((content = this._encodePrimitive(state.tag, data)), (primitive = !0));
       if (!state.any && state.choice === null) {
         let tag = state.implicit !== null ? state.implicit : state.tag,
           cls = state.implicit === null ? "universal" : "context";
         tag === null
-          ? state.use === null &&
-            reporter.error("Tag could be omitted only for .use()")
-          : state.use === null &&
-            (result = this._encodeComposite(tag, primitive, cls, content));
+          ? state.use === null && reporter.error("Tag could be omitted only for .use()")
+          : state.use === null && (result = this._encodeComposite(tag, primitive, cls, content));
       }
-      return (
-        state.explicit !== null &&
-          (result = this._encodeComposite(
-            state.explicit,
-            !1,
-            "context",
-            result,
-          )),
-        result
-      );
+      return state.explicit !== null && (result = this._encodeComposite(state.explicit, !1, "context", result)), result;
     };
     Node.prototype._encodeChoice = function (data, reporter) {
       let state = this._baseState,
         node = state.choice[data.type];
       return (
-        node ||
-          assert(
-            !1,
-            data.type +
-              " not found in " +
-              JSON.stringify(Object.keys(state.choice)),
-          ),
+        node || assert(!1, data.type + " not found in " + JSON.stringify(Object.keys(state.choice))),
         node._encode(data.value, reporter)
       );
     };
     Node.prototype._encodePrimitive = function (tag, data) {
       let state = this._baseState;
       if (/str$/.test(tag)) return this._encodeStr(data, tag);
-      if (tag === "objid" && state.args)
-        return this._encodeObjid(data, state.reverseArgs[0], state.args[1]);
+      if (tag === "objid" && state.args) return this._encodeObjid(data, state.reverseArgs[0], state.args[1]);
       if (tag === "objid") return this._encodeObjid(data, null, null);
-      if (tag === "gentime" || tag === "utctime")
-        return this._encodeTime(data, tag);
+      if (tag === "gentime" || tag === "utctime") return this._encodeTime(data, tag);
       if (tag === "null_") return this._encodeNull();
-      if (tag === "int" || tag === "enum")
-        return this._encodeInt(data, state.args && state.reverseArgs[0]);
+      if (tag === "int" || tag === "enum") return this._encodeInt(data, state.args && state.reverseArgs[0]);
       if (tag === "bool") return this._encodeBool(data);
       if (tag === "objDesc") return this._encodeStr(data, tag);
       throw new Error("Unsupported tag: " + tag);
@@ -21214,44 +18152,30 @@ var require_der2 = __commonJS({
       Node.call(this, "der", parent);
     }
     inherits(DERNode, Node);
-    DERNode.prototype._encodeComposite = function (
-      tag,
-      primitive,
-      cls,
-      content,
-    ) {
+    DERNode.prototype._encodeComposite = function (tag, primitive, cls, content) {
       let encodedTag = encodeTag(tag, primitive, cls, this.reporter);
       if (content.length < 128) {
         let header2 = Buffer2.alloc(2);
-        return (
-          (header2[0] = encodedTag),
-          (header2[1] = content.length),
-          this._createEncoderBuffer([header2, content])
-        );
+        return (header2[0] = encodedTag), (header2[1] = content.length), this._createEncoderBuffer([header2, content]);
       }
       let lenOctets = 1;
       for (let i = content.length; i >= 256; i >>= 8) lenOctets++;
       let header = Buffer2.alloc(1 + 1 + lenOctets);
       (header[0] = encodedTag), (header[1] = 128 | lenOctets);
-      for (let i = 1 + lenOctets, j = content.length; j > 0; i--, j >>= 8)
-        header[i] = j & 255;
+      for (let i = 1 + lenOctets, j = content.length; j > 0; i--, j >>= 8) header[i] = j & 255;
       return this._createEncoderBuffer([header, content]);
     };
     DERNode.prototype._encodeStr = function (str, tag) {
-      if (tag === "bitstr")
-        return this._createEncoderBuffer([str.unused | 0, str.data]);
+      if (tag === "bitstr") return this._createEncoderBuffer([str.unused | 0, str.data]);
       if (tag === "bmpstr") {
         let buf = Buffer2.alloc(str.length * 2);
-        for (let i = 0; i < str.length; i++)
-          buf.writeUInt16BE(str.charCodeAt(i), i * 2);
+        for (let i = 0; i < str.length; i++) buf.writeUInt16BE(str.charCodeAt(i), i * 2);
         return this._createEncoderBuffer(buf);
       } else
         return tag === "numstr"
           ? this._isNumstr(str)
             ? this._createEncoderBuffer(str)
-            : this.reporter.error(
-                "Encoding of string type: numstr supports only digits and space",
-              )
+            : this.reporter.error("Encoding of string type: numstr supports only digits and space")
           : tag === "printstr"
           ? this._isPrintstr(str)
             ? this._createEncoderBuffer(str)
@@ -21262,18 +18186,12 @@ var require_der2 = __commonJS({
           ? this._createEncoderBuffer(str)
           : tag === "objDesc"
           ? this._createEncoderBuffer(str)
-          : this.reporter.error(
-              "Encoding of string type: " + tag + " unsupported",
-            );
+          : this.reporter.error("Encoding of string type: " + tag + " unsupported");
     };
     DERNode.prototype._encodeObjid = function (id, values, relative) {
       if (typeof id == "string") {
-        if (!values)
-          return this.reporter.error(
-            "string objid given, but no values map found",
-          );
-        if (!values.hasOwnProperty(id))
-          return this.reporter.error("objid not found in values map");
+        if (!values) return this.reporter.error("string objid given, but no values map found");
+        if (!values.hasOwnProperty(id)) return this.reporter.error("objid not found in values map");
         id = values[id].split(/[\s.]+/g);
         for (let i = 0; i < id.length; i++) id[i] |= 0;
       } else if (Array.isArray(id)) {
@@ -21281,13 +18199,9 @@ var require_der2 = __commonJS({
         for (let i = 0; i < id.length; i++) id[i] |= 0;
       }
       if (!Array.isArray(id))
-        return this.reporter.error(
-          "objid() should be either array or string, got: " +
-            JSON.stringify(id),
-        );
+        return this.reporter.error("objid() should be either array or string, got: " + JSON.stringify(id));
       if (!relative) {
-        if (id[1] >= 40)
-          return this.reporter.error("Second objid identifier OOB");
+        if (id[1] >= 40) return this.reporter.error("Second objid identifier OOB");
         id.splice(0, 2, id[0] * 40 + id[1]);
       }
       let size = 0;
@@ -21299,8 +18213,7 @@ var require_der2 = __commonJS({
         offset = objid.length - 1;
       for (let i = id.length - 1; i >= 0; i--) {
         let ident = id[i];
-        for (objid[offset--] = ident & 127; (ident >>= 7) > 0; )
-          objid[offset--] = 128 | (ident & 127);
+        for (objid[offset--] = ident & 127; (ident >>= 7) > 0; ) objid[offset--] = 128 | (ident & 127);
       }
       return this._createEncoderBuffer(objid);
     };
@@ -21331,9 +18244,7 @@ var require_der2 = __commonJS({
               two(date.getUTCSeconds()),
               "Z",
             ].join(""))
-          : this.reporter.error(
-              "Encoding " + tag + " time is not supported yet",
-            ),
+          : this.reporter.error("Encoding " + tag + " time is not supported yet"),
         this._encodeStr(str, "octstr")
       );
     };
@@ -21342,51 +18253,34 @@ var require_der2 = __commonJS({
     };
     DERNode.prototype._encodeInt = function (num, values) {
       if (typeof num == "string") {
-        if (!values)
-          return this.reporter.error(
-            "String int or enum given, but no values map",
-          );
+        if (!values) return this.reporter.error("String int or enum given, but no values map");
         if (!values.hasOwnProperty(num))
-          return this.reporter.error(
-            "Values map doesn't contain: " + JSON.stringify(num),
-          );
+          return this.reporter.error("Values map doesn't contain: " + JSON.stringify(num));
         num = values[num];
       }
       if (typeof num != "number" && !Buffer2.isBuffer(num)) {
         let numArray = num.toArray();
-        !num.sign && numArray[0] & 128 && numArray.unshift(0),
-          (num = Buffer2.from(numArray));
+        !num.sign && numArray[0] & 128 && numArray.unshift(0), (num = Buffer2.from(numArray));
       }
       if (Buffer2.isBuffer(num)) {
         let size2 = num.length;
         num.length === 0 && size2++;
         let out2 = Buffer2.alloc(size2);
-        return (
-          num.copy(out2),
-          num.length === 0 && (out2[0] = 0),
-          this._createEncoderBuffer(out2)
-        );
+        return num.copy(out2), num.length === 0 && (out2[0] = 0), this._createEncoderBuffer(out2);
       }
       if (num < 128) return this._createEncoderBuffer(num);
       if (num < 256) return this._createEncoderBuffer([0, num]);
       let size = 1;
       for (let i = num; i >= 256; i >>= 8) size++;
       let out = new Array(size);
-      for (let i = out.length - 1; i >= 0; i--)
-        (out[i] = num & 255), (num >>= 8);
-      return (
-        out[0] & 128 && out.unshift(0),
-        this._createEncoderBuffer(Buffer2.from(out))
-      );
+      for (let i = out.length - 1; i >= 0; i--) (out[i] = num & 255), (num >>= 8);
+      return out[0] & 128 && out.unshift(0), this._createEncoderBuffer(Buffer2.from(out));
     };
     DERNode.prototype._encodeBool = function (value) {
       return this._createEncoderBuffer(value ? 255 : 0);
     };
     DERNode.prototype._use = function (entity, obj) {
-      return (
-        typeof entity == "function" && (entity = entity(obj)),
-        entity._getEncoder("der").tree
-      );
+      return typeof entity == "function" && (entity = entity(obj)), entity._getEncoder("der").tree;
     };
     DERNode.prototype._skipDefault = function (dataBuffer, reporter, parent) {
       let state = this._baseState,
@@ -21395,32 +18289,22 @@ var require_der2 = __commonJS({
       let data = dataBuffer.join();
       if (
         (state.defaultBuffer === void 0 &&
-          (state.defaultBuffer = this._encodeValue(
-            state.default,
-            reporter,
-            parent,
-          ).join()),
+          (state.defaultBuffer = this._encodeValue(state.default, reporter, parent).join()),
         data.length !== state.defaultBuffer.length)
       )
         return !1;
-      for (i = 0; i < data.length; i++)
-        if (data[i] !== state.defaultBuffer[i]) return !1;
+      for (i = 0; i < data.length; i++) if (data[i] !== state.defaultBuffer[i]) return !1;
       return !0;
     };
     function encodeTag(tag, primitive, cls, reporter) {
       let res;
-      if (
-        (tag === "seqof" ? (tag = "seq") : tag === "setof" && (tag = "set"),
-        der.tagByName.hasOwnProperty(tag))
-      )
+      if ((tag === "seqof" ? (tag = "seq") : tag === "setof" && (tag = "set"), der.tagByName.hasOwnProperty(tag)))
         res = der.tagByName[tag];
       else if (typeof tag == "number" && (tag | 0) === tag) res = tag;
       else return reporter.error("Unknown tag: " + tag);
       return res >= 31
         ? reporter.error("Multi-octet tag encoding unsupported")
-        : (primitive || (res |= 32),
-          (res |= der.tagClassByName[cls || "universal"] << 6),
-          res);
+        : (primitive || (res |= 32), (res |= der.tagClassByName[cls || "universal"] << 6), res);
     }
   },
 });
@@ -21478,8 +18362,7 @@ var require_der3 = __commonJS({
     module.exports = DERDecoder;
     DERDecoder.prototype.decode = function (data, options) {
       return (
-        DecoderBuffer.isDecoderBuffer(data) ||
-          (data = new DecoderBuffer(data, options)),
+        DecoderBuffer.isDecoderBuffer(data) || (data = new DecoderBuffer(data, options)),
         this.tree._decode(data, options)
       );
     };
@@ -21494,37 +18377,18 @@ var require_der3 = __commonJS({
       return buffer.isError(decodedTag)
         ? decodedTag
         : (buffer.restore(state),
-          decodedTag.tag === tag ||
-            decodedTag.tagStr === tag ||
-            decodedTag.tagStr + "of" === tag ||
-            any);
+          decodedTag.tag === tag || decodedTag.tagStr === tag || decodedTag.tagStr + "of" === tag || any);
     };
     DERNode.prototype._decodeTag = function (buffer, tag, any) {
-      let decodedTag = derDecodeTag(
-        buffer,
-        'Failed to decode tag of "' + tag + '"',
-      );
+      let decodedTag = derDecodeTag(buffer, 'Failed to decode tag of "' + tag + '"');
       if (buffer.isError(decodedTag)) return decodedTag;
-      let len = derDecodeLen(
-        buffer,
-        decodedTag.primitive,
-        'Failed to get length of "' + tag + '"',
-      );
+      let len = derDecodeLen(buffer, decodedTag.primitive, 'Failed to get length of "' + tag + '"');
       if (buffer.isError(len)) return len;
-      if (
-        !any &&
-        decodedTag.tag !== tag &&
-        decodedTag.tagStr !== tag &&
-        decodedTag.tagStr + "of" !== tag
-      )
+      if (!any && decodedTag.tag !== tag && decodedTag.tagStr !== tag && decodedTag.tagStr + "of" !== tag)
         return buffer.error('Failed to match tag: "' + tag + '"');
-      if (decodedTag.primitive || len !== null)
-        return buffer.skip(len, 'Failed to match body of: "' + tag + '"');
+      if (decodedTag.primitive || len !== null) return buffer.skip(len, 'Failed to match body of: "' + tag + '"');
       let state = buffer.save(),
-        res = this._skipUntilEnd(
-          buffer,
-          'Failed to skip indefinite length body: "' + this.tag + '"',
-        );
+        res = this._skipUntilEnd(buffer, 'Failed to skip indefinite length body: "' + this.tag + '"');
       return buffer.isError(res)
         ? res
         : ((len = buffer.offset - state.offset),
@@ -21539,9 +18403,7 @@ var require_der3 = __commonJS({
         if (buffer.isError(len)) return len;
         let res;
         if (
-          (tag.primitive || len !== null
-            ? (res = buffer.skip(len))
-            : (res = this._skipUntilEnd(buffer, fail)),
+          (tag.primitive || len !== null ? (res = buffer.skip(len)) : (res = this._skipUntilEnd(buffer, fail)),
           buffer.isError(res))
         )
           return res;
@@ -21565,21 +18427,13 @@ var require_der3 = __commonJS({
         return buffer.isError(unused) ? unused : { unused, data: buffer.raw() };
       } else if (tag === "bmpstr") {
         let raw = buffer.raw();
-        if (raw.length % 2 === 1)
-          return buffer.error(
-            "Decoding of string type: bmpstr length mismatch",
-          );
+        if (raw.length % 2 === 1) return buffer.error("Decoding of string type: bmpstr length mismatch");
         let str = "";
-        for (let i = 0; i < raw.length / 2; i++)
-          str += String.fromCharCode(raw.readUInt16BE(i * 2));
+        for (let i = 0; i < raw.length / 2; i++) str += String.fromCharCode(raw.readUInt16BE(i * 2));
         return str;
       } else if (tag === "numstr") {
         let numstr = buffer.raw().toString("ascii");
-        return this._isNumstr(numstr)
-          ? numstr
-          : buffer.error(
-              "Decoding of string type: numstr unsupported characters",
-            );
+        return this._isNumstr(numstr) ? numstr : buffer.error("Decoding of string type: numstr unsupported characters");
       } else {
         if (tag === "octstr") return buffer.raw();
         if (tag === "objDesc") return buffer.raw();
@@ -21587,9 +18441,7 @@ var require_der3 = __commonJS({
           let printstr = buffer.raw().toString("ascii");
           return this._isPrintstr(printstr)
             ? printstr
-            : buffer.error(
-                "Decoding of string type: printstr unsupported characters",
-              );
+            : buffer.error("Decoding of string type: printstr unsupported characters");
         } else
           return /str$/.test(tag)
             ? buffer.raw().toString()
@@ -21609,15 +18461,9 @@ var require_der3 = __commonJS({
       subident & 128 && identifiers.push(ident);
       let first = (identifiers[0] / 40) | 0,
         second = identifiers[0] % 40;
-      if (
-        (relative
-          ? (result = identifiers)
-          : (result = [first, second].concat(identifiers.slice(1))),
-        values)
-      ) {
+      if ((relative ? (result = identifiers) : (result = [first, second].concat(identifiers.slice(1))), values)) {
         let tmp = values[result.join(" ")];
-        tmp === void 0 && (tmp = values[result.join(".")]),
-          tmp !== void 0 && (result = tmp);
+        tmp === void 0 && (tmp = values[result.join(".")]), tmp !== void 0 && (result = tmp);
       }
       return result;
     };
@@ -21644,8 +18490,7 @@ var require_der3 = __commonJS({
           (min = str.slice(8, 10) | 0),
           (sec = str.slice(10, 12) | 0),
           year < 70 ? (year = 2e3 + year) : (year = 1900 + year);
-      else
-        return buffer.error("Decoding " + tag + " time is not supported yet");
+      else return buffer.error("Decoding " + tag + " time is not supported yet");
       return Date.UTC(year, mon - 1, day, hour, min, sec, 0);
     };
     DERNode.prototype._decodeNull = function () {
@@ -21661,10 +18506,7 @@ var require_der3 = __commonJS({
       return values && (res = values[res.toString(10)] || res), res;
     };
     DERNode.prototype._use = function (entity, obj) {
-      return (
-        typeof entity == "function" && (entity = entity(obj)),
-        entity._getDecoder("der").tree
-      );
+      return typeof entity == "function" && (entity = entity(obj)), entity._getDecoder("der").tree;
     };
     function derDecodeTag(buf, fail) {
       let tag = buf.readUInt8(fail);
@@ -21735,8 +18577,7 @@ var require_pem2 = __commonJS({
             break;
           }
       }
-      if (start === -1 || end === -1)
-        throw new Error("PEM section not found for: " + label);
+      if (start === -1 || end === -1) throw new Error("PEM section not found for: " + label);
       let base64 = lines.slice(start + 1, end).join("");
       base64.replace(/[^a-z0-9+/=]+/gi, "");
       let input = Buffer2.from(base64, "base64");
@@ -21767,10 +18608,7 @@ var require_api = __commonJS({
       return new Entity(name, body);
     };
     function Entity(name, body) {
-      (this.name = name),
-        (this.body = body),
-        (this.decoders = {}),
-        (this.encoders = {});
+      (this.name = name), (this.body = body), (this.decoders = {}), (this.encoders = {});
     }
     Entity.prototype._createNamed = function (Base) {
       let name = this.name;
@@ -21788,8 +18626,7 @@ var require_api = __commonJS({
     Entity.prototype._getDecoder = function (enc) {
       return (
         (enc = enc || "der"),
-        this.decoders.hasOwnProperty(enc) ||
-          (this.decoders[enc] = this._createNamed(decoders[enc])),
+        this.decoders.hasOwnProperty(enc) || (this.decoders[enc] = this._createNamed(decoders[enc])),
         this.decoders[enc]
       );
     };
@@ -21799,8 +18636,7 @@ var require_api = __commonJS({
     Entity.prototype._getEncoder = function (enc) {
       return (
         (enc = enc || "der"),
-        this.encoders.hasOwnProperty(enc) ||
-          (this.encoders[enc] = this._createNamed(encoders[enc])),
+        this.encoders.hasOwnProperty(enc) || (this.encoders[enc] = this._createNamed(encoders[enc])),
         this.encoders[enc]
       );
     };
@@ -21878,17 +18714,11 @@ var require_certificate = __commonJS({
         );
       }),
       SubjectPublicKeyInfo = asn.define("SubjectPublicKeyInfo", function () {
-        this.seq().obj(
-          this.key("algorithm").use(AlgorithmIdentifier),
-          this.key("subjectPublicKey").bitstr(),
-        );
+        this.seq().obj(this.key("algorithm").use(AlgorithmIdentifier), this.key("subjectPublicKey").bitstr());
       }),
-      RelativeDistinguishedName = asn.define(
-        "RelativeDistinguishedName",
-        function () {
-          this.setof(AttributeTypeValue);
-        },
-      ),
+      RelativeDistinguishedName = asn.define("RelativeDistinguishedName", function () {
+        this.setof(AttributeTypeValue);
+      }),
       RDNSequence = asn.define("RDNSequence", function () {
         this.seqof(RelativeDistinguishedName);
       }),
@@ -21898,17 +18728,10 @@ var require_certificate = __commonJS({
         });
       }),
       Validity = asn.define("Validity", function () {
-        this.seq().obj(
-          this.key("notBefore").use(Time),
-          this.key("notAfter").use(Time),
-        );
+        this.seq().obj(this.key("notBefore").use(Time), this.key("notAfter").use(Time));
       }),
       Extension = asn.define("Extension", function () {
-        this.seq().obj(
-          this.key("extnID").objid(),
-          this.key("critical").bool().def(!1),
-          this.key("extnValue").octstr(),
-        );
+        this.seq().obj(this.key("extnID").objid(), this.key("critical").bool().def(!1), this.key("extnValue").octstr());
       }),
       TBSCertificate = asn.define("TBSCertificate", function () {
         this.seq().obj(
@@ -21956,17 +18779,11 @@ var require_asn12 = __commonJS({
     });
     exports.RSAPrivateKey = RSAPrivateKey;
     var RSAPublicKey = asn1.define("RSAPublicKey", function () {
-      this.seq().obj(
-        this.key("modulus").int(),
-        this.key("publicExponent").int(),
-      );
+      this.seq().obj(this.key("modulus").int(), this.key("publicExponent").int());
     });
     exports.RSAPublicKey = RSAPublicKey;
     var PublicKey = asn1.define("SubjectPublicKeyInfo", function () {
-      this.seq().obj(
-        this.key("algorithm").use(AlgorithmIdentifier),
-        this.key("subjectPublicKey").bitstr(),
-      );
+      this.seq().obj(this.key("algorithm").use(AlgorithmIdentifier), this.key("subjectPublicKey").bitstr());
     });
     exports.PublicKey = PublicKey;
     var AlgorithmIdentifier = asn1.define("AlgorithmIdentifier", function () {
@@ -21974,10 +18791,7 @@ var require_asn12 = __commonJS({
           this.key("algorithm").objid(),
           this.key("none").null_().optional(),
           this.key("curve").objid().optional(),
-          this.key("params")
-            .seq()
-            .obj(this.key("p").int(), this.key("q").int(), this.key("g").int())
-            .optional(),
+          this.key("params").seq().obj(this.key("p").int(), this.key("q").int(), this.key("g").int()).optional(),
         );
       }),
       PrivateKeyInfo = asn1.define("PrivateKeyInfo", function () {
@@ -21988,37 +18802,27 @@ var require_asn12 = __commonJS({
         );
       });
     exports.PrivateKey = PrivateKeyInfo;
-    var EncryptedPrivateKeyInfo = asn1.define(
-      "EncryptedPrivateKeyInfo",
-      function () {
-        this.seq().obj(
-          this.key("algorithm")
-            .seq()
-            .obj(
-              this.key("id").objid(),
-              this.key("decrypt")
-                .seq()
-                .obj(
-                  this.key("kde")
-                    .seq()
-                    .obj(
-                      this.key("id").objid(),
-                      this.key("kdeparams")
-                        .seq()
-                        .obj(
-                          this.key("salt").octstr(),
-                          this.key("iters").int(),
-                        ),
-                    ),
-                  this.key("cipher")
-                    .seq()
-                    .obj(this.key("algo").objid(), this.key("iv").octstr()),
-                ),
-            ),
-          this.key("subjectPrivateKey").octstr(),
-        );
-      },
-    );
+    var EncryptedPrivateKeyInfo = asn1.define("EncryptedPrivateKeyInfo", function () {
+      this.seq().obj(
+        this.key("algorithm")
+          .seq()
+          .obj(
+            this.key("id").objid(),
+            this.key("decrypt")
+              .seq()
+              .obj(
+                this.key("kde")
+                  .seq()
+                  .obj(
+                    this.key("id").objid(),
+                    this.key("kdeparams").seq().obj(this.key("salt").octstr(), this.key("iters").int()),
+                  ),
+                this.key("cipher").seq().obj(this.key("algo").objid(), this.key("iv").octstr()),
+              ),
+          ),
+        this.key("subjectPrivateKey").octstr(),
+      );
+    });
     exports.EncryptedPrivateKey = EncryptedPrivateKeyInfo;
     var DSAPrivateKey = asn1.define("DSAPrivateKey", function () {
       this.seq().obj(
@@ -22080,8 +18884,7 @@ var require_fixProc = __commonJS({
     var findProc =
         /Proc-Type: 4,ENCRYPTED[\n\r]+DEK-Info: AES-((?:128)|(?:192)|(?:256))-CBC,([0-9A-H]+)[\n\r]+([0-9A-z\n\r+/=]+)[\n\r]+/m,
       startRegex = /^-----BEGIN ((?:.*? KEY)|CERTIFICATE)-----/m,
-      fullRegex =
-        /^-----BEGIN ((?:.*? KEY)|CERTIFICATE)-----([0-9A-z\n\r+/=]+)-----END \1-----$/m,
+      fullRegex = /^-----BEGIN ((?:.*? KEY)|CERTIFICATE)-----([0-9A-z\n\r+/=]+)-----END \1-----$/m,
       evp = require_evp_bytestokey(),
       ciphers = require_browser5(),
       Buffer2 = require_safe_buffer().Buffer;
@@ -22096,9 +18899,7 @@ var require_fixProc = __commonJS({
           cipherKey = evp(password, iv.slice(0, 8), parseInt(match[1], 10)).key,
           out = [],
           cipher = ciphers.createDecipheriv(suite, cipherKey, iv);
-        out.push(cipher.update(cipherText)),
-          out.push(cipher.final()),
-          (decrypted = Buffer2.concat(out));
+        out.push(cipher.update(cipherText)), out.push(cipher.final()), (decrypted = Buffer2.concat(out));
       } else {
         var match2 = key.match(fullRegex);
         decrypted = Buffer2.from(match2[2].replace(/[\r\n]/g, ""), "base64");
@@ -22124,9 +18925,7 @@ var require_parse_asn1 = __commonJS({
     module.exports = parseKeys;
     function parseKeys(buffer) {
       var password;
-      typeof buffer == "object" &&
-        !Buffer2.isBuffer(buffer) &&
-        ((password = buffer.passphrase), (buffer = buffer.key)),
+      typeof buffer == "object" && !Buffer2.isBuffer(buffer) && ((password = buffer.passphrase), (buffer = buffer.key)),
         typeof buffer == "string" && (buffer = Buffer2.from(buffer));
       var stripped = fixProc(buffer, password),
         type = stripped.tag,
@@ -22135,8 +18934,7 @@ var require_parse_asn1 = __commonJS({
         ndata;
       switch (type) {
         case "CERTIFICATE":
-          ndata = asn1.certificate.decode(data, "der").tbsCertificate
-            .subjectPublicKeyInfo;
+          ndata = asn1.certificate.decode(data, "der").tbsCertificate.subjectPublicKeyInfo;
         case "PUBLIC KEY":
           switch (
             (ndata || (ndata = asn1.PublicKey.decode(data, "der")),
@@ -22144,10 +18942,7 @@ var require_parse_asn1 = __commonJS({
             subtype)
           ) {
             case "1.2.840.113549.1.1.1":
-              return asn1.RSAPublicKey.decode(
-                ndata.subjectPublicKey.data,
-                "der",
-              );
+              return asn1.RSAPublicKey.decode(ndata.subjectPublicKey.data, "der");
             case "1.2.840.10045.2.1":
               return (
                 (ndata.subjectPrivateKey = ndata.subjectPublicKey),
@@ -22158,10 +18953,7 @@ var require_parse_asn1 = __commonJS({
               );
             case "1.2.840.10040.4.1":
               return (
-                (ndata.algorithm.params.pub_key = asn1.DSAparam.decode(
-                  ndata.subjectPublicKey.data,
-                  "der",
-                )),
+                (ndata.algorithm.params.pub_key = asn1.DSAparam.decode(ndata.subjectPublicKey.data, "der")),
                 {
                   type: "dsa",
                   data: ndata.algorithm.params,
@@ -22171,30 +18963,21 @@ var require_parse_asn1 = __commonJS({
               throw new Error("unknown key id " + subtype);
           }
         case "ENCRYPTED PRIVATE KEY":
-          (data = asn1.EncryptedPrivateKey.decode(data, "der")),
-            (data = decrypt(data, password));
+          (data = asn1.EncryptedPrivateKey.decode(data, "der")), (data = decrypt(data, password));
         case "PRIVATE KEY":
           switch (
-            ((ndata = asn1.PrivateKey.decode(data, "der")),
-            (subtype = ndata.algorithm.algorithm.join(".")),
-            subtype)
+            ((ndata = asn1.PrivateKey.decode(data, "der")), (subtype = ndata.algorithm.algorithm.join(".")), subtype)
           ) {
             case "1.2.840.113549.1.1.1":
               return asn1.RSAPrivateKey.decode(ndata.subjectPrivateKey, "der");
             case "1.2.840.10045.2.1":
               return {
                 curve: ndata.algorithm.curve,
-                privateKey: asn1.ECPrivateKey.decode(
-                  ndata.subjectPrivateKey,
-                  "der",
-                ).privateKey,
+                privateKey: asn1.ECPrivateKey.decode(ndata.subjectPrivateKey, "der").privateKey,
               };
             case "1.2.840.10040.4.1":
               return (
-                (ndata.algorithm.params.priv_key = asn1.DSAparam.decode(
-                  ndata.subjectPrivateKey,
-                  "der",
-                )),
+                (ndata.algorithm.params.priv_key = asn1.DSAparam.decode(ndata.subjectPrivateKey, "der")),
                 {
                   type: "dsa",
                   params: ndata.algorithm.params,
@@ -22227,10 +19010,7 @@ var require_parse_asn1 = __commonJS({
     parseKeys.signature = asn1.signature;
     function decrypt(data, password) {
       var salt = data.algorithm.decrypt.kde.kdeparams.salt,
-        iters = parseInt(
-          data.algorithm.decrypt.kde.kdeparams.iters.toString(),
-          10,
-        ),
+        iters = parseInt(data.algorithm.decrypt.kde.kdeparams.iters.toString(), 10),
         algo = aesid[data.algorithm.decrypt.cipher.algo.join(".")],
         iv = data.algorithm.decrypt.cipher.iv,
         cipherText = data.subjectPrivateKey,
@@ -22238,11 +19018,7 @@ var require_parse_asn1 = __commonJS({
         key = compat.pbkdf2Sync(password, salt, iters, keylen, "sha1"),
         cipher = ciphers.createDecipheriv(algo, key, iv),
         out = [];
-      return (
-        out.push(cipher.update(cipherText)),
-        out.push(cipher.final()),
-        Buffer2.concat(out)
-      );
+      return out.push(cipher.update(cipherText)), out.push(cipher.final()), Buffer2.concat(out);
     }
   },
 });
@@ -22274,21 +19050,14 @@ var require_sign = __commonJS({
     function sign(hash, key, hashType, signType, tag) {
       var priv = parseKeys(key);
       if (priv.curve) {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa")
-          throw new Error("wrong private key type");
+        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
         return ecSign(hash, priv);
       } else if (priv.type === "dsa") {
         if (signType !== "dsa") throw new Error("wrong private key type");
         return dsaSign(hash, priv, hashType);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa")
-        throw new Error("wrong private key type");
+      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
       hash = Buffer2.concat([tag, hash]);
-      for (
-        var len = priv.modulus.byteLength(), pad = [0, 1];
-        hash.length + pad.length + 1 < len;
-
-      )
-        pad.push(255);
+      for (var len = priv.modulus.byteLength(), pad = [0, 1]; hash.length + pad.length + 1 < len; ) pad.push(255);
       pad.push(0);
       for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
       var out = crt(pad, priv);
@@ -22326,10 +19095,7 @@ var require_sign = __commonJS({
       return toDER(r, s);
     }
     function toDER(r, s) {
-      (r = r.toArray()),
-        (s = s.toArray()),
-        r[0] & 128 && (r = [0].concat(r)),
-        s[0] & 128 && (s = [0].concat(s));
+      (r = r.toArray()), (s = s.toArray()), r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s));
       var total = r.length + s.length + 4,
         res = [48, total, 2, r.length];
       return (res = res.concat(r, [2, s.length], s)), Buffer2.from(res);
@@ -22380,8 +19146,7 @@ var require_sign = __commonJS({
       var t, k;
       do {
         for (t = Buffer2.alloc(0); t.length * 8 < q.bitLength(); )
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest()),
-            (t = Buffer2.concat([t, kv.v]));
+          (kv.v = createHmac(algo, kv.k).update(kv.v).digest()), (t = Buffer2.concat([t, kv.v]));
         (k = bits2int(t, q)),
           (kv.k = createHmac(algo, kv.k)
             .update(kv.v)
@@ -22411,20 +19176,14 @@ var require_verify = __commonJS({
     function verify(sig, hash, key, signType, tag) {
       var pub = parseKeys(key);
       if (pub.type === "ec") {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa")
-          throw new Error("wrong public key type");
+        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
         return ecVerify(sig, hash, pub);
       } else if (pub.type === "dsa") {
         if (signType !== "dsa") throw new Error("wrong public key type");
         return dsaVerify(sig, hash, pub);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa")
-        throw new Error("wrong public key type");
+      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
       hash = Buffer2.concat([tag, hash]);
-      for (
-        var len = pub.modulus.byteLength(), pad = [1], padNum = 0;
-        hash.length + pad.length + 2 < len;
-
-      )
+      for (var len = pub.modulus.byteLength(), pad = [1], padNum = 0; hash.length + pad.length + 2 < len; )
         pad.push(255), padNum++;
       pad.push(0);
       for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
@@ -22434,20 +19193,13 @@ var require_verify = __commonJS({
         (sig = sig.redPow(new BN(pub.publicExponent))),
         (sig = Buffer2.from(sig.fromRed().toArray()));
       var out = padNum < 8 ? 1 : 0;
-      for (
-        len = Math.min(sig.length, pad.length),
-          sig.length !== pad.length && (out = 1),
-          i = -1;
-        ++i < len;
-
-      )
+      for (len = Math.min(sig.length, pad.length), sig.length !== pad.length && (out = 1), i = -1; ++i < len; )
         out |= sig[i] ^ pad[i];
       return out === 0;
     }
     function ecVerify(sig, hash, pub) {
       var curveId = curves[pub.data.algorithm.curve.join(".")];
-      if (!curveId)
-        throw new Error("unknown curve " + pub.data.algorithm.curve.join("."));
+      if (!curveId) throw new Error("unknown curve " + pub.data.algorithm.curve.join("."));
       var curve = new EC(curveId),
         pubkey = pub.data.subjectPrivateKey.data;
       return curve.verify(hash, sig, pubkey);
@@ -22491,8 +19243,7 @@ var require_browser8 = __commonJS({
       verify = require_verify(),
       algorithms = require_algorithms();
     Object.keys(algorithms).forEach(function (key) {
-      (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")),
-        (algorithms[key.toLowerCase()] = algorithms[key]);
+      (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
     });
     function Sign(algorithm) {
       stream.Writable.call(this);
@@ -22508,11 +19259,7 @@ var require_browser8 = __commonJS({
       this._hash.update(data), done();
     };
     Sign.prototype.update = function (data, enc) {
-      return (
-        typeof data == "string" && (data = Buffer2.from(data, enc)),
-        this._hash.update(data),
-        this
-      );
+      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
     };
     Sign.prototype.sign = function (key, enc) {
       this.end();
@@ -22524,20 +19271,14 @@ var require_browser8 = __commonJS({
       stream.Writable.call(this);
       var data = algorithms[algorithm];
       if (!data) throw new Error("Unknown message digest");
-      (this._hash = createHash(data.hash)),
-        (this._tag = data.id),
-        (this._signType = data.sign);
+      (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
     }
     inherits(Verify, stream.Writable);
     Verify.prototype._write = function (data, _, done) {
       this._hash.update(data), done();
     };
     Verify.prototype.update = function (data, enc) {
-      return (
-        typeof data == "string" && (data = Buffer2.from(data, enc)),
-        this._hash.update(data),
-        this
-      );
+      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
     };
     Verify.prototype.verify = function (key, sig, enc) {
       typeof sig == "string" && (sig = Buffer2.from(sig, enc)), this.end();
@@ -22584,9 +19325,7 @@ var require_bn6 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2;
       try {
         typeof window < "u" && typeof window.Buffer < "u"
@@ -22608,10 +19347,8 @@ var require_bn6 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -22621,33 +19358,23 @@ var require_bn6 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -22670,23 +19397,14 @@ var require_bn6 = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -22695,44 +19413,26 @@ var require_bn6 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -22745,30 +19445,18 @@ var require_bn6 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -22779,15 +19467,11 @@ var require_bn6 = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -22821,15 +19505,13 @@ var require_bn6 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -22841,18 +19523,11 @@ var require_bn6 = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -22862,13 +19537,9 @@ var require_bn6 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -22880,8 +19551,7 @@ var require_bn6 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -22889,10 +19559,7 @@ var require_bn6 = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -22900,10 +19567,7 @@ var require_bn6 = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -22912,13 +19576,11 @@ var require_bn6 = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -22956,11 +19618,7 @@ var require_bn6 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -22979,14 +19637,10 @@ var require_bn6 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -22999,50 +19653,37 @@ var require_bn6 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -23050,27 +19691,18 @@ var require_bn6 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -23090,49 +19722,25 @@ var require_bn6 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -23143,34 +19751,17 @@ var require_bn6 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -23203,9 +19794,7 @@ var require_bn6 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -23760,15 +20349,12 @@ var require_bn6 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -23810,32 +20396,22 @@ var require_bn6 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -23852,9 +20428,7 @@ var require_bn6 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -23877,12 +20451,8 @@ var require_bn6 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -23932,17 +20502,11 @@ var require_bn6 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -23952,10 +20516,7 @@ var require_bn6 = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -23971,14 +20532,8 @@ var require_bn6 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -23997,8 +20552,7 @@ var require_bn6 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -24020,20 +20574,15 @@ var require_bn6 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -24066,17 +20615,8 @@ var require_bn6 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -24093,32 +20633,20 @@ var require_bn6 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -24152,14 +20680,10 @@ var require_bn6 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -24169,33 +20693,19 @@ var require_bn6 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -24218,9 +20728,7 @@ var require_bn6 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -24234,9 +20742,7 @@ var require_bn6 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -24287,11 +20793,7 @@ var require_bn6 = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -24311,40 +20813,18 @@ var require_bn6 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -24357,35 +20837,15 @@ var require_bn6 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -24393,8 +20853,7 @@ var require_bn6 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -24424,14 +20883,10 @@ var require_bn6 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -24446,8 +20901,7 @@ var require_bn6 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -24513,52 +20967,28 @@ var require_bn6 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -24575,46 +21005,22 @@ var require_bn6 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -24636,11 +21042,7 @@ var require_bn6 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -24661,78 +21063,45 @@ var require_bn6 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -24757,26 +21126,17 @@ var require_bn6 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -24823,29 +21183,19 @@ var require_bn6 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -24854,9 +21204,7 @@ var require_bn6 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -24872,10 +21220,7 @@ var require_bn6 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -24883,9 +21228,7 @@ var require_bn6 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -24922,38 +21265,23 @@ var require_bn6 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -25017,13 +21345,10 @@ var require_browser9 = __commonJS({
         (this.keys = void 0);
     }
     ECDH.prototype.generateKeys = function (enc, format) {
-      return (
-        (this.keys = this.curve.genKeyPair()), this.getPublicKey(enc, format)
-      );
+      return (this.keys = this.curve.genKeyPair()), this.getPublicKey(enc, format);
     };
     ECDH.prototype.computeSecret = function (other, inenc, enc) {
-      (inenc = inenc || "utf8"),
-        Buffer.isBuffer(other) || (other = new Buffer(other, inenc));
+      (inenc = inenc || "utf8"), Buffer.isBuffer(other) || (other = new Buffer(other, inenc));
       var otherPub = this.curve.keyFromPublic(other).getPublic(),
         out = otherPub.mul(this.keys.getPrivate()).getX();
       return formatReturnValue(out, enc, this.curveType.byteLength);
@@ -25031,9 +21356,7 @@ var require_browser9 = __commonJS({
     ECDH.prototype.getPublicKey = function (enc, format) {
       var key = this.keys.getPublic(format === "compressed", !0);
       return (
-        format === "hybrid" &&
-          (key[key.length - 1] % 2 ? (key[0] = 7) : (key[0] = 6)),
-        formatReturnValue(key, enc)
+        format === "hybrid" && (key[key.length - 1] % 2 ? (key[0] = 7) : (key[0] = 6)), formatReturnValue(key, enc)
       );
     };
     ECDH.prototype.getPrivateKey = function (enc) {
@@ -25041,22 +21364,13 @@ var require_browser9 = __commonJS({
     };
     ECDH.prototype.setPublicKey = function (pub, enc) {
       return (
-        (enc = enc || "utf8"),
-        Buffer.isBuffer(pub) || (pub = new Buffer(pub, enc)),
-        this.keys._importPublic(pub),
-        this
+        (enc = enc || "utf8"), Buffer.isBuffer(pub) || (pub = new Buffer(pub, enc)), this.keys._importPublic(pub), this
       );
     };
     ECDH.prototype.setPrivateKey = function (priv, enc) {
-      (enc = enc || "utf8"),
-        Buffer.isBuffer(priv) || (priv = new Buffer(priv, enc));
+      (enc = enc || "utf8"), Buffer.isBuffer(priv) || (priv = new Buffer(priv, enc));
       var _priv = new BN(priv);
-      return (
-        (_priv = _priv.toString(16)),
-        (this.keys = this.curve.genKeyPair()),
-        this.keys._importPrivate(_priv),
-        this
-      );
+      return (_priv = _priv.toString(16)), (this.keys = this.curve.genKeyPair()), this.keys._importPrivate(_priv), this;
     };
     function formatReturnValue(bn, enc, len) {
       Array.isArray(bn) || (bn = bn.toArray());
@@ -25077,11 +21391,7 @@ var require_mgf = __commonJS({
       Buffer2 = require_safe_buffer().Buffer;
     module.exports = function (seed, len) {
       for (var t = Buffer2.alloc(0), i = 0, c; t.length < len; )
-        (c = i2ops(i++)),
-          (t = Buffer2.concat([
-            t,
-            createHash("sha1").update(seed).update(c).digest(),
-          ]));
+        (c = i2ops(i++)), (t = Buffer2.concat([t, createHash("sha1").update(seed).update(c).digest()]));
       return t.slice(0, len);
     };
     function i2ops(c) {
@@ -25126,9 +21436,7 @@ var require_bn7 = __commonJS({
             ((base === "le" || base === "be") && ((endian = base), (base = 10)),
             this._init(number || 0, base || 10, endian || "be"));
       }
-      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN),
-        (BN.BN = BN),
-        (BN.wordSize = 26);
+      typeof module2 == "object" ? (module2.exports = BN) : (exports2.BN = BN), (BN.BN = BN), (BN.wordSize = 26);
       var Buffer2 = globalThis.Buffer;
       (BN.isBN = function (num) {
         return num instanceof BN
@@ -25145,10 +21453,8 @@ var require_bn7 = __commonJS({
           return left.cmp(right) < 0 ? left : right;
         }),
         (BN.prototype._init = function (number, base, endian) {
-          if (typeof number == "number")
-            return this._initNumber(number, base, endian);
-          if (typeof number == "object")
-            return this._initArray(number, base, endian);
+          if (typeof number == "number") return this._initNumber(number, base, endian);
+          if (typeof number == "object") return this._initArray(number, base, endian);
           base === "hex" && (base = 16),
             assert(base === (base | 0) && base >= 2 && base <= 36),
             (number = number.toString().replace(/\s+/g, ""));
@@ -25158,33 +21464,23 @@ var require_bn7 = __commonJS({
               (base === 16
                 ? this._parseHex(number, start, endian)
                 : (this._parseBase(number, base, start),
-                  endian === "le" &&
-                    this._initArray(this.toArray(), base, endian)));
+                  endian === "le" && this._initArray(this.toArray(), base, endian)));
         }),
         (BN.prototype._initNumber = function (number, base, endian) {
           number < 0 && ((this.negative = 1), (number = -number)),
             number < 67108864
               ? ((this.words = [number & 67108863]), (this.length = 1))
               : number < 4503599627370496
-              ? ((this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                ]),
-                (this.length = 2))
+              ? ((this.words = [number & 67108863, (number / 67108864) & 67108863]), (this.length = 2))
               : (assert(number < 9007199254740992),
-                (this.words = [
-                  number & 67108863,
-                  (number / 67108864) & 67108863,
-                  1,
-                ]),
+                (this.words = [number & 67108863, (number / 67108864) & 67108863, 1]),
                 (this.length = 3)),
             endian === "le" && this._initArray(this.toArray(), base, endian);
         }),
         (BN.prototype._initArray = function (number, base, endian) {
           if ((assert(typeof number.length == "number"), number.length <= 0))
             return (this.words = [0]), (this.length = 1), this;
-          (this.length = Math.ceil(number.length / 3)),
-            (this.words = new Array(this.length));
+          (this.length = Math.ceil(number.length / 3)), (this.words = new Array(this.length));
           for (var i = 0; i < this.length; i++) this.words[i] = 0;
           var j,
             w,
@@ -25207,23 +21503,14 @@ var require_bn7 = __commonJS({
         });
       function parseHex4Bits(string, index) {
         var c = string.charCodeAt(index);
-        return c >= 65 && c <= 70
-          ? c - 55
-          : c >= 97 && c <= 102
-          ? c - 87
-          : (c - 48) & 15;
+        return c >= 65 && c <= 70 ? c - 55 : c >= 97 && c <= 102 ? c - 87 : (c - 48) & 15;
       }
       function parseHexByte(string, lowerBound, index) {
         var r = parseHex4Bits(string, index);
-        return (
-          index - 1 >= lowerBound &&
-            (r |= parseHex4Bits(string, index - 1) << 4),
-          r
-        );
+        return index - 1 >= lowerBound && (r |= parseHex4Bits(string, index - 1) << 4), r;
       }
       BN.prototype._parseHex = function (number, start, endian) {
-        (this.length = Math.ceil((number.length - start) / 6)),
-          (this.words = new Array(this.length));
+        (this.length = Math.ceil((number.length - start) / 6)), (this.words = new Array(this.length));
         for (var i = 0; i < this.length; i++) this.words[i] = 0;
         var off = 0,
           j = 0,
@@ -25232,44 +21519,26 @@ var require_bn7 = __commonJS({
           for (i = number.length - 1; i >= start; i -= 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         else {
           var parseLength = number.length - start;
-          for (
-            i = parseLength % 2 === 0 ? start + 1 : start;
-            i < number.length;
-            i += 2
-          )
+          for (i = parseLength % 2 === 0 ? start + 1 : start; i < number.length; i += 2)
             (w = parseHexByte(number, start, i) << off),
               (this.words[j] |= w & 67108863),
-              off >= 18
-                ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26))
-                : (off += 8);
+              off >= 18 ? ((off -= 18), (j += 1), (this.words[j] |= w >>> 26)) : (off += 8);
         }
         this.strip();
       };
       function parseBase(str, start, end, mul) {
-        for (
-          var r = 0, len = Math.min(str.length, end), i = start;
-          i < len;
-          i++
-        ) {
+        for (var r = 0, len = Math.min(str.length, end), i = start; i < len; i++) {
           var c = str.charCodeAt(i) - 48;
-          (r *= mul),
-            c >= 49
-              ? (r += c - 49 + 10)
-              : c >= 17
-              ? (r += c - 17 + 10)
-              : (r += c);
+          (r *= mul), c >= 49 ? (r += c - 49 + 10) : c >= 17 ? (r += c - 17 + 10) : (r += c);
         }
         return r;
       }
       (BN.prototype._parseBase = function (number, base, start) {
         (this.words = [0]), (this.length = 1);
-        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base)
-          limbLen++;
+        for (var limbLen = 0, limbPow = 1; limbPow <= 67108863; limbPow *= base) limbLen++;
         limbLen--, (limbPow = (limbPow / base) | 0);
         for (
           var total = number.length - start,
@@ -25282,30 +21551,18 @@ var require_bn7 = __commonJS({
         )
           (word = parseBase(number, i, i + limbLen, base)),
             this.imuln(limbPow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+            this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         if (mod !== 0) {
           var pow = 1;
-          for (
-            word = parseBase(number, i, number.length, base), i = 0;
-            i < mod;
-            i++
-          )
-            pow *= base;
-          this.imuln(pow),
-            this.words[0] + word < 67108864
-              ? (this.words[0] += word)
-              : this._iaddn(word);
+          for (word = parseBase(number, i, number.length, base), i = 0; i < mod; i++) pow *= base;
+          this.imuln(pow), this.words[0] + word < 67108864 ? (this.words[0] += word) : this._iaddn(word);
         }
         this.strip();
       }),
         (BN.prototype.copy = function (dest) {
           dest.words = new Array(this.length);
           for (var i = 0; i < this.length; i++) dest.words[i] = this.words[i];
-          (dest.length = this.length),
-            (dest.negative = this.negative),
-            (dest.red = this.red);
+          (dest.length = this.length), (dest.negative = this.negative), (dest.red = this.red);
         }),
         (BN.prototype.clone = function () {
           var r = new BN(null);
@@ -25316,15 +21573,11 @@ var require_bn7 = __commonJS({
           return this;
         }),
         (BN.prototype.strip = function () {
-          for (; this.length > 1 && this.words[this.length - 1] === 0; )
-            this.length--;
+          for (; this.length > 1 && this.words[this.length - 1] === 0; ) this.length--;
           return this._normSign();
         }),
         (BN.prototype._normSign = function () {
-          return (
-            this.length === 1 && this.words[0] === 0 && (this.negative = 0),
-            this
-          );
+          return this.length === 1 && this.words[0] === 0 && (this.negative = 0), this;
         }),
         (BN.prototype.inspect = function () {
           return (this.red ? "<BN-R: " : "<BN: ") + this.toString(16) + ">";
@@ -25358,15 +21611,13 @@ var require_bn7 = __commonJS({
           "0000000000000000000000000",
         ],
         groupSizes = [
-          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5,
-          5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          0, 0, 25, 16, 12, 11, 10, 9, 8, 8, 7, 7, 7, 7, 6, 6, 6, 6, 6, 6, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5,
+          5, 5,
         ],
         groupBases = [
-          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607,
-          16777216, 43046721, 1e7, 19487171, 35831808, 62748517, 7529536,
-          11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101,
-          5153632, 6436343, 7962624, 9765625, 11881376, 14348907, 17210368,
-          20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
+          0, 0, 33554432, 43046721, 16777216, 48828125, 60466176, 40353607, 16777216, 43046721, 1e7, 19487171, 35831808,
+          62748517, 7529536, 11390625, 16777216, 24137569, 34012224, 47045881, 64e6, 4084101, 5153632, 6436343, 7962624,
+          9765625, 11881376, 14348907, 17210368, 20511149, 243e5, 28629151, 33554432, 39135393, 45435424, 52521875,
           60466176,
         ];
       (BN.prototype.toString = function (base, padding) {
@@ -25378,18 +21629,11 @@ var require_bn7 = __commonJS({
             var w = this.words[i],
               word = (((w << off) | carry) & 16777215).toString(16);
             (carry = (w >>> (24 - off)) & 16777215),
-              carry !== 0 || i !== this.length - 1
-                ? (out = zeros[6 - word.length] + word + out)
-                : (out = word + out),
+              carry !== 0 || i !== this.length - 1 ? (out = zeros[6 - word.length] + word + out) : (out = word + out),
               (off += 2),
               off >= 26 && ((off -= 26), i--);
           }
-          for (
-            carry !== 0 && (out = carry.toString(16) + out);
-            out.length % padding !== 0;
-
-          )
-            out = "0" + out;
+          for (carry !== 0 && (out = carry.toString(16) + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         if (base === (base | 0) && base >= 2 && base <= 36) {
@@ -25399,13 +21643,9 @@ var require_bn7 = __commonJS({
           var c = this.clone();
           for (c.negative = 0; !c.isZero(); ) {
             var r = c.modn(groupBase).toString(base);
-            (c = c.idivn(groupBase)),
-              c.isZero()
-                ? (out = r + out)
-                : (out = zeros[groupSize - r.length] + r + out);
+            (c = c.idivn(groupBase)), c.isZero() ? (out = r + out) : (out = zeros[groupSize - r.length] + r + out);
           }
-          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; )
-            out = "0" + out;
+          for (this.isZero() && (out = "0" + out); out.length % padding !== 0; ) out = "0" + out;
           return this.negative !== 0 && (out = "-" + out), out;
         }
         assert(!1, "Base should be between 2 and 36");
@@ -25417,8 +21657,7 @@ var require_bn7 = __commonJS({
               ? (ret += this.words[1] * 67108864)
               : this.length === 3 && this.words[2] === 1
               ? (ret += 4503599627370496 + this.words[1] * 67108864)
-              : this.length > 2 &&
-                assert(!1, "Number can only safely store up to 53 bits"),
+              : this.length > 2 && assert(!1, "Number can only safely store up to 53 bits"),
             this.negative !== 0 ? -ret : ret
           );
         }),
@@ -25426,10 +21665,7 @@ var require_bn7 = __commonJS({
           return this.toString(16);
         }),
         (BN.prototype.toBuffer = function (endian, length) {
-          return (
-            assert(typeof Buffer2 < "u"),
-            this.toArrayLike(Buffer2, endian, length)
-          );
+          return assert(typeof Buffer2 < "u"), this.toArrayLike(Buffer2, endian, length);
         }),
         (BN.prototype.toArray = function (endian, length) {
           return this.toArrayLike(Array, endian, length);
@@ -25437,10 +21673,7 @@ var require_bn7 = __commonJS({
         (BN.prototype.toArrayLike = function (ArrayType, endian, length) {
           var byteLength = this.byteLength(),
             reqLength = length || Math.max(1, byteLength);
-          assert(
-            byteLength <= reqLength,
-            "byte array longer than desired length",
-          ),
+          assert(byteLength <= reqLength, "byte array longer than desired length"),
             assert(reqLength > 0, "Requested array length <= 0"),
             this.strip();
           var littleEndian = endian === "le",
@@ -25449,13 +21682,11 @@ var require_bn7 = __commonJS({
             i,
             q = this.clone();
           if (littleEndian) {
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[i] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[i] = b);
             for (; i < reqLength; i++) res[i] = 0;
           } else {
             for (i = 0; i < reqLength - byteLength; i++) res[i] = 0;
-            for (i = 0; !q.isZero(); i++)
-              (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
+            for (i = 0; !q.isZero(); i++) (b = q.andln(255)), q.iushrn(8), (res[reqLength - i - 1] = b);
           }
           return res;
         }),
@@ -25493,11 +21724,7 @@ var require_bn7 = __commonJS({
           return (this.length - 1) * 26 + hi;
         });
       function toBitArray(num) {
-        for (
-          var w = new Array(num.bitLength()), bit = 0;
-          bit < w.length;
-          bit++
-        ) {
+        for (var w = new Array(num.bitLength()), bit = 0; bit < w.length; bit++) {
           var off = (bit / 26) | 0,
             wbit = bit % 26;
           w[bit] = (num.words[off] & (1 << wbit)) >>> wbit;
@@ -25516,14 +21743,10 @@ var require_bn7 = __commonJS({
           return Math.ceil(this.bitLength() / 8);
         }),
         (BN.prototype.toTwos = function (width) {
-          return this.negative !== 0
-            ? this.abs().inotn(width).iaddn(1)
-            : this.clone();
+          return this.negative !== 0 ? this.abs().inotn(width).iaddn(1) : this.clone();
         }),
         (BN.prototype.fromTwos = function (width) {
-          return this.testn(width - 1)
-            ? this.notn(width).iaddn(1).ineg()
-            : this.clone();
+          return this.testn(width - 1) ? this.notn(width).iaddn(1).ineg() : this.clone();
         }),
         (BN.prototype.isNeg = function () {
           return this.negative !== 0;
@@ -25536,50 +21759,37 @@ var require_bn7 = __commonJS({
         }),
         (BN.prototype.iuor = function (num) {
           for (; this.length < num.length; ) this.words[this.length++] = 0;
-          for (var i = 0; i < num.length; i++)
-            this.words[i] = this.words[i] | num.words[i];
+          for (var i = 0; i < num.length; i++) this.words[i] = this.words[i] | num.words[i];
           return this.strip();
         }),
         (BN.prototype.ior = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuor(num);
         }),
         (BN.prototype.or = function (num) {
-          return this.length > num.length
-            ? this.clone().ior(num)
-            : num.clone().ior(this);
+          return this.length > num.length ? this.clone().ior(num) : num.clone().ior(this);
         }),
         (BN.prototype.uor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuor(num)
-            : num.clone().iuor(this);
+          return this.length > num.length ? this.clone().iuor(num) : num.clone().iuor(this);
         }),
         (BN.prototype.iuand = function (num) {
           var b;
           this.length > num.length ? (b = num) : (b = this);
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = this.words[i] & num.words[i];
+          for (var i = 0; i < b.length; i++) this.words[i] = this.words[i] & num.words[i];
           return (this.length = b.length), this.strip();
         }),
         (BN.prototype.iand = function (num) {
           return assert((this.negative | num.negative) === 0), this.iuand(num);
         }),
         (BN.prototype.and = function (num) {
-          return this.length > num.length
-            ? this.clone().iand(num)
-            : num.clone().iand(this);
+          return this.length > num.length ? this.clone().iand(num) : num.clone().iand(this);
         }),
         (BN.prototype.uand = function (num) {
-          return this.length > num.length
-            ? this.clone().iuand(num)
-            : num.clone().iuand(this);
+          return this.length > num.length ? this.clone().iuand(num) : num.clone().iuand(this);
         }),
         (BN.prototype.iuxor = function (num) {
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
-          for (var i = 0; i < b.length; i++)
-            this.words[i] = a.words[i] ^ b.words[i];
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
+          for (var i = 0; i < b.length; i++) this.words[i] = a.words[i] ^ b.words[i];
           if (this !== a) for (; i < a.length; i++) this.words[i] = a.words[i];
           return (this.length = a.length), this.strip();
         }),
@@ -25587,27 +21797,18 @@ var require_bn7 = __commonJS({
           return assert((this.negative | num.negative) === 0), this.iuxor(num);
         }),
         (BN.prototype.xor = function (num) {
-          return this.length > num.length
-            ? this.clone().ixor(num)
-            : num.clone().ixor(this);
+          return this.length > num.length ? this.clone().ixor(num) : num.clone().ixor(this);
         }),
         (BN.prototype.uxor = function (num) {
-          return this.length > num.length
-            ? this.clone().iuxor(num)
-            : num.clone().iuxor(this);
+          return this.length > num.length ? this.clone().iuxor(num) : num.clone().iuxor(this);
         }),
         (BN.prototype.inotn = function (width) {
           assert(typeof width == "number" && width >= 0);
           var bytesNeeded = Math.ceil(width / 26) | 0,
             bitsLeft = width % 26;
           this._expand(bytesNeeded), bitsLeft > 0 && bytesNeeded--;
-          for (var i = 0; i < bytesNeeded; i++)
-            this.words[i] = ~this.words[i] & 67108863;
-          return (
-            bitsLeft > 0 &&
-              (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))),
-            this.strip()
-          );
+          for (var i = 0; i < bytesNeeded; i++) this.words[i] = ~this.words[i] & 67108863;
+          return bitsLeft > 0 && (this.words[i] = ~this.words[i] & (67108863 >> (26 - bitsLeft))), this.strip();
         }),
         (BN.prototype.notn = function (width) {
           return this.clone().inotn(width);
@@ -25627,49 +21828,25 @@ var require_bn7 = __commonJS({
         (BN.prototype.iadd = function (num) {
           var r;
           if (this.negative !== 0 && num.negative === 0)
-            return (
-              (this.negative = 0),
-              (r = this.isub(num)),
-              (this.negative ^= 1),
-              this._normSign()
-            );
+            return (this.negative = 0), (r = this.isub(num)), (this.negative ^= 1), this._normSign();
           if (this.negative === 0 && num.negative !== 0)
-            return (
-              (num.negative = 0),
-              (r = this.isub(num)),
-              (num.negative = 1),
-              r._normSign()
-            );
+            return (num.negative = 0), (r = this.isub(num)), (num.negative = 1), r._normSign();
           var a, b;
-          this.length > num.length
-            ? ((a = this), (b = num))
-            : ((a = num), (b = this));
+          this.length > num.length ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
+            (r = (a.words[i] | 0) + (b.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (this.words[i] = r & 67108863),
-              (carry = r >>> 26);
-          if (((this.length = a.length), carry !== 0))
-            (this.words[this.length] = carry), this.length++;
-          else if (a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
+            (r = (a.words[i] | 0) + carry), (this.words[i] = r & 67108863), (carry = r >>> 26);
+          if (((this.length = a.length), carry !== 0)) (this.words[this.length] = carry), this.length++;
+          else if (a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
           return this;
         }),
         (BN.prototype.add = function (num) {
           var res;
           return num.negative !== 0 && this.negative === 0
-            ? ((num.negative = 0),
-              (res = this.sub(num)),
-              (num.negative ^= 1),
-              res)
+            ? ((num.negative = 0), (res = this.sub(num)), (num.negative ^= 1), res)
             : num.negative === 0 && this.negative !== 0
-            ? ((this.negative = 0),
-              (res = num.sub(this)),
-              (this.negative = 1),
-              res)
+            ? ((this.negative = 0), (res = num.sub(this)), (this.negative = 1), res)
             : this.length > num.length
             ? this.clone().iadd(num)
             : num.clone().iadd(this);
@@ -25680,34 +21857,17 @@ var require_bn7 = __commonJS({
             var r = this.iadd(num);
             return (num.negative = 1), r._normSign();
           } else if (this.negative !== 0)
-            return (
-              (this.negative = 0),
-              this.iadd(num),
-              (this.negative = 1),
-              this._normSign()
-            );
+            return (this.negative = 0), this.iadd(num), (this.negative = 1), this._normSign();
           var cmp = this.cmp(num);
-          if (cmp === 0)
-            return (
-              (this.negative = 0), (this.length = 1), (this.words[0] = 0), this
-            );
+          if (cmp === 0) return (this.negative = 0), (this.length = 1), (this.words[0] = 0), this;
           var a, b;
           cmp > 0 ? ((a = this), (b = num)) : ((a = num), (b = this));
           for (var carry = 0, i = 0; i < b.length; i++)
-            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
+            (r = (a.words[i] | 0) - (b.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
           for (; carry !== 0 && i < a.length; i++)
-            (r = (a.words[i] | 0) + carry),
-              (carry = r >> 26),
-              (this.words[i] = r & 67108863);
-          if (carry === 0 && i < a.length && a !== this)
-            for (; i < a.length; i++) this.words[i] = a.words[i];
-          return (
-            (this.length = Math.max(this.length, i)),
-            a !== this && (this.negative = 1),
-            this.strip()
-          );
+            (r = (a.words[i] | 0) + carry), (carry = r >> 26), (this.words[i] = r & 67108863);
+          if (carry === 0 && i < a.length && a !== this) for (; i < a.length; i++) this.words[i] = a.words[i];
+          return (this.length = Math.max(this.length, i)), a !== this && (this.negative = 1), this.strip();
         }),
         (BN.prototype.sub = function (num) {
           return this.clone().isub(num);
@@ -25740,9 +21900,7 @@ var require_bn7 = __commonJS({
           }
           (out.words[k] = rword | 0), (carry = ncarry | 0);
         }
-        return (
-          carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip()
-        );
+        return carry !== 0 ? (out.words[k] = carry | 0) : out.length--, out.strip();
       }
       var comb10MulTo = function (self2, num, out) {
         var a = self2.words,
@@ -26297,15 +22455,12 @@ var require_bn7 = __commonJS({
       };
       Math.imul || (comb10MulTo = smallMulTo);
       function bigMulTo(self2, num, out) {
-        (out.negative = num.negative ^ self2.negative),
-          (out.length = self2.length + num.length);
+        (out.negative = num.negative ^ self2.negative), (out.length = self2.length + num.length);
         for (var carry = 0, hncarry = 0, k = 0; k < out.length - 1; k++) {
           var ncarry = hncarry;
           hncarry = 0;
           for (
-            var rword = carry & 67108863,
-              maxJ = Math.min(k, num.length - 1),
-              j = Math.max(0, k - self2.length + 1);
+            var rword = carry & 67108863, maxJ = Math.min(k, num.length - 1), j = Math.max(0, k - self2.length + 1);
             j <= maxJ;
             j++
           ) {
@@ -26347,32 +22502,22 @@ var require_bn7 = __commonJS({
         (this.x = x), (this.y = y);
       }
       (FFTM.prototype.makeRBT = function (N) {
-        for (
-          var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0;
-          i < N;
-          i++
-        )
-          t[i] = this.revBin(i, l, N);
+        for (var t = new Array(N), l = BN.prototype._countBits(N) - 1, i = 0; i < N; i++) t[i] = this.revBin(i, l, N);
         return t;
       }),
         (FFTM.prototype.revBin = function (x, l, N) {
           if (x === 0 || x === N - 1) return x;
-          for (var rb = 0, i = 0; i < l; i++)
-            (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
+          for (var rb = 0, i = 0; i < l; i++) (rb |= (x & 1) << (l - i - 1)), (x >>= 1);
           return rb;
         }),
         (FFTM.prototype.permute = function (rbt, rws, iws, rtws, itws, N) {
-          for (var i = 0; i < N; i++)
-            (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
+          for (var i = 0; i < N; i++) (rtws[i] = rws[rbt[i]]), (itws[i] = iws[rbt[i]]);
         }),
         (FFTM.prototype.transform = function (rws, iws, rtws, itws, N, rbt) {
           this.permute(rbt, rws, iws, rtws, itws, N);
           for (var s = 1; s < N; s <<= 1)
             for (
-              var l = s << 1,
-                rtwdf = Math.cos((2 * Math.PI) / l),
-                itwdf = Math.sin((2 * Math.PI) / l),
-                p = 0;
+              var l = s << 1, rtwdf = Math.cos((2 * Math.PI) / l), itwdf = Math.sin((2 * Math.PI) / l), p = 0;
               p < N;
               p += l
             )
@@ -26389,9 +22534,7 @@ var require_bn7 = __commonJS({
                   (rtws[p + j + s] = re - ro),
                   (itws[p + j + s] = ie - io),
                   j !== l &&
-                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_),
-                    (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_),
-                    (rtwdf_ = rx));
+                    ((rx = rtwdf * rtwdf_ - itwdf * itwdf_), (itwdf_ = rtwdf * itwdf_ + itwdf * rtwdf_), (rtwdf_ = rx));
               }
         }),
         (FFTM.prototype.guessLen13b = function (n, m) {
@@ -26414,12 +22557,8 @@ var require_bn7 = __commonJS({
         }),
         (FFTM.prototype.normalize13b = function (ws, N) {
           for (var carry = 0, i = 0; i < N / 2; i++) {
-            var w =
-              Math.round(ws[2 * i + 1] / N) * 8192 +
-              Math.round(ws[2 * i] / N) +
-              carry;
-            (ws[i] = w & 67108863),
-              w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
+            var w = Math.round(ws[2 * i + 1] / N) * 8192 + Math.round(ws[2 * i] / N) + carry;
+            (ws[i] = w & 67108863), w < 67108864 ? (carry = 0) : (carry = (w / 67108864) | 0);
           }
           return ws;
         }),
@@ -26469,17 +22608,11 @@ var require_bn7 = __commonJS({
         }),
         (BN.prototype.mul = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            this.mulTo(num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), this.mulTo(num, out);
         }),
         (BN.prototype.mulf = function (num) {
           var out = new BN(null);
-          return (
-            (out.words = new Array(this.length + num.length)),
-            jumboMulTo(this, num, out)
-          );
+          return (out.words = new Array(this.length + num.length)), jumboMulTo(this, num, out);
         }),
         (BN.prototype.imul = function (num) {
           return this.clone().mulTo(num, this);
@@ -26489,10 +22622,7 @@ var require_bn7 = __commonJS({
           for (var carry = 0, i = 0; i < this.length; i++) {
             var w = (this.words[i] | 0) * num,
               lo = (w & 67108863) + (carry & 67108863);
-            (carry >>= 26),
-              (carry += (w / 67108864) | 0),
-              (carry += lo >>> 26),
-              (this.words[i] = lo & 67108863);
+            (carry >>= 26), (carry += (w / 67108864) | 0), (carry += lo >>> 26), (this.words[i] = lo & 67108863);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -26508,14 +22638,8 @@ var require_bn7 = __commonJS({
         (BN.prototype.pow = function (num) {
           var w = toBitArray(num);
           if (w.length === 0) return new BN(1);
-          for (
-            var res = this, i = 0;
-            i < w.length && w[i] === 0;
-            i++, res = res.sqr()
-          );
-          if (++i < w.length)
-            for (var q = res.sqr(); i < w.length; i++, q = q.sqr())
-              w[i] !== 0 && (res = res.mul(q));
+          for (var res = this, i = 0; i < w.length && w[i] === 0; i++, res = res.sqr());
+          if (++i < w.length) for (var q = res.sqr(); i < w.length; i++, q = q.sqr()) w[i] !== 0 && (res = res.mul(q));
           return res;
         }),
         (BN.prototype.iushln = function (bits) {
@@ -26534,8 +22658,7 @@ var require_bn7 = __commonJS({
             carry && ((this.words[i] = carry), this.length++);
           }
           if (s !== 0) {
-            for (i = this.length - 1; i >= 0; i--)
-              this.words[i + s] = this.words[i];
+            for (i = this.length - 1; i >= 0; i--) this.words[i + s] = this.words[i];
             for (i = 0; i < s; i++) this.words[i] = 0;
             this.length += s;
           }
@@ -26557,20 +22680,15 @@ var require_bn7 = __commonJS({
             maskedWords.length = s;
           }
           if (s !== 0)
-            if (this.length > s)
-              for (this.length -= s, i = 0; i < this.length; i++)
-                this.words[i] = this.words[i + s];
+            if (this.length > s) for (this.length -= s, i = 0; i < this.length; i++) this.words[i] = this.words[i + s];
             else (this.words[0] = 0), (this.length = 1);
           var carry = 0;
           for (i = this.length - 1; i >= 0 && (carry !== 0 || i >= h); i--) {
             var word = this.words[i] | 0;
-            (this.words[i] = (carry << (26 - r)) | (word >>> r)),
-              (carry = word & mask);
+            (this.words[i] = (carry << (26 - r)) | (word >>> r)), (carry = word & mask);
           }
           return (
-            maskedWords &&
-              carry !== 0 &&
-              (maskedWords.words[maskedWords.length++] = carry),
+            maskedWords && carry !== 0 && (maskedWords.words[maskedWords.length++] = carry),
             this.length === 0 && ((this.words[0] = 0), (this.length = 1)),
             this.strip()
           );
@@ -26603,17 +22721,8 @@ var require_bn7 = __commonJS({
           assert(typeof bits == "number" && bits >= 0);
           var r = bits % 26,
             s = (bits - r) / 26;
-          if (
-            (assert(
-              this.negative === 0,
-              "imaskn works only with positive numbers",
-            ),
-            this.length <= s)
-          )
-            return this;
-          if (
-            (r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)
-          ) {
+          if ((assert(this.negative === 0, "imaskn works only with positive numbers"), this.length <= s)) return this;
+          if ((r !== 0 && s++, (this.length = Math.min(s, this.length)), r !== 0)) {
             var mask = 67108863 ^ ((67108863 >>> r) << r);
             this.words[this.length - 1] &= mask;
           }
@@ -26630,32 +22739,20 @@ var require_bn7 = __commonJS({
               ? this.isubn(-num)
               : this.negative !== 0
               ? this.length === 1 && (this.words[0] | 0) < num
-                ? ((this.words[0] = num - (this.words[0] | 0)),
-                  (this.negative = 0),
-                  this)
-                : ((this.negative = 0),
-                  this.isubn(num),
-                  (this.negative = 1),
-                  this)
+                ? ((this.words[0] = num - (this.words[0] | 0)), (this.negative = 0), this)
+                : ((this.negative = 0), this.isubn(num), (this.negative = 1), this)
               : this._iaddn(num)
           );
         }),
         (BN.prototype._iaddn = function (num) {
           this.words[0] += num;
           for (var i = 0; i < this.length && this.words[i] >= 67108864; i++)
-            (this.words[i] -= 67108864),
-              i === this.length - 1
-                ? (this.words[i + 1] = 1)
-                : this.words[i + 1]++;
+            (this.words[i] -= 67108864), i === this.length - 1 ? (this.words[i + 1] = 1) : this.words[i + 1]++;
           return (this.length = Math.max(this.length, i + 1)), this;
         }),
         (BN.prototype.isubn = function (num) {
-          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0))
-            return this.iaddn(-num);
-          if (this.negative !== 0)
-            return (
-              (this.negative = 0), this.iaddn(num), (this.negative = 1), this
-            );
+          if ((assert(typeof num == "number"), assert(num < 67108864), num < 0)) return this.iaddn(-num);
+          if (this.negative !== 0) return (this.negative = 0), this.iaddn(num), (this.negative = 1), this;
           if (((this.words[0] -= num), this.length === 1 && this.words[0] < 0))
             (this.words[0] = -this.words[0]), (this.negative = 1);
           else
@@ -26689,14 +22786,10 @@ var require_bn7 = __commonJS({
               (this.words[i + shift] = w & 67108863);
           }
           for (; i < this.length - shift; i++)
-            (w = (this.words[i + shift] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i + shift] = w & 67108863);
+            (w = (this.words[i + shift] | 0) + carry), (carry = w >> 26), (this.words[i + shift] = w & 67108863);
           if (carry === 0) return this.strip();
           for (assert(carry === -1), carry = 0, i = 0; i < this.length; i++)
-            (w = -(this.words[i] | 0) + carry),
-              (carry = w >> 26),
-              (this.words[i] = w & 67108863);
+            (w = -(this.words[i] | 0) + carry), (carry = w >> 26), (this.words[i] = w & 67108863);
           return (this.negative = 1), this.strip();
         }),
         (BN.prototype._wordDiv = function (num, mode) {
@@ -26706,33 +22799,19 @@ var require_bn7 = __commonJS({
             bhi = b.words[b.length - 1] | 0,
             bhiBits = this._countBits(bhi);
           (shift = 26 - bhiBits),
-            shift !== 0 &&
-              ((b = b.ushln(shift)),
-              a.iushln(shift),
-              (bhi = b.words[b.length - 1] | 0));
+            shift !== 0 && ((b = b.ushln(shift)), a.iushln(shift), (bhi = b.words[b.length - 1] | 0));
           var m = a.length - b.length,
             q;
           if (mode !== "mod") {
-            (q = new BN(null)),
-              (q.length = m + 1),
-              (q.words = new Array(q.length));
+            (q = new BN(null)), (q.length = m + 1), (q.words = new Array(q.length));
             for (var i = 0; i < q.length; i++) q.words[i] = 0;
           }
           var diff = a.clone()._ishlnsubmul(b, 1, m);
           diff.negative === 0 && ((a = diff), q && (q.words[m] = 1));
           for (var j = m - 1; j >= 0; j--) {
-            var qj =
-              (a.words[b.length + j] | 0) * 67108864 +
-              (a.words[b.length + j - 1] | 0);
-            for (
-              qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j);
-              a.negative !== 0;
-
-            )
-              qj--,
-                (a.negative = 0),
-                a._ishlnsubmul(b, 1, j),
-                a.isZero() || (a.negative ^= 1);
+            var qj = (a.words[b.length + j] | 0) * 67108864 + (a.words[b.length + j - 1] | 0);
+            for (qj = Math.min((qj / bhi) | 0, 67108863), a._ishlnsubmul(b, qj, j); a.negative !== 0; )
+              qj--, (a.negative = 0), a._ishlnsubmul(b, 1, j), a.isZero() || (a.negative ^= 1);
             q && (q.words[j] = qj);
           }
           return (
@@ -26755,9 +22834,7 @@ var require_bn7 = __commonJS({
           return this.negative !== 0 && num.negative === 0
             ? ((res = this.neg().divmod(num, mode)),
               mode !== "mod" && (div = res.div.neg()),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.iadd(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.iadd(num)),
               {
                 div,
                 mod,
@@ -26771,9 +22848,7 @@ var require_bn7 = __commonJS({
               })
             : (this.negative & num.negative) !== 0
             ? ((res = this.neg().divmod(num.neg(), mode)),
-              mode !== "div" &&
-                ((mod = res.mod.neg()),
-                positive && mod.negative !== 0 && mod.isub(num)),
+              mode !== "div" && ((mod = res.mod.neg()), positive && mod.negative !== 0 && mod.isub(num)),
               {
                 div: res.div,
                 mod,
@@ -26824,11 +22899,7 @@ var require_bn7 = __commonJS({
         }),
         (BN.prototype.modn = function (num) {
           assert(num <= 67108863);
-          for (
-            var p = (1 << 26) % num, acc = 0, i = this.length - 1;
-            i >= 0;
-            i--
-          )
+          for (var p = (1 << 26) % num, acc = 0, i = this.length - 1; i >= 0; i--)
             acc = (p * acc + (this.words[i] | 0)) % num;
           return acc;
         }),
@@ -26848,40 +22919,18 @@ var require_bn7 = __commonJS({
           var x = this,
             y = p.clone();
           x.negative !== 0 ? (x = x.umod(p)) : (x = x.clone());
-          for (
-            var A = new BN(1),
-              B = new BN(0),
-              C = new BN(0),
-              D = new BN(1),
-              g = 0;
-            x.isEven() && y.isEven();
-
-          )
+          for (var A = new BN(1), B = new BN(0), C = new BN(0), D = new BN(1), g = 0; x.isEven() && y.isEven(); )
             x.iushrn(1), y.iushrn(1), ++g;
           for (var yp = y.clone(), xp = x.clone(); !x.isZero(); ) {
-            for (
-              var i = 0, im = 1;
-              (x.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
+            for (var i = 0, im = 1; (x.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
             if (i > 0)
               for (x.iushrn(i); i-- > 0; )
-                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)),
-                  A.iushrn(1),
-                  B.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (y.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
+                (A.isOdd() || B.isOdd()) && (A.iadd(yp), B.isub(xp)), A.iushrn(1), B.iushrn(1);
+            for (var j = 0, jm = 1; (y.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
             if (j > 0)
               for (y.iushrn(j); j-- > 0; )
-                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)),
-                  C.iushrn(1),
-                  D.iushrn(1);
-            x.cmp(y) >= 0
-              ? (x.isub(y), A.isub(C), B.isub(D))
-              : (y.isub(x), C.isub(A), D.isub(B));
+                (C.isOdd() || D.isOdd()) && (C.iadd(yp), D.isub(xp)), C.iushrn(1), D.iushrn(1);
+            x.cmp(y) >= 0 ? (x.isub(y), A.isub(C), B.isub(D)) : (y.isub(x), C.isub(A), D.isub(B));
           }
           return {
             a: C,
@@ -26894,35 +22943,15 @@ var require_bn7 = __commonJS({
           var a = this,
             b = p.clone();
           a.negative !== 0 ? (a = a.umod(p)) : (a = a.clone());
-          for (
-            var x1 = new BN(1), x2 = new BN(0), delta = b.clone();
-            a.cmpn(1) > 0 && b.cmpn(1) > 0;
-
-          ) {
-            for (
-              var i = 0, im = 1;
-              (a.words[0] & im) === 0 && i < 26;
-              ++i, im <<= 1
-            );
-            if (i > 0)
-              for (a.iushrn(i); i-- > 0; )
-                x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
-            for (
-              var j = 0, jm = 1;
-              (b.words[0] & jm) === 0 && j < 26;
-              ++j, jm <<= 1
-            );
-            if (j > 0)
-              for (b.iushrn(j); j-- > 0; )
-                x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
+          for (var x1 = new BN(1), x2 = new BN(0), delta = b.clone(); a.cmpn(1) > 0 && b.cmpn(1) > 0; ) {
+            for (var i = 0, im = 1; (a.words[0] & im) === 0 && i < 26; ++i, im <<= 1);
+            if (i > 0) for (a.iushrn(i); i-- > 0; ) x1.isOdd() && x1.iadd(delta), x1.iushrn(1);
+            for (var j = 0, jm = 1; (b.words[0] & jm) === 0 && j < 26; ++j, jm <<= 1);
+            if (j > 0) for (b.iushrn(j); j-- > 0; ) x2.isOdd() && x2.iadd(delta), x2.iushrn(1);
             a.cmp(b) >= 0 ? (a.isub(b), x1.isub(x2)) : (b.isub(a), x2.isub(x1));
           }
           var res;
-          return (
-            a.cmpn(1) === 0 ? (res = x1) : (res = x2),
-            res.cmpn(0) < 0 && res.iadd(p),
-            res
-          );
+          return a.cmpn(1) === 0 ? (res = x1) : (res = x2), res.cmpn(0) < 0 && res.iadd(p), res;
         }),
         (BN.prototype.gcd = function (num) {
           if (this.isZero()) return num.abs();
@@ -26930,8 +22959,7 @@ var require_bn7 = __commonJS({
           var a = this.clone(),
             b = num.clone();
           (a.negative = 0), (b.negative = 0);
-          for (var shift = 0; a.isEven() && b.isEven(); shift++)
-            a.iushrn(1), b.iushrn(1);
+          for (var shift = 0; a.isEven() && b.isEven(); shift++) a.iushrn(1), b.iushrn(1);
           do {
             for (; a.isEven(); ) a.iushrn(1);
             for (; b.isEven(); ) b.iushrn(1);
@@ -26961,14 +22989,10 @@ var require_bn7 = __commonJS({
           var r = bit % 26,
             s = (bit - r) / 26,
             q = 1 << r;
-          if (this.length <= s)
-            return this._expand(s + 1), (this.words[s] |= q), this;
+          if (this.length <= s) return this._expand(s + 1), (this.words[s] |= q), this;
           for (var carry = q, i = s; carry !== 0 && i < this.length; i++) {
             var w = this.words[i] | 0;
-            (w += carry),
-              (carry = w >>> 26),
-              (w &= 67108863),
-              (this.words[i] = w);
+            (w += carry), (carry = w >>> 26), (w &= 67108863), (this.words[i] = w);
           }
           return carry !== 0 && ((this.words[i] = carry), this.length++), this;
         }),
@@ -26983,8 +23007,7 @@ var require_bn7 = __commonJS({
           var res;
           if (this.length > 1) res = 1;
           else {
-            negative && (num = -num),
-              assert(num <= 67108863, "Number is too big");
+            negative && (num = -num), assert(num <= 67108863, "Number is too big");
             var w = this.words[0] | 0;
             res = w === num ? 0 : w < num ? -1 : 1;
           }
@@ -27050,52 +23073,28 @@ var require_bn7 = __commonJS({
           );
         }),
         (BN.prototype.fromRed = function () {
-          return (
-            assert(
-              this.red,
-              "fromRed works only with numbers in reduction context",
-            ),
-            this.red.convertFrom(this)
-          );
+          return assert(this.red, "fromRed works only with numbers in reduction context"), this.red.convertFrom(this);
         }),
         (BN.prototype._forceRed = function (ctx) {
           return (this.red = ctx), this;
         }),
         (BN.prototype.forceRed = function (ctx) {
-          return (
-            assert(!this.red, "Already a number in reduction context"),
-            this._forceRed(ctx)
-          );
+          return assert(!this.red, "Already a number in reduction context"), this._forceRed(ctx);
         }),
         (BN.prototype.redAdd = function (num) {
-          return (
-            assert(this.red, "redAdd works only with red numbers"),
-            this.red.add(this, num)
-          );
+          return assert(this.red, "redAdd works only with red numbers"), this.red.add(this, num);
         }),
         (BN.prototype.redIAdd = function (num) {
-          return (
-            assert(this.red, "redIAdd works only with red numbers"),
-            this.red.iadd(this, num)
-          );
+          return assert(this.red, "redIAdd works only with red numbers"), this.red.iadd(this, num);
         }),
         (BN.prototype.redSub = function (num) {
-          return (
-            assert(this.red, "redSub works only with red numbers"),
-            this.red.sub(this, num)
-          );
+          return assert(this.red, "redSub works only with red numbers"), this.red.sub(this, num);
         }),
         (BN.prototype.redISub = function (num) {
-          return (
-            assert(this.red, "redISub works only with red numbers"),
-            this.red.isub(this, num)
-          );
+          return assert(this.red, "redISub works only with red numbers"), this.red.isub(this, num);
         }),
         (BN.prototype.redShl = function (num) {
-          return (
-            assert(this.red, "redShl works only with red numbers"),
-            this.red.shl(this, num)
-          );
+          return assert(this.red, "redShl works only with red numbers"), this.red.shl(this, num);
         }),
         (BN.prototype.redMul = function (num) {
           return (
@@ -27112,46 +23111,22 @@ var require_bn7 = __commonJS({
           );
         }),
         (BN.prototype.redSqr = function () {
-          return (
-            assert(this.red, "redSqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqr(this)
-          );
+          return assert(this.red, "redSqr works only with red numbers"), this.red._verify1(this), this.red.sqr(this);
         }),
         (BN.prototype.redISqr = function () {
-          return (
-            assert(this.red, "redISqr works only with red numbers"),
-            this.red._verify1(this),
-            this.red.isqr(this)
-          );
+          return assert(this.red, "redISqr works only with red numbers"), this.red._verify1(this), this.red.isqr(this);
         }),
         (BN.prototype.redSqrt = function () {
-          return (
-            assert(this.red, "redSqrt works only with red numbers"),
-            this.red._verify1(this),
-            this.red.sqrt(this)
-          );
+          return assert(this.red, "redSqrt works only with red numbers"), this.red._verify1(this), this.red.sqrt(this);
         }),
         (BN.prototype.redInvm = function () {
-          return (
-            assert(this.red, "redInvm works only with red numbers"),
-            this.red._verify1(this),
-            this.red.invm(this)
-          );
+          return assert(this.red, "redInvm works only with red numbers"), this.red._verify1(this), this.red.invm(this);
         }),
         (BN.prototype.redNeg = function () {
-          return (
-            assert(this.red, "redNeg works only with red numbers"),
-            this.red._verify1(this),
-            this.red.neg(this)
-          );
+          return assert(this.red, "redNeg works only with red numbers"), this.red._verify1(this), this.red.neg(this);
         }),
         (BN.prototype.redPow = function (num) {
-          return (
-            assert(this.red && !num.red, "redPow(normalNum)"),
-            this.red._verify1(this),
-            this.red.pow(this, num)
-          );
+          return assert(this.red && !num.red, "redPow(normalNum)"), this.red._verify1(this), this.red.pow(this, num);
         });
       var primes = {
         k256: null,
@@ -27173,11 +23148,7 @@ var require_bn7 = __commonJS({
         (MPrime.prototype.ireduce = function (num) {
           var r = num,
             rlen;
-          do
-            this.split(r, this.tmp),
-              (r = this.imulK(r)),
-              (r = r.iadd(this.tmp)),
-              (rlen = r.bitLength());
+          do this.split(r, this.tmp), (r = this.imulK(r)), (r = r.iadd(this.tmp)), (rlen = r.bitLength());
           while (rlen > this.n);
           var cmp = rlen < this.n ? -1 : r.ucmp(this.p);
           return (
@@ -27198,78 +23169,45 @@ var require_bn7 = __commonJS({
           return num.imul(this.k);
         });
       function K256() {
-        MPrime.call(
-          this,
-          "k256",
-          "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f",
-        );
+        MPrime.call(this, "k256", "ffffffff ffffffff ffffffff ffffffff ffffffff ffffffff fffffffe fffffc2f");
       }
       inherits(K256, MPrime),
         (K256.prototype.split = function (input, output) {
-          for (
-            var mask = 4194303, outLen = Math.min(input.length, 9), i = 0;
-            i < outLen;
-            i++
-          )
+          for (var mask = 4194303, outLen = Math.min(input.length, 9), i = 0; i < outLen; i++)
             output.words[i] = input.words[i];
           if (((output.length = outLen), input.length <= 9)) {
             (input.words[0] = 0), (input.length = 1);
             return;
           }
           var prev = input.words[9];
-          for (
-            output.words[output.length++] = prev & mask, i = 10;
-            i < input.length;
-            i++
-          ) {
+          for (output.words[output.length++] = prev & mask, i = 10; i < input.length; i++) {
             var next = input.words[i] | 0;
-            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)),
-              (prev = next);
+            (input.words[i - 10] = ((next & mask) << 4) | (prev >>> 22)), (prev = next);
           }
           (prev >>>= 22),
             (input.words[i - 10] = prev),
-            prev === 0 && input.length > 10
-              ? (input.length -= 10)
-              : (input.length -= 9);
+            prev === 0 && input.length > 10 ? (input.length -= 10) : (input.length -= 9);
         }),
         (K256.prototype.imulK = function (num) {
-          (num.words[num.length] = 0),
-            (num.words[num.length + 1] = 0),
-            (num.length += 2);
+          (num.words[num.length] = 0), (num.words[num.length + 1] = 0), (num.length += 2);
           for (var lo = 0, i = 0; i < num.length; i++) {
             var w = num.words[i] | 0;
-            (lo += w * 977),
-              (num.words[i] = lo & 67108863),
-              (lo = w * 64 + ((lo / 67108864) | 0));
+            (lo += w * 977), (num.words[i] = lo & 67108863), (lo = w * 64 + ((lo / 67108864) | 0));
           }
           return (
-            num.words[num.length - 1] === 0 &&
-              (num.length--, num.words[num.length - 1] === 0 && num.length--),
-            num
+            num.words[num.length - 1] === 0 && (num.length--, num.words[num.length - 1] === 0 && num.length--), num
           );
         });
       function P224() {
-        MPrime.call(
-          this,
-          "p224",
-          "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001",
-        );
+        MPrime.call(this, "p224", "ffffffff ffffffff ffffffff ffffffff 00000000 00000000 00000001");
       }
       inherits(P224, MPrime);
       function P192() {
-        MPrime.call(
-          this,
-          "p192",
-          "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff",
-        );
+        MPrime.call(this, "p192", "ffffffff ffffffff ffffffff fffffffe ffffffff ffffffff");
       }
       inherits(P192, MPrime);
       function P25519() {
-        MPrime.call(
-          this,
-          "25519",
-          "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed",
-        );
+        MPrime.call(this, "25519", "7fffffffffffffff ffffffffffffffff ffffffffffffffff ffffffffffffffed");
       }
       inherits(P25519, MPrime),
         (P25519.prototype.imulK = function (num) {
@@ -27294,26 +23232,17 @@ var require_bn7 = __commonJS({
         if (typeof m == "string") {
           var prime = BN._prime(m);
           (this.m = prime.p), (this.prime = prime);
-        } else
-          assert(m.gtn(1), "modulus must be greater than 1"),
-            (this.m = m),
-            (this.prime = null);
+        } else assert(m.gtn(1), "modulus must be greater than 1"), (this.m = m), (this.prime = null);
       }
       (Red.prototype._verify1 = function (a) {
-        assert(a.negative === 0, "red works only with positives"),
-          assert(a.red, "red works only with red numbers");
+        assert(a.negative === 0, "red works only with positives"), assert(a.red, "red works only with red numbers");
       }),
         (Red.prototype._verify2 = function (a, b) {
-          assert(
-            (a.negative | b.negative) === 0,
-            "red works only with positives",
-          ),
+          assert((a.negative | b.negative) === 0, "red works only with positives"),
             assert(a.red && a.red === b.red, "red works only with red numbers");
         }),
         (Red.prototype.imod = function (a) {
-          return this.prime
-            ? this.prime.ireduce(a)._forceRed(this)
-            : a.umod(this.m)._forceRed(this);
+          return this.prime ? this.prime.ireduce(a)._forceRed(this) : a.umod(this.m)._forceRed(this);
         }),
         (Red.prototype.neg = function (a) {
           return a.isZero() ? a.clone() : this.m.sub(a)._forceRed(this);
@@ -27360,29 +23289,19 @@ var require_bn7 = __commonJS({
             var pow = this.m.add(new BN(1)).iushrn(2);
             return this.pow(a, pow);
           }
-          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; )
-            s++, q.iushrn(1);
+          for (var q = this.m.subn(1), s = 0; !q.isZero() && q.andln(1) === 0; ) s++, q.iushrn(1);
           assert(!q.isZero());
           var one = new BN(1).toRed(this),
             nOne = one.redNeg(),
             lpow = this.m.subn(1).iushrn(1),
             z = this.m.bitLength();
+          for (z = new BN(2 * z * z).toRed(this); this.pow(z, lpow).cmp(nOne) !== 0; ) z.redIAdd(nOne);
           for (
-            z = new BN(2 * z * z).toRed(this);
-            this.pow(z, lpow).cmp(nOne) !== 0;
-
-          )
-            z.redIAdd(nOne);
-          for (
-            var c = this.pow(z, q),
-              r = this.pow(a, q.addn(1).iushrn(1)),
-              t = this.pow(a, q),
-              m = s;
+            var c = this.pow(z, q), r = this.pow(a, q.addn(1).iushrn(1)), t = this.pow(a, q), m = s;
             t.cmp(one) !== 0;
 
           ) {
-            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++)
-              tmp = tmp.redSqr();
+            for (var tmp = t, i = 0; tmp.cmp(one) !== 0; i++) tmp = tmp.redSqr();
             assert(i < m);
             var b = this.pow(c, new BN(1).iushln(m - i - 1));
             (r = r.redMul(b)), (c = b.redSqr()), (t = t.redMul(c)), (m = i);
@@ -27391,9 +23310,7 @@ var require_bn7 = __commonJS({
         }),
         (Red.prototype.invm = function (a) {
           var inv = a._invmp(this.m);
-          return inv.negative !== 0
-            ? ((inv.negative = 0), this.imod(inv).redNeg())
-            : this.imod(inv);
+          return inv.negative !== 0 ? ((inv.negative = 0), this.imod(inv).redNeg()) : this.imod(inv);
         }),
         (Red.prototype.pow = function (a, num) {
           if (num.isZero()) return new BN(1).toRed(this);
@@ -27409,10 +23326,7 @@ var require_bn7 = __commonJS({
           for (start === 0 && (start = 26), i = num.length - 1; i >= 0; i--) {
             for (var word = num.words[i], j = start - 1; j >= 0; j--) {
               var bit = (word >> j) & 1;
-              if (
-                (res !== wnd[0] && (res = this.sqr(res)),
-                bit === 0 && current === 0)
-              ) {
+              if ((res !== wnd[0] && (res = this.sqr(res)), bit === 0 && current === 0)) {
                 currentLen = 0;
                 continue;
               }
@@ -27420,9 +23334,7 @@ var require_bn7 = __commonJS({
                 (current |= bit),
                 currentLen++,
                 !(currentLen !== windowSize && (i !== 0 || j !== 0)) &&
-                  ((res = this.mul(res, wnd[current])),
-                  (currentLen = 0),
-                  (current = 0));
+                  ((res = this.mul(res, wnd[current])), (currentLen = 0), (current = 0));
             }
             start = 26;
           }
@@ -27459,38 +23371,23 @@ var require_bn7 = __commonJS({
           return (r.red = null), r;
         }),
         (Mont.prototype.imul = function (a, b) {
-          if (a.isZero() || b.isZero())
-            return (a.words[0] = 0), (a.length = 1), a;
+          if (a.isZero() || b.isZero()) return (a.words[0] = 0), (a.length = 1), a;
           var t = a.imul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.mul = function (a, b) {
           if (a.isZero() || b.isZero()) return new BN(0)._forceRed(this);
           var t = a.mul(b),
-            c = t
-              .maskn(this.shift)
-              .mul(this.minv)
-              .imaskn(this.shift)
-              .mul(this.m),
+            c = t.maskn(this.shift).mul(this.minv).imaskn(this.shift).mul(this.m),
             u = t.isub(c).iushrn(this.shift),
             res = u;
           return (
-            u.cmp(this.m) >= 0
-              ? (res = u.isub(this.m))
-              : u.cmpn(0) < 0 && (res = u.iadd(this.m)),
-            res._forceRed(this)
+            u.cmp(this.m) >= 0 ? (res = u.isub(this.m)) : u.cmpn(0) < 0 && (res = u.iadd(this.m)), res._forceRed(this)
           );
         }),
         (Mont.prototype.invm = function (a) {
@@ -27509,13 +23406,7 @@ var require_withPublic = __commonJS({
     var BN = require_bn7(),
       Buffer2 = require_safe_buffer().Buffer;
     function withPublic(paddedMsg, key) {
-      return Buffer2.from(
-        paddedMsg
-          .toRed(BN.mont(key.modulus))
-          .redPow(new BN(key.publicExponent))
-          .fromRed()
-          .toArray(),
-      );
+      return Buffer2.from(paddedMsg.toRed(BN.mont(key.modulus)).redPow(new BN(key.publicExponent)).fromRed().toArray());
     }
     module.exports = withPublic;
   },
@@ -27535,18 +23426,13 @@ var require_publicEncrypt = __commonJS({
       Buffer2 = require_safe_buffer().Buffer;
     module.exports = function (publicKey, msg, reverse) {
       var padding;
-      publicKey.padding
-        ? (padding = publicKey.padding)
-        : reverse
-        ? (padding = 1)
-        : (padding = 4);
+      publicKey.padding ? (padding = publicKey.padding) : reverse ? (padding = 1) : (padding = 4);
       var key = parseKeys(publicKey),
         paddedMsg;
       if (padding === 4) paddedMsg = oaep(key, msg);
       else if (padding === 1) paddedMsg = pkcs1(key, msg, reverse);
       else if (padding === 3) {
-        if (((paddedMsg = new BN(msg)), paddedMsg.cmp(key.modulus) >= 0))
-          throw new Error("data too long for modulus");
+        if (((paddedMsg = new BN(msg)), paddedMsg.cmp(key.modulus) >= 0)) throw new Error("data too long for modulus");
       } else throw new Error("unknown padding");
       return reverse ? crt(paddedMsg, key) : withPublic(paddedMsg, key);
     };
@@ -27560,14 +23446,9 @@ var require_publicEncrypt = __commonJS({
       var ps = Buffer2.alloc(k - mLen - hLen2 - 2),
         dblen = k - hLen - 1,
         seed = randomBytes(hLen),
-        maskedDb = xor(
-          Buffer2.concat([iHash, ps, Buffer2.alloc(1, 1), msg], dblen),
-          mgf(seed, dblen),
-        ),
+        maskedDb = xor(Buffer2.concat([iHash, ps, Buffer2.alloc(1, 1), msg], dblen), mgf(seed, dblen)),
         maskedSeed = xor(seed, mgf(maskedDb, hLen));
-      return new BN(
-        Buffer2.concat([Buffer2.alloc(1), maskedSeed, maskedDb], k),
-      );
+      return new BN(Buffer2.concat([Buffer2.alloc(1), maskedSeed, maskedDb], k));
     }
     function pkcs1(key, msg, reverse) {
       var mLen = msg.length,
@@ -27575,27 +23456,12 @@ var require_publicEncrypt = __commonJS({
       if (mLen > k - 11) throw new Error("message too long");
       var ps;
       return (
-        reverse
-          ? (ps = Buffer2.alloc(k - mLen - 3, 255))
-          : (ps = nonZero(k - mLen - 3)),
-        new BN(
-          Buffer2.concat(
-            [Buffer2.from([0, reverse ? 1 : 2]), ps, Buffer2.alloc(1), msg],
-            k,
-          ),
-        )
+        reverse ? (ps = Buffer2.alloc(k - mLen - 3, 255)) : (ps = nonZero(k - mLen - 3)),
+        new BN(Buffer2.concat([Buffer2.from([0, reverse ? 1 : 2]), ps, Buffer2.alloc(1), msg], k))
       );
     }
     function nonZero(len) {
-      for (
-        var out = Buffer2.allocUnsafe(len),
-          i = 0,
-          cache = randomBytes(len * 2),
-          cur = 0,
-          num;
-        i < len;
-
-      )
+      for (var out = Buffer2.allocUnsafe(len), i = 0, cache = randomBytes(len * 2), cur = 0, num; i < len; )
         cur === cache.length && ((cache = randomBytes(len * 2)), (cur = 0)),
           (num = cache[cur++]),
           num && (out[i++] = num);
@@ -27617,20 +23483,14 @@ var require_privateDecrypt = __commonJS({
       Buffer2 = require_safe_buffer().Buffer;
     module.exports = function (privateKey, enc, reverse) {
       var padding;
-      privateKey.padding
-        ? (padding = privateKey.padding)
-        : reverse
-        ? (padding = 1)
-        : (padding = 4);
+      privateKey.padding ? (padding = privateKey.padding) : reverse ? (padding = 1) : (padding = 4);
       var key = parseKeys(privateKey),
         k = key.modulus.byteLength();
-      if (enc.length > k || new BN(enc).cmp(key.modulus) >= 0)
-        throw new Error("decryption error");
+      if (enc.length > k || new BN(enc).cmp(key.modulus) >= 0) throw new Error("decryption error");
       var msg;
       reverse ? (msg = withPublic(new BN(enc), key)) : (msg = crt(enc, key));
       var zBuffer = Buffer2.alloc(k - msg.length);
-      if (((msg = Buffer2.concat([zBuffer, msg], k)), padding === 4))
-        return oaep(key, msg);
+      if (((msg = Buffer2.concat([zBuffer, msg], k)), padding === 4)) return oaep(key, msg);
       if (padding === 1) return pkcs1(key, msg, reverse);
       if (padding === 3) return msg;
       throw new Error("unknown padding");
@@ -27644,8 +23504,7 @@ var require_privateDecrypt = __commonJS({
         maskedDb = msg.slice(hLen + 1),
         seed = xor(maskedSeed, mgf(maskedDb, hLen)),
         db = xor(maskedDb, mgf(seed, k - hLen - 1));
-      if (compare(iHash, db.slice(0, hLen)))
-        throw new Error("decryption error");
+      if (compare(iHash, db.slice(0, hLen))) throw new Error("decryption error");
       for (var i = hLen; db[i] === 0; ) i++;
       if (db[i++] !== 1) throw new Error("decryption error");
       return db.slice(i);
@@ -27658,9 +23517,7 @@ var require_privateDecrypt = __commonJS({
         }
       var ps = msg.slice(2, i - 1);
       if (
-        (((p1.toString("hex") !== "0002" && !reverse) ||
-          (p1.toString("hex") !== "0001" && reverse)) &&
-          status++,
+        (((p1.toString("hex") !== "0002" && !reverse) || (p1.toString("hex") !== "0001" && reverse)) && status++,
         ps.length < 8 && status++,
         status)
       )
@@ -27707,20 +23564,14 @@ use chrome, FireFox or Internet Explorer 11`);
       crypto2 = global.crypto || global.msCrypto,
       kMaxUint32 = Math.pow(2, 32) - 1;
     function assertOffset(offset, length) {
-      if (typeof offset != "number" || offset !== offset)
-        throw new TypeError("offset must be a number");
-      if (offset > kMaxUint32 || offset < 0)
-        throw new TypeError("offset must be a uint32");
-      if (offset > kBufferMaxLength || offset > length)
-        throw new RangeError("offset out of range");
+      if (typeof offset != "number" || offset !== offset) throw new TypeError("offset must be a number");
+      if (offset > kMaxUint32 || offset < 0) throw new TypeError("offset must be a uint32");
+      if (offset > kBufferMaxLength || offset > length) throw new RangeError("offset out of range");
     }
     function assertSize(size, offset, length) {
-      if (typeof size != "number" || size !== size)
-        throw new TypeError("size must be a number");
-      if (size > kMaxUint32 || size < 0)
-        throw new TypeError("size must be a uint32");
-      if (size + offset > length || size > kBufferMaxLength)
-        throw new RangeError("buffer too small");
+      if (typeof size != "number" || size !== size) throw new TypeError("size must be a number");
+      if (size > kMaxUint32 || size < 0) throw new TypeError("size must be a uint32");
+      if (size + offset > length || size > kBufferMaxLength) throw new RangeError("buffer too small");
     }
 
     exports.randomFill = randomFill;
@@ -27729,17 +23580,10 @@ use chrome, FireFox or Internet Explorer 11`);
     function randomFill(buf, offset, size, cb) {
       if (!Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array))
         throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
-      if (typeof offset == "function")
-        (cb = offset), (offset = 0), (size = buf.length);
-      else if (typeof size == "function")
-        (cb = size), (size = buf.length - offset);
-      else if (typeof cb != "function")
-        throw new TypeError('"cb" argument must be a function');
-      return (
-        assertOffset(offset, buf.length),
-        assertSize(size, offset, buf.length),
-        actualFill(buf, offset, size, cb)
-      );
+      if (typeof offset == "function") (cb = offset), (offset = 0), (size = buf.length);
+      else if (typeof size == "function") (cb = size), (size = buf.length - offset);
+      else if (typeof cb != "function") throw new TypeError('"cb" argument must be a function');
+      return assertOffset(offset, buf.length), assertSize(size, offset, buf.length), actualFill(buf, offset, size, cb);
     }
     function actualFill(buf, offset, size, cb) {
       if (cb) {
@@ -27753,10 +23597,7 @@ use chrome, FireFox or Internet Explorer 11`);
       return bytes.copy(buf, offset), buf;
     }
     function randomFillSync(buf, offset, size) {
-      if (
-        (typeof offset > "u" && (offset = 0),
-        !Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array))
-      )
+      if ((typeof offset > "u" && (offset = 0), !Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array)))
         throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
       return (
         assertOffset(offset, buf.length),
@@ -27772,25 +23613,13 @@ use chrome, FireFox or Internet Explorer 11`);
 var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
     "use strict";
-    exports.randomBytes =
-      exports.rng =
-      exports.pseudoRandomBytes =
-      exports.prng =
-        require_browser();
+    exports.randomBytes = exports.rng = exports.pseudoRandomBytes = exports.prng = require_browser();
     exports.createHash = require_browser2();
     exports.Hash = exports.createHash.Hash;
     exports.createHmac = exports.Hmac = require_browser3();
     var algos = require_algos(),
       algoKeys = Object.keys(algos),
-      hashes = [
-        "sha1",
-        "sha224",
-        "sha256",
-        "sha384",
-        "sha512",
-        "md5",
-        "rmd160",
-      ].concat(algoKeys);
+      hashes = ["sha1", "sha224", "sha256", "sha384", "sha512", "md5", "rmd160"].concat(algoKeys);
     exports.getHashes = function () {
       return hashes;
     };
@@ -27873,7 +23702,7 @@ __export(crypto_exports, {
   webcrypto: () => webcrypto,
 });
 var DEFAULT_ENCODING = "buffer",
-  getRandomValues = (array) => crypto.getRandomValues(array),
+  getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
   timingSafeEqual =
     "timingSafeEqual" in crypto
@@ -27882,8 +23711,7 @@ var DEFAULT_ENCODING = "buffer",
             { byteLength: byteLengthB } = b;
           if (typeof byteLengthA != "number" || typeof byteLengthB != "number")
             throw new TypeError("Input must be an array buffer view");
-          if (byteLengthA !== byteLengthB)
-            throw new RangeError("Input buffers must have the same length");
+          if (byteLengthA !== byteLengthB) throw new RangeError("Input buffers must have the same length");
           return crypto.timingSafeEqual(a, b);
         }
       : void 0,
@@ -27891,18 +23719,14 @@ var DEFAULT_ENCODING = "buffer",
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
           let res = crypto.scryptSync(password, salt, keylen, options);
-          return DEFAULT_ENCODING !== "buffer"
-            ? new Buffer(res).toString(DEFAULT_ENCODING)
-            : new Buffer(res);
+          return DEFAULT_ENCODING !== "buffer" ? new Buffer(res).toString(DEFAULT_ENCODING) : new Buffer(res);
         }
       : void 0,
   scrypt =
     "scryptSync" in crypto
       ? function (password, salt, keylen, options, callback) {
           if (
-            (typeof options == "function" &&
-              ((callback = options), (options = void 0)),
-            typeof callback != "function")
+            (typeof options == "function" && ((callback = options), (options = void 0)), typeof callback != "function")
           ) {
             var err = new TypeError("callback must be a function");
             throw ((err.code = "ERR_INVALID_CALLBACK"), err);
@@ -27912,9 +23736,7 @@ var DEFAULT_ENCODING = "buffer",
             process.nextTick(
               callback,
               null,
-              DEFAULT_ENCODING !== "buffer"
-                ? new Buffer(result).toString(DEFAULT_ENCODING)
-                : new Buffer(result),
+              DEFAULT_ENCODING !== "buffer" ? new Buffer(result).toString(DEFAULT_ENCODING) : new Buffer(result),
             );
           } catch (err2) {
             throw err2;
@@ -27932,14 +23754,6 @@ timingSafeEqual &&
     value: "::bunternal::",
   }));
 var webcrypto = crypto;
-export {
-  DEFAULT_ENCODING,
-  getRandomValues,
-  randomUUID,
-  scrypt,
-  scryptSync,
-  timingSafeEqual,
-  webcrypto,
-};
+export { DEFAULT_ENCODING, getRandomValues, randomUUID, scrypt, scryptSync, timingSafeEqual, webcrypto };
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

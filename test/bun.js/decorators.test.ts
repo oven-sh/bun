@@ -260,13 +260,7 @@ test("parameter decorators", () => {
       this.y = y;
     }
 
-    constructor(
-      one: number,
-      two: string,
-      three: boolean,
-      @d1 @d2 width: number,
-      @d3 height: number,
-    ) {
+    constructor(one: number, two: string, three: boolean, @d1 @d2 width: number, @d3 height: number) {
       this.width = width;
       this.height = height;
     }
@@ -334,11 +328,7 @@ test("parameter decorators", () => {
   }
 
   class Maybe {
-    constructor(
-      @m1 private x: number,
-      @m2 public y: boolean,
-      @m3 protected z: string,
-    ) {}
+    constructor(@m1 private x: number, @m2 public y: boolean, @m3 protected z: string) {}
   }
 
   function m1(target, propertyKey, index) {
@@ -384,7 +374,7 @@ test("decorators random", () => {
       const getter = () => {
         return val;
       };
-      const setter = (next) => {
+      const setter = next => {
         val = `🍦 ${next} 🍦`;
       };
 
@@ -545,7 +535,7 @@ test("decorators random", () => {
       const getter = () => {
         return val;
       };
-      const setter = (value) => {
+      const setter = value => {
         val = `${value} ${emoji}`;
       };
 
@@ -921,11 +911,7 @@ describe("constructor statements", () => {
 
     class A {
       l: number;
-      constructor(
-        protected u: string,
-        @d1 l: number = 3,
-        @d2 public k: number = 4,
-      ) {
+      constructor(protected u: string, @d1 l: number = 3, @d2 public k: number = 4) {
         this.l = l;
       }
     }

@@ -49,11 +49,7 @@ describe("Web Crypto", () => {
 
     async function signResponse(message, secret) {
       const key = await importKey(secret);
-      const signature = await crypto.subtle.sign(
-        "HMAC",
-        key,
-        new TextEncoder().encode(message),
-      );
+      const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
 
       // Convert ArrayBuffer to Base64
       return btoa(String.fromCharCode(...new Uint8Array(signature)));
@@ -63,14 +59,9 @@ describe("Web Crypto", () => {
       const key = await importKey(secret);
 
       // Convert Base64 to Uint8Array
-      const sigBuf = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
+      const sigBuf = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
 
-      return await crypto.subtle.verify(
-        "HMAC",
-        key,
-        sigBuf,
-        new TextEncoder().encode(message),
-      );
+      return await crypto.subtle.verify("HMAC", key, sigBuf, new TextEncoder().encode(message));
     }
 
     const msg = `hello world`;

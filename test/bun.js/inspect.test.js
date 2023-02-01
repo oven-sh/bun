@@ -12,8 +12,7 @@ it("when prototype defines the same property, don't print the same property twic
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
-  expect(Bun.inspect(Bun.file("/tmp/file.txt")))
-    .toBe(`FileRef ("/tmp/file.txt") {
+  expect(Bun.inspect(Bun.file("/tmp/file.txt"))).toBe(`FileRef ("/tmp/file.txt") {
   type: "text/plain;charset=utf-8"
 }`);
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
@@ -103,14 +102,10 @@ it("TypedArray prints", () => {
     const buffer = new TypedArray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const input = Bun.inspect(buffer);
 
-    expect(input).toBe(
-      `${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`,
-    );
+    expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` +
-          [...buffer.subarray(i)].join(", ") +
-          " ]",
+        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   }
@@ -121,13 +116,11 @@ it("BigIntArray", () => {
     const buffer = new TypedArray([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n]);
     const input = Bun.inspect(buffer);
 
-    expect(input).toBe(
-      `${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`,
-    );
+    expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
         `${TypedArray.name}(${buffer.length - i}) [ ` +
-          [...buffer.subarray(i)].map((a) => a.toString(10) + "n").join(", ") +
+          [...buffer.subarray(i)].map(a => a.toString(10) + "n").join(", ") +
           " ]",
       );
     }
@@ -139,16 +132,10 @@ it("FloatArray", () => {
     const buffer = new TypedArray([Math.fround(42.68)]);
     const input = Bun.inspect(buffer);
 
-    expect(input).toBe(
-      `${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(
-        ", ",
-      )} ]`,
-    );
+    expect(input).toBe(`${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(", ")} ]`);
     for (let i = 1; i < buffer.length + 1; i++) {
       expect(Bun.inspect(buffer.subarray(i))).toBe(
-        `${TypedArray.name}(${buffer.length - i}) [ ` +
-          [...buffer.subarray(i)].join(", ") +
-          " ]",
+        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
   }
@@ -189,9 +176,7 @@ it("jsx with fragment", () => {
 });
 
 it("inspect", () => {
-  expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(
-    true,
-  );
+  expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect("hi").toBe("hi");
   expect(Bun.inspect(1)).toBe("1");
   expect(Bun.inspect(NaN)).toBe("NaN");
@@ -201,15 +186,9 @@ it("inspect", () => {
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
   expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe(
-    "{\n  hello: 1,\n  there: 2\n}",
-  );
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe(
-    '{\n  hello: "1",\n  there: 2\n}',
-  );
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe(
-    '{\n  "hello-\\"there": "1",\n  there: 2\n}',
-  );
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";
@@ -226,19 +205,13 @@ it("inspect", () => {
   // ).toBe('{"hi":"ok"}');
   expect(Bun.inspect(new Set())).toBe("Set {}");
   expect(Bun.inspect(new Map())).toBe("Map {}");
-  expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe(
-    'Map(1) {\n  "foo": "bar",\n}',
-  );
+  expect(Bun.inspect(new Map([["foo", "bar"]]))).toBe('Map(1) {\n  "foo": "bar",\n}');
   expect(Bun.inspect(new Set(["bar"]))).toBe('Set(1) {\n  "bar",\n}');
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
-  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe(
-    "<div hello=123>hi</div>",
-  );
-  expect(Bun.inspect(<div hello="quoted">quoted</div>)).toBe(
-    '<div hello="quoted">quoted</div>',
-  );
+  expect(Bun.inspect(<div hello={123}>hi</div>)).toBe("<div hello=123>hi</div>");
+  expect(Bun.inspect(<div hello="quoted">quoted</div>)).toBe('<div hello="quoted">quoted</div>');
   expect(
     Bun.inspect(
       <div hello="quoted">
@@ -318,10 +291,7 @@ const fixture = [
 
 describe("crash testing", () => {
   for (let input of fixture) {
-    it(`inspecting "${input
-      .toString()
-      .slice(0, 20)
-      .replaceAll("\n", "\\n")}" doesn't crash`, async () => {
+    it(`inspecting "${input.toString().slice(0, 20).replaceAll("\n", "\\n")}" doesn't crash`, async () => {
       try {
         Bun.inspect(await input());
       } catch (e) {

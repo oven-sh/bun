@@ -51,14 +51,12 @@ describe("should work for streaming input", () => {
       const { stdout, stdin } = proc;
       stdin.write(input.slice(0, (input.length / 2) | 0));
       stdin.flush();
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise(resolve => setTimeout(resolve, 1));
       stdin.write(input.slice((input.length / 2) | 0));
       stdin.flush();
       stdin.end();
 
-      expect(await new Response(stdout).text()).toBe(
-        input.replaceAll("\n", ""),
-      );
+      expect(await new Response(stdout).text()).toBe(input.replaceAll("\n", ""));
       proc.kill(0);
     });
   }

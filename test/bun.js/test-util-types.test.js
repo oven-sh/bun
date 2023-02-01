@@ -54,8 +54,7 @@ for (const [value, _method] of [
 
     for (const key of Object.keys(types)) {
       if (
-        ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) &&
-          key.includes("Array")) ||
+        ((types.isArrayBufferView(value) || types.isAnyArrayBuffer(value)) && key.includes("Array")) ||
         key === "isBoxedPrimitive"
       ) {
         continue;
@@ -68,13 +67,9 @@ for (const [value, _method] of [
 
 // Check boxed primitives.
 test("isBoxedPrimitive", () => {
-  [
-    new Boolean(),
-    new Number(),
-    new String(),
-    Object(Symbol()),
-    Object(BigInt(0)),
-  ].forEach((entry) => assert(types.isBoxedPrimitive(entry)));
+  [new Boolean(), new Number(), new String(), Object(Symbol()), Object(BigInt(0))].forEach(entry =>
+    assert(types.isBoxedPrimitive(entry)),
+  );
 });
 
 {
@@ -108,54 +103,18 @@ test("isBoxedPrimitive", () => {
   const fakeBigInt64Array = Object.create(BigInt64Array.prototype);
   const fakeBigUint64Array = Object.create(BigUint64Array.prototype);
 
-  const stealthyDataView = Object.setPrototypeOf(
-    new DataView(arrayBuffer),
-    Uint8Array.prototype,
-  );
-  const stealthyUint8Array = Object.setPrototypeOf(
-    new Uint8Array(arrayBuffer),
-    ArrayBuffer.prototype,
-  );
-  const stealthyUint8ClampedArray = Object.setPrototypeOf(
-    new Uint8ClampedArray(arrayBuffer),
-    ArrayBuffer.prototype,
-  );
-  const stealthyUint16Array = Object.setPrototypeOf(
-    new Uint16Array(arrayBuffer),
-    Uint16Array.prototype,
-  );
-  const stealthyUint32Array = Object.setPrototypeOf(
-    new Uint32Array(arrayBuffer),
-    Uint32Array.prototype,
-  );
-  const stealthyInt8Array = Object.setPrototypeOf(
-    new Int8Array(arrayBuffer),
-    Int8Array.prototype,
-  );
-  const stealthyInt16Array = Object.setPrototypeOf(
-    new Int16Array(arrayBuffer),
-    Int16Array.prototype,
-  );
-  const stealthyInt32Array = Object.setPrototypeOf(
-    new Int32Array(arrayBuffer),
-    Int32Array.prototype,
-  );
-  const stealthyFloat32Array = Object.setPrototypeOf(
-    new Float32Array(arrayBuffer),
-    Float32Array.prototype,
-  );
-  const stealthyFloat64Array = Object.setPrototypeOf(
-    new Float64Array(arrayBuffer),
-    Float64Array.prototype,
-  );
-  const stealthyBigInt64Array = Object.setPrototypeOf(
-    new BigInt64Array(arrayBuffer),
-    BigInt64Array.prototype,
-  );
-  const stealthyBigUint64Array = Object.setPrototypeOf(
-    new BigUint64Array(arrayBuffer),
-    BigUint64Array.prototype,
-  );
+  const stealthyDataView = Object.setPrototypeOf(new DataView(arrayBuffer), Uint8Array.prototype);
+  const stealthyUint8Array = Object.setPrototypeOf(new Uint8Array(arrayBuffer), ArrayBuffer.prototype);
+  const stealthyUint8ClampedArray = Object.setPrototypeOf(new Uint8ClampedArray(arrayBuffer), ArrayBuffer.prototype);
+  const stealthyUint16Array = Object.setPrototypeOf(new Uint16Array(arrayBuffer), Uint16Array.prototype);
+  const stealthyUint32Array = Object.setPrototypeOf(new Uint32Array(arrayBuffer), Uint32Array.prototype);
+  const stealthyInt8Array = Object.setPrototypeOf(new Int8Array(arrayBuffer), Int8Array.prototype);
+  const stealthyInt16Array = Object.setPrototypeOf(new Int16Array(arrayBuffer), Int16Array.prototype);
+  const stealthyInt32Array = Object.setPrototypeOf(new Int32Array(arrayBuffer), Int32Array.prototype);
+  const stealthyFloat32Array = Object.setPrototypeOf(new Float32Array(arrayBuffer), Float32Array.prototype);
+  const stealthyFloat64Array = Object.setPrototypeOf(new Float64Array(arrayBuffer), Float64Array.prototype);
+  const stealthyBigInt64Array = Object.setPrototypeOf(new BigInt64Array(arrayBuffer), BigInt64Array.prototype);
+  const stealthyBigUint64Array = Object.setPrototypeOf(new BigUint64Array(arrayBuffer), BigUint64Array.prototype);
 
   const all = [
     primitive,

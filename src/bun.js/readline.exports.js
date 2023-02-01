@@ -109,10 +109,7 @@ var createSafeIterator = (factory, next) => {
   return SafeIterator;
 };
 
-var SafeStringIterator = createSafeIterator(
-  StringPrototypeSymbolIterator,
-  StringIteratorPrototypeNext,
-);
+var SafeStringIterator = createSafeIterator(StringPrototypeSymbolIterator, StringIteratorPrototypeNext);
 
 // ----------------------------------------------------------------------------
 // Section: "Internal" modules
@@ -122,7 +119,7 @@ var SafeStringIterator = createSafeIterator(
  * Returns true if the character represented by a given
  * Unicode code point is full-width. Otherwise returns false.
  */
-var isFullWidthCodePoint = (code) => {
+var isFullWidthCodePoint = code => {
   // Code points are partially derived from:
   // https://www.unicode.org/Public/UNIDATA/EastAsianWidth.txt
   return (
@@ -161,7 +158,7 @@ var isFullWidthCodePoint = (code) => {
   );
 };
 
-var isZeroWidthCodePoint = (code) => {
+var isZeroWidthCodePoint = code => {
   return (
     code <= 0x1f || // C0 control codes
     (code >= 0x7f && code <= 0x9f) || // C1 control codes
@@ -248,8 +245,7 @@ function promisify(original) {
         }
         if (argumentNames !== undefined && values.length > 1) {
           var obj = {};
-          for (var i = 0; i < argumentNames.length; i++)
-            obj[argumentNames[i]] = values[i];
+          for (var i = 0; i < argumentNames.length; i++) obj[argumentNames[i]] = values[i];
           resolve(obj);
         } else {
           resolve(values[0]);
@@ -330,21 +326,17 @@ var NodeRangeError = getNodeErrorByName("RangeError");
 
 class ERR_INVALID_ARG_TYPE extends NodeTypeError {
   constructor(name, type, value) {
-    super(
-      `The "${name}" argument must be of type ${type}. Received type ${typeof value}`,
-      { code: "ERR_INVALID_ARG_TYPE" },
-    );
+    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value}`, {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
   }
 }
 
 class ERR_INVALID_ARG_VALUE extends NodeTypeError {
   constructor(name, value, reason = "not specified") {
-    super(
-      `The value "${String(
-        value,
-      )}" is invalid for argument '${name}'. Reason: ${reason}`,
-      { code: "ERR_INVALID_ARG_VALUE" },
-    );
+    super(`The value "${String(value)}" is invalid for argument '${name}'. Reason: ${reason}`, {
+      code: "ERR_INVALID_ARG_VALUE",
+    });
   }
 }
 
@@ -358,10 +350,9 @@ class ERR_INVALID_CURSOR_POS extends NodeTypeError {
 
 class ERR_OUT_OF_RANGE extends NodeRangeError {
   constructor(name, range, received) {
-    super(
-      `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
-      { code: "ERR_OUT_OF_RANGE" },
-    );
+    super(`The value of "${name}" is out of range. It must be ${range}. Received ${received}`, {
+      code: "ERR_OUT_OF_RANGE",
+    });
   }
 }
 
@@ -390,8 +381,7 @@ class AbortError extends Error {
  * @returns {asserts value is Function}
  */
 function validateFunction(value, name) {
-  if (typeof value !== "function")
-    throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
+  if (typeof value !== "function") throw new ERR_INVALID_ARG_TYPE(name, "Function", value);
 }
 
 /**
@@ -400,10 +390,7 @@ function validateFunction(value, name) {
  * @param {string} name
  */
 function validateAbortSignal(signal, name) {
-  if (
-    signal !== undefined &&
-    (signal === null || typeof signal !== "object" || !("aborted" in signal))
-  ) {
+  if (signal !== undefined && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
     throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
@@ -433,8 +420,7 @@ function validateArray(value, name, minLength = 0) {
  * @returns {asserts value is string}
  */
 function validateString(value, name) {
-  if (typeof value !== "string")
-    throw new ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (typeof value !== "string") throw new ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
 /**
@@ -444,8 +430,7 @@ function validateString(value, name) {
  * @returns {asserts value is boolean}
  */
 function validateBoolean(value, name) {
-  if (typeof value !== "boolean")
-    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
+  if (typeof value !== "boolean") throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
 /**
@@ -466,8 +451,7 @@ function validateObject(value, name, options = null) {
   if (
     (!nullable && value === null) ||
     (!allowArray && ArrayIsArray.call(value)) ||
-    (typeof value !== "object" &&
-      (!allowFunction || typeof value !== "function"))
+    (typeof value !== "object" && (!allowFunction || typeof value !== "function"))
   ) {
     throw new ERR_INVALID_ARG_TYPE(name, "object", value);
   }
@@ -481,18 +465,10 @@ function validateObject(value, name, options = null) {
  * @param {number} [max]
  * @returns {asserts value is number}
  */
-function validateInteger(
-  value,
-  name,
-  min = NumberMIN_SAFE_INTEGER,
-  max = NumberMAX_SAFE_INTEGER,
-) {
-  if (typeof value !== "number")
-    throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value))
-    throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max)
-    throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
+function validateInteger(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER) {
+  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 }
 
 /**
@@ -543,9 +519,7 @@ CSI.kClearToLineEnd = kClearToLineEnd = CSI`0K`;
 function charLengthLeft(str, i) {
   if (i <= 0) return 0;
   if (
-    (i > 1 &&
-      StringPrototypeCodePointAt.call(str, i - 2) >=
-        kUTF16SurrogateThreshold) ||
+    (i > 1 && StringPrototypeCodePointAt.call(str, i - 2) >= kUTF16SurrogateThreshold) ||
     StringPrototypeCodePointAt.call(str, i - 1) >= kUTF16SurrogateThreshold
   ) {
     return 2;
@@ -559,9 +533,7 @@ function charLengthAt(str, i) {
     // moving to the right.
     return 1;
   }
-  return StringPrototypeCodePointAt.call(str, i) >= kUTF16SurrogateThreshold
-    ? 2
-    : 1;
+  return StringPrototypeCodePointAt.call(str, i) >= kUTF16SurrogateThreshold ? 2 : 1;
 }
 
 /*
@@ -702,14 +674,10 @@ function* emitKeys(stream) {
         var cmd = StringPrototypeSlice.call(s, cmdStart);
         var match;
 
-        if (
-          (match = RegExpPrototypeExec.call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))
-        ) {
+        if ((match = RegExpPrototypeExec.call(/^(\d\d?)(;(\d))?([~^$])$/, cmd))) {
           code += match[1] + match[4];
           modifier = (match[3] || 1) - 1;
-        } else if (
-          (match = RegExpPrototypeExec.call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))
-        ) {
+        } else if ((match = RegExpPrototypeExec.call(/^((\d;)?(\d))?([A-Za-z])$/, cmd))) {
           code += match[4];
           modifier = (match[3] || 1) - 1;
         } else {
@@ -1019,11 +987,7 @@ function* emitKeys(stream) {
       keyMeta = escaped;
     } else if (!escaped && ch <= "\x1a") {
       // ctrl+letter
-      keyName = StringFromCharCode(
-        StringPrototypeCharCodeAt.call(ch) +
-          StringPrototypeCharCodeAt.call("a") -
-          1,
-      );
+      keyName = StringFromCharCode(StringPrototypeCharCodeAt.call(ch) + StringPrototypeCharCodeAt.call("a") - 1);
       keyCtrl = true;
     } else if (RegExpPrototypeExec.call(/^[0-9A-Za-z]$/, ch) !== null) {
       // Letter, number, shift+letter
@@ -1160,8 +1124,7 @@ function clearLine(stream, dir, callback) {
     return true;
   }
 
-  var type =
-    dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+  var type = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
   return stream.write(type, callback);
 }
 
@@ -1504,10 +1467,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
       if (NumberIsFinite(inputEscapeCodeTimeout)) {
         this.escapeCodeTimeout = inputEscapeCodeTimeout;
       } else {
-        throw new ERR_INVALID_ARG_VALUE(
-          "input.escapeCodeTimeout",
-          this.escapeCodeTimeout,
-        );
+        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
       }
     }
 
@@ -1533,11 +1493,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     historySize = kHistorySize;
   }
 
-  if (
-    typeof historySize !== "number" ||
-    NumberIsNaN(historySize) ||
-    historySize < 0
-  ) {
+  if (typeof historySize !== "number" || NumberIsNaN(historySize) || historySize < 0) {
     throw new ERR_INVALID_ARG_VALUE("historySize", historySize);
   }
 
@@ -1565,9 +1521,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   this[kKillRingCursor] = 0;
 
   this.removeHistoryDuplicates = !!removeHistoryDuplicates;
-  this.crlfDelay = crlfDelay
-    ? MathMax(kMincrlfDelay, crlfDelay)
-    : kMincrlfDelay;
+  this.crlfDelay = crlfDelay ? MathMax(kMincrlfDelay, crlfDelay) : kMincrlfDelay;
   this.completer = completer;
 
   this.setPrompt(prompt);
@@ -1597,8 +1551,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     this.cursor = 0;
     this.historyIndex = -1;
 
-    if (output !== null && output !== undefined)
-      output.on("resize", this[kOnResize]);
+    if (output !== null && output !== undefined) output.on("resize", this[kOnResize]);
 
     this.once("close", this[kOnSelfCloseWithTerminal]);
   }
@@ -1738,15 +1691,13 @@ var _Interface = class Interface extends InterfaceConstructor {
       if (this.removeHistoryDuplicates) {
         // Remove older history line if identical to new one
         var dupIndex = ArrayPrototypeIndexOf.call(this.history, this.line);
-        if (dupIndex !== -1)
-          ArrayPrototypeSplice.call(this.history, dupIndex, 1);
+        if (dupIndex !== -1) ArrayPrototypeSplice.call(this.history, dupIndex, 1);
       }
 
       ArrayPrototypeUnshift.call(this.history, this.line);
 
       // Only store so many
-      if (this.history.length > this.historySize)
-        ArrayPrototypePop.call(this.history);
+      if (this.history.length > this.historySize) ArrayPrototypePop.call(this.history);
     }
 
     this.historyIndex = -1;
@@ -1866,12 +1817,8 @@ var _Interface = class Interface extends InterfaceConstructor {
       return;
     }
     var string = this[kDecoder].write(b);
-    if (
-      this[kSawReturnAt] &&
-      DateNow() - this[kSawReturnAt] <= this.crlfDelay
-    ) {
-      if (StringPrototypeCodePointAt.call(string) === 10)
-        string = StringPrototypeSlice.call(string, 1);
+    if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
+      if (StringPrototypeCodePointAt.call(string) === 10) string = StringPrototypeSlice.call(string, 1);
       this[kSawReturnAt] = 0;
     }
 
@@ -1883,27 +1830,18 @@ var _Interface = class Interface extends InterfaceConstructor {
         this[kLine_buffer] = null;
         newPartContainsEnding = RegExpPrototypeExec.call(lineEnding, string);
       }
-      this[kSawReturnAt] = StringPrototypeEndsWith.call(string, "\r")
-        ? DateNow()
-        : 0;
+      this[kSawReturnAt] = StringPrototypeEndsWith.call(string, "\r") ? DateNow() : 0;
 
       var indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
       var nextMatch;
-      while (
-        (nextMatch = RegExpPrototypeExec.call(lineEnding, string)) !== null
-      ) {
+      while ((nextMatch = RegExpPrototypeExec.call(lineEnding, string)) !== null) {
         ArrayPrototypePush.call(indexes, nextMatch.index, lineEnding.lastIndex);
       }
       var lastIndex = indexes.length - 1;
       // Either '' or (conceivably) the unfinished portion of the next line
-      this[kLine_buffer] = StringPrototypeSlice.call(
-        string,
-        indexes[lastIndex],
-      );
+      this[kLine_buffer] = StringPrototypeSlice.call(string, indexes[lastIndex]);
       for (var i = 1; i < lastIndex; i += 2) {
-        this[kOnLine](
-          StringPrototypeSlice.call(string, indexes[i - 1], indexes[i]),
-        );
+        this[kOnLine](StringPrototypeSlice.call(string, indexes[i - 1], indexes[i]));
       }
     } else if (string) {
       // No newlines this time, save what we have for next time
@@ -1919,11 +1857,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     this[kBeforeEdit](this.line, this.cursor);
     if (this.cursor < this.line.length) {
       var beg = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var end = StringPrototypeSlice.call(
-        this.line,
-        this.cursor,
-        this.line.length,
-      );
+      var end = StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
       this.line = beg + c + end;
       this.cursor += c.length;
       this[kRefreshLine]();
@@ -1964,22 +1898,13 @@ var _Interface = class Interface extends InterfaceConstructor {
     }
 
     // If there is a common prefix to all matches, then apply that portion.
-    var prefix = commonPrefix(
-      ArrayPrototypeFilter.call(completions, (e) => e !== ""),
-    );
-    if (
-      StringPrototypeStartsWith.call(prefix, completeOn) &&
-      prefix.length > completeOn.length
-    ) {
+    var prefix = commonPrefix(ArrayPrototypeFilter.call(completions, e => e !== ""));
+    if (StringPrototypeStartsWith.call(prefix, completeOn) && prefix.length > completeOn.length) {
       this[kInsertString](StringPrototypeSlice.call(prefix, completeOn.length));
       return;
     } else if (!StringPrototypeStartsWith.call(completeOn, prefix)) {
       this.line =
-        StringPrototypeSlice.call(
-          this.line,
-          0,
-          this.cursor - completeOn.length,
-        ) +
+        StringPrototypeSlice.call(this.line, 0, this.cursor - completeOn.length) +
         prefix +
         StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
       this.cursor = this.cursor - completeOn.length + prefix.length;
@@ -1994,9 +1919,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     this[kBeforeEdit](this.line, this.cursor);
 
     // Apply/show completions.
-    var completionsWidth = ArrayPrototypeMap.call(completions, (e) =>
-      getStringWidth(e),
-    );
+    var completionsWidth = ArrayPrototypeMap.call(completions, e => getStringWidth(e));
     var width = MathMaxApply(completionsWidth) + 2; // 2 space padding
     var maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
@@ -2034,10 +1957,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
       var leading = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var reversed = ArrayPrototypeJoin.call(
-        ArrayPrototypeReverse.call(ArrayFrom(leading)),
-        "",
-      );
+      var reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), "");
       var match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
       this[kMoveCursor](-match[0].length);
     }
@@ -2046,10 +1966,7 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kWordRight]() {
     if (this.cursor < this.line.length) {
       var trailing = StringPrototypeSlice.call(this.line, this.cursor);
-      var match = RegExpPrototypeExec.call(
-        /^(?:\s+|[^\w\s]+|\w+)\s*/,
-        trailing,
-      );
+      var match = RegExpPrototypeExec.call(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
       this[kMoveCursor](match[0].length);
     }
   }
@@ -2075,11 +1992,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var charSize = charLengthAt(this.line, this.cursor);
       this.line =
         StringPrototypeSlice.call(this.line, 0, this.cursor) +
-        StringPrototypeSlice.call(
-          this.line,
-          this.cursor + charSize,
-          this.line.length,
-        );
+        StringPrototypeSlice.call(this.line, this.cursor + charSize, this.line.length);
       this[kRefreshLine]();
     }
   }
@@ -2090,19 +2003,10 @@ var _Interface = class Interface extends InterfaceConstructor {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
       var leading = StringPrototypeSlice.call(this.line, 0, this.cursor);
-      var reversed = ArrayPrototypeJoin.call(
-        ArrayPrototypeReverse.call(ArrayFrom(leading)),
-        "",
-      );
+      var reversed = ArrayPrototypeJoin.call(ArrayPrototypeReverse.call(ArrayFrom(leading)), "");
       var match = RegExpPrototypeExec.call(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
-      leading = StringPrototypeSlice.call(
-        leading,
-        0,
-        leading.length - match[0].length,
-      );
-      this.line =
-        leading +
-        StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
+      leading = StringPrototypeSlice.call(leading, 0, leading.length - match[0].length);
+      this.line = leading + StringPrototypeSlice.call(this.line, this.cursor, this.line.length);
       this.cursor = leading.length;
       this[kRefreshLine]();
     }
@@ -2114,8 +2018,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var trailing = StringPrototypeSlice.call(this.line, this.cursor);
       var match = RegExpPrototypeExec.call(/^(?:\s+|\W+|\w+)\s*/, trailing);
       this.line =
-        StringPrototypeSlice.call(this.line, 0, this.cursor) +
-        StringPrototypeSlice.call(trailing, match[0].length);
+        StringPrototypeSlice.call(this.line, 0, this.cursor) + StringPrototypeSlice.call(trailing, match[0].length);
       this[kRefreshLine]();
     }
   }
@@ -2141,8 +2044,7 @@ var _Interface = class Interface extends InterfaceConstructor {
     if (!del || del === this[kKillRing][0]) return;
     ArrayPrototypeUnshift.call(this[kKillRing], del);
     this[kKillRingCursor] = 0;
-    while (this[kKillRing].length > kMaxLengthOfKillRing)
-      ArrayPrototypePop.call(this[kKillRing]);
+    while (this[kKillRing].length > kMaxLengthOfKillRing) ArrayPrototypePop.call(this[kKillRing]);
   }
 
   [kYank]() {
@@ -2163,11 +2065,7 @@ var _Interface = class Interface extends InterfaceConstructor {
         this[kKillRingCursor] = 0;
       }
       var currentYank = this[kKillRing][this[kKillRingCursor]];
-      var head = StringPrototypeSlice.call(
-        this.line,
-        0,
-        this.cursor - lastYank.length,
-      );
+      var head = StringPrototypeSlice.call(this.line, 0, this.cursor - lastYank.length);
       var tail = StringPrototypeSlice.call(this.line, this.cursor);
       this.line = head + currentYank + tail;
       this.cursor = head.length + currentYank.length;
@@ -2192,10 +2090,7 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kPushToUndoStack](text, cursor) {
-    if (
-      ArrayPrototypePush.call(this[kUndoStack], { text, cursor }) >
-      kMaxUndoRedoStackSize
-    ) {
+    if (ArrayPrototypePush.call(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize) {
       ArrayPrototypeShift.call(this[kUndoStack]);
     }
   }
@@ -2237,8 +2132,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var index = this.historyIndex - 1;
       while (
         index >= 0 &&
-        (!StringPrototypeStartsWith.call(this.history[index], search) ||
-          this.line === this.history[index])
+        (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index])
       ) {
         index--;
       }
@@ -2260,8 +2154,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       var index = this.historyIndex + 1;
       while (
         index < this.history.length &&
-        (!StringPrototypeStartsWith.call(this.history[index], search) ||
-          this.line === this.history[index])
+        (!StringPrototypeStartsWith.call(this.history[index], search) || this.line === this.history[index])
       ) {
         index++;
       }
@@ -2319,8 +2212,7 @@ var _Interface = class Interface extends InterfaceConstructor {
    * }}
    */
   getCursorPos() {
-    var strBeforeCursor =
-      this[kPrompt] + StringPrototypeSlice.call(this.line, 0, this.cursor);
+    var strBeforeCursor = this[kPrompt] + StringPrototypeSlice.call(this.line, 0, this.cursor);
     return this[kGetDisplayPos](strBeforeCursor);
   }
 
@@ -2364,18 +2256,9 @@ var _Interface = class Interface extends InterfaceConstructor {
     }
 
     // Activate or deactivate substring search.
-    if (
-      (keyName === "up" || keyName === "down") &&
-      !keyCtrl &&
-      !keyMeta &&
-      !keyShift
-    ) {
+    if ((keyName === "up" || keyName === "down") && !keyCtrl && !keyMeta && !keyShift) {
       if (this[kSubstringSearch] === null) {
-        this[kSubstringSearch] = StringPrototypeSlice.call(
-          this.line,
-          0,
-          this.cursor,
-        );
+        this[kSubstringSearch] = StringPrototypeSlice.call(this.line, 0, this.cursor);
       }
     } else if (this[kSubstringSearch] !== null) {
       this[kSubstringSearch] = null;
@@ -2564,10 +2447,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
         case "enter":
           // When key interval > crlfDelay
-          if (
-            this[kSawReturnAt] === 0 ||
-            DateNow() - this[kSawReturnAt] > this.crlfDelay
-          ) {
+          if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay) {
             this[kLine]();
           }
           this[kSawReturnAt] = 0;
@@ -2608,10 +2488,7 @@ var _Interface = class Interface extends InterfaceConstructor {
 
         case "tab":
           // If tab completion enabled, do that...
-          if (
-            typeof this.completer === "function" &&
-            this.isCompletionEnabled
-          ) {
+          if (typeof this.completer === "function" && this.isCompletionEnabled) {
             var lastKeypressWasTab = previousKey && previousKey.name === "tab";
             this[kTabComplete](lastKeypressWasTab);
             break;
@@ -2621,17 +2498,11 @@ var _Interface = class Interface extends InterfaceConstructor {
           if (typeof s === "string" && s) {
             var nextMatch = RegExpPrototypeExec.call(lineEnding, s);
             if (nextMatch !== null) {
-              this[kInsertString](
-                StringPrototypeSlice.call(s, 0, nextMatch.index),
-              );
+              this[kInsertString](StringPrototypeSlice.call(s, 0, nextMatch.index));
               var { lastIndex } = lineEnding;
-              while (
-                (nextMatch = RegExpPrototypeExec.call(lineEnding, s)) !== null
-              ) {
+              while ((nextMatch = RegExpPrototypeExec.call(lineEnding, s)) !== null) {
                 this[kLine]();
-                this[kInsertString](
-                  StringPrototypeSlice.call(s, lastIndex, nextMatch.index),
-                );
+                this[kInsertString](StringPrototypeSlice.call(s, lastIndex, nextMatch.index));
                 ({ lastIndex } = lineEnding);
               }
               if (lastIndex === s.length) this[kLine]();
@@ -2669,11 +2540,7 @@ function Interface(input, output, completer, terminal) {
     return new Interface(input, output, completer, terminal);
   }
 
-  if (
-    input?.input &&
-    typeof input.completer === "function" &&
-    input.completer.length !== 2
-  ) {
+  if (input?.input && typeof input.completer === "function" && input.completer.length !== 2) {
     var { completer } = input;
     input.completer = (v, cb) => cb(null, completer(v));
   } else if (typeof completer === "function" && completer.length !== 2) {
@@ -2722,7 +2589,7 @@ Interface.prototype.question = function question(query, options, cb) {
     var originalCb = cb;
     cb =
       typeof cb === "function"
-        ? (answer) => {
+        ? answer => {
             cleanup();
             return originalCb(answer);
           }
@@ -2734,10 +2601,7 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-Interface.prototype.question[promisify.custom] = function question(
-  query,
-  options,
-) {
+Interface.prototype.question[promisify.custom] = function question(query, options) {
   if (options === null || typeof options !== "object") {
     options = kEmptyObject;
   }
@@ -2755,7 +2619,7 @@ Interface.prototype.question[promisify.custom] = function question(
         reject(new AbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      cb = (answer) => {
+      cb = answer => {
         signal.removeEventListener("abort", onAbort);
         resolve(answer);
       };
@@ -3072,10 +2936,7 @@ function _ttyWriteDumb(s, key) {
 
     case "enter":
       // When key interval > crlfDelay
-      if (
-        this[kSawReturnAt] === 0 ||
-        DateNow() - this[kSawReturnAt] > this.crlfDelay
-      ) {
+      if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay) {
         this._line();
       }
       this[kSawReturnAt] = 0;
@@ -3097,8 +2958,7 @@ class Readline {
 
   constructor(stream, options = undefined) {
     isWritable ??= import.meta.require("node:stream").isWritable;
-    if (!isWritable(stream))
-      throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
+    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
       validateBoolean(options.autoCommit, "options.autoCommit");
@@ -3164,8 +3024,7 @@ class Readline {
   clearLine(dir) {
     validateInteger(dir, "dir", -1, 1);
 
-    var data =
-      dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+    var data = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
     else ArrayPrototypePush.call(this.#todo, data);
     return this;
@@ -3191,7 +3050,7 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    return new Promise((resolve) => {
+    return new Promise(resolve => {
       this.#stream.write(ArrayPrototypeJoin.call(this.#todo, ""), resolve);
       this.#todo = [];
     });
@@ -3218,9 +3077,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (signal) {
       validateAbortSignal(signal, "options.signal");
       if (signal.aborted) {
-        return PromiseReject(
-          new AbortError(undefined, { cause: signal.reason }),
-        );
+        return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
       }
     }
     return new Promise((resolve, reject) => {
@@ -3231,7 +3088,7 @@ var PromisesInterface = class Interface extends _Interface {
           reject(new AbortError(undefined, { cause: signal.reason }));
         };
         signal.addEventListener("abort", onAbort, { once: true });
-        cb = (answer) => {
+        cb = answer => {
           signal.removeEventListener("abort", onAbort);
           resolve(answer);
         };

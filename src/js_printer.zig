@@ -5343,7 +5343,7 @@ pub fn printCommonJSThreaded(
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, true, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, ascii_only, true, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,

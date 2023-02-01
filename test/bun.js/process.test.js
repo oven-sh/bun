@@ -7,17 +7,13 @@ it("process", () => {
   // this property isn't implemented yet but it should at least return a string
   const isNode = !process.isBun;
 
-  if (!isNode && process.title !== "bun")
-    throw new Error("process.title is not 'bun'");
+  if (!isNode && process.title !== "bun") throw new Error("process.title is not 'bun'");
 
-  if (typeof process.env.USER !== "string")
-    throw new Error("process.env is not an object");
+  if (typeof process.env.USER !== "string") throw new Error("process.env is not an object");
 
-  if (process.env.USER.length === 0)
-    throw new Error("process.env is missing a USER property");
+  if (process.env.USER.length === 0) throw new Error("process.env is missing a USER property");
 
-  if (process.platform !== "darwin" && process.platform !== "linux")
-    throw new Error("process.platform is invalid");
+  if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("process.platform is invalid");
 
   if (isNode) throw new Error("process.isBun is invalid");
 
@@ -41,9 +37,7 @@ it("process", () => {
   }
 
   if (typeof JSON.parse(JSON.stringify(process.env)).toJSON !== "undefined") {
-    throw new Error(
-      "process.env should call toJSON to hide its internal state",
-    );
+    throw new Error("process.env should call toJSON to hide its internal state");
   }
 
   var { env, ...proces } = process;
@@ -71,9 +65,9 @@ it("process.hrtime.bigint()", () => {
 it("process.release", () => {
   expect(process.release.name).toBe("bun");
   expect(process.release.sourceUrl).toBe(
-    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${
-      process.platform
-    }-${{ arm64: "aarch64", x64: "x64" }[process.arch] || process.arch}.zip`,
+    `https://github.com/oven-sh/bun/release/bun-v${process.versions.bun}/bun-${process.platform}-${
+      { arm64: "aarch64", x64: "x64" }[process.arch] || process.arch
+    }.zip`,
   );
 });
 
@@ -95,7 +89,7 @@ it("process.env is spreadable and editable", () => {
   expect(lol).toBe("😂");
   delete process.env["LOL SMILE UTF16 😂"];
   expect(rest).toEqual(process.env);
-  const orig = ((getter) => process.env[getter])("USER");
+  const orig = (getter => process.env[getter])("USER");
   expect(process.env).toEqual(process.env);
   eval(`globalThis.process.env.USER = 'bun';`);
   expect(eval(`globalThis.process.env.USER`)).toBe("bun");
@@ -117,9 +111,7 @@ it("process.execPath", () => {
 
 it("process.uptime()", () => {
   expect(process.uptime()).toBeGreaterThan(0);
-  expect(Math.floor(process.uptime())).toBe(
-    Math.floor(performance.now() / 1000),
-  );
+  expect(Math.floor(process.uptime())).toBe(Math.floor(performance.now() / 1000));
 });
 
 it("process.umask()", () => {
@@ -143,18 +135,10 @@ it("process.versions", () => {
   // pub const c_ares = "0e7a5dee0fbb04080750cf6eabbe89d8bae87faa";
   // pub const usockets = "fafc241e8664243fc0c51d69684d5d02b9805134";
   const versions = Object.fromEntries(
-    readFileSync(
-      import.meta.dir + "/../../src/generated_versions_list.zig",
-      "utf8",
-    )
+    readFileSync(import.meta.dir + "/../../src/generated_versions_list.zig", "utf8")
       .split("\n")
-      .filter(
-        (line) =>
-          line.startsWith("pub const") &&
-          !line.includes("zig") &&
-          line.includes(' = "'),
-      )
-      .map((line) => line.split(" = "))
+      .filter(line => line.startsWith("pub const") && !line.includes("zig") && line.includes(' = "'))
+      .map(line => line.split(" = "))
       .map(([name, hash]) => [name.slice(9).trim(), hash.slice(1, -2)]),
   );
   versions.uwebsockets = versions.uws;
@@ -180,7 +164,7 @@ it("process.config", () => {
 it("process.emitWarning", () => {
   process.emitWarning("-- Testing process.emitWarning --");
   var called = 0;
-  process.on("warning", (err) => {
+  process.on("warning", err => {
     called++;
     expect(err.message).toBe("-- Testing process.on('warning') --");
   });

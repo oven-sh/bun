@@ -64,10 +64,7 @@ it("path.basename", () => {
   strictEqual(path.win32.basename("a", "a"), "");
 
   // On unix a backslash is just treated as any other character.
-  strictEqual(
-    path.posix.basename("\\dir\\basename.ext"),
-    "\\dir\\basename.ext",
-  );
+  strictEqual(path.posix.basename("\\dir\\basename.ext"), "\\dir\\basename.ext");
   strictEqual(path.posix.basename("\\basename.ext"), "\\basename.ext");
   strictEqual(path.posix.basename("basename.ext"), "basename.ext");
   strictEqual(path.posix.basename("basename.ext\\"), "basename.ext\\");
@@ -77,10 +74,7 @@ it("path.basename", () => {
   // POSIX filenames may include control characters
   // c.f. http://www.dwheeler.com/essays/fixing-unix-linux-filenames.html
   const controlCharFilename = `Icon${String.fromCharCode(13)}`;
-  strictEqual(
-    path.posix.basename(`/a/b/${controlCharFilename}`),
-    controlCharFilename,
-  );
+  strictEqual(path.posix.basename(`/a/b/${controlCharFilename}`), controlCharFilename);
 });
 
 it("path.join", () => {
@@ -195,10 +189,10 @@ it("path.join", () => {
   //     [["c:", "file"], "c:\\file"],
   //   ]),
   // ]);
-  joinTests.forEach((test) => {
+  joinTests.forEach(test => {
     if (!Array.isArray(test[0])) test[0] = [test[0]];
-    test[0].forEach((join) => {
-      test[1].forEach((test) => {
+    test[0].forEach(join => {
+      test[1].forEach(test => {
         const actual = join.apply(null, test[0]);
         const expected = test[1];
         // For non-Windows specific tests with the Windows join(), we need to try
@@ -284,9 +278,9 @@ it("path.relative", () => {
     ],
   ];
 
-  relativeTests.forEach((test) => {
+  relativeTests.forEach(test => {
     const relative = test[0];
-    test[1].forEach((test) => {
+    test[1].forEach(test => {
       const actual = relative(test[0], test[1]);
       const expected = test[2];
       if (actual !== expected) {
@@ -294,9 +288,7 @@ it("path.relative", () => {
         const message = `path.${os}.relative(${test
           .slice(0, 2)
           .map(JSON.stringify)
-          .join(",")})\n  expect=${JSON.stringify(
-          expected,
-        )}\n  actual=${JSON.stringify(actual)}`;
+          .join(",")})\n  expect=${JSON.stringify(expected)}\n  actual=${JSON.stringify(actual)}`;
         failures.push(`\n${message}`);
       }
     });
@@ -353,10 +345,7 @@ it("path.normalize", () => {
   // );
   // strictEqual(path.win32.normalize("foo/bar\\baz"), "foo\\bar\\baz");
 
-  strictEqual(
-    path.posix.normalize("./fixtures///b/../b/c.js"),
-    "fixtures/b/c.js",
-  );
+  strictEqual(path.posix.normalize("./fixtures///b/../b/c.js"), "fixtures/b/c.js");
   strictEqual(path.posix.normalize("/foo/../../../bar"), "/bar");
   strictEqual(path.posix.normalize("a//b//../b"), "a/b");
   strictEqual(path.posix.normalize("a//b//./c"), "a/b/c");
@@ -370,22 +359,10 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("bar/foo.."), "bar/foo..");
   strictEqual(path.posix.normalize("../foo../../../bar"), "../../bar");
   strictEqual(path.posix.normalize("../.../.././.../../../bar"), "../../bar");
-  strictEqual(
-    path.posix.normalize("../../../foo/../../../bar"),
-    "../../../../../bar",
-  );
-  strictEqual(
-    path.posix.normalize("../../../foo/../../../bar/../../"),
-    "../../../../../../",
-  );
-  strictEqual(
-    path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"),
-    "../../",
-  );
-  strictEqual(
-    path.posix.normalize("../.../../foobar/../../../bar/../../baz"),
-    "../../../../baz",
-  );
+  strictEqual(path.posix.normalize("../../../foo/../../../bar"), "../../../../../bar");
+  strictEqual(path.posix.normalize("../../../foo/../../../bar/../../"), "../../../../../../");
+  strictEqual(path.posix.normalize("../foobar/barfoo/foo/../../../bar/../../"), "../../");
+  strictEqual(path.posix.normalize("../.../../foobar/../../../bar/../../baz"), "../../../../baz");
   strictEqual(path.posix.normalize("foo/bar\\baz"), "foo/bar\\baz");
 });
 
@@ -425,10 +402,7 @@ it("path.resolve", () => {
         [["a/b/c/", "../../.."], process.cwd()],
         [["."], process.cwd()],
         [["/some/dir", ".", "/absolute/"], "/absolute"],
-        [
-          ["/foo/tmp.3/", "../tmp.3/cycles/root.js"],
-          "/foo/tmp.3/cycles/root.js",
-        ],
+        [["/foo/tmp.3/", "../tmp.3/cycles/root.js"], "/foo/tmp.3/cycles/root.js"],
       ],
     ],
   ];
@@ -438,14 +412,10 @@ it("path.resolve", () => {
       const actual = resolve.apply(null, test);
       let actualAlt;
       const os = resolve === path.win32.resolve ? "win32" : "posix";
-      if (resolve === path.win32.resolve && !isWindows)
-        actualAlt = actual.replace(backslashRE, "/");
-      else if (resolve !== path.win32.resolve && isWindows)
-        actualAlt = actual.replace(slashRE, "\\");
+      if (resolve === path.win32.resolve && !isWindows) actualAlt = actual.replace(backslashRE, "/");
+      else if (resolve !== path.win32.resolve && isWindows) actualAlt = actual.replace(slashRE, "\\");
 
-      const message = `path.${os}.resolve(${test
-        .map(JSON.stringify)
-        .join(",")})\n  expect=${JSON.stringify(
+      const message = `path.${os}.resolve(${test.map(JSON.stringify).join(",")})\n  expect=${JSON.stringify(
         expected,
       )}\n  actual=${JSON.stringify(actual)}`;
       if (actual !== expected && actualAlt !== expected) failures.push(message);

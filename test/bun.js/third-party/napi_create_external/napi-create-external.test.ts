@@ -3,7 +3,7 @@ import { withoutAggressiveGC } from "gc";
 import * as _ from "lodash";
 
 function rebase(str, inBase, outBase) {
-  const mapBase = (b) => (b === 2 ? 32 : b === 16 ? 8 : null);
+  const mapBase = b => (b === 2 ? 32 : b === 16 ? 8 : null);
   const stride = mapBase(inBase);
   const pad = mapBase(outBase);
   if (!stride) throw new Error(`Bad inBase ${inBase}`);
@@ -31,10 +31,7 @@ class HashMaker {
   _dist: any;
 
   binToHex(binHash) {
-    if (binHash.length !== this.length)
-      throw new Error(
-        `Hash length mismatch ${this.length} != ${binHash.length}`,
-      );
+    if (binHash.length !== this.length) throw new Error(`Hash length mismatch ${this.length} != ${binHash.length}`);
     return rebase(binHash, 2, 16);
   }
 
@@ -46,8 +43,7 @@ class HashMaker {
 
   makeRandom() {
     const bits = [];
-    for (let i = 0; i < this.length; i++)
-      bits.push(Math.random() < 0.5 ? 1 : 0);
+    for (let i = 0; i < this.length; i++) bits.push(Math.random() < 0.5 ? 1 : 0);
     return bits;
   }
 
@@ -84,7 +80,7 @@ class HashMaker {
   }
 
   distance(a, b) {
-    const bitCount = (n) => {
+    const bitCount = n => {
       n = n - ((n >> 1) & 0x55555555);
       n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
       return (((n + (n >> 4)) & 0xf0f0f0f) * 0x1010101) >> 24;
@@ -126,20 +122,17 @@ withoutAggressiveGC(() => {
     describe(`Key length: ${keyLen}`, () => {
       it("should compute distance", () => {
         const tree = new treeClass(keyLen);
-        for (const a of hm.data)
-          for (const b of hm.data)
-            expect(tree.distance(a, b)).toBe(hm.distance(a, b));
+        for (const a of hm.data) for (const b of hm.data) expect(tree.distance(a, b)).toBe(hm.distance(a, b));
       });
 
       it("should know which keys it has", () => {
         const tree = new treeClass(keyLen).add(hm.data);
         expectDeepEqual(
-          hm.data.map((hash) => tree.has(hash)),
+          hm.data.map(hash => tree.has(hash)),
           hm.data.map(() => true),
         );
         // Not interested in the hash
-        for (const hash of hm.data)
-          expect(tree.has(hm.randomKey())).toBe(false);
+        for (const hash of hm.data) expect(tree.has(hm.randomKey())).toBe(false);
       });
 
       it("should know the tree size", () => {
@@ -166,9 +159,7 @@ withoutAggressiveGC(() => {
             for (const baseKey of [hm.random, hm.data[0]]) {
               const baseKey = hm.random;
               const got = [];
-              tree.query(baseKey, dist, (key, distance) =>
-                got.push({ key, distance }),
-              );
+              tree.query(baseKey, dist, (key, distance) => got.push({ key, distance }));
               const want = hm.query(baseKey, dist);
               expectDeepEqual(
                 got.sort((a, b) => a.distance - b.distance),

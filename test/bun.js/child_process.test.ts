@@ -1,15 +1,6 @@
 import { describe, it as it_, expect as expect_ } from "bun:test";
 import { gcTick } from "gc";
-import {
-  ChildProcess,
-  spawn,
-  execFile,
-  exec,
-  fork,
-  spawnSync,
-  execFileSync,
-  execSync,
-} from "node:child_process";
+import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 
 const expect: typeof expect_ = (actual: unknown) => {
@@ -22,13 +13,13 @@ const expect: typeof expect_ = (actual: unknown) => {
 const it: typeof it_ = (label, fn) => {
   const hasDone = fn.length === 1;
   if (fn.constructor.name === "AsyncFunction" && hasDone) {
-    return it_(label, async (done) => {
+    return it_(label, async done => {
       gcTick();
       await fn(done);
       gcTick();
     });
   } else if (hasDone) {
-    return it_(label, (done) => {
+    return it_(label, done => {
       gcTick();
       fn(done);
       gcTick();
@@ -60,7 +51,7 @@ const SEMVER_REGEX =
 describe("ChildProcess.spawn()", () => {
   it("should emit `spawn` on spawn", async () => {
     const proc = new ChildProcess();
-    const result = await new Promise((resolve) => {
+    const result = await new Promise(resolve => {
       proc.on("spawn", () => {
         resolve(true);
       });
@@ -71,7 +62,7 @@ describe("ChildProcess.spawn()", () => {
 
   it("should emit `exit` when killed", async () => {
     const proc = new ChildProcess();
-    const result = await new Promise((resolve) => {
+    const result = await new Promise(resolve => {
       proc.on("exit", () => {
         resolve(true);
       });
@@ -104,26 +95,26 @@ describe("spawn()", () => {
 
   it("should allow stdout to be read via Node stream.Readable `data` events", async () => {
     const child = spawn("bun", ["-v"]);
-    const result: string = await new Promise((resolve) => {
-      child.stdout.on("error", (e) => {
+    const result: string = await new Promise(resolve => {
+      child.stdout.on("error", e => {
         console.error(e);
       });
-      child.stdout.on("data", (data) => {
+      child.stdout.on("data", data => {
         debug(`stdout: ${data}`);
         resolve(data.toString());
       });
-      child.stderr.on("data", (data) => {
+      child.stderr.on("data", data => {
         debug(`stderr: ${data}`);
       });
     });
     expect(SEMVER_REGEX.test(result.trim())).toBe(true);
   });
 
-  it("should allow stdout to be read via .read() API", async (done) => {
+  it("should allow stdout to be read via .read() API", async done => {
     const child = spawn("bun", ["-v"]);
-    const result: string = await new Promise((resolve) => {
+    const result: string = await new Promise(resolve => {
       let finalData = "";
-      child.stdout.on("error", (e) => {
+      child.stdout.on("error", e => {
         done(e);
       });
       child.stdout.on("readable", () => {
@@ -160,8 +151,8 @@ describe("spawn()", () => {
 
   it("should allow us to set cwd", async () => {
     const child = spawn("pwd", { cwd: platformTmpDir });
-    const result: string = await new Promise((resolve) => {
-      child.stdout.on("data", (data) => {
+    const result: string = await new Promise(resolve => {
+      child.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
@@ -170,9 +161,9 @@ describe("spawn()", () => {
 
   it("should allow us to write to stdin", async () => {
     const child = spawn("tee");
-    const result: string = await new Promise((resolve) => {
+    const result: string = await new Promise(resolve => {
       child.stdin.write("hello");
-      child.stdout.on("data", (data) => {
+      child.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
@@ -183,7 +174,7 @@ describe("spawn()", () => {
     const child = spawn("sleep", ["2"], { timeout: 3 });
     const start = performance.now();
     let end;
-    await new Promise((resolve) => {
+    await new Promise(resolve => {
       child.on("exit", () => {
         end = performance.now();
         resolve(true);
@@ -194,8 +185,8 @@ describe("spawn()", () => {
 
   it("should allow us to set env", async () => {
     const child = spawn("env", { env: { TEST: "test" } });
-    const result: string = await new Promise((resolve) => {
-      child.stdout.on("data", (data) => {
+    const result: string = await new Promise(resolve => {
+      child.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
@@ -204,7 +195,7 @@ describe("spawn()", () => {
 
   it("should allow explicit setting of argv0", async () => {
     var resolve;
-    const promise = new Promise<string>((resolve1) => {
+    const promise = new Promise<string>(resolve1 => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
@@ -212,7 +203,7 @@ describe("spawn()", () => {
     delete process.env.NO_COLOR;
     let msg = "";
 
-    child.stdout.on("data", (data) => {
+    child.stdout.on("data", data => {
       msg += data.toString();
     });
 
@@ -225,15 +216,15 @@ describe("spawn()", () => {
   });
 
   it("should allow us to spawn in a shell", async () => {
-    const result1: string = await new Promise((resolve) => {
+    const result1: string = await new Promise(resolve => {
       const child1 = spawn("echo", ["$0"], { shell: true });
-      child1.stdout.on("data", (data) => {
+      child1.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
-    const result2: string = await new Promise((resolve) => {
+    const result2: string = await new Promise(resolve => {
       const child2 = spawn("echo", ["$0"], { shell: "bash" });
-      child2.stdout.on("data", (data) => {
+      child2.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
@@ -249,17 +240,12 @@ describe("spawn()", () => {
 describe("execFile()", () => {
   it("should execute a file", async () => {
     const result: Buffer = await new Promise((resolve, reject) => {
-      execFile(
-        "bun",
-        ["-v"],
-        { encoding: "buffer" },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(error);
-          }
-          resolve(stdout);
-        },
-      );
+      execFile("bun", ["-v"], { encoding: "buffer" }, (error, stdout, stderr) => {
+        if (error) {
+          reject(error);
+        }
+        resolve(stdout);
+      });
     });
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
   });
@@ -305,14 +291,10 @@ describe("execFileSync()", () => {
   });
 
   it("should allow us to pass input to the command", () => {
-    const result = execFileSync(
-      "node",
-      [import.meta.dir + "/spawned-child.js", "STDIN"],
-      {
-        input: "hello world!",
-        encoding: "utf8",
-      },
-    );
+    const result = execFileSync("node", [import.meta.dir + "/spawned-child.js", "STDIN"], {
+      input: "hello world!",
+      encoding: "utf8",
+    });
     expect(result.trim()).toBe("data: hello world!");
   });
 });
@@ -336,10 +318,10 @@ describe("Bun.spawn()", () => {
       expect(text.trim()).toBe("hello");
     }
 
-    const result = await new Promise((resolve) => {
+    const result = await new Promise(resolve => {
       const maybeExited = Bun.peek(proc.exited);
       if (maybeExited === proc.exited) {
-        proc.exited.then((code) => resolve(code));
+        proc.exited.then(code => resolve(code));
       } else {
         resolve(maybeExited);
       }

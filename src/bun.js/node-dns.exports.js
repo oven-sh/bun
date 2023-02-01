@@ -19,7 +19,7 @@ function lookup(domain, options, callback) {
     ([{ address, family }]) => {
       callback(null, address, family);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -31,15 +31,14 @@ function resolveSrv(hostname, callback) {
   }
 
   dns.resolveSrv(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
 }
-
 
 function resolveTxt(hostname, callback) {
   if (typeof callback != "function") {
@@ -47,10 +46,10 @@ function resolveTxt(hostname, callback) {
   }
 
   dns.resolveTxt(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -62,10 +61,10 @@ function resolveSoa(hostname, callback) {
   }
 
   dns.resolveSoa(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -77,10 +76,10 @@ function resolveNaptr(hostname, callback) {
   }
 
   dns.resolveNaptr(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -92,14 +91,13 @@ function resolveMx(hostname, callback) {
   }
 
   dns.resolveMx(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
-
 }
 
 function resolveCaa(hostname, callback) {
@@ -108,10 +106,10 @@ function resolveCaa(hostname, callback) {
   }
 
   dns.resolveCaa(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -123,10 +121,10 @@ function resolveNs(hostname, callback) {
   }
 
   dns.resolveNs(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -138,10 +136,10 @@ function resolvePtr(hostname, callback) {
   }
 
   dns.resolvePtr(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -153,10 +151,10 @@ function resolveCname(hostname, callback) {
   }
 
   dns.resolveCname(hostname, callback).then(
-    (results) => {
+    results => {
       callback(null, results);
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -171,9 +169,9 @@ function lookupService(address, port, callback) {
 }
 
 var InternalResolver = class Resolver {
-  constructor(options) { }
+  constructor(options) {}
 
-  cancel() { }
+  cancel() {}
 
   getServers() {
     return [];
@@ -189,10 +187,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolve(hostname).then(
-      (results) => {
+      results => {
         switch (rrtype?.toLowerCase()) {
-          case 'a':
-          case 'aaaa':
+          case "a":
+          case "aaaa":
             callback(
               null,
               hostname,
@@ -203,9 +201,8 @@ var InternalResolver = class Resolver {
             callback(null, results);
             break;
         }
-
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -221,13 +218,13 @@ var InternalResolver = class Resolver {
     }
 
     dns.lookup(hostname, { family: 4 }).then(
-      (addresses) => {
+      addresses => {
         callback(
           null,
           addresses.map(({ address }) => address),
         );
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -243,13 +240,13 @@ var InternalResolver = class Resolver {
     }
 
     dns.lookup(hostname, { family: 6 }).then(
-      (addresses) => {
+      addresses => {
         callback(
           null,
           addresses.map(({ address }) => address),
         );
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -265,10 +262,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveCname(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -280,14 +277,13 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveMx(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
-
   }
 
   resolveNaptr(hostname, callback) {
@@ -296,10 +292,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveNaptr(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -311,10 +307,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveNs(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -326,10 +322,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolvePtr(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -341,10 +337,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveSrv(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -356,10 +352,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveCaa(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -371,10 +367,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveTxt(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -385,10 +381,10 @@ var InternalResolver = class Resolver {
     }
 
     dns.resolveSoa(hostname, callback).then(
-      (results) => {
+      results => {
         callback(null, results);
       },
-      (error) => {
+      error => {
         callback(error);
       },
     );
@@ -398,7 +394,7 @@ var InternalResolver = class Resolver {
     callback(null, []);
   }
 
-  setServers(servers) { }
+  setServers(servers) {}
 };
 
 function resolve(hostname, rrtype, callback) {
@@ -411,10 +407,10 @@ function resolve(hostname, rrtype, callback) {
   }
 
   dns.resolve(hostname).then(
-    (results) => {
+    results => {
       switch (rrtype?.toLowerCase()) {
-        case 'a':
-        case 'aaaa':
+        case "a":
+        case "aaaa":
           callback(
             null,
             hostname,
@@ -425,9 +421,8 @@ function resolve(hostname, rrtype, callback) {
           callback(null, results);
           break;
       }
-
     },
-    (error) => {
+    error => {
       callback(error);
     },
   );
@@ -456,29 +451,28 @@ export var {
   resolveTxt,
 } = InternalResolver.prototype;
 
-function setDefaultResultOrder() { }
-function setServers() { }
+function setDefaultResultOrder() {}
+function setServers() {}
 
-const promisifyLookup = (res) => {
+const promisifyLookup = res => {
   res.sort((a, b) => a.family - b.family);
   const [{ address, family }] = res;
   return { address, family };
 };
 
-const promisifyResolve = (rrtype) => {
+const promisifyResolve = rrtype => {
   switch (rrtype?.toLowerCase()) {
-    case 'a':
-    case 'aaaa':
-      return (res) => {
-
+    case "a":
+    case "aaaa":
+      return res => {
         res.sort((a, b) => a.family - b.family);
         const [{ address, family }] = res;
         return { address, family };
       };
     default:
-      return (res) => res;
+      return res => res;
   }
-}
+};
 
 // promisified versions
 export const promises = {
@@ -532,9 +526,9 @@ export const promises = {
   },
 
   Resolver: class Resolver {
-    constructor(options) { }
+    constructor(options) {}
 
-    cancel() { }
+    cancel() {}
 
     getServers() {
       return [];
@@ -596,13 +590,10 @@ export const promises = {
       return Promise.resolve([]);
     }
 
-    setServers(servers) { }
+    setServers(servers) {}
   },
 };
-for (const key of [
-  "resolveAny",
-  "reverse",
-]) {
+for (const key of ["resolveAny", "reverse"]) {
   promises[key] = () => Promise.resolve(undefined);
 }
 

@@ -1,7 +1,7 @@
 import { expect, it, describe } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
-const getByteLength = (str) => {
+const getByteLength = str => {
   // returns the byte length of an utf8 string
   var s = str.length;
   for (var i = str.length - 1; i >= 0; i--) {
@@ -17,13 +17,7 @@ describe("TextDecoder", () => {
   it("should not crash on empty text", () => {
     const decoder = new TextDecoder();
     gcTrace(true);
-    const fixtures = [
-      new Uint8Array(),
-      new Uint8Array([]),
-      new Buffer(0),
-      new ArrayBuffer(0),
-      new Uint16Array(0),
-    ];
+    const fixtures = [new Uint8Array(), new Uint8Array([]), new Buffer(0), new ArrayBuffer(0), new Uint16Array(0)];
 
     for (let input of fixtures) {
       expect(decoder.decode(input)).toBe("");
@@ -50,9 +44,7 @@ describe("TextDecoder", () => {
     gcTrace(true);
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
     gcTrace(true);
-    expect(decoder.decode(Uint8Array.from(result))).toBe(
-      String.fromCharCode(...result),
-    );
+    expect(decoder.decode(Uint8Array.from(result))).toBe(String.fromCharCode(...result));
     gcTrace(true);
   });
 
@@ -61,9 +53,7 @@ describe("TextDecoder", () => {
     gcTrace(true);
     var text = `❤️ Red Heart`;
 
-    const bytes = [
-      226, 157, 164, 239, 184, 143, 32, 82, 101, 100, 32, 72, 101, 97, 114, 116,
-    ];
+    const bytes = [226, 157, 164, 239, 184, 143, 32, 82, 101, 100, 32, 72, 101, 97, 114, 116];
     const decoded = decoder.decode(Uint8Array.from(bytes));
     expect(decoder.encoding).toBe("utf-8");
 
@@ -134,30 +124,12 @@ it("truncated sequences", () => {
 
   // Truncated sequences
   assert_equals(new TextDecoder().decode(new Uint8Array([0xf0])), "\uFFFD");
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f])),
-    "\uFFFD",
-  );
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x92])),
-    "\uFFFD",
-  );
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x9f])), "\uFFFD");
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x92])), "\uFFFD");
 
   // Errors near end-of-queue
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x41])),
-    "\uFFFDA",
-  );
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0x42])),
-    "\uFFFDAB",
-  );
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0xf0])),
-    "\uFFFDA\uFFFD",
-  );
-  assert_equals(
-    new TextDecoder().decode(new Uint8Array([0xf0, 0x8f, 0x92])),
-    "\uFFFD\uFFFD\uFFFD",
-  );
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x9f, 0x41])), "\uFFFDA");
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0x42])), "\uFFFDAB");
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0xf0])), "\uFFFDA\uFFFD");
+  assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x8f, 0x92])), "\uFFFD\uFFFD\uFFFD");
 });

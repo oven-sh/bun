@@ -3,16 +3,13 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 
 function resolveFrom(from) {
-  return (specifier) => import.meta.resolveSync(specifier, from);
+  return specifier => import.meta.resolveSync(specifier, from);
 }
 
 it("#imports", async () => {
   await writePackageJSONImportsFixture();
 
-  const baz = await import.meta.resolve(
-    "#foo",
-    join(await import.meta.resolve("package-json-imports/baz"), "../"),
-  );
+  const baz = await import.meta.resolve("#foo", join(await import.meta.resolve("package-json-imports/baz"), "../"));
   expect(baz.endsWith("foo/private-foo.js")).toBe(true);
 
   const subpath = await import.meta.resolve(
@@ -50,15 +47,9 @@ it("#imports", async () => {
 
 it("#imports with wildcard", async () => {
   await writePackageJSONImportsFixture();
-  const run = resolveFrom(
-    resolve(
-      import.meta.dir + "/node_modules/package-json-imports/package.json",
-    ),
-  );
+  const run = resolveFrom(resolve(import.meta.dir + "/node_modules/package-json-imports/package.json"));
 
-  const wildcard = resolve(
-    import.meta.dir + "/node_modules/package-json-imports/foo/wildcard.js",
-  );
+  const wildcard = resolve(import.meta.dir + "/node_modules/package-json-imports/foo/wildcard.js");
   expect(run("#foo/wildcard.js")).toBe(wildcard);
   expect(run("#foo/extensionless/wildcard")).toBe(wildcard);
 });
@@ -66,30 +57,21 @@ it("#imports with wildcard", async () => {
 it("import.meta.resolve", async () => {
   expect(await import.meta.resolve("./resolve.test.js")).toBe(import.meta.path);
 
-  expect(await import.meta.resolve("./resolve.test.js", import.meta.path)).toBe(
-    import.meta.path,
-  );
+  expect(await import.meta.resolve("./resolve.test.js", import.meta.path)).toBe(import.meta.path);
 
   expect(
     // optional second param can be any path, including a dir
-    await import.meta.resolve(
-      "./bun.js/resolve.test.js",
-      join(import.meta.path, "../"),
-    ),
+    await import.meta.resolve("./bun.js/resolve.test.js", join(import.meta.path, "../")),
   ).toBe(import.meta.path);
 
   // can be a package path
-  expect(
-    (await import.meta.resolve("react", import.meta.path)).length > 0,
-  ).toBe(true);
+  expect((await import.meta.resolve("react", import.meta.path)).length > 0).toBe(true);
 
   // file extensions are optional
   expect(await import.meta.resolve("./resolve.test")).toBe(import.meta.path);
 
   // works with tsconfig.json "paths"
-  expect(await import.meta.resolve("foo/bar")).toBe(
-    join(import.meta.path, "../baz.js"),
-  );
+  expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
 
   // works with package.json "exports"
   writePackageJSONExportsFixture();
@@ -130,25 +112,19 @@ it("import.meta.resolve", async () => {
 // the slightly lower level API, which doesn't prefill the second param
 // and expects a directory instead of a filepath
 it("Bun.resolve", async () => {
-  expect(await Bun.resolve("./resolve.test.js", import.meta.dir)).toBe(
-    import.meta.path,
-  );
+  expect(await Bun.resolve("./resolve.test.js", import.meta.dir)).toBe(import.meta.path);
 });
 
 // synchronous
 it("Bun.resolveSync", () => {
-  expect(Bun.resolveSync("./resolve.test.js", import.meta.dir)).toBe(
-    import.meta.path,
-  );
+  expect(Bun.resolveSync("./resolve.test.js", import.meta.dir)).toBe(import.meta.path);
 });
 
 it("self-referencing imports works", async () => {
   await writePackageJSONExportsFixture();
 
   const baz = await import.meta.resolve("package-json-exports/baz");
-  const namespace = await import.meta.resolve(
-    "package-json-exports/references-baz",
-  );
+  const namespace = await import.meta.resolve("package-json-exports/references-baz");
   Loader.registry.delete(baz);
   Loader.registry.delete(namespace);
   var a = await import(baz);
@@ -188,22 +164,13 @@ it("self-referencing imports works", async () => {
 
 function writePackageJSONExportsFixture() {
   try {
-    mkdirSync(
-      join(import.meta.dir, "./node_modules/package-json-exports/foo"),
-      {
-        recursive: true,
-      },
-    );
+    mkdirSync(join(import.meta.dir, "./node_modules/package-json-exports/foo"), {
+      recursive: true,
+    });
   } catch (exception) {}
+  writeFileSync(join(import.meta.dir, "./node_modules/package-json-exports/foo/bar.js"), "export const bar = 1;");
   writeFileSync(
-    join(import.meta.dir, "./node_modules/package-json-exports/foo/bar.js"),
-    "export const bar = 1;",
-  );
-  writeFileSync(
-    join(
-      import.meta.dir,
-      "./node_modules/package-json-exports/foo/references-baz.js",
-    ),
+    join(import.meta.dir, "./node_modules/package-json-exports/foo/references-baz.js"),
     "export {bar} from 'package-json-exports/baz';",
   );
   writeFileSync(
@@ -224,29 +191,17 @@ function writePackageJSONExportsFixture() {
 
 function writePackageJSONImportsFixture() {
   try {
-    mkdirSync(
-      join(import.meta.dir, "./node_modules/package-json-imports/foo"),
-      {
-        recursive: true,
-      },
-    );
+    mkdirSync(join(import.meta.dir, "./node_modules/package-json-imports/foo"), {
+      recursive: true,
+    });
   } catch (exception) {}
+  writeFileSync(join(import.meta.dir, "./node_modules/package-json-imports/foo/bar.js"), "export const bar = 1;");
   writeFileSync(
-    join(import.meta.dir, "./node_modules/package-json-imports/foo/bar.js"),
-    "export const bar = 1;",
-  );
-  writeFileSync(
-    join(
-      import.meta.dir,
-      "./node_modules/package-json-imports/foo/wildcard.js",
-    ),
+    join(import.meta.dir, "./node_modules/package-json-imports/foo/wildcard.js"),
     "export const wildcard = 1;",
   );
   writeFileSync(
-    join(
-      import.meta.dir,
-      "./node_modules/package-json-imports/foo/private-foo.js",
-    ),
+    join(import.meta.dir, "./node_modules/package-json-imports/foo/private-foo.js"),
     "export {bar} from 'package-json-imports/#foo';",
   );
   writeFileSync(

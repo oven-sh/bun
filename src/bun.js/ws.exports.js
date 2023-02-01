@@ -80,18 +80,10 @@ var Receiver = (BunWebSocket.Receiver = class Receiver {
   }
 });
 
-var createWebSocketStream = (BunWebSocket.createWebSocketStream = function (
-  ws,
-) {
+var createWebSocketStream = (BunWebSocket.createWebSocketStream = function (ws) {
   throw new Error("Not supported in Bun");
 });
 
 export default BunWebSocket;
 
-export {
-  createWebSocketStream,
-  Sender,
-  Receiver,
-  BunWebSocket as WebSocket,
-  WebSocketServer,
-};
+export { createWebSocketStream, Sender, Receiver, BunWebSocket as WebSocket, WebSocketServer };

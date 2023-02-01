@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-} from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
 
 it("should support net.isIP()", () => {
@@ -41,7 +33,7 @@ describe("net.Socket read", () => {
   ]) {
     describe(label, () => {
       function runWithServer(cb) {
-        return (done) => {
+        return done => {
           function drain(socket) {
             const message = socket.data.message;
             const written = socket.write(message);
@@ -94,7 +86,7 @@ describe("net.Socket read", () => {
               expect(socket.connecting).toBe(false);
             })
             .setEncoding("utf8")
-            .on("data", (chunk) => {
+            .on("data", chunk => {
               data += chunk;
             })
             .on("end", () => {
@@ -120,7 +112,7 @@ describe("net.Socket read", () => {
               expect(socket.connecting).toBe(false);
             })
             .setEncoding("utf8")
-            .on("data", (chunk) => {
+            .on("data", chunk => {
               data += chunk;
             })
             .on("end", () => {
@@ -146,7 +138,7 @@ describe("net.Socket read", () => {
               expect(socket.connecting).toBe(false);
             })
             .setEncoding("utf8")
-            .on("data", (chunk) => {
+            .on("data", chunk => {
               data += chunk;
             })
             .on("end", () => {
@@ -169,7 +161,7 @@ describe("net.Socket write", () => {
   let port = 53213;
 
   function runWithServer(cb) {
-    return (done) => {
+    return done => {
       let server;
 
       function close(socket) {
@@ -263,11 +255,11 @@ describe("net.Socket write", () => {
   );
 });
 
-it("should handle connection error", (done) => {
+it("should handle connection error", done => {
   var data = {};
   connect(55555, () => {
     done(new Error("Should not have connected"));
-  }).on("error", (error) => {
+  }).on("error", error => {
     expect(error).toBeDefined();
     expect(error.name).toBe("SystemError");
     expect(error.message).toBe("Failed to connect");

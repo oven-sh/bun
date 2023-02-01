@@ -19,12 +19,8 @@ it("syntax", async () => {
   expect(toml.inline.array[0]).toBe(1234);
   expect(toml.inline.array[1]).toBe(4);
   expect(toml.dev["foo.bar"]).toBe("baz");
-  expect(toml.install.scopes["@mybigcompany"].url).toBe(
-    "https://registry.mybigcompany.com",
-  );
-  expect(toml.install.scopes["@mybigcompany2"].url).toBe(
-    "https://registry.mybigcompany.com",
-  );
+  expect(toml.install.scopes["@mybigcompany"].url).toBe("https://registry.mybigcompany.com");
+  expect(toml.install.scopes["@mybigcompany2"].url).toBe("https://registry.mybigcompany.com");
   expect(toml.install.scopes["@mybigcompany3"].three).toBe(4);
   gc();
 });

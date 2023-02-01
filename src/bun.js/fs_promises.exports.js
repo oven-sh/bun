@@ -5,7 +5,7 @@ var fs = Bun.fs();
 // this is just better than nothing.
 const notrace = "::bunternal::";
 var promisify = {
-  [notrace]: (fsFunction) => {
+  [notrace]: fsFunction => {
     // TODO: remove variadic arguments
     // we can use new Function() here instead
     // based on fsFucntion.length

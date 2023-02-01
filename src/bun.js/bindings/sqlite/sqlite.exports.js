@@ -2,9 +2,7 @@ var symbolFor = Symbol.for;
 
 const lazy = globalThis[symbolFor("Bun.lazy")];
 if (!lazy || typeof lazy !== "function") {
-  throw new Error(
-    "Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.",
-  );
+  throw new Error("Something went wrong while loading Bun. Expected 'Bun.lazy' to be defined.");
 }
 
 var defineProperties = Object.defineProperties;
@@ -120,8 +118,7 @@ export class Statement {
     // ("foo") => ["foo"]
     // (Uint8Array(1024)) => [Uint8Array]
     // (123) => [123]
-    return !isArray(arg0) &&
-      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? this.#raw.get(args)
       : this.#raw.get(...args);
   }
@@ -133,8 +130,7 @@ export class Statement {
     // ("foo") => ["foo"]
     // (Uint8Array(1024)) => [Uint8Array]
     // (123) => [123]
-    return !isArray(arg0) &&
-      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? this.#raw.all(args)
       : this.#raw.all(...args);
   }
@@ -146,8 +142,7 @@ export class Statement {
     // ("foo") => ["foo"]
     // (Uint8Array(1024)) => [Uint8Array]
     // (123) => [123]
-    return !isArray(arg0) &&
-      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? this.#raw.values(args)
       : this.#raw.values(...args);
   }
@@ -191,13 +186,10 @@ export class Database {
         return;
       }
 
-      throw new TypeError(
-        `Expected 'filename' to be a string, got '${typeof filenameGiven}'`,
-      );
+      throw new TypeError(`Expected 'filename' to be a string, got '${typeof filenameGiven}'`);
     }
 
-    var filename =
-      typeof filenameGiven === "string" ? filenameGiven.trim() : ":memory:";
+    var filename = typeof filenameGiven === "string" ? filenameGiven.trim() : ":memory:";
     var flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
     if (typeof options === "object" && options) {
       flags = 0;
@@ -206,10 +198,7 @@ export class Database {
         flags = constants.SQLITE_OPEN_READONLY;
       }
 
-      if ("readOnly" in options)
-        throw new TypeError(
-          'Misspelled option "readOnly" should be "readonly"',
-        );
+      if ("readOnly" in options) throw new TypeError('Misspelled option "readOnly" should be "readonly"');
 
       if (options.create) {
         flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
@@ -297,8 +286,7 @@ export class Database {
     }
 
     var arg0 = params[0];
-    return !isArray(arg0) &&
-      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+    return !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
       ? SQL.run(this.#handle, query, params)
       : SQL.run(this.#handle, query, ...params);
   }
@@ -315,9 +303,7 @@ export class Database {
 
   query(query) {
     if (typeof query !== "string") {
-      throw new TypeError(
-        `Expected 'query' to be a string, got '${typeof query}'`,
-      );
+      throw new TypeError(`Expected 'query' to be a string, got '${typeof query}'`);
     }
 
     if (query.length === 0) {
@@ -343,14 +329,9 @@ export class Database {
       return stmt;
     }
 
-    const willCache =
-      this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
+    const willCache = this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
-    var stmt = this.prepare(
-      query,
-      undefined,
-      willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0,
-    );
+    var stmt = this.prepare(query, undefined, willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0);
 
     if (willCache) {
       this.#cachedQueriesKeys.push(query);
@@ -365,8 +346,7 @@ export class Database {
   // https://github.com/JoshuaWise/better-sqlite3/blob/master/lib/methods/transaction.js
   // thank you @JoshuaWise!
   transaction(fn, self) {
-    if (typeof fn !== "function")
-      throw new TypeError("Expected first argument to be a function");
+    if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
 
     const db = this;
     const controller = getController(db, self);
@@ -411,22 +391,10 @@ const getController = (db, self) => {
     controllers.set(
       db,
       (controller = {
-        default: Object.assign(
-          { begin: db.prepare("BEGIN", undefined, 0) },
-          shared,
-        ),
-        deferred: Object.assign(
-          { begin: db.prepare("BEGIN DEFERRED", undefined, 0) },
-          shared,
-        ),
-        immediate: Object.assign(
-          { begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) },
-          shared,
-        ),
-        exclusive: Object.assign(
-          { begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) },
-          shared,
-        ),
+        default: Object.assign({ begin: db.prepare("BEGIN", undefined, 0) }, shared),
+        deferred: Object.assign({ begin: db.prepare("BEGIN DEFERRED", undefined, 0) }, shared),
+        immediate: Object.assign({ begin: db.prepare("BEGIN IMMEDIATE", undefined, 0) }, shared),
+        exclusive: Object.assign({ begin: db.prepare("BEGIN EXCLUSIVE", undefined, 0) }, shared),
       }),
     );
   }
@@ -434,11 +402,7 @@ const getController = (db, self) => {
 };
 
 // Return a new transaction function by wrapping the given function
-const wrapTransaction = (
-  fn,
-  db,
-  { begin, commit, rollback, savepoint, release, rollbackTo },
-) =>
+const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, rollbackTo }) =>
   function transaction(...args) {
     let before, after, undo;
     if (db.inTransaction) {

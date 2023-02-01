@@ -971,15 +971,6 @@ pub const FileSystemFlags = enum(Mode) {
 
         if (val.isNumber()) {
             const number = val.toInt32();
-            if (!(number >= 0o000 and number <= 0o777)) {
-                JSC.throwInvalidArguments(
-                    "Invalid integer mode: must be a number between 0o000 and 0o777",
-                    .{},
-                    ctx,
-                    exception,
-                );
-                return null;
-            }
             return @intToEnum(FileSystemFlags, number);
         }
 
@@ -1141,19 +1132,19 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                     .get = JSC.To.JS.Getter(This, .birthtime),
                     .name = "birthtime",
                 },
-                .atime_ms = .{
+                .atimeMs = .{
                     .get = JSC.To.JS.Getter(This, .atime_ms),
                     .name = "atimeMs",
                 },
-                .mtime_ms = .{
+                .mtimeMs = .{
                     .get = JSC.To.JS.Getter(This, .mtime_ms),
                     .name = "mtimeMs",
                 },
-                .ctime_ms = .{
+                .ctimeMs = .{
                     .get = JSC.To.JS.Getter(This, .ctime_ms),
                     .name = "ctimeMs",
                 },
-                .birthtime_ms = .{
+                .birthtimeMs = .{
                     .get = JSC.To.JS.Getter(This, .birthtime_ms),
                     .name = "birthtimeMs",
                 },
@@ -1215,27 +1206,27 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             };
         }
 
-        pub fn isBlockDevice(this: *Stats) JSC.JSValue {
+        pub fn isBlockDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.mode)));
         }
 
-        pub fn isCharacterDevice(this: *Stats) JSC.JSValue {
+        pub fn isCharacterDevice(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.mode)));
         }
 
-        pub fn isDirectory(this: *Stats) JSC.JSValue {
+        pub fn isDirectory(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
         }
 
-        pub fn isFIFO(this: *Stats) JSC.JSValue {
+        pub fn isFIFO(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.mode)));
         }
 
-        pub fn isFile(this: *Stats) JSC.JSValue {
+        pub fn isFile(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
         }
 
-        pub fn isSocket(this: *Stats) JSC.JSValue {
+        pub fn isSocket(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.mode)));
         }
 
@@ -1244,7 +1235,7 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         // still just return false.
         //
         // See https://nodejs.org/api/fs.html#statsissymboliclink
-        pub fn isSymbolicLink(this: *Stats) JSC.JSValue {
+        pub fn isSymbolicLink(this: *This) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.mode)));
         }
 
@@ -1254,7 +1245,7 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             return Class.make(ctx, _this);
         }
 
-        pub fn finalize(this: *Stats) void {
+        pub fn finalize(this: *This) void {
             bun.default_allocator.destroy(this);
         }
     };

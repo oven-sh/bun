@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 
-test.skip("AbortSignal.timeout", (done) => {
+test.skip("AbortSignal.timeout", done => {
   const abort = AbortSignal.timeout(10);
-  abort.addEventListener("abort", (event) => {
+  abort.addEventListener("abort", event => {
     done();
   });
 

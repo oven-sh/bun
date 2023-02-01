@@ -73,13 +73,9 @@ describe("HTMLRewriter", () => {
         }
       },
     });
-    var input = new Response(
-      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>',
-    );
+    var input = new Response('<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>');
     var output = rewriter.transform(input);
-    expect(await output.text()).toBe(
-      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>',
-    );
+    expect(await output.text()).toBe('<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>');
     expect(expected.length).toBe(0);
   });
 
@@ -147,9 +143,7 @@ describe("HTMLRewriter", () => {
         element.setInnerContent(this.content);
       }
     }
-    const res = new HTMLRewriter()
-      .on("p", new Handler("new"))
-      .transform(new Response("<p>test</p>"));
+    const res = new HTMLRewriter().on("p", new Handler("new")).transform(new Response("<p>test</p>"));
     expect(await res.text()).toBe("<p>new</p>");
   });
 
@@ -169,8 +163,8 @@ describe("HTMLRewriter", () => {
     remove: "<p></p>",
   };
 
-  const commentPropertiesMacro = async (func) => {
-    const res = func(new HTMLRewriter(), (comment) => {
+  const commentPropertiesMacro = async func => {
+    const res = func(new HTMLRewriter(), comment => {
       expect(comment.removed).toBe(false);
       expect(comment.text).toBe("test");
       comment.text = "new";
@@ -224,21 +218,9 @@ describe("HTMLRewriter", () => {
       "<div><p>1</p><p>2</p><p>3</p></div>",
       "<div><p>1</p><p>new</p><p>new</p></div>",
     );
-    await checkSelector(
-      "p.red",
-      '<p class="red">1</p><p>2</p>',
-      '<p class="red">new</p><p>2</p>',
-    );
-    await checkSelector(
-      "h1#header",
-      '<h1 id="header">1</h1><h1>2</h1>',
-      '<h1 id="header">new</h1><h1>2</h1>',
-    );
-    await checkSelector(
-      "p[data-test]",
-      "<p data-test>1</p><p>2</p>",
-      "<p data-test>new</p><p>2</p>",
-    );
+    await checkSelector("p.red", '<p class="red">1</p><p>2</p>', '<p class="red">new</p><p>2</p>');
+    await checkSelector("h1#header", '<h1 id="header">1</h1><h1>2</h1>', '<h1 id="header">new</h1><h1>2</h1>');
+    await checkSelector("p[data-test]", "<p data-test>1</p><p>2</p>", "<p data-test>new</p><p>2</p>");
     await checkSelector(
       'p[data-test="one"]',
       '<p data-test="one">1</p><p data-test="two">2</p>',

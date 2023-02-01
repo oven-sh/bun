@@ -2244,6 +2244,13 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
+        return .{
+            .loc = this.loc,
+            .data = try this.data.clone(allocator),
+        };
+    }
+
     pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
         var stmts = try allocator.alloc(Stmt, 1);
         stmts[0] = Stmt.alloc(S.Return, S.Return{ .value = this }, this.loc);
@@ -3623,6 +3630,122 @@ pub const Expr = struct {
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
+
+        pub fn clone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
+            return switch (this) {
+                .e_array => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_array)));
+                    item.* = el.*;
+                    return .{ .e_array = item };
+                },
+                .e_unary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_unary)));
+                    item.* = el.*;
+                    return .{ .e_unary = item };
+                },
+                .e_binary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_binary)));
+                    item.* = el.*;
+                    return .{ .e_binary = item };
+                },
+                .e_class => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_class)));
+                    item.* = el.*;
+                    return .{ .e_class = item };
+                },
+                .e_new => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_new)));
+                    item.* = el.*;
+                    return .{ .e_new = item };
+                },
+                .e_function => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_function)));
+                    item.* = el.*;
+                    return .{ .e_function = item };
+                },
+                .e_call => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_call)));
+                    item.* = el.*;
+                    return .{ .e_call = item };
+                },
+                .e_dot => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_dot)));
+                    item.* = el.*;
+                    return .{ .e_dot = item };
+                },
+                .e_index => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_index)));
+                    item.* = el.*;
+                    return .{ .e_index = item };
+                },
+                .e_arrow => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_arrow)));
+                    item.* = el.*;
+                    return .{ .e_arrow = item };
+                },
+                .e_jsx_element => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_jsx_element)));
+                    item.* = el.*;
+                    return .{ .e_jsx_element = item };
+                },
+                .e_object => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_object)));
+                    item.* = el.*;
+                    return .{ .e_object = item };
+                },
+                .e_spread => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
+                    item.* = el.*;
+                    return .{ .e_spread = item };
+                },
+                .e_template_part => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
+                    item.* = el.*;
+                    return .{ .e_template_part = item };
+                },
+                .e_template => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
+                    item.* = el.*;
+                    return .{ .e_template = item };
+                },
+                .e_reg_exp => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_reg_exp)));
+                    item.* = el.*;
+                    return .{ .e_reg_exp = item };
+                },
+                .e_await => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_await)));
+                    item.* = el.*;
+                    return .{ .e_await = item };
+                },
+                .e_yield => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_yield)));
+                    item.* = el.*;
+                    return .{ .e_yield = item };
+                },
+                .e_if => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_if)));
+                    item.* = el.*;
+                    return .{ .e_if = item };
+                },
+                .e_import => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_import)));
+                    item.* = el.*;
+                    return .{ .e_import = item };
+                },
+                .e_big_int => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_big_int)));
+                    item.* = el.*;
+                    return .{ .e_big_int = item };
+                },
+                .e_string => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
+                    item.* = el.*;
+                    return .{ .e_string = item };
+                },
+                else => this,
+            };
+        }
 
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {

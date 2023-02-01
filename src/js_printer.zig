@@ -5246,7 +5246,7 @@ pub fn printJSON(
         writer,
         &ast,
         source,
-        std.mem.zeroes(Symbol.Map),
+        .{},
         .{},
         null,
         allocator,

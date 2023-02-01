@@ -139,7 +139,7 @@ pub const WaitGroup = struct {
     }
 
     pub fn deinit(self: *WaitGroup) void {
-        self.event.deinit();
+        self.event.reset();
         self.* = undefined;
     }
 
@@ -218,7 +218,7 @@ pub fn ConcurrentFunction(
 
             pub fn callback(task: *Task) void {
                 var routine = @fieldParentPtr(@This(), "task", task);
-                @call(.{ .modifier = .always_inline }, Fn, routine.args);
+                @call(.always_inline, Fn, routine.args);
             }
         };
 

@@ -12,6 +12,8 @@ pub fn BabyList(comptime Type: type) type {
         len: u32 = 0,
         cap: u32 = 0,
 
+        pub const Elem = Type;
+
         pub fn set(this: *@This(), slice_: []Type) void {
             this.ptr = slice_.ptr;
             this.len = @truncate(u32, slice_.len);
@@ -60,12 +62,13 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub inline fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
-            var tail = this.ptr[this.len];
+            var tail = this.ptr[this.len .. this.len + values.len];
+            std.debug.assert(this.cap >= this.len + @truncate(u32, values.len));
             for (values) |value| {
-                tail.* = value;
-                tail += 1;
+                tail[0] = value;
+                tail = tail[1..];
             }
-            this.len += values.len;
+            this.len += @truncate(u32, values.len);
         }
 
         pub inline fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {

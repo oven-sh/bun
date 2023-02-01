@@ -855,6 +855,16 @@ pub const Symbol = struct {
     pub const List = BabyList(Symbol);
     pub const NestedList = BabyList(List);
 
+    pub fn mergeContentsWith(this: *Symbol, old: *Symbol) void {
+        this.use_count_estimate += old.use_count_estimate;
+        if (old.must_not_be_renamed) {
+            this.original_name = old.original_name;
+            this.must_not_be_renamed = true;
+        }
+
+        // TODO: MustStartWithCapitalLetterForJSX
+    }
+
     pub const Map = struct {
         // This could be represented as a "map[Ref]Symbol" but a two-level array was
         // more efficient in profiles. This appears to be because it doesn't involve
@@ -864,6 +874,29 @@ pub const Symbol = struct {
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
         symbols_for_source: NestedList = NestedList{},
+
+        pub fn merge(this: *Map, old: Ref, new: Ref) Ref {
+            if (old.eql(new)) {
+                return new;
+            }
+
+            var old_symbol = this.get(old).?;
+            if (old_symbol.hasLink()) {
+                old_symbol.link = this.merge(old_symbol.link, new);
+                return old_symbol.link;
+            }
+
+            var new_symbol = this.get(new).?;
+
+            if (new_symbol.hasLink()) {
+                new_symbol.link = this.merge(old, new_symbol.link);
+                return new_symbol.link;
+            }
+
+            old_symbol.link = new;
+            new_symbol.mergeContentsWith(old_symbol);
+            return new;
+        }
 
         pub fn get(self: *Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
@@ -1115,7 +1148,7 @@ pub const E = struct {
     };
 
     pub const Arrow = struct {
-        args: []G.Arg,
+        args: []G.Arg = &[_]G.Arg{},
         body: G.FnBody,
 
         is_async: bool = false,
@@ -4671,6 +4704,10 @@ pub const ExportsKind = enum {
     // directly. Other imports go through property accesses on "exports".
     esm_with_dynamic_fallback,
 
+    pub fn isDynamic(self: ExportsKind) bool {
+        return self == .esm_with_dynamic_fallback or self == .cjs;
+    }
+
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
     }
@@ -4703,7 +4740,7 @@ pub const Part = struct {
     pub const ImportRecordIndices = BabyList(u32);
     pub const List = BabyList(Part);
 
-    stmts: []Stmt,
+    stmts: []Stmt = &([_]Stmt{}),
     scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
@@ -4769,7 +4806,7 @@ pub const NamedImport = struct {
     local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
     alias: ?string,
-    alias_loc: ?logger.Loc,
+    alias_loc: ?logger.Loc = null,
     namespace_ref: ?Ref,
     import_record_index: u32,
 

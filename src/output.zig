@@ -269,7 +269,7 @@ inline fn printElapsedToWithCtx(elapsed: f64, comptime printerFn: anytype, compt
     }
 }
 
-pub fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
+pub inline fn printElapsedTo(elapsed: f64, comptime printerFn: anytype, ctx: anytype) void {
     printElapsedToWithCtx(elapsed, printerFn, true, ctx);
 }
 
@@ -297,7 +297,7 @@ pub fn printTimer(timer: *SystemTimer) void {
     printElapsed(@intToFloat(f64, elapsed));
 }
 
-pub fn printErrorable(comptime fmt: string, args: anytype) !void {
+pub inline fn printErrorable(comptime fmt: string, args: anytype) !void {
     if (comptime Environment.isWasm) {
         try source.stream.seekTo(0);
         try source.stream.writer().print(fmt, args);
@@ -310,7 +310,7 @@ pub fn printErrorable(comptime fmt: string, args: anytype) !void {
 /// Print to stdout
 /// This will appear in the terminal, including in production.
 /// Text automatically buffers
-pub fn println(comptime fmt: string, args: anytype) void {
+pub inline fn println(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
     }
@@ -326,7 +326,7 @@ pub inline fn debug(comptime fmt: string, args: anytype) void {
     flush();
 }
 
-pub fn _debug(comptime fmt: string, args: anytype) void {
+pub inline fn _debug(comptime fmt: string, args: anytype) void {
     std.debug.assert(source_set);
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return print(fmt ++ "\n", args);
@@ -335,7 +335,7 @@ pub fn _debug(comptime fmt: string, args: anytype) void {
     return print(fmt, args);
 }
 
-pub fn print(comptime fmt: string, args: anytype) void {
+pub inline fn print(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
         source.stream.pos = 0;
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
@@ -449,7 +449,7 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 pub const RESET = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
-    if (comptime bun.fast_debug_build_mode)
+    if (comptime @import("bun").fast_debug_build_mode)
         return fmt;
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
@@ -535,12 +535,12 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     return comptime new_fmt[0..new_fmt_i];
 }
 
-pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
+pub inline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Level) void {
     if (comptime l == .Warn) {
         if (level == .Error) return;
     }
 
-    if (comptime bun.fast_debug_build_mode)
+    if (comptime @import("bun").fast_debug_build_mode)
         return printer(comptime prettyFmt(fmt, false), args);
 
     if (if (comptime l == Level.stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
@@ -550,8 +550,8 @@ pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: 
     }
 }
 
-pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime bun.fast_debug_build_mode)
+pub inline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+    if (comptime @import("bun").fast_debug_build_mode)
         return printFn(ctx, comptime prettyFmt(fmt, false), args);
 
     if (enable_ansi_colors) {
@@ -561,13 +561,13 @@ pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn
     }
 }
 
-pub fn pretty(comptime fmt: string, args: anytype) void {
+pub inline fn pretty(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, print, .stdout);
 }
 
 /// Like Output.println, except it will automatically strip ansi color codes if
 /// the terminal doesn't support them.
-pub fn prettyln(comptime fmt: string, args: anytype) void {
+pub inline fn prettyln(comptime fmt: string, args: anytype) void {
     if (enable_ansi_colors) {
         println(comptime prettyFmt(fmt, true), args);
     } else {
@@ -575,7 +575,7 @@ pub fn prettyln(comptime fmt: string, args: anytype) void {
     }
 }
 
-pub fn printErrorln(comptime fmt: string, args: anytype) void {
+pub inline fn printErrorln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return printError(fmt ++ "\n", args);
     }
@@ -583,13 +583,13 @@ pub fn printErrorln(comptime fmt: string, args: anytype) void {
     return printError(fmt, args);
 }
 
-pub fn prettyError(comptime fmt: string, args: anytype) void {
+pub inline fn prettyError(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Error);
 }
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
-pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
+pub inline fn prettyErrorln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return prettyWithPrinter(
             fmt ++ "\n",
@@ -615,11 +615,11 @@ pub const Level = enum(u8) {
 
 pub var level = if (Environment.isDebug) Level.Warn else Level.Error;
 
-pub fn prettyWarn(comptime fmt: string, args: anytype) void {
+pub inline fn prettyWarn(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Warn);
 }
 
-pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
+pub inline fn prettyWarnln(comptime fmt: string, args: anytype) void {
     if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
         return prettyWithPrinter(fmt ++ "\n", args, printError, .Warn);
     }
@@ -627,11 +627,11 @@ pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
     return prettyWithPrinter(fmt, args, printError, .Warn);
 }
 
-pub fn errorLn(comptime fmt: string, args: anytype) void {
+pub inline fn errorLn(comptime fmt: string, args: anytype) void {
     return printErrorln(fmt, args);
 }
 
-pub fn printError(comptime fmt: string, args: anytype) void {
+pub inline fn printError(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isWasm) {
         source.error_stream.seekTo(0) catch return;
         source.error_stream.writer().print(fmt, args) catch unreachable;

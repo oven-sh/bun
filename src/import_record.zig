@@ -105,6 +105,8 @@ pub const ImportRecord = struct {
 
     is_internal: bool = false,
 
+    calls_runtime_require: bool = false,
+
     /// This tells the printer that we should print as export var $moduleID = ...
     /// Instead of using the path.
     is_bundled: bool = false,
@@ -123,9 +125,11 @@ pub const ImportRecord = struct {
     /// either via the "import x from" or "import {default as x} from" syntax.
     contains_default_alias: bool = false,
 
+    contains_es_module_alias: bool = false,
+
     /// If true, this "export * from 'path'" statement is evaluated at run-time by
     /// calling the "__reExport()" helper function
-    calls_run_time_re_export_fn: bool = false,
+    calls_runtime_re_export_fn: bool = false,
 
     /// Tell the printer to use runtime code to resolve this import/export
     do_commonjs_transform_in_printer: bool = false,
@@ -151,6 +155,8 @@ pub const ImportRecord = struct {
     ///
     /// Used to prevent running resolve plugins multiple times for the same path
     print_namespace_in_path: bool = false,
+
+    wrap_with_to_esm: bool = false,
 
     pub const List = bun.BabyList(ImportRecord);
 

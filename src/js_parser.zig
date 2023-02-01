@@ -2318,7 +2318,7 @@ pub const Parser = struct {
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
                     !import_record.was_originally_bare_import and
-                    !import_record.calls_run_time_re_export_fn);
+                    !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -7228,7 +7228,7 @@ fn NewParser_(
 
                             if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
@@ -7267,7 +7267,7 @@ fn NewParser_(
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                    p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                    p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                                 }
 
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);

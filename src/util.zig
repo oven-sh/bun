@@ -23,7 +23,11 @@ pub fn fromEntries(
     }
 
     if (comptime std.meta.trait.isIndexable(EntryType)) {
-        try map.ensureUnusedCapacity(entries.len);
+        if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
+            try map.ensureUnusedCapacity(entries.len);
+        } else {
+            try map.ensureUnusedCapacity(allocator, entries.len);
+        }
 
         comptime var i: usize = 0;
 
@@ -33,7 +37,11 @@ pub fn fromEntries(
 
         return map;
     } else if (comptime std.meta.trait.isContainer(EntryType) and @hasDecl(EntryType, "count")) {
-        try map.ensureUnusedCapacity(entries.count());
+        if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
+            try map.ensureUnusedCapacity(entries.count());
+        } else {
+            try map.ensureUnusedCapacity(allocator, entries.count());
+        }
 
         if (comptime @hasDecl(EntryType, "iterator")) {
             var iter = entries.iterator();
@@ -44,7 +52,11 @@ pub fn fromEntries(
             return map;
         }
     } else if (comptime std.meta.trait.isContainer(EntryType) and std.meta.fields(EntryType).len > 0) {
-        try map.ensureUnusedCapacity(std.meta.fields(EntryType).len);
+        if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
+            try map.ensureUnusedCapacity(std.meta.fields(EntryType).len);
+        } else {
+            try map.ensureUnusedCapacity(allocator, std.meta.fields(EntryType).len);
+        }
 
         inline for (comptime std.meta.fieldNames(@TypeOf(EntryType))) |entry| {
             map.putAssumeCapacity(entry.@"0", entry.@"1");
@@ -52,7 +64,11 @@ pub fn fromEntries(
 
         return map;
     } else if (comptime std.meta.trait.isConstPtr(EntryType) and std.meta.fields(std.meta.Child(EntryType)).len > 0) {
-        try map.ensureUnusedCapacity(std.meta.fields(std.meta.Child(EntryType)).len);
+        if (comptime !needsAllocator(Map.ensureUnusedCapacity)) {
+            try map.ensureUnusedCapacity(std.meta.fields(std.meta.Child(EntryType)).len);
+        } else {
+            try map.ensureUnusedCapacity(allocator, std.meta.fields(std.meta.Child(EntryType)).len);
+        }
 
         comptime var i: usize = 0;
 
@@ -99,8 +115,8 @@ pub fn Of(comptime ArrayLike: type) type {
         return std.meta.Child(ArrayLike);
     }
 
-    if (comptime @hasField(ArrayLike, "Elem")) {
-        return FieldType(ArrayLike, "Elem").?;
+    if (comptime @hasDecl(ArrayLike, "Elem")) {
+        return ArrayLike.Elem;
     }
 
     if (comptime @hasField(ArrayLike, "items")) {
@@ -147,6 +163,10 @@ pub inline fn from(
         return fromSlice(Array, allocator, DefaultType, default);
     }
 
+    if (comptime @typeInfo(DefaultType) == .Array) {
+        return fromSlice(Array, allocator, []const Of(Array), @as([]const Of(Array), &default));
+    }
+
     return fromSlice(Array, allocator, []const Of(Array), @as([]const Of(Array), default));
 }
 
@@ -175,15 +195,21 @@ pub fn fromSlice(
         var slice: []Of(Array) = undefined;
         if (comptime !std.meta.trait.isSlice(Array)) {
             // is it an ArrayList with an allocator?
-            if (@hasField(Array, "allocator")) {
+            if (comptime !needsAllocator(Array.ensureUnusedCapacity)) {
                 try map.ensureUnusedCapacity(default.len);
                 // is it an ArrayList without an allocator?
             } else {
                 try map.ensureUnusedCapacity(allocator, default.len);
             }
-
-            map.items.len = default.len;
-            slice = map.items;
+            if (comptime @hasField(Array, "items")) {
+                map.items.len = default.len;
+                slice = map.items;
+            } else if (comptime @hasField(Array, "len")) {
+                map.len = @intCast(u32, default.len);
+                slice = map.slice();
+            } else {
+                @compileError("Cannot set length of " ++ @typeName(Array));
+            }
         } else if (comptime std.meta.trait.isSlice(Array)) {
             slice = try allocator.alloc(Of(Array), default.len);
         } else if (comptime @hasField(map, "ptr")) {
@@ -298,4 +324,8 @@ test "from arraylist with struct" {
         &.{ Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 } },
     );
     try std.testing.expectEqualSlices(Entry, &[_]Entry{ .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 } }, values.items);
+}
+
+fn needsAllocator(comptime Fn: anytype) bool {
+    return std.meta.fields(std.meta.ArgsTuple(@TypeOf(Fn))).len > 2;
 }

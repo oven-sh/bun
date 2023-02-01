@@ -654,6 +654,7 @@ export class OutgoingMessage extends Writable {
     }
   }
 
+  // TODO: Use fetch AbortSignal when implemented
   setTimeout(msecs, callback) {
     if (this.#timeoutTimer) return this;
     if (callback) {
@@ -976,6 +977,7 @@ export class ClientRequest extends OutgoingMessage {
     return this.#aborted;
   }
 
+  // TODO: Use fetch AbortSignal when implemented
   abort() {
     if (this.#aborted) return;
     this.#aborted = true;

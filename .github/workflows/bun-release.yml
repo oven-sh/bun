@@ -43,6 +43,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+  npm-types:
+    name: Release types to NPM
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/bun-types
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-node
+        name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        with:
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - id: bun-install
+        name: Install Dependencies
+        run: |
+          bun upgrade --canary
+          bun install
+      - id: bun-run
+        name: Build
+        run: bun run build
+        env:
+          BUN_VERSION: ${{ env.TAG }}
+      - id: npm-publish
+        name: Release
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/dist/package.json
+          token: ${{ secrets.NPM_TOKEN }}
+          tag: ${{ env.TAG }}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -127,7 +172,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_options: --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
-          commit_message: Release v${{ env.TAG }}
+          commit_message: Bun v${{ env.TAG }}
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh
           commit_author: robobun <robobun@oven.sh>

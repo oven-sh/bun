@@ -2,8 +2,11 @@ const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
+const globalReportError = globalThis.reportError;
+const setTimeout = globalThis.setTimeout;
+const fetch = Bun.fetch;
 const nop = () => {};
-const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : () => {};
+const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : nop;
 
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
@@ -657,7 +660,7 @@ export class OutgoingMessage extends Writable {
       this.on("timeout", callback);
     }
 
-    this.#timeoutTimer = globalThis.setTimeout(async () => {
+    this.#timeoutTimer = setTimeout(async () => {
       this.emit("timeout");
       this.#timeoutTimer = null;
     }, msecs);
@@ -942,14 +945,13 @@ export class ClientRequest extends OutgoingMessage {
 
   _final(callback) {
     this.#finished = true;
-    this.#fetchRequest = globalThis
-      .fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
-        method: this.#method,
-        headers: this.getHeaders(),
-        body: this.#body,
-        redirect: "manual",
-        verbose: Boolean(process.env.BUN_JS_DEBUG),
-      })
+    this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
+      method: this.#method,
+      headers: this.getHeaders(),
+      body: this.#body,
+      redirect: "manual",
+      verbose: Boolean(process.env.BUN_JS_DEBUG),
+    })
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
           type: "response",
@@ -957,7 +959,7 @@ export class ClientRequest extends OutgoingMessage {
         this.emit("response", res);
       })
       .catch(err => {
-        if (process.env.BUN_JS_DEBUG) globalThis.reportError(err);
+        if (process.env.BUN_JS_DEBUG) globalReportError(err);
         this.emit("error", err);
       })
       .finally(() => {

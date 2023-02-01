@@ -557,7 +557,8 @@ export class OutgoingMessage extends Writable {
 
   // For compat with IncomingRequest
   get headers() {
-    return this.#headers;
+    if (!this.#headers) return {};
+    return this.#headers.toJSON();
   }
 
   get shouldKeepAlive() {

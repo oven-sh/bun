@@ -126,8 +126,8 @@ jobs:
         name: Commit Tap
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
-          commit_options: --signoff --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
-          commit_message: Release ${{ env.TAG }}
+          commit_options: --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
+          commit_message: Release v${{ env.TAG }}
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh
           commit_author: robobun <robobun@oven.sh>

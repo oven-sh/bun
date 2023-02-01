@@ -3139,12 +3139,16 @@ pub const Timer = struct {
         return JSValue.jsNumberWithType(i32, id);
     }
 
-    pub fn clearTimer(timer_id: JSValue, _: *JSGlobalObject, repeats: bool) void {
+    pub fn clearTimer(timer_id: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
         JSC.markBinding(@src());
 
         var map = if (repeats) &VirtualMachine.get().timer.interval_map else &VirtualMachine.get().timer.timeout_map;
+        if (!timer_id.isAnyInt()) {
+            return;
+        }
+
         const id: Timeout.ID = .{
-            .id = timer_id.toInt32(),
+            .id = timer_id.coerce(i32, globalThis),
             .repeat = @as(u32, @boolToInt(repeats)),
         };
         var timer = map.fetchSwapRemove(id.id) orelse return;

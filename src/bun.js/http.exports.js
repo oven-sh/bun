@@ -550,11 +550,6 @@ export class OutgoingMessage extends Writable {
   #fakeSocket;
   #timeoutTimer = null;
 
-  // So that headers are accessible outside of `OutgoingMessage`
-  get _headers() {
-    return this.#headers;
-  }
-
   // For compat with IncomingRequest
   get headers() {
     if (!this.#headers) return {};

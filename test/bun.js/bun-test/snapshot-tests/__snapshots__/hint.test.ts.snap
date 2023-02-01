@@ -2,4 +2,6 @@
 
 exports[`test hint hint should be well formatted: using a hint 1`] = `some string`;
 
+exports[`test hint hint should be well formatted: using a hint 2`] = `another string`;
+
 exports[`test hint hint should be well formatted 1`] = `do not use a hint`;

@@ -449,6 +449,9 @@ pub const color_map = ComptimeStringMap(string, .{
 });
 pub const RESET = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
+    if (comptime bun.fast_debug_build_mode)
+        return fmt;
+
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
 
@@ -537,6 +540,9 @@ pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: 
         if (level == .Error) return;
     }
 
+    if (comptime bun.fast_debug_build_mode)
+        return printer(comptime prettyFmt(fmt, false), args);
+
     if (if (comptime l == Level.stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
@@ -545,6 +551,9 @@ pub fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: 
 }
 
 pub fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
+    if (comptime bun.fast_debug_build_mode)
+        return printFn(ctx, comptime prettyFmt(fmt, false), args);
+
     if (enable_ansi_colors) {
         printFn(ctx, comptime prettyFmt(fmt, true), args);
     } else {

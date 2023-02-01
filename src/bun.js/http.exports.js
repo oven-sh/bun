@@ -29,7 +29,7 @@ const NODE_HTTP_WARNING =
 
 var _globalAgent;
 
-class FakeSocket {
+var FakeSocket = class Socket {
   on() {
     return this;
   }
@@ -39,7 +39,7 @@ class FakeSocket {
   }
   removeListener() {}
   removeAllListeners() {}
-}
+};
 
 export function createServer(options, callback) {
   return new Server(options, callback);

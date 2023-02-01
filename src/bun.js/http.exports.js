@@ -177,6 +177,8 @@ export class Agent extends EventEmitter {
 
   keepSocketAlive() {
     debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
+
+    return true;
   }
 
   reuseSocket() {

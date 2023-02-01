@@ -1,15 +1,9 @@
-name: bun-release
-concurrency: release
+name: bun-release-canary
+concurrency: release-canary
 on:
-  release:
-    types:
-      - published
+  schedule:
+    - cron: "0 14 * * *" # every day at 6am PST
   workflow_dispatch:
-    inputs:
-      tag:
-        type: string
-        description: The tag to publish
-        required: true
 jobs:
   npm:
     name: Release to NPM
@@ -21,13 +15,6 @@ jobs:
       - id: checkout
         name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-bun
         name: Setup Bun
         uses: oven-sh/setup-bun@v0.1.8
@@ -39,7 +26,7 @@ jobs:
         run: bun install
       - id: bun-run
         name: Release
-        run: bun upload-npm -- "${{ env.TAG }}" publish
+        run: bun upload-npm -- canary publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -50,13 +37,6 @@ jobs:
       - id: checkout
         name: Checkout
         uses: actions/checkout@v3
-      - id: environment
-        name: Setup Environment
-        run: |
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: qemu
         name: Setup Docker QEMU
         uses: docker/setup-qemu-action@v2
@@ -70,10 +50,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: oven/bun
-          tags: |
-            type=match,pattern=(bun-v)?(\d.\d.\d),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(\d.\d.\d),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(\d.\d.\d),group=2,value=${{ env.TAG }}
+          tags: canary
       - id: login
         name: Login to Docker
         uses: docker/login-action@v2

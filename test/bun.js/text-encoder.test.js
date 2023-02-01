@@ -66,6 +66,36 @@ describe("TextEncoder", () => {
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
     }
+
+    let t = [
+      {
+        str: "\u009c\u0097",
+        expected: [194, 156, 194, 151],
+      },
+      {
+        str: "世",
+        expected: [228, 184, 150],
+      },
+      // Less than 0, out of range.
+      {
+        str: -1,
+        expected: [45, 49],
+      },
+      // Greater than 0x10FFFF, out of range.
+      {
+        str: 0x110000,
+        expected: [49, 49, 49, 52, 49, 49, 50],
+      },
+      // The Unicode replacement character.
+      {
+        str: "\uFFFD",
+        expected: [239, 191, 189],
+      },
+    ];
+    for (let { str, expected } of t) {
+      let utf8 = new TextEncoder().encode(str);
+      expect([...utf8]).toEqual(expected);
+    }
   });
 
   it("should encode long latin1 text", async () => {

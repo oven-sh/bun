@@ -87,7 +87,6 @@ jobs:
         with:
           package: packages/bun-types/dist/package.json
           token: ${{ secrets.NPM_TOKEN }}
-          tag: ${{ env.TAG }}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest

@@ -40,15 +40,6 @@ jobs:
       - id: checkout
         name: Checkout
         uses: actions/checkout@v3
-      - id: setup-env
-        name: Setup Environment
-        run: |
-          SHA=$(git rev-parse --short "$GITHUB_SHA")
-          TAG="${{ github.event.inputs.tag }}"
-          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          TAG="${TAG}-canary.$(date '+%Y%m%d').1+${SHA}"
-          echo "Setup tag: ${TAG}"
-          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-node
         name: Setup Node.js
         uses: actions/setup-node@v3
@@ -65,6 +56,14 @@ jobs:
         run: |
           bun upgrade --canary
           bun install
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          SHA=$(git rev-parse --short "$GITHUB_SHA")
+          VERSION=$(bun --version)
+          TAG="${VERSION}-canary.$(date '+%Y%m%d').1+${SHA}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: bun-run
         name: Build
         run: bun run build

@@ -301,11 +301,11 @@ function assignHeaders(object, req) {
 function destroyBodyStreamNT(bodyStream) {
   bodyStream.destroy();
 }
+
+var defaultIncomingOpts = { type: "request" };
 export class IncomingMessage extends Readable {
-  #options;
-  constructor(req, options = { type: "request" }) {
+  constructor(req, { type = "request" } = defaultIncomingOpts) {
     const method = req.method;
-    const type = options.type;
 
     super();
 
@@ -323,7 +323,7 @@ export class IncomingMessage extends Readable {
 
     this.#req = req;
     this.method = method;
-    this.#options = options;
+    this.#type = type;
     this.complete = !!this.#noBody;
 
     this.#bodyStream = null;
@@ -343,10 +343,11 @@ export class IncomingMessage extends Readable {
   #aborted = false;
   #req;
   url;
+  #type;
 
   _construct(callback) {
     // TODO: streaming
-    if (this.#options.type === "response" || this.#noBody) {
+    if (this.#type === "response" || this.#noBody) {
       callback();
       return;
     }

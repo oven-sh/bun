@@ -101,7 +101,13 @@ jobs:
         with:
           repository: oven-sh/homebrew-bun
           token: ${{ secrets.ROBOBUN_TOKEN }}
-      - id: environment
+      - id: setup-gpg
+        name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - id: setup-env
         name: Setup Environment
         run: |
           TAG="${{ github.event.inputs.tag }}"
@@ -120,6 +126,7 @@ jobs:
         name: Commit Tap
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
+          commit_options: --signoff --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
           commit_message: Release ${{ env.TAG }}
           commit_user_name: robobun
           commit_user_email: robobun@oven.sh

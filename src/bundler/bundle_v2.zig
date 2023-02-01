@@ -122,9 +122,10 @@ pub const ThreadPool = struct {
 
                 switch (parse_result) {
                     .empty => |source_index| {
-                        var input_files = graph.input_files.slice();
-                        var side_effects = input_files.items(.side_effects);
-                        side_effects[source_index.get()] = .no_side_effects__empty_ast;
+                        _ = source_index;
+                        // var input_files = graph.input_files.slice();
+                        // var side_effects = input_files.items(.side_effects);
+                        // side_effects[source_index.get()] = .no_side_effects__empty_ast;
                     },
                     .success => |*result| {
                         result.log.appendTo(v2.bundler.log) catch unreachable;
@@ -312,6 +313,7 @@ pub fn enqueueItem(this: *BundleV2, hash: ?u64, batch: *ThreadPoolLib.Batch, res
     var task = try this.graph.allocator.create(ParseTask);
     task.* = ParseTask.init(&result, source_index);
     task.loader = loader;
+    task.task.node.next = null;
     batch.push(ThreadPoolLib.Batch.from(&task.task));
     return source_index.get();
 }
@@ -468,7 +470,9 @@ pub fn generate(
         .side_effects = _resolver.SideEffects.no_side_effects__package_json,
     });
     try this.graph.entry_points.append(allocator, Index.runtime);
-    batch.push(ThreadPoolLib.Batch.from(@intToPtr(*ThreadPoolLib.Task, @ptrToInt(&ParseTask.runtime.task))));
+    var runtime_parse_task = try this.graph.allocator.create(ParseTask);
+    runtime_parse_task.* = ParseTask.runtime;
+    batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
 
     if (bundler.options.framework) |framework| {
         if (bundler.options.platform.isBun()) {
@@ -565,7 +569,7 @@ const ParseTask = struct {
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
     source_index: Index = Index.invalid,
-    task: ThreadPoolLib.Task = .{ .callback = callback },
+    task: ThreadPoolLib.Task = .{ .callback = &callback },
 
     pub const ResolveQueue = std.AutoArrayHashMap(u64, ParseTask);
 

@@ -10,11 +10,18 @@
  */
 
 declare module "timers" {
+  class Timer {
+    ref(): void;
+    unref(): void;
+    hasRef(): boolean;
+  }
+
   const _exported: {
-    clearTimeout: typeof clearTimeout;
-    clearInterval: typeof clearInterval;
-    setTimeout: typeof setTimeout;
-    setInterval: typeof setInterval;
+    clearTimeout: (timer: Timer | number) => void;
+    clearInterval: (timer: Timer | number) => void;
+    setInterval: (cb: CallableFunction, msDelay: number, ...args: any[]) => Timer;
+    setTimeout: (cb: CallableFunction, msDelay: number, ...args: any[]) => Timer;
+    setImmediate: (cb: CallableFunction, ...args: any[]) => Timer;
   };
   export = _exported;
 }

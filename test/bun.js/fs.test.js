@@ -22,6 +22,7 @@ import {
   promises,
   unlinkSync,
   mkdtempSync,
+  constants,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -35,16 +36,12 @@ describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true,
-    );
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
     expect(existsSync(tempdir + "/copyFileSync.js")).toBe(true);
-    expect(readFileSync(tempdir + "/copyFileSync.js", "utf-8")).toBe(
-      readFileSync(import.meta.path, "utf-8"),
-    );
+    expect(readFileSync(tempdir + "/copyFileSync.js", "utf-8")).toBe(readFileSync(import.meta.path, "utf-8"));
 
     // that do exist
     copyFileSync(tempdir + "/copyFileSync.js", tempdir + "/copyFileSync.js1");
@@ -57,9 +54,7 @@ describe("copyFileSync", () => {
   it("should work for files > 128 KB ", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}-1/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true,
-    );
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
     var buffer = new Int32Array(128 * 1024);
     for (let i = 0; i < buffer.length; i++) {
       buffer[i] = i % 256;
@@ -70,23 +65,13 @@ describe("copyFileSync", () => {
 
     expect(existsSync(tempdir + "/copyFileSync.dest.blob")).toBe(false);
     expect(existsSync(tempdir + "/copyFileSync.src.blob")).toBe(true);
-    copyFileSync(
-      tempdir + "/copyFileSync.src.blob",
-      tempdir + "/copyFileSync.dest.blob",
-    );
+    copyFileSync(tempdir + "/copyFileSync.src.blob", tempdir + "/copyFileSync.dest.blob");
 
-    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
-      hash,
-    );
+    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(hash);
     buffer[0] = 255;
     writeFileSync(tempdir + "/copyFileSync.src.blob", buffer.buffer);
-    copyFileSync(
-      tempdir + "/copyFileSync.src.blob",
-      tempdir + "/copyFileSync.dest.blob",
-    );
-    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
-      Bun.hash(buffer.buffer),
-    );
+    copyFileSync(tempdir + "/copyFileSync.src.blob", tempdir + "/copyFileSync.dest.blob");
+    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(Bun.hash(buffer.buffer));
   });
 });
 
@@ -94,9 +79,7 @@ describe("mkdirSync", () => {
   it("should create a directory", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
-      true,
-    );
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
   });
 });
@@ -174,18 +157,13 @@ it("readdirSync on import.meta.dir with trailing slash", () => {
 });
 
 it("readdirSync works on empty directories", () => {
-  const path = `/tmp/fs-test-empty-dir-${(
-    Math.random() * 100000 +
-    100
-  ).toString(32)}`;
+  const path = `/tmp/fs-test-empty-dir-${(Math.random() * 100000 + 100).toString(32)}`;
   mkdirSync(path, { recursive: true });
   expect(readdirSync(path).length).toBe(0);
 });
 
 it("readdirSync works on directories with under 32 files", () => {
-  const path = `/tmp/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(
-    32,
-  )}`;
+  const path = `/tmp/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(32)}`;
   mkdirSync(path, { recursive: true });
   writeFileSync(`${path}/a`, "a");
   const results = readdirSync(path);
@@ -221,9 +199,7 @@ it("readdirSync throws when given a file path with trailing slash", () => {
 });
 
 describe("readSync", () => {
-  const firstFourBytes = new Uint32Array(
-    new TextEncoder().encode("File").buffer,
-  )[0];
+  const firstFourBytes = new Uint32Array(new TextEncoder().encode("File").buffer)[0];
   it("works with a position set to 0", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -282,10 +258,7 @@ describe("readFileSync", () => {
 
   it("works with a file url", () => {
     gc();
-    const text = readFileSync(
-      new URL("file://" + import.meta.dir + "/readFileSync.txt"),
-      "utf8",
-    );
+    const text = readFileSync(new URL("file://" + import.meta.dir + "/readFileSync.txt"), "utf8");
     gc();
     expect(text).toBe("File read successfully");
   });
@@ -307,8 +280,7 @@ describe("readFileSync", () => {
   it("returning Buffer works", () => {
     const text = readFileSync(import.meta.dir + "/readFileSync.txt");
     const encoded = [
-      70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101, 115,
-      115, 102, 117, 108, 108, 121,
+      70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
     ];
     for (let i = 0; i < encoded.length; i++) {
       expect(text[i]).toBe(encoded[i]);
@@ -334,8 +306,7 @@ describe("readFile", () => {
       gc();
       readFile(import.meta.dir + "/readFileSync.txt", (err, text) => {
         const encoded = [
-          70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101,
-          115, 115, 102, 117, 108, 108, 121,
+          70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
         ];
         gc();
         for (let i = 0; i < encoded.length; i++) {
@@ -357,8 +328,8 @@ describe("writeFileSync", () => {
 
   it("returning Buffer works", () => {
     const buffer = new Buffer([
-      70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117,
-      99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
+      70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
+      121,
     ]);
     const path = `/tmp/${Date.now()}.blob.writeFileSync.txt`;
     writeFileSync(path, buffer);
@@ -370,8 +341,8 @@ describe("writeFileSync", () => {
   });
   it("returning ArrayBuffer works", () => {
     const buffer = new Buffer([
-      70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117,
-      99, 99, 101, 115, 115, 102, 117, 108, 108, 121,
+      70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
+      121,
     ]);
     const path = `/tmp/${Date.now()}.blob2.writeFileSync.txt`;
     writeFileSync(path, buffer);
@@ -385,33 +356,21 @@ describe("writeFileSync", () => {
 
 describe("lstat", () => {
   it("file metadata is correct", () => {
-    const fileStats = lstatSync(
-      new URL("./fs-stream.js", import.meta.url)
-        .toString()
-        .slice("file://".length - 1),
-    );
+    const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(
-      new URL("../../test", import.meta.url)
-        .toString()
-        .slice("file://".length - 1),
-    );
+    const fileStats = lstatSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
   });
 
   it("symlink metadata is correct", () => {
-    const linkStats = lstatSync(
-      new URL("./fs-stream.link.js", import.meta.url)
-        .toString()
-        .slice("file://".length - 1),
-    );
+    const linkStats = lstatSync(new URL("./fs-stream.link.js", import.meta.url).toString().slice("file://".length - 1));
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
@@ -420,22 +379,14 @@ describe("lstat", () => {
 
 describe("stat", () => {
   it("file metadata is correct", () => {
-    const fileStats = statSync(
-      new URL("./fs-stream.js", import.meta.url)
-        .toString()
-        .slice("file://".length - 1),
-    );
+    const fileStats = statSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(
-      new URL("../../test", import.meta.url)
-        .toString()
-        .slice("file://".length - 1),
-    );
+    const fileStats = statSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -500,11 +451,11 @@ describe("rm", () => {
 });
 
 describe("rmdir", () => {
-  it("removes a file", (done) => {
+  it("removes a file", done => {
     const path = `/tmp/${Date.now()}.rm.txt`;
     writeFileSync(path, "File written successfully", "utf8");
     expect(existsSync(path)).toBe(true);
-    rmdir(path, (err) => {
+    rmdir(path, err => {
       try {
         expect(err).toBeDefined();
         expect(err.code).toBe("EPERM");
@@ -518,26 +469,26 @@ describe("rmdir", () => {
     });
   });
 
-  it("removes a dir", (done) => {
+  it("removes a dir", done => {
     const path = `/tmp/${Date.now()}.rm.dir`;
     try {
       mkdirSync(path);
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdir(path, (err) => {
+    rmdir(path, err => {
       if (err) return done(err);
       expect(existsSync(path)).toBe(false);
       done();
     });
   });
   // TODO support `recursive: true`
-  it("removes a dir recursively", (done) => {
+  it("removes a dir recursively", done => {
     const path = `/tmp/${Date.now()}.rm.dir/foo/bar`;
     try {
       mkdirSync(path, { recursive: true });
     } catch (e) {}
     expect(existsSync(path)).toBe(true);
-    rmdir(join(path, "../../"), { recursive: true }, (err) => {
+    rmdir(join(path, "../../"), { recursive: true }, err => {
       try {
         expect(existsSync(path)).toBe(false);
         done(err);
@@ -586,11 +537,11 @@ describe("createReadStream", () => {
     return await new Promise((resolve, reject) => {
       var stream = createReadStream(import.meta.dir + "/readFileSync.txt", {});
 
-      stream.on("error", (e) => {
+      stream.on("error", e => {
         reject(e);
       });
 
-      stream.on("data", (chunk) => {
+      stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
         expect(chunk.length).toBe("File read successfully".length);
         expect(chunk.toString()).toBe("File read successfully");
@@ -609,8 +560,8 @@ describe("createReadStream", () => {
 
     var data = readFileSync(import.meta.dir + "/readFileSync.txt", "utf8");
     var i = 0;
-    return await new Promise((resolve) => {
-      stream.on("data", (chunk) => {
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
         expect(chunk.length).toBe(1);
         expect(chunk.toString()).toBe(data[i++]);
@@ -631,14 +582,12 @@ describe("createWriteStream", () => {
     stream.end();
 
     return await new Promise((resolve, reject) => {
-      stream.on("error", (e) => {
+      stream.on("error", e => {
         reject(e);
       });
 
       stream.on("finish", () => {
-        expect(readFileSync(path, "utf8")).toBe(
-          "Test file written successfully",
-        );
+        expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
         resolve(true);
       });
     });
@@ -774,4 +723,47 @@ describe("fs/promises", () => {
     //   expect(await exists(path)).toBe(false);
     // });
   });
+});
+
+it("fs.constants", () => {
+  expect(constants).toBeDefined();
+  expect(constants.F_OK).toBeDefined();
+  expect(constants.R_OK).toBeDefined();
+  expect(constants.W_OK).toBeDefined();
+  expect(constants.X_OK).toBeDefined();
+  expect(constants.O_RDONLY).toBeDefined();
+  expect(constants.O_WRONLY).toBeDefined();
+  expect(constants.O_RDWR).toBeDefined();
+  expect(constants.O_CREAT).toBeDefined();
+  expect(constants.O_EXCL).toBeDefined();
+  expect(constants.O_NOCTTY).toBeDefined();
+  expect(constants.O_TRUNC).toBeDefined();
+  expect(constants.O_APPEND).toBeDefined();
+  expect(constants.O_DIRECTORY).toBeDefined();
+  expect(constants.O_NOATIME).toBeDefined();
+  expect(constants.O_NOFOLLOW).toBeDefined();
+  expect(constants.O_SYNC).toBeDefined();
+  expect(constants.O_DSYNC).toBeDefined();
+  expect(constants.O_SYMLINK).toBeDefined();
+  expect(constants.O_DIRECT).toBeDefined();
+  expect(constants.O_NONBLOCK).toBeDefined();
+  expect(constants.S_IFMT).toBeDefined();
+  expect(constants.S_IFREG).toBeDefined();
+  expect(constants.S_IFDIR).toBeDefined();
+  expect(constants.S_IFCHR).toBeDefined();
+  expect(constants.S_IFBLK).toBeDefined();
+  expect(constants.S_IFIFO).toBeDefined();
+  expect(constants.S_IFLNK).toBeDefined();
+  expect(constants.S_IFSOCK).toBeDefined();
+  expect(constants.S_IRWXU).toBeDefined();
+  expect(constants.S_IRUSR).toBeDefined();
+  expect(constants.S_IWUSR).toBeDefined();
+  expect(constants.S_IXUSR).toBeDefined();
+  expect(constants.S_IRWXG).toBeDefined();
+  expect(constants.S_IRGRP).toBeDefined();
+  expect(constants.S_IWGRP).toBeDefined();
+  expect(constants.S_IXGRP).toBeDefined();
+  expect(constants.S_IRWXO).toBeDefined();
+  expect(constants.S_IROTH).toBeDefined();
+  expect(constants.S_IWOTH).toBeDefined();
 });

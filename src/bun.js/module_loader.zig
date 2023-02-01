@@ -1698,7 +1698,7 @@ pub const ModuleLoader = struct {
 
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),
+                        .source_code = ZigString.init( JSC.Node.fs.constants_string ++ @embedFile("fs.exports.js")),
                         .specifier = ZigString.init("node:fs"),
                         .source_url = ZigString.init("node:fs"),
                         .hash = 0,

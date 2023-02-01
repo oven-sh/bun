@@ -483,10 +483,6 @@ function onError(self, err, cb) {
   process.nextTick(() => emitErrorNt(self, err, cb));
 }
 
-function isUint8Array(arr) {
-  return Object.prototype.toString.call(arr) === "[object Uint8Array]";
-}
-
 function write_(msg, chunk, encoding, callback, fromEnd) {
   if (typeof callback !== "function") callback = nop;
 
@@ -496,8 +492,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
     throw new Error("ERR_STREAM_NULL_VALUES");
   } else if (typeof chunk === "string") {
     len = Buffer.byteLength(chunk, encoding);
-  } else if (isUint8Array(chunk)) {
-    len = chunk.length;
   } else {
     throw new Error("Invalid arg type for chunk");
     // throw new ERR_INVALID_ARG_TYPE(

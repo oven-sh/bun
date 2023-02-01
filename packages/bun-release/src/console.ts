@@ -4,9 +4,7 @@ import { createInterface } from "readline";
 export const isAction = !!process.env["GITHUB_ACTION"];
 
 export const isDebug =
-  process.env["DEBUG"] === "1" ||
-  process.env["LOG_LEVEL"] === "debug" ||
-  process.env["RUNNER_DEBUG"] === "1";
+  process.env["DEBUG"] === "1" || process.env["LOG_LEVEL"] === "debug" || process.env["RUNNER_DEBUG"] === "1";
 
 export function debug(...message: any[]): void {
   if (isAction) {
@@ -54,10 +52,10 @@ export async function stdin(question: string): Promise<string> {
     terminal: false,
   });
   let buffer = "";
-  reader.on("line", (line) => {
+  reader.on("line", line => {
     buffer += line;
   });
-  return new Promise((resolve) => {
+  return new Promise(resolve => {
     reader.once("close", () => resolve(buffer));
   });
 }

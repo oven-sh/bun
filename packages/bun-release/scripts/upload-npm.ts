@@ -73,9 +73,7 @@ async function buildRootModule() {
     scripts: {
       postinstall: "node install.js",
     },
-    optionalDependencies: Object.fromEntries(
-      platforms.map(({ bin }) => [`${owner}/${bin}`, version]),
-    ),
+    optionalDependencies: Object.fromEntries(platforms.map(({ bin }) => [`${owner}/${bin}`, version])),
     bin: {
       bun: "bin/bun",
       bunx: "bin/bun",
@@ -136,10 +134,7 @@ function publishModule(name: string, dryRun?: boolean): void {
   }
 }
 
-async function extractFromZip(
-  url: string,
-  filename: string,
-): Promise<JSZipObject> {
+async function extractFromZip(url: string, filename: string): Promise<JSZipObject> {
   const response = await fetch(url);
   const buffer = await response.arrayBuffer();
   const zip = await loadAsync(buffer);
@@ -155,9 +150,7 @@ async function extractFromZip(
 async function getCanarySemver(): Promise<string> {
   const date = new Date().toISOString().split("T")[0].replace(/-/g, "");
   try {
-    const response = await fetch(
-      `https://registry.npmjs.org/-/package/${module}/dist-tags`,
-    );
+    const response = await fetch(`https://registry.npmjs.org/-/package/${module}/dist-tags`);
     const { canary }: { canary: string } = await response.json();
     if (canary.includes(date)) {
       const match = /canary.[0-9]{8}\.([0-9]+)+?/.exec(canary);

@@ -17,13 +17,10 @@ async function webFetch(url: string, options: Options = {}): Promise<Response> {
   return response;
 }
 
-async function nodeFetch(
-  url: string,
-  options: Options = {},
-): Promise<Response> {
+async function nodeFetch(url: string, options: Options = {}): Promise<Response> {
   const { get } = await import("node:http");
   return new Promise((resolve, reject) => {
-    get(url, (response) => {
+    get(url, response => {
       debug("http.get", url, response.statusCode);
       const status = response.statusCode ?? 501;
       if (response.headers.location && isRedirect(status)) {
@@ -33,7 +30,7 @@ async function nodeFetch(
         return reject(new Error(`${status}: ${url}`));
       }
       const body: Buffer[] = [];
-      response.on("data", (chunk) => {
+      response.on("data", chunk => {
         body.push(chunk);
       });
       response.on("end", () => {

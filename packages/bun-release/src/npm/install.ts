@@ -53,10 +53,7 @@ async function requireBun(platform: Platform): Promise<string> {
       await downloadBun(platform, cwd);
     } catch (cause) {
       debug("downloadBun failed", cause);
-      error(
-        `Failed to download package "${module}" from "registry.npmjs.org".`,
-        cause,
-      );
+      error(`Failed to download package "${module}" from "registry.npmjs.org".`, cause);
     }
   }
   return resolveBun();
@@ -69,14 +66,7 @@ function installBun(platform: Platform, dst: string): void {
     write(join(cwd, "package.json"), "{}");
     const { exitCode } = spawn(
       "npm",
-      [
-        "install",
-        "--loglevel=error",
-        "--prefer-offline",
-        "--no-audit",
-        "--progress=false",
-        `${module}@${version}`,
-      ],
+      ["install", "--loglevel=error", "--prefer-offline", "--no-audit", "--progress=false", `${module}@${version}`],
       {
         cwd,
         stdio: "pipe",
@@ -100,9 +90,7 @@ function installBun(platform: Platform, dst: string): void {
 }
 
 async function downloadBun(platform: Platform, dst: string): Promise<void> {
-  const response = await fetch(
-    `https://registry.npmjs.org/${owner}/${platform.bin}/-/${platform.bin}-${version}.tgz`,
-  );
+  const response = await fetch(`https://registry.npmjs.org/${owner}/${platform.bin}/-/${platform.bin}-${version}.tgz`);
   const tgz = await response.arrayBuffer();
   let buffer: Buffer;
   try {
@@ -111,10 +99,7 @@ async function downloadBun(platform: Platform, dst: string): Promise<void> {
     throw new Error("Invalid gzip data", { cause });
   }
   function str(i: number, n: number): string {
-    return String.fromCharCode(...buffer.subarray(i, i + n)).replace(
-      /\0.*$/,
-      "",
-    );
+    return String.fromCharCode(...buffer.subarray(i, i + n)).replace(/\0.*$/, "");
   }
   let offset = 0;
   while (offset < buffer.length) {

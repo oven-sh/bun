@@ -3,10 +3,7 @@ import { Octokit } from "octokit";
 import { fetch } from "./fetch";
 import { debug, log, warn, error } from "./console";
 
-const [owner, repo] = process.env["GITHUB_REPOSITORY"]?.split("/") ?? [
-  "oven-sh",
-  "bun",
-];
+const [owner, repo] = process.env["GITHUB_REPOSITORY"]?.split("/") ?? ["oven-sh", "bun"];
 
 const octokit = new Octokit({
   auth: process.env["GITHUB_TOKEN"],
@@ -24,14 +21,10 @@ const octokit = new Octokit({
 export async function github<R extends Route>(
   url: R | keyof Endpoints,
   options?: Omit<
-    R extends keyof Endpoints
-      ? Endpoints[R]["parameters"] & RequestParameters
-      : RequestParameters,
+    R extends keyof Endpoints ? Endpoints[R]["parameters"] & RequestParameters : RequestParameters,
     "owner" | "repo"
   >,
-): Promise<
-  R extends keyof Endpoints ? Endpoints[R]["response"]["data"] : unknown
-> {
+): Promise<R extends keyof Endpoints ? Endpoints[R]["response"]["data"] : unknown> {
   // @ts-ignore
   const { data } = await octokit.request(url, {
     owner,
@@ -52,7 +45,7 @@ export async function getRelease(tag?: string) {
 
 export async function uploadAsset(tag: string, name: string, blob: Blob) {
   const release = await getRelease(tag);
-  const asset = release.assets.find((asset) => asset.name === name);
+  const asset = release.assets.find(asset => asset.name === name);
   // Github requires that existing assets are deleted before uploading
   // a new asset, but does not provide a rename or re-upload API?!?
   if (asset) {
@@ -60,24 +53,21 @@ export async function uploadAsset(tag: string, name: string, blob: Blob) {
       asset_id: asset.id,
     });
   }
-  return github(
-    "POST {origin}/repos/{owner}/{repo}/releases/{release_id}/assets{?name,label}",
-    {
-      baseUrl: "https://uploads.github.com",
-      release_id: release.id,
-      name,
-      headers: {
-        "content-type": blob.type,
-        "content-length": blob.size,
-      },
-      data: Buffer.from(await blob.arrayBuffer()),
+  return github("POST {origin}/repos/{owner}/{repo}/releases/{release_id}/assets{?name,label}", {
+    baseUrl: "https://uploads.github.com",
+    release_id: release.id,
+    name,
+    headers: {
+      "content-type": blob.type,
+      "content-length": blob.size,
     },
-  );
+    data: Buffer.from(await blob.arrayBuffer()),
+  });
 }
 
 export async function downloadAsset(tag: string, name: string): Promise<Blob> {
   const release = await getRelease(tag);
-  const asset = release.assets.find((asset) => asset.name === name);
+  const asset = release.assets.find(asset => asset.name === name);
   if (!asset) {
     throw new Error(`Asset not found: ${name}`);
   }
@@ -86,8 +76,11 @@ export async function downloadAsset(tag: string, name: string): Promise<Blob> {
 }
 
 export async function getSha(tag: string, format?: "short" | "long") {
-  const { sha } = await github("GET /repos/{owner}/{repo}/git/tags/{tag_sha}", {
-    tag_sha: formatTag(tag),
+  const ref = formatTag(tag);
+  const {
+    object: { sha },
+  } = await github("GET /repos/{owner}/{repo}/git/ref/{ref}", {
+    ref: ref === "canary" ? "heads/main" : `tags/${ref}`,
   });
   return format === "short" ? sha.substring(0, 7) : sha;
 }

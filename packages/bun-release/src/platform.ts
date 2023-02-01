@@ -4,14 +4,9 @@ import { debug } from "./console";
 
 export const os = process.platform;
 
-export const arch =
-  os === "darwin" && process.arch === "x64" && isRosetta2()
-    ? "arm64"
-    : process.arch;
+export const arch = os === "darwin" && process.arch === "x64" && isRosetta2() ? "arm64" : process.arch;
 
-export const avx2 =
-  (arch === "x64" && os === "linux" && isLinuxAVX2()) ||
-  (os === "darwin" && isDarwinAVX2());
+export const avx2 = (arch === "x64" && os === "linux" && isLinuxAVX2()) || (os === "darwin" && isDarwinAVX2());
 
 export type Platform = {
   os: string;
@@ -63,10 +58,7 @@ export const platforms: Platform[] = [
 ];
 
 export const supportedPlatforms: Platform[] = platforms
-  .filter(
-    (platform) =>
-      platform.os === os && platform.arch === arch && (!platform.avx2 || avx2),
-  )
+  .filter(platform => platform.os === os && platform.arch === arch && (!platform.avx2 || avx2))
   .sort((a, b) => (a.avx2 === b.avx2 ? 0 : a.avx2 ? -1 : 1));
 
 function isLinuxAVX2(): boolean {
@@ -90,10 +82,7 @@ function isDarwinAVX2(): boolean {
 
 function isRosetta2(): boolean {
   try {
-    const { exitCode, stdout } = spawn("sysctl", [
-      "-n",
-      "sysctl.proc_translated",
-    ]);
+    const { exitCode, stdout } = spawn("sysctl", ["-n", "sysctl.proc_translated"]);
     return exitCode === 0 && stdout.includes("1");
   } catch (error) {
     debug("isRosetta2 failed", error);

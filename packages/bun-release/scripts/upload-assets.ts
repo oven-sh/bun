@@ -13,7 +13,7 @@ if (!tag) {
 const { tag_name, assets } = await getRelease(tag);
 log("Release:", tag_name, "\n");
 log("Existing assets:\n", ...assets.map(({ name }) => `- ${name}\n`));
-log("Updating assets:\n", ...paths.map((path) => `+ ${basename(path)}\n`));
+log("Updating assets:\n", ...paths.map(path => `+ ${basename(path)}\n`));
 await confirm();
 
 log("Hashing assets...\n");
@@ -37,12 +37,7 @@ log(
     .filter(([name]) => !updated.has(name))
     .map(([name, sha256]) => ` - ${sha256} => ${name}\n`),
 );
-log(
-  "Changed hashes:\n",
-  ...Array.from(updated.entries()).map(
-    ([name, sha256]) => ` + ${sha256} => ${name}\n`,
-  ),
-);
+log("Changed hashes:\n", ...Array.from(updated.entries()).map(([name, sha256]) => ` + ${sha256} => ${name}\n`));
 await confirm();
 
 log("Signing assets...\n");
@@ -51,39 +46,23 @@ const path = join(cwd, "SHASUMS256.txt");
 const signedPath = `${path}.asc`;
 write(
   path,
-  [
-    ...Array.from(updated.entries()),
-    ...Array.from(existing.entries()).filter(([name]) => !updated.has(name)),
-  ]
+  [...Array.from(updated.entries()), ...Array.from(existing.entries()).filter(([name]) => !updated.has(name))]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, sha256]) => `${sha256}  ${name}`)
     .join("\n"),
 );
-const { stdout: keys } = spawn("gpg", [
-  "--list-secret-keys",
-  "--keyid-format",
-  "long",
-]);
+const { stdout: keys } = spawn("gpg", ["--list-secret-keys", "--keyid-format", "long"]);
 const verifiedKeys = [
   "F3DCC08A8572C0749B3E18888EAB4D40A7B22B59", // robobun@oven.sh
 ];
-if (!verifiedKeys.find((key) => keys.includes(key))) {
+if (!verifiedKeys.find(key => keys.includes(key))) {
   warn("Signature is probably wrong, key not found: robobun@oven.sh");
 }
 const passphrase = await stdin("Passphrase:");
 log();
 const { exitCode, stdout, stderr } = spawn(
   "gpg",
-  [
-    "--pinentry-mode",
-    "loopback",
-    "--passphrase-fd",
-    "0",
-    "--clearsign",
-    "--output",
-    signedPath,
-    path,
-  ],
+  ["--pinentry-mode", "loopback", "--passphrase-fd", "0", "--clearsign", "--output", signedPath, path],
   {
     // @ts-ignore
     input: passphrase,
@@ -96,7 +75,7 @@ if (exitCode !== 0) {
 }
 
 const uploads = [...paths, path, signedPath];
-log("Uploading assets:\n", ...uploads.map((path) => ` + ${basename(path)}\n`));
+log("Uploading assets:\n", ...uploads.map(path => ` + ${basename(path)}\n`));
 await confirm();
 
 for (const path of uploads) {

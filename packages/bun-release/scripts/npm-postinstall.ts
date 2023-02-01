@@ -1,10 +1,10 @@
 import { importBun, optimizeBun } from "../src/npm/install";
 
 importBun()
-  .then((path) => {
+  .then(path => {
     optimizeBun(path);
   })
-  .catch((error) => {
+  .catch(error => {
     console.error(error);
     process.exit(1);
   });

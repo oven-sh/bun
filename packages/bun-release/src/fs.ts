@@ -73,10 +73,7 @@ export function rename(path: string, newPath: string): void {
   fs.renameSync(path, newPath);
 }
 
-export function write(
-  dst: string,
-  content: string | ArrayBuffer | ArrayBufferView,
-): void {
+export function write(dst: string, content: string | ArrayBuffer | ArrayBufferView): void {
   debug("write", dst);
   try {
     fs.writeFileSync(dst, content);
@@ -123,11 +120,7 @@ export function blob(path: string): Blob {
   }
   const buffer = fs.readFileSync(path);
   return new Blob([buffer], {
-    type: path.endsWith(".zip")
-      ? "application/zip"
-      : path.endsWith(".txt")
-      ? "text/plain"
-      : "application/octet-stream",
+    type: path.endsWith(".zip") ? "application/zip" : path.endsWith(".txt") ? "text/plain" : "application/octet-stream",
   });
 }
 

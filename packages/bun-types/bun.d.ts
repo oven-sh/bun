@@ -767,7 +767,7 @@ declare module "bun" {
      *    const query = UserQuery;
      *    ```
      */
-    macros?: MacroMap;
+    macro?: MacroMap;
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;

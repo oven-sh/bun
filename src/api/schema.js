@@ -122,12 +122,7 @@ function encodeStackFrame(message, bb) {
   var value = message["scope"];
   if (value != null) {
     var encoded = StackFrameScope[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "StackFrameScope"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "StackFrameScope"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "scope"');
@@ -504,10 +499,7 @@ function encodeFallbackMessageContainer(message, bb) {
   if (value != null) {
     bb.writeByte(3);
     var encoded = FallbackStep[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "FallbackStep"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "FallbackStep"');
     bb.writeByte(encoded);
   }
 
@@ -620,10 +612,7 @@ function encodeJSX(message, bb) {
   var value = message["runtime"];
   if (value != null) {
     var encoded = JSXRuntime[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "JSXRuntime"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "JSXRuntime"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "runtime"');
@@ -783,12 +772,10 @@ function decodeJavascriptBundle(bb) {
 
   var length = bb.readVarUint();
   var values = (result["modules"] = Array(length));
-  for (var i = 0; i < length; i++)
-    values[i] = decodeJavascriptBundledModule(bb);
+  for (var i = 0; i < length; i++) values[i] = decodeJavascriptBundledModule(bb);
   var length = bb.readVarUint();
   var values = (result["packages"] = Array(length));
-  for (var i = 0; i < length; i++)
-    values[i] = decodeJavascriptBundledPackage(bb);
+  for (var i = 0; i < length; i++) values[i] = decodeJavascriptBundledPackage(bb);
   result["etag"] = bb.readByteArray();
   result["generated_at"] = bb.readUint32();
   result["app_package_json_dependencies_hash"] = bb.readByteArray();
@@ -842,9 +829,7 @@ function encodeJavascriptBundle(message, bb) {
   if (value != null) {
     bb.writeByteArray(value);
   } else {
-    throw new Error(
-      'Missing required field "app_package_json_dependencies_hash"',
-    );
+    throw new Error('Missing required field "app_package_json_dependencies_hash"');
   }
 
   var value = message["import_from_name"];
@@ -966,12 +951,7 @@ function encodeModuleImportRecord(message, bb) {
   var value = message["kind"];
   if (value != null) {
     var encoded = ModuleImportType[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "ModuleImportType"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "ModuleImportType"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "kind"');
@@ -1098,10 +1078,7 @@ function encodeLoaderMap(message, bb) {
     for (var i = 0; i < n; i++) {
       value = values[i];
       var encoded = Loader[value];
-      if (encoded === void 0)
-        throw new Error(
-          "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-        );
+      if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
       bb.writeByte(encoded);
     }
   } else {
@@ -1175,10 +1152,7 @@ function encodeLoadedEnvConfig(message, bb) {
   var value = message["dotenv"];
   if (value != null) {
     var encoded = DotEnvBehavior[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "DotEnvBehavior"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "DotEnvBehavior"');
     bb.writeVarUint(encoded);
   } else {
     throw new Error('Missing required field "dotenv"');
@@ -1280,12 +1254,7 @@ function encodeFrameworkConfig(message, bb) {
   if (value != null) {
     bb.writeByte(6);
     var encoded = CSSInJSBehavior[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "CSSInJSBehavior"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "CSSInJSBehavior"');
     bb.writeByte(encoded);
   }
 
@@ -1317,11 +1286,7 @@ function encodeFrameworkEntryPoint(message, bb) {
   if (value != null) {
     var encoded = FrameworkEntryPointType[value];
     if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "FrameworkEntryPointType"',
-      );
+      throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "FrameworkEntryPointType"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "kind"');
@@ -1470,12 +1435,7 @@ function encodeLoadedFramework(message, bb) {
   var value = message["client_css_in_js"];
   if (value != null) {
     var encoded = CSSInJSBehavior[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "CSSInJSBehavior"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "CSSInJSBehavior"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "client_css_in_js"');
@@ -1759,10 +1719,7 @@ function encodeTransformOptions(message, bb) {
   if (value != null) {
     bb.writeByte(3);
     var encoded = ResolveMode[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "ResolveMode"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "ResolveMode"');
     bb.writeByte(encoded);
   }
 
@@ -1860,10 +1817,7 @@ function encodeTransformOptions(message, bb) {
   if (value != null) {
     bb.writeByte(15);
     var encoded = Platform[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Platform"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Platform"');
     bb.writeByte(encoded);
   }
 
@@ -1937,10 +1891,7 @@ function encodeTransformOptions(message, bb) {
   if (value != null) {
     bb.writeByte(26);
     var encoded = MessageLevel[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"');
     bb.writeVarUint(encoded);
   }
 
@@ -1948,10 +1899,7 @@ function encodeTransformOptions(message, bb) {
   if (value != null) {
     bb.writeByte(27);
     var encoded = SourceMapMode[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "SourceMapMode"');
     bb.writeByte(encoded);
   }
   bb.writeByte(0);
@@ -2058,10 +2006,7 @@ function encodeTransform(message, bb) {
   if (value != null) {
     bb.writeByte(4);
     var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
     bb.writeByte(encoded);
   }
 
@@ -2116,10 +2061,7 @@ function encodeScan(message, bb) {
   if (value != null) {
     bb.writeByte(3);
     var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
     bb.writeByte(encoded);
   }
   bb.writeByte(0);
@@ -2184,10 +2126,7 @@ function encodeScannedImport(message, bb) {
   var value = message["kind"];
   if (value != null) {
     var encoded = ImportKind[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "ImportKind"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "ImportKind"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "kind"');
@@ -2284,11 +2223,7 @@ function encodeTransformResponse(message, bb) {
   if (value != null) {
     var encoded = TransformResponseStatus[value];
     if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "TransformResponseStatus"',
-      );
+      throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "TransformResponseStatus"');
     bb.writeVarUint(encoded);
   } else {
     throw new Error('Missing required field "status"');
@@ -2499,10 +2434,7 @@ function encodeMessage(message, bb) {
   var value = message["level"];
   if (value != null) {
     var encoded = MessageLevel[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "MessageLevel"');
     bb.writeVarUint(encoded);
   } else {
     throw new Error('Missing required field "level"');
@@ -2664,11 +2596,7 @@ function encodeWebsocketMessage(message, bb) {
   if (value != null) {
     var encoded = WebsocketMessageKind[value];
     if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "WebsocketMessageKind"',
-      );
+      throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "WebsocketMessageKind"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "kind"');
@@ -2696,10 +2624,7 @@ function encodeWebsocketMessageWelcome(message, bb) {
   var value = message["javascriptReloader"];
   if (value != null) {
     var encoded = Reloader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Reloader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Reloader"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "javascriptReloader"');
@@ -2739,10 +2664,7 @@ function encodeWebsocketMessageFileChangeNotification(message, bb) {
   var value = message["loader"];
   if (value != null) {
     var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "loader"');
@@ -2762,11 +2684,7 @@ function encodeWebsocketCommand(message, bb) {
   if (value != null) {
     var encoded = WebsocketCommandKind[value];
     if (encoded === void 0)
-      throw new Error(
-        "Invalid value " +
-          JSON.stringify(value) +
-          ' for enum "WebsocketCommandKind"',
-      );
+      throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "WebsocketCommandKind"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "kind"');
@@ -2841,10 +2759,7 @@ function encodeWebsocketMessageBuildSuccess(message, bb) {
   var value = message["loader"];
   if (value != null) {
     var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "loader"');
@@ -2894,10 +2809,7 @@ function encodeWebsocketMessageBuildFailure(message, bb) {
   var value = message["loader"];
   if (value != null) {
     var encoded = Loader[value];
-    if (encoded === void 0)
-      throw new Error(
-        "Invalid value " + JSON.stringify(value) + ' for enum "Loader"',
-      );
+    if (encoded === void 0) throw new Error("Invalid value " + JSON.stringify(value) + ' for enum "Loader"');
     bb.writeByte(encoded);
   } else {
     throw new Error('Missing required field "loader"');

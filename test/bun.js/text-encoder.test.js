@@ -101,21 +101,30 @@ describe("TextEncoder", () => {
 
     const fixture = new Uint8Array(await Bun.file("utf8-encoding-fixture.txt").arrayBuffer());
     let textEncoder = new TextEncoder();
+    let textDecoder = new TextDecoder();
     let encodeOut = new Uint8Array(0x10ffff * 4);
     let encodeIntoOut = new Uint8Array(0x10ffff * 4);
+    let encodeIntoBuffer = new Uint8Array(4);
+    let encodeDecodedOut = new Uint8Array(0x10ffff * 4);
     for (let i = 0, offset = 0; i < 0x10ffff; i++, offset += 4) {
       const s = String.fromCodePoint(i);
       const u = textEncoder.encode(s);
-      const b = new Uint8Array(4);
-      textEncoder.encodeInto(s, b);
-
       encodeOut.set(u, offset);
-      encodeIntoOut.set(b, offset);
+
+      textEncoder.encodeInto(s, encodeIntoBuffer);
+      encodeIntoOut.set(encodeIntoBuffer, offset);
+
+      const decoded = textDecoder.decode(encodeIntoBuffer);
+      const encoded = textEncoder.encode(decoded);
+      encodeDecodedOut.set(encoded, offset);
     }
 
     expect(encodeOut).toEqual(fixture);
     expect(encodeIntoOut).toEqual(fixture);
     expect(encodeOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(encodeOut);
+    expect(encodeDecodedOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(fixture);
   });
 
   it("should encode long latin1 text", async () => {

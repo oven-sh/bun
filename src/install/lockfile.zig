@@ -78,7 +78,6 @@ const initializeStore = @import("./install.zig").initializeStore;
 const invalid_package_id = @import("./install.zig").invalid_package_id;
 const JSAst = bun.JSAst;
 const Origin = @import("./install.zig").Origin;
-const PackageIDMultiple = @import("./install.zig").PackageIDMultiple;
 const Crypto = @import("../sha.zig").Hashers;
 pub const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
@@ -441,7 +440,7 @@ pub const Tree = struct {
         if (resolutions.len == 0) return;
 
         const name_hashes: []const PackageNameHash = builder.name_hashes;
-        const max_package_id = name_hashes.len;
+        const max_package_id = @truncate(PackageID, name_hashes.len);
         const dependencies: []const Dependency = builder.dependencies[resolution_list.off..][0..resolution_list.len];
 
         for (resolutions) |pid, j| {
@@ -759,7 +758,7 @@ const Cloner = struct {
 
             const mapping = this.mapping[to_clone.old_resolution];
             if (mapping < max_package_id) {
-                this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = this.mapping[to_clone.old_resolution];
+                this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = mapping;
                 continue;
             }
 
@@ -1391,14 +1390,14 @@ pub fn verifyData(this: *Lockfile) !void {
         while (i < this.packages.len) : (i += 1) {
             const package: Lockfile.Package = this.packages.get(i);
             std.debug.assert(this.str(&package.name).len == @as(usize, package.name.len()));
-            std.debug.assert(stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
+            std.debug.assert(String.Builder.stringHash(this.str(&package.name)) == @as(usize, package.name_hash));
             std.debug.assert(package.dependencies.get(this.buffers.dependencies.items).len == @as(usize, package.dependencies.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.resolutions.len));
             std.debug.assert(package.resolutions.get(this.buffers.resolutions.items).len == @as(usize, package.dependencies.len));
             const dependencies = package.dependencies.get(this.buffers.dependencies.items);
             for (dependencies) |dependency| {
                 std.debug.assert(this.str(&dependency.name).len == @as(usize, dependency.name.len()));
-                std.debug.assert(stringHash(this.str(&dependency.name)) == dependency.name_hash);
+                std.debug.assert(String.Builder.stringHash(this.str(&dependency.name)) == dependency.name_hash);
             }
         }
     }
@@ -1538,49 +1537,33 @@ pub fn getPackageID(
 ) ?PackageID {
     const entry = this.package_index.get(name_hash) orelse return null;
     const resolutions: []const Resolution = this.packages.items(.resolution);
+    const npm_version = if (version) |v| switch (v.tag) {
+        .npm => v.value.npm.version,
+        else => null,
+    } else null;
+
     switch (entry) {
         .PackageID => |id| {
-            if (comptime Environment.isDebug or Environment.isTest) {
-                std.debug.assert(id != invalid_package_id);
-                std.debug.assert(id != invalid_package_id - 1);
+            if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+
+            if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
+                return id;
             }
 
-            if (id < resolutions.len and resolutions[id].eql(
-                resolution,
-                this.buffers.string_bytes.items,
-                this.buffers.string_bytes.items,
-            )) {
-                return id;
-            } else if (version) |version_| {
-                switch (version_.tag) {
-                    .npm => {
-                        // is it a peerDependency satisfied by a parent package?
-                        if (version_.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
-                            return id;
-                        }
-                    },
-                    else => return null,
-                }
+            if (npm_version) |range| {
+                if (range.satisfies(resolutions[id].value.npm.version)) return id;
             }
         },
-        .PackageIDMultiple => |multi_| {
-            const multi = std.mem.span(multi_);
-
-            const can_satisfy = version != null and version.?.tag == .npm;
-
-            for (multi) |id| {
-                if (comptime Environment.isDebug or Environment.isTest) {
-                    std.debug.assert(id != invalid_package_id);
-                }
-
-                if (id >= resolutions.len) return null;
+        .PackageIDMultiple => |ids| {
+            for (ids.items) |id| {
+                if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
 
                 if (resolutions[id].eql(resolution, this.buffers.string_bytes.items, this.buffers.string_bytes.items)) {
                     return id;
                 }
 
-                if (can_satisfy and version.?.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
-                    return id;
+                if (npm_version) |range| {
+                    if (range.satisfies(resolutions[id].value.npm.version)) return id;
                 }
             }
         },
@@ -1599,48 +1582,18 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         this.unique_packages.unset(id);
 
         switch (index.*) {
-            .PackageID => |single_| {
-                var ids = try this.allocator.alloc(PackageID, 8);
-                std.mem.set(PackageID, ids, invalid_package_id - 1);
+            .PackageID => |single| {
+                this.unique_packages.unset(single);
 
-                ids[0] = single_;
-                ids[1] = id;
-                this.unique_packages.unset(single_);
-
-                // stage1 compiler doesn't like this
-                ids[7] = invalid_package_id;
-                var ids_sentinel = ids.ptr[0 .. ids.len - 1 :invalid_package_id];
+                var ids = try PackageIDList.initCapacity(this.allocator, 8);
+                ids.appendAssumeCapacity(single);
+                ids.appendAssumeCapacity(id);
                 index.* = .{
-                    .PackageIDMultiple = ids_sentinel,
+                    .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => |ids_| {
-                var ids = bun.sliceTo(ids_, invalid_package_id - 1);
-                for (ids) |id2, i| {
-                    if (id2 == invalid_package_id - 1) {
-                        ids[i] = id;
-                        return;
-                    }
-                }
-
-                var new_ids = try this.allocator.alloc(PackageID, ids.len + 8);
-                std.mem.set(PackageID, new_ids, invalid_package_id - 1);
-
-                defer this.allocator.free(ids);
-                for (ids) |id2, i| {
-                    new_ids[i] = id2;
-                }
-                new_ids[ids.len - 1] = id;
-                for (new_ids[ids.len .. new_ids.len - 2]) |_, i| {
-                    new_ids[i + ids.len] = invalid_package_id - 1;
-                }
-
-                // stage1 compiler doesn't like this
-                new_ids[new_ids.len - 1] = invalid_package_id;
-                var new_ids_sentinel = new_ids.ptr[0 .. new_ids.len - 1 :invalid_package_id];
-                index.* = .{
-                    .PackageIDMultiple = new_ids_sentinel,
-                };
+            .PackageIDMultiple => |*ids| {
+                try ids.append(this.allocator, id);
             },
         }
     } else {
@@ -1670,12 +1623,8 @@ fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: PackageI
 
 const StringPool = String.Builder.StringPool;
 
-pub inline fn stringHash(in: []const u8) u64 {
-    return std.hash.Wyhash.hash(0, in);
-}
-
 pub inline fn stringBuilder(this: *Lockfile) Lockfile.StringBuilder {
-    return Lockfile.StringBuilder{
+    return .{
         .lockfile = this,
     };
 }
@@ -1708,7 +1657,7 @@ pub const StringBuilder = struct {
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
         if (String.canInline(slice)) return;
-        return countWithHash(this, slice, stringHash(slice));
+        return countWithHash(this, slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
@@ -1743,7 +1692,7 @@ pub const StringBuilder = struct {
     }
 
     pub fn append(this: *StringBuilder, comptime Type: type, slice: string) Type {
-        return @call(.always_inline, appendWithHash, .{ this, Type, slice, stringHash(slice) });
+        return @call(.always_inline, appendWithHash, .{ this, Type, slice, String.Builder.stringHash(slice) });
     }
 
     // SlicedString is not supported due to inline strings.
@@ -1825,7 +1774,7 @@ pub const PackageIndex = struct {
     pub const Map = std.HashMap(PackageNameHash, PackageIndex.Entry, IdentityContext(PackageNameHash), 80);
     pub const Entry = union(Tag) {
         PackageID: PackageID,
-        PackageIDMultiple: PackageIDMultiple,
+        PackageIDMultiple: PackageIDList,
 
         pub const Tag = enum(u8) {
             PackageID = 0,
@@ -3624,34 +3573,31 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
 }
 
 pub fn resolve(this: *Lockfile, package_name: []const u8, version: Dependency.Version) ?PackageID {
-    const name_hash = bun.hash(package_name);
+    const name_hash = String.Builder.stringHash(package_name);
     const entry = this.package_index.get(name_hash) orelse return null;
-    const can_satisfy = version.tag == .npm;
 
-    switch (entry) {
-        .PackageID => |id| {
-            const resolutions = this.packages.items(.resolution);
+    switch (version.tag) {
+        .npm => switch (entry) {
+            .PackageID => |id| {
+                const resolutions = this.packages.items(.resolution);
 
-            if (can_satisfy and version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
-                return id;
-            }
-        },
-        .PackageIDMultiple => |multi_| {
-            const multi = std.mem.span(multi_);
-            const resolutions = this.packages.items(.resolution);
-
-            for (multi) |id| {
-                if (comptime Environment.isDebug or Environment.isTest) {
-                    std.debug.assert(id != invalid_package_id);
-                }
-
-                if (id == invalid_package_id - 1) return null;
-
-                if (can_satisfy and version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+                if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
                     return id;
                 }
-            }
+            },
+            .PackageIDMultiple => |ids| {
+                const resolutions = this.packages.items(.resolution);
+
+                for (ids.items) |id| {
+                    if (comptime Environment.allow_assert) std.debug.assert(id < resolutions.len);
+                    if (version.value.npm.version.satisfies(resolutions[id].value.npm.version)) {
+                        return id;
+                    }
+                }
+            },
         },
+        else => {},
     }
 
     return null;

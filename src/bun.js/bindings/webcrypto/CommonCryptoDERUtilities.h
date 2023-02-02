@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,32 +25,31 @@
 
 #pragma once
 
+#include <wtf/Vector.h>
+
 #if ENABLE(WEB_CRYPTO)
 
+// FIXME: <rdar://problem/31618371>
+// The following constants and functions are for customized DER implementations.
+// They are not intended to be used outside Crypto codes, and should be removed
+// once the above bug is fixed.
 namespace WebCore {
 
-enum class CryptoAlgorithmIdentifier {
-    RSAES_PKCS1_v1_5 = 1,
-    RSASSA_PKCS1_v1_5,
-    RSA_PSS,
-    RSA_OAEP,
-    ECDSA,
-    ECDH,
-    AES_CTR,
-    AES_CBC,
-    AES_GCM,
-    AES_CFB,
-    AES_KW,
-    HMAC,
-    SHA_1,
-    SHA_224,
-    SHA_256,
-    SHA_384,
-    SHA_512,
-    HKDF,
-    PBKDF2,
-    Ed25519
-};
+// Per X.690 08/2015: https://www.itu.int/rec/T-REC-X.680-X.693/en
+static const unsigned char BitStringMark = 0x03;
+static const unsigned char IntegerMark = 0x02;
+static const unsigned char OctetStringMark = 0x04;
+static const unsigned char SequenceMark = 0x30;
+// Version 0. Per https://tools.ietf.org/html/rfc5208#section-5
+static const unsigned char Version[] = {0x02, 0x01, 0x00};
+
+static const unsigned char InitialOctet = 0x00;
+static const size_t MaxLengthInOneByte = 128;
+
+size_t bytesUsedToEncodedLength(uint8_t);
+size_t extraBytesNeededForEncodedLength(size_t);
+void addEncodedASN1Length(Vector<uint8_t>&, size_t);
+size_t bytesNeededForEncodedLength(size_t);
 
 } // namespace WebCore
 

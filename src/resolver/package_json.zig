@@ -887,7 +887,7 @@ pub const PackageJSON = struct {
                                         const dependency = Dependency{
                                             .name = name,
                                             .version = dependency_version,
-                                            .name_hash = bun.hash(name_str),
+                                            .name_hash = String.Builder.stringHash(name_str),
                                             .behavior = group.behavior,
                                         };
                                         package_json.dependencies.map.putAssumeCapacityContext(

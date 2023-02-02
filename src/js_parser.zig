@@ -6757,7 +6757,7 @@ fn NewParser_(
         }
 
         pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
-            const inner_index = Ref.toInt(p.symbols.items.len);
+            const inner_index = @truncate(Ref.Int, p.symbols.items.len);
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
@@ -6767,7 +6767,11 @@ fn NewParser_(
                 try p.ts_use_counts.append(p.allocator, 0);
             }
 
-            return Ref.init(inner_index, Ref.toInt(p.source.index), false);
+            return Ref{
+                .inner_index = inner_index,
+                .source_index = Ref.toInt(p.source.index.get()),
+                .tag = .symbol,
+            };
         }
 
         fn parseLabelName(p: *P) !?js_ast.LocRef {
@@ -9759,24 +9763,21 @@ fn NewParser_(
             if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
                 const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
                 const end = Ref.toInt(name.len);
-                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .is_source_contents_slice = true });
+                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .tag = .source_contents_slice });
             } else {
                 const inner_index = Ref.toInt(p.allocated_names.items.len);
                 try p.allocated_names.append(p.allocator, name);
-                return Ref.initSourceEnd(.{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index, .is_source_contents_slice = false });
+                return Ref.init(inner_index, p.source.index.get(), false);
             }
         }
 
         pub fn loadNameFromRef(p: *P, ref: Ref) string {
-            if (ref.isSourceContentsSlice()) {
-                return p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
-            } else if (ref.sourceIndex() == std.math.maxInt(Ref.Int)) {
-                if (comptime Environment.allow_assert)
-                    assert(ref.innerIndex() < p.allocated_names.items.len);
-                return p.allocated_names.items[ref.innerIndex()];
-            } else {
-                return p.symbols.items[ref.innerIndex()].original_name;
-            }
+            return switch (ref.tag) {
+                .symbol => p.symbols.items[ref.innerIndex()].original_name,
+                .source_contents_slice => p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()],
+                .allocated_name => p.allocated_names.items[ref.innerIndex()],
+                else => @panic("Internal error: JS parser tried to load an invalid name from a Ref"),
+            };
         }
 
         // This parses an expression. This assumes we've already parsed the "async"
@@ -18215,8 +18216,9 @@ fn NewParser_(
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
             // Remove the last child from the parent scope
-            _ = parent.children.popOrNull().?;
-            if (comptime Environment.allow_assert) assert(parent.children.last().?.* == to_flatten);
+            const last = parent.children.len - 1;
+            if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
+            _ = parent.children.popOrNull();
 
             for (to_flatten.children.slice()) |item| {
                 item.parent = parent;

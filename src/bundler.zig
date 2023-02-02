@@ -381,6 +381,7 @@ pub const Bundler = struct {
         to.log.* = logger.Log.init(allocator);
         to.setLog(to.log);
         to.macro_context = null;
+        to.linker.resolver = &to.resolver;
     }
 
     pub inline fn getPackageManager(this: *Bundler) *PackageManager {

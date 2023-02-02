@@ -1152,7 +1152,7 @@ pub const Source = struct {
     /// Avoid accessing this directly most of the  time
     identifier_name: string = "",
 
-    index: Index = Index.invalid,
+    index: Index = Index.init(0),
 
     pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();
@@ -1190,7 +1190,7 @@ pub const Source = struct {
 
     pub fn initEmptyFile(filepath: string) Source {
         const path = fs.Path.init(filepath);
-        return Source{ .path = path, .key_path = path, .index = Index.init(0), .contents = "" };
+        return Source{ .path = path, .key_path = path, .contents = "" };
     }
 
     pub fn initFile(file: fs.File, _: std.mem.Allocator) !Source {

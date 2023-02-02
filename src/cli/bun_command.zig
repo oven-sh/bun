@@ -32,7 +32,7 @@ const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
 const Router = @import("../router.zig");
-const BundleV2 = @import("../bundler/bundle_v2.zig");
+const BundleV2 = @import("../bundler/bundle_v2.zig").BundleV2;
 var estimated_input_lines_of_code_: usize = undefined;
 // const ServerBundleGeneratorThread = struct {
 //     inline fn _generate(
@@ -186,6 +186,7 @@ pub const BunCommand = struct {
                 filepath,
                 &estimated_input_lines_of_code_,
                 ctx.debug.package_bundle_map,
+                bun.JSC.AnyEventLoop.init(ctx.allocator),
             );
 
             // const estimated_input_lines_of_code = estimated_input_lines_of_code_;

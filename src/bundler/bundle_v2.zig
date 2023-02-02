@@ -264,7 +264,7 @@ pub const BundleV2 = struct {
             return null;
         }
         this.graph.parse_pending += 1;
-        const source_index = Index.init(this.graph.input_files.len);
+        const source_index = Index.init(.source, this.graph.input_files.len);
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
         try this.graph.input_files.append(this.graph.allocator, .{
@@ -368,7 +368,6 @@ pub const BundleV2 = struct {
 
         var this = generator;
         try pool.start(this);
-        try generator.appendBytes(&initial_header);
 
         if (framework_config != null) {
             defer this.bundler.resetStore();
@@ -407,7 +406,7 @@ pub const BundleV2 = struct {
                         .entry_point,
                     );
                     if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.init(source_index)) catch unreachable;
+                        this.graph.entry_points.append(this.graph.allocator, Index.init(.source, source_index)) catch unreachable;
                     } else {}
                 }
             } else {
@@ -418,7 +417,7 @@ pub const BundleV2 = struct {
                         .entry_point,
                     );
                     if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.init(source_index)) catch unreachable;
+                        this.graph.entry_points.append(this.graph.allocator, Index.init(.source, source_index)) catch unreachable;
                     } else {}
                 }
 
@@ -429,7 +428,7 @@ pub const BundleV2 = struct {
                         .entry_point,
                     );
                     if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                        this.graph.entry_points.append(this.graph.allocator, Index.init(source_index)) catch unreachable;
+                        this.graph.entry_points.append(this.graph.allocator, Index.init(.source, source_index)) catch unreachable;
                     } else {}
                 }
             }
@@ -447,7 +446,7 @@ pub const BundleV2 = struct {
             for (entry_points) |entry_point| {
                 const resolved = bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.init(source_index)) catch unreachable;
+                    this.graph.entry_points.append(this.graph.allocator, Index.init(.source, source_index)) catch unreachable;
                 } else {}
             }
         } else {}
@@ -462,7 +461,7 @@ pub const BundleV2 = struct {
             for (bundler.options.entry_points) |entry_point| {
                 const resolved = bundler.resolveEntryPoint(entry_point) catch continue;
                 if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
-                    this.graph.entry_points.append(this.graph.allocator, Index.init(source_index)) catch unreachable;
+                    this.graph.entry_points.append(this.graph.allocator, Index.init(.source, source_index)) catch unreachable;
                 } else {}
             }
         }
@@ -506,14 +505,14 @@ pub const BundleV2 = struct {
                 result.log.appendTo(this.bundler.log) catch unreachable;
                 {
                     var input_files = graph.input_files.slice();
-                    input_files.items(.source)[result.source.index.get()] = result.source;
+                    input_files.items(.source)[result.source.index.get(.source)] = result.source;
                     debug("onParse({d}, {s}) = {d} imports, {d} exports", .{
                         result.source.index.get(),
                         result.source.path.text,
                         result.ast.import_records.len,
                         result.ast.named_exports.count(),
                     });
-                    input_files.items(.ast)[result.source.index.get()] = Index.init(graph.ast.len);
+                    input_files.items(.ast)[result.source.index.get(.source)] = Index.init(.ast_id, graph.ast.len);
                 }
 
                 var iter = result.resolve_queue.iterator();
@@ -532,12 +531,12 @@ pub const BundleV2 = struct {
                             .source = Logger.Source.initEmptyFile(entry.value_ptr.path.text),
                             .side_effects = value.side_effects,
                         };
-                        new_input_file.source.index = Index.init(graph.input_files.len);
+                        new_input_file.source.index = Index.init(.source, graph.input_files.len);
                         new_input_file.source.path = entry.value_ptr.path;
                         new_input_file.source.key_path = new_input_file.source.path;
                         // graph.source_index_map.put(graph.allocator, new_input_file.source.index.get, new_input_file.source) catch unreachable;
-                        new_input_file.ast = Index.init(graph.ast.len);
-                        existing.value_ptr.* = new_input_file.source.index.get();
+                        new_input_file.ast = Index.init(.ast_id, graph.ast.len);
+                        existing.value_ptr.* = new_input_file.source.index.get(.source);
                         entry.value_ptr.source_index = new_input_file.source.index;
                         graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
                         batch.push(ThreadPoolLib.Batch.from(&entry.value_ptr.task));
@@ -991,12 +990,12 @@ const Visitor = struct {
     // order within a given file is deterministic.
     pub fn visit(this: *Visitor, source_index: Index) void {
         if (source_index.isInvalid()) return;
-        if (this.visited.isSet(source_index.get())) {
+        if (this.visited.isSet(source_index.get(.source))) {
             return;
         }
-        this.visited.set(source_index.get());
+        this.visited.set(source_index.get(.source));
 
-        const import_record_list_id = this.input_file_asts[source_index.get()];
+        const import_record_list_id = this.input_file_asts[source_index.get(.source)];
         // when there are no import records, this index will be invalid
         if (import_record_list_id.get() < this.all_import_records.len) {
             for (this.all_import_records[import_record_list_id.get()].slice()) |*import_record| {
@@ -1303,7 +1302,7 @@ const LinkerGraph = struct {
     ast: std.MultiArrayList(js_ast.Ast) = .{},
     meta: std.MultiArrayList(JSMeta) = .{},
 
-    reachable_files: []Index.Int = &[_]Index.Int{},
+    reachable_files: []Index = &[_]Index{},
 
     stable_source_indices: []const u32 = &[_]u32{},
 
@@ -1484,9 +1483,9 @@ const LinkerGraph = struct {
 
         // Setup files
         {
-            var stable_source_indices = try this.allocator.alloc(Index.Int, sources.len);
-            for (this.reachable_files) |reachable, i| {
-                stable_source_indices[i] = reachable;
+            var stable_source_indices = try this.allocator.alloc(Index, sources.len);
+            for (this.reachable_files) |_, i| {
+                stable_source_indices[i] = Index.init(.source, i);
             }
 
             const file = comptime LinkerGraph.File{};
@@ -1502,7 +1501,7 @@ const LinkerGraph = struct {
     }
 
     pub const File = struct {
-        input_file: u32 = 0,
+        input_file: Index = Index.init(.source, 0),
 
         /// The minimum number of links in the module graph to get from an entry point
         /// to this file
@@ -1609,6 +1608,7 @@ const LinkerContext = struct {
         var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
         var wraps: []WrapKind = this.graph.meta.items(.wrap);
         const reachable = this.graph.reachable_files;
+        this.graph.files
         const output_format = this.options.output_format;
         var export_star_import_records: [][]u32 = this.parse_graph.ast.items(.export_star_import_records);
         var exports_refs: []Ref = this.parse_graph.ast.items(.exports_ref);
@@ -1763,7 +1763,7 @@ const LinkerContext = struct {
             var resolved_export_stars: []ExportData = this.graph.meta.items(.resolved_export_star);
 
             for (reachable) |source_index| {
-                if (asts.len < @as(usize, source_index)) continue;
+                if (asts.len < @as(usize, source_index.get(.ast))) continue;
                 const id = asts[source_index].get();
                 if (id >= import_records_list.len) continue;
 
@@ -1800,7 +1800,7 @@ const LinkerContext = struct {
                 // but before matching imports with exports.
                 resolved_export_stars[id] = ExportData{
                     .data = .{
-                        .source_index = Index.init(source_index),
+                        .source_index = Index.init(.source, source_index.get(.source)),
                         .import_ref = exports_refs[id],
                     },
                 };
@@ -2018,7 +2018,7 @@ const LinkerContext = struct {
                         for (parts_declaring_symbol) |resolved_part_index| {
                             part.dependencies.appendAssumeCapacity(
                                 .{
-                                    .source_index = Index.init(import_source_index),
+                                    .source_index = Index.init(.source, import_source_index),
                                     .part_index = resolved_part_index,
                                 },
                             );
@@ -2044,26 +2044,26 @@ const LinkerContext = struct {
                     var resolved_exports_list: *RefExportData = &this.graph.meta.items(.resolved_exports)[id];
                     for (aliases) |alias| {
                         var export_ = resolved_exports_list.get(alias).?;
-                        var target_source_index = export_.data.source_index.get();
+                        var target_source_index = export_.data.source_index.get(.source);
                         var target_id = asts[target_source_index];
                         var target_ref = export_.data.import_ref;
 
                         // If this is an import, then target what the import points to
 
                         if (imports_to_bind.get(target_ref)) |import_data| {
-                            target_source_index = import_data.data.source_index.get();
+                            target_source_index = import_data.data.source_index.get(.source);
                             target_id = asts[target_source_index];
                             target_ref = import_data.data.import_ref;
                             dependencies.appendSlice(import_data.re_exports.slice()) catch unreachable;
                         }
 
-                        const top_to_parts = this.topLevelSymbolsToParts(target_id.get(), target_ref);
+                        const top_to_parts = this.topLevelSymbolsToParts(target_id.get(.javascript_ast), target_ref);
                         dependencies.ensureUnusedCapacity(top_to_parts.len) catch unreachable;
                         // Pull in all declarations of this symbol
                         for (top_to_parts) |part_index| {
                             dependencies.appendAssumeCapacity(
                                 .{
-                                    .source_index = Index.init(target_source_index),
+                                    .source_index = Index.source( target_source_index),
                                     .part_index = part_index,
                                 },
                             );
@@ -2075,15 +2075,15 @@ const LinkerContext = struct {
                     // Ensure "exports" is included if the current output format needs it
                     if (force_include_exports) {
                         dependencies.appendAssumeCapacity(
-                            .{ .source_index = Index.init(source_index), .part_index = js_ast.namespace_export_part_index },
+                            .{ .source_index = Index.source(source_index), .part_index = js_ast.namespace_export_part_index },
                         );
                     }
 
                     if (add_wrapper) {
                         dependencies.appendAssumeCapacity(
                             .{
-                                .source_index = Index.init(source_index),
-                                .part_index = this.graph.meta.items(.wrapper_part_index)[id].get(),
+                                .source_index = Index.source(source_index),
+                                .part_index = this.graph.meta.items(.wrapper_part_index)[id].get(.part),
                             },
                         );
                     }
@@ -2096,14 +2096,14 @@ const LinkerContext = struct {
                             .can_be_removed_if_unused = false,
                         },
                     ) catch unreachable;
-                    this.graph.meta.items(.entry_point_part_index)[id] = Index.init(entry_point_part_index);
+                    this.graph.meta.items(.entry_point_part_index)[id] = Index.init(.part, entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                     if (force_include_exports) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
                             id,
-                            Index.init(entry_point_part_index),
+                            Index.init(.part, entry_point_part_index),
                             "__toCommonJS",
                             1,
                         ) catch unreachable;
@@ -2159,8 +2159,8 @@ const LinkerContext = struct {
                             continue;
                         }
 
-                        const other_source_index = record.source_index.get();
-                        const other_id = asts[other_source_index].get();
+                        const other_source_index = record.source_index.get(.source);
+                        const other_id = asts[other_source_index].get(.ast_id);
                         std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
 
                         const other_export_kind = exports_kind[other_id];
@@ -2176,7 +2176,7 @@ const LinkerContext = struct {
                                     @intCast(u32, part_index),
                                     wrapper_ref,
                                     1,
-                                    Index.init(other_source_index),
+                                    Index.source(other_source_index),
                                 ) catch unreachable;
 
                                 // This is an ES6 import of a CommonJS module, so it needs the
@@ -2199,7 +2199,7 @@ const LinkerContext = struct {
                                         @intCast(u32, part_index),
                                         this.graph.ast.items(.exports_ref)[other_id],
                                         1,
-                                        Index.init(other_source_index),
+                                        Index.source(other_source_index),
                                     ) catch unreachable;
                                 }
                             },
@@ -2211,7 +2211,7 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         id,
                         source_index,
-                        Index.init(part_index),
+                        Index.part(part_index),
                         "__toESM",
                         to_esm_uses,
                     ) catch unreachable;
@@ -2221,7 +2221,7 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         id,
                         source_index,
-                        Index.init(part_index),
+                        Index.part(part_index),
                         "__toCommonJS",
                         to_common_js_uses,
                     ) catch unreachable;
@@ -2231,7 +2231,7 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         id,
                         source_index,
-                        Index.init(part_index),
+                        Index.part(part_index),
                         "__require",
                         runtime_require_uses,
                     ) catch unreachable;
@@ -2245,8 +2245,8 @@ const LinkerContext = struct {
 
                         var happens_at_runtime = record.source_index.isInvalid() and (!is_entry_point or !output_format.keepES6ImportExportSyntax());
                         if (record.source_index.isValid()) {
-                            var other_source_index = record.source_index.get();
-                            const other_id = asts[other_source_index].get();
+                            var other_source_index = record.source_index.get(.source);
+                            const other_id = asts[other_source_index].get(.javascript_ast);
                             std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
                             const other_export_kind = exports_kind[other_id];
                             if (other_source_index != source_index and other_export_kind.isDynamic()) {
@@ -2264,7 +2264,7 @@ const LinkerContext = struct {
                                     @intCast(u32, part_index),
                                     this.graph.ast.items(.exports_ref)[other_id],
                                     1,
-                                    Index.init(other_source_index),
+                                    Index.source(other_source_index),
                                 ) catch unreachable;
                             }
                         }
@@ -2277,7 +2277,7 @@ const LinkerContext = struct {
                                 @intCast(u32, part_index),
                                 this.graph.ast.items(.exports_ref)[id],
                                 1,
-                                Index.init(source_index),
+                                Index.source(source_index),
                             ) catch unreachable;
                             this.graph.ast.items(.uses_exports_ref)[id] = true;
                             record.calls_runtime_re_export_fn = true;
@@ -2288,7 +2288,7 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         id,
-                        Index.init(part_index),
+                        Index.part(part_index),
                         "__reExport",
                         re_export_uses,
                     ) catch unreachable;
@@ -2622,7 +2622,7 @@ const LinkerContext = struct {
                         part.dependencies.push(
                             allocator_,
                             .{
-                                .source_index = Index.init(source_index),
+                                .source_index = Index.source(source_index),
                                 .part_index = other_part_index,
                             },
                         ) catch unreachable;
@@ -3069,7 +3069,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
-                wrapper_part_index.* = Index.init(part_index);
+                wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     id,
                     source_index,
@@ -3122,7 +3122,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
-                wrapper_part_index.* = Index.init(part_index);
+                wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     id,
                     source_index,
@@ -3179,7 +3179,7 @@ const LinkerContext = struct {
             // Just warn about it and replace the import with "undefined"
             return .{
                 .value = .{
-                    .source_index = Index.init(other_source_index),
+                    .source_index = Index.source(other_source_index),
                     .import_ref = Ref.None,
                 },
                 .status = .cjs_without_exports,
@@ -3191,7 +3191,7 @@ const LinkerContext = struct {
         if (other_kind == .cjs) {
             return .{
                 .value = .{
-                    .source_index = Index.init(other_source_index),
+                    .source_index = Index.source(other_source_index),
                     .import_ref = Ref.None,
                 },
                 .status = .cjs,
@@ -3232,7 +3232,7 @@ const LinkerContext = struct {
         if (other_kind == .esm_with_dynamic_fallback) {
             return .{
                 .value = .{
-                    .source_index = Index.init(other_source_index),
+                    .source_index = Index.source(other_source_index),
                     .import_ref = c.parse_graph.ast.items(.exports_ref)[other_id],
                 },
                 .status = .dynamic_fallback,
@@ -3251,7 +3251,7 @@ const LinkerContext = struct {
 
         return .{
             .value = .{
-                .source_index = Index.init(other_source_index),
+                .source_index = Index.source(other_source_index),
             },
             .status = .no_match,
             .tracker = tracker,
@@ -3273,7 +3273,7 @@ const LinkerContext = struct {
             const import_ref = Ref.init(ref.innerIndex(), @truncate(Ref.Int, source_index), ref.isSourceContentsSlice());
             var import_tracker = ImportData{
                 .data = .{
-                    .source_index = Index.init(source_index),
+                    .source_index = Index.source(source_index),
                     .import_ref = import_ref,
                 },
             };
@@ -3291,7 +3291,7 @@ const LinkerContext = struct {
                         .{
                             .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
                             .data = .{
-                                .source_index = Index.init(result.source_index),
+                                .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
                             },
                         },
@@ -3310,7 +3310,7 @@ const LinkerContext = struct {
                         .{
                             .re_exports = bun.BabyList(js_ast.Dependency).init(re_exports.items),
                             .data = .{
-                                .source_index = Index.init(result.source_index),
+                                .source_index = Index.source(result.source_index),
                                 .import_ref = result.ref,
                             },
                         },
@@ -3431,7 +3431,7 @@ const LinkerContext = struct {
                         resolved.value_ptr.* = .{
                             .data = .{
                                 .import_ref = ref,
-                                .source_index = Index.init(other_source_index),
+                                .source_index = Index.source(other_source_index),
                                 .name_loc = entry.value_ptr.alias_loc,
                             },
                         };
@@ -3441,14 +3441,14 @@ const LinkerContext = struct {
                         this.imports_to_bind[id].put(this.allocator, entry.value_ptr.ref, .{
                             .data = .{
                                 .import_ref = ref,
-                                .source_index = Index.init(other_source_index),
+                                .source_index = Index.source(other_source_index),
                             },
                         }) catch unreachable;
                     } else if (resolved.value_ptr.data.source_index.get() != other_source_index) {
                         // Two different re-exports colliding makes it potentially ambiguous
                         resolved.value_ptr.potentially_ambiguous_export_star_refs.push(this.allocator, .{
                             .data = .{
-                                .source_index = Index.init(other_source_index),
+                                .source_index = Index.source(other_source_index),
                                 .import_ref = ref,
                                 .name_loc = entry.value_ptr.alias_loc,
                             },

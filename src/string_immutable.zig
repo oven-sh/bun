@@ -3542,7 +3542,7 @@ test "firstNonASCII16" {
     }
 }
 
-fn getSharedBuffer() void {
+fn getSharedBuffer() []u8 {
     return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
         shared_temp_buffer_ptr = bun.default_allocator.create([32 * 1024]u8) catch unreachable;
         break :brk shared_temp_buffer_ptr.?;

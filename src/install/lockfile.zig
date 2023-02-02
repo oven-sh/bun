@@ -1592,8 +1592,8 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
                     .PackageIDMultiple = ids,
                 };
             },
-            .PackageIDMultiple => |*ids| {
-                try ids.append(this.allocator, id);
+            .PackageIDMultiple => {
+                try index.PackageIDMultiple.append(this.allocator, id);
             },
         }
     } else {

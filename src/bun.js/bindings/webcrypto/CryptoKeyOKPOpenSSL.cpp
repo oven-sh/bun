@@ -302,9 +302,9 @@ String CryptoKeyOKP::generateJwkX() const
 
     ASSERT(type() == CryptoKeyType::Private);
 
-    uint8_t publicKey[X25519_PRIVATE_KEY_LEN];
-
-    X25519_public_from_private(publicKey, m_data.data());
+    uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
+    uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
+    ED25519_keypair_from_seed(publicKey, privateKey, m_data.data());
 
     return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
 }

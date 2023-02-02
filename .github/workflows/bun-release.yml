@@ -4,20 +4,19 @@ on:
   release:
     types:
       - published
-      - edited # canary only
   workflow_dispatch:
     inputs:
       tag:
         type: string
         description: The tag to publish
-        default: canary
+        required: true
 jobs:
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: packages/bun-npm
+        working-directory: packages/bun-release
     steps:
       - id: checkout
         name: Checkout
@@ -27,7 +26,6 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag }}"
           TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          TAG="${TAG:-"canary"}"
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-bun
@@ -41,10 +39,54 @@ jobs:
         run: bun install
       - id: bun-run
         name: Release
-        run: bun run npm -- "${{ env.TAG }}" publish
+        run: bun upload-npm -- "${{ env.TAG }}" publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+  npm-types:
+    name: Release types to NPM
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/bun-types
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-node
+        name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: latest
+      - id: setup-bun
+        name: Setup Bun
+        uses: oven-sh/setup-bun@v0.1.8
+        with:
+          bun-version: canary
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - id: bun-install
+        name: Install Dependencies
+        run: |
+          bun upgrade --canary
+          bun install
+      - id: bun-run
+        name: Build
+        run: bun run build
+        env:
+          BUN_VERSION: ${{ env.TAG }}
+      - id: npm-publish
+        name: Release
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          package: packages/bun-types/dist/package.json
+          token: ${{ secrets.NPM_TOKEN }}
   docker:
     name: Release to Dockerhub
     runs-on: ubuntu-latest
@@ -57,7 +99,6 @@ jobs:
         run: |
           TAG="${{ github.event.inputs.tag }}"
           TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
-          TAG="${TAG:-"canary"}"
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: qemu
@@ -73,11 +114,9 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: oven/bun
-          flavor: latest=false # TODO
           tags: |
-            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
-            type=match,pattern=(bun-v)?(canary|\d.\d.\d),group=2,value=${{ env.TAG }}
+            type=match,pattern=(bun-v)?(\d.\d.\d),group=2,value=${{ env.TAG }}
+            type=match,pattern=(bun-v)?(\d.\d),group=2,value=${{ env.TAG }}
       - id: login
         name: Login to Docker
         uses: docker/login-action@v2
@@ -95,3 +134,43 @@ jobs:
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
+  homebrew:
+    name: Release to Homebrew
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          repository: oven-sh/homebrew-bun
+          token: ${{ secrets.ROBOBUN_TOKEN }}
+      - id: setup-gpg
+        name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+      - id: setup-env
+        name: Setup Environment
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
+          echo "Setup tag: ${TAG}"
+          echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-ruby
+        name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "2.6"
+      - id: update-tap
+        name: Update Tap
+        run: ruby scripts/release.rb "${{ env.TAG }}"
+      - id: commit-tap
+        name: Commit Tap
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_options: --gpg-sign=${{ steps.setup-gpg.outputs.keyid }}
+          commit_message: Bun v${{ env.TAG }}
+          commit_user_name: robobun
+          commit_user_email: robobun@oven.sh
+          commit_author: robobun <robobun@oven.sh>

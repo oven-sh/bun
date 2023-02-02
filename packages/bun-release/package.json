@@ -1,0 +1,19 @@
+{
+  "private": true,
+  "dependencies": {
+    "esbuild": "^0.17.3",
+    "jszip": "^3.10.1",
+    "octokit": "^2.0.14"
+  },
+  "devDependencies": {
+    "@octokit/types": "^8.1.1",
+    "bun-types": "^0.4.0",
+    "prettier": "^2.8.2"
+  },
+  "scripts": {
+    "format": "prettier --write src scripts",
+    "get-version": "bun scripts/get-version.ts",
+    "upload-npm": "bun scripts/upload-npm.ts",
+    "upload-assets": "bun scripts/upload-assets.ts"
+  }
+}

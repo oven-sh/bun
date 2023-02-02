@@ -2481,9 +2481,8 @@ const latin1_to_utf16_conversion_table = [256]u16{
 };
 
 pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
-    const as_utf16 = latin1ToCodepointBytesAssumeNotASCII16(char);
     var bytes = [4]u8{ 0, 0, 0, 0 };
-    _ = encodeWTF8Rune(&bytes, @intCast(i32, as_utf16));
+    _ = encodeWTF8Rune(&bytes, @intCast(i32, char));
     return bytes[0..2].*;
 }
 
@@ -2567,7 +2566,6 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                         },
                         else => {},
                     }
-                    
                 },
                 4 => {
                     //only 1 to 3 written

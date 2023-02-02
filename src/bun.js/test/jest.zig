@@ -1295,9 +1295,9 @@ pub const TestScope = struct {
     callback: js.JSValueRef,
     id: TestRunner.Test.ID = 0,
     promise: ?*JSInternalPromise = null,
-    ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
+    done_called: ?bool = null,
 
     pub const Class = NewClass(
         void,
@@ -1437,6 +1437,8 @@ pub const TestScope = struct {
 
         if (JSC.getFunctionData(function)) |data| {
             var task = bun.cast(*TestRunnerTask, data);
+            var test_scope = task.describe.tests.items[task.test_id];
+            test_scope.done_called = true;
             JSC.setFunctionData(function, null);
             if (args.len > 0) {
                 const err = args.ptr[0];
@@ -1449,6 +1451,10 @@ pub const TestScope = struct {
             } else {
                 task.handleResult(.{ .pass = active_test_expectation_counter.actual }, .callback);
             }
+        } else {
+            var err = globalThis.createErrorInstance("Expected done to be called once, but it was called multiple times.", .{});
+            globalThis.throwValue(err);
+            return .zero;
         }
 
         return JSValue.jsUndefined();
@@ -1482,6 +1488,7 @@ pub const TestScope = struct {
                 task,
             );
             task.done_callback_state = .pending;
+            this.done_called = false;
             initial_value = JSValue.fromRef(callback.?).call(vm.global, &.{callback_func});
         } else {
             initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
@@ -1533,8 +1540,10 @@ pub const TestScope = struct {
             }
         }
 
-        if (callback_length > 0) {
-            return .{ .pending = {} };
+        if (this.done_called) |called| {
+            if (!called) {
+                return .{ .pending = {} };
+            }
         }
 
         this.callback = null;
@@ -2089,6 +2098,8 @@ pub const TestRunnerTask = struct {
             },
             .callback => {
                 std.debug.assert(this.done_callback_state == .pending);
+                // done was called. Test can finish remaining expect calls, but
+                // cannot call done again.
                 this.done_callback_state = .fulfilled;
 
                 if (this.promise_state == .pending and result == .pass) {
@@ -2097,6 +2108,7 @@ pub const TestRunnerTask = struct {
             },
             .sync => {
                 std.debug.assert(this.sync_state == .pending);
+
                 this.sync_state = .fulfilled;
             },
             .unhandledRejection => {

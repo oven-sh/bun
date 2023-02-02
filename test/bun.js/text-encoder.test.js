@@ -52,7 +52,7 @@ describe("TextEncoder", () => {
     expect(into2).toEqual(repeatedResult);
   });
 
-  it("should encode latin1 text", () => {
+  it("should encode latin1 text", async () => {
     gcTrace(true);
     const text = "Hello World!";
     const encoder = new TextEncoder();
@@ -96,6 +96,26 @@ describe("TextEncoder", () => {
       let utf8 = new TextEncoder().encode(str);
       expect([...utf8]).toEqual(expected);
     }
+
+    expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
+
+    const fixture = new Uint8Array(await Bun.file("utf8-encoding-fixture.txt").arrayBuffer());
+    let textEncoder = new TextEncoder();
+    let encodeOut = new Uint8Array(0x10ffff * 4);
+    let encodeIntoOut = new Uint8Array(0x10ffff * 4);
+    for (let i = 0, offset = 0; i < 0x10ffff; i++, offset += 4) {
+      const s = String.fromCodePoint(i);
+      const u = textEncoder.encode(s);
+      const b = new Uint8Array(4);
+      textEncoder.encodeInto(s, b);
+
+      encodeOut.set(u, offset);
+      encodeIntoOut.set(b, offset);
+    }
+
+    expect(encodeOut).toEqual(fixture);
+    expect(encodeIntoOut).toEqual(fixture);
+    expect(encodeOut).toEqual(encodeIntoOut);
   });
 
   it("should encode long latin1 text", async () => {

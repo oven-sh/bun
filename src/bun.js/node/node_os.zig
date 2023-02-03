@@ -73,14 +73,14 @@ pub const Os = struct {
         const cpus_or_error = if (comptime Environment.isLinux)
                                 cpusImplLinux(&cpu_buffer)
                               else
-                                cpu_buffer[0..0];  // unsupported platform -> empty array
+                                @as(anyerror![]CPU, cpu_buffer[0..0]);  // unsupported platform -> empty array
 
         if (cpus_or_error) |list| {
             // Convert the CPU list to a JS Array
             const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
             for (list) |cpu, cpu_index| {
                 const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValue(globalThis));
+                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
 
                 const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));

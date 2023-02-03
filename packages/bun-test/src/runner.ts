@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import * as action from "@actions/core";
 
 const cwd = resolve("../..");
 const isAction = !!process.env["GITHUB_ACTION"];
@@ -38,7 +39,7 @@ async function runTest(path: string): Promise<void> {
     const prefix = exitCode === 0
       ? "PASS"
       : `FAIL (exit code ${exitCode})`;
-    console.log(`::group::${prefix} - ${name}`);
+    action.startGroup(`${prefix} - ${name}`);
   }
   for (const stdout of [runner.stdout, runner.stderr]) {
     if (!stdout) {
@@ -48,7 +49,11 @@ async function runTest(path: string): Promise<void> {
     while (true) {
       const { value, done } = await reader.read();
       if (value) {
-        write(value);
+        if (isAction) {
+          write(value);
+        } else {
+          console.write(value);
+        }
       }
       if (done) {
         break;
@@ -56,19 +61,18 @@ async function runTest(path: string): Promise<void> {
     }
   }
   if (isAction) {
-    console.log("::endgroup::");
+    action.endGroup();
   }
 }
 
 function write(data: Uint8Array): void {
-  console.write(data);
-  if (!isAction) {
-    return;
-  }
   const text = new TextDecoder().decode(data);
   for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
-    const name = path.replace(cwd, "").slice(1);
-    console.log(`::error file=${name},line=${line},col=${col},title=${message}::`);
+    action.error(message, {
+      file: path.replace(cwd, "").slice(1),
+      startLine: parseInt(line),
+      startColumn: parseInt(col),
+    });
   }
 }
 

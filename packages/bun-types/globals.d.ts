@@ -14,17 +14,7 @@ type Platform =
   | "win32"
   | "cygwin"
   | "netbsd";
-type Architecture =
-  | "arm"
-  | "arm64"
-  | "ia32"
-  | "mips"
-  | "mipsel"
-  | "ppc"
-  | "ppc64"
-  | "s390"
-  | "s390x"
-  | "x64";
+type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
 type Signals =
   | "SIGABRT"
   | "SIGALRM"
@@ -446,10 +436,7 @@ interface Headers {
   entries(): IterableIterator<[string, string]>;
   keys(): IterableIterator<string>;
   values(): IterableIterator<string>;
-  forEach(
-    callbackfn: (value: string, key: string, parent: Headers) => void,
-    thisArg?: any,
-  ): void;
+  forEach(callbackfn: (value: string, key: string, parent: Headers) => void, thisArg?: any): void;
 
   /**
    * Convert {@link Headers} to a plain JavaScript object.
@@ -493,13 +480,7 @@ declare var Headers: {
 };
 
 type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
-type ResponseType =
-  | "basic"
-  | "cors"
-  | "default"
-  | "error"
-  | "opaque"
-  | "opaqueredirect";
+type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
 declare class Blob implements BlobInterface {
   /**
@@ -575,10 +556,7 @@ interface ResponseInit {
  * ```
  */
 declare class Response implements BlobInterface {
-  constructor(
-    body?: ReadableStream | BlobPart | BlobPart[] | null,
-    options?: ResponseInit,
-  );
+  constructor(body?: ReadableStream | BlobPart | BlobPart[] | null, options?: ResponseInit);
 
   /**
    * Create a new {@link Response} with a JSON body
@@ -711,13 +689,7 @@ declare class Response implements BlobInterface {
   clone(): Response;
 }
 
-type RequestCache =
-  | "default"
-  | "force-cache"
-  | "no-cache"
-  | "no-store"
-  | "only-if-cached"
-  | "reload";
+type RequestCache = "default" | "force-cache" | "no-cache" | "no-store" | "only-if-cached" | "reload";
 type RequestCredentials = "include" | "omit" | "same-origin";
 type RequestDestination =
   | ""
@@ -757,9 +729,7 @@ type RequestInfo = Request | string;
 type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
 type XMLHttpRequestBodyInit = Blob | BufferSource | string;
 type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
-type ReadableStreamDefaultReadResult<T> =
-  | ReadableStreamDefaultReadValueResult<T>
-  | ReadableStreamDefaultReadDoneResult;
+type ReadableStreamDefaultReadResult<T> = ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
 type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
 
 interface RequestInit {
@@ -832,22 +802,21 @@ interface RequestInit {
    * Enable or disable HTTP request timeout
    */
   timeout?: boolean;
-
 }
 
 interface FetchRequestInit extends RequestInit {
-    /**
+  /**
    * Log the raw HTTP request & response to stdout. This API may be
    * removed in a future version of Bun without notice.
    * This is a custom property that is not part of the Fetch API specification.
    * It exists mostly as a debugging tool
    */
-    verbose?: boolean,
-    /**
-     * Override http_proxy or HTTPS_PROXY
-     * This is a custom property that is not part of the Fetch API specification.
-     */
-    proxy?: string
+  verbose?: boolean;
+  /**
+   * Override http_proxy or HTTPS_PROXY
+   * This is a custom property that is not part of the Fetch API specification.
+   */
+  proxy?: string;
 }
 
 /**
@@ -1092,10 +1061,7 @@ declare class TextDecoder {
    */
   readonly ignoreBOM: boolean;
 
-  constructor(
-    encoding?: Encoding,
-    options?: { fatal?: boolean; ignoreBOM?: boolean },
-  );
+  constructor(encoding?: Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean });
 
   /**
    * Decodes the `input` and returns a string. If `options.stream` is `true`, any
@@ -1253,10 +1219,7 @@ declare function clearTimeout(id?: number): void;
  *
  *
  */
-declare function fetch(
-  url: string | URL,
-  init?: FetchRequestInit
-): Promise<Response>;
+declare function fetch(url: string | URL, init?: FetchRequestInit): Promise<Response>;
 
 /**
  * Send a HTTP(s) request
@@ -1269,10 +1232,7 @@ declare function fetch(
  *
  */
 // tslint:disable-next-line:unified-signatures
-declare function fetch(
-  request: Request,
-  init?: RequestInit
-): Promise<Response>;
+declare function fetch(request: Request, init?: RequestInit): Promise<Response>;
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
 /**
@@ -1284,30 +1244,19 @@ declare function reportError(error: any): void;
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
  */
-declare function setImmediate(
-  handler: TimerHandler,
-  ...arguments: any[]
-): number;
+declare function setImmediate(handler: TimerHandler, ...arguments: any[]): number;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
  */
-declare function setInterval(
-  handler: TimerHandler,
-  interval?: number,
-  ...arguments: any[]
-): number;
+declare function setInterval(handler: TimerHandler, interval?: number, ...arguments: any[]): number;
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
  * @param timeout milliseconds to wait between calls
  */
-declare function setTimeout(
-  handler: TimerHandler,
-  timeout?: number,
-  ...arguments: any[]
-): number;
+declare function setTimeout(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
@@ -1755,19 +1704,14 @@ interface URLSearchParams {
   keys(): IterableIterator<string>;
   /** Returns an iterator allowing to go through all values of the key/value pairs of this search parameter. */
   values(): IterableIterator<string>;
-  forEach(
-    callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
-    thisArg?: any,
-  ): void;
+  forEach(callbackfn: (value: string, key: string, parent: URLSearchParams) => void, thisArg?: any): void;
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
 }
 
 declare var URLSearchParams: {
   prototype: URLSearchParams;
-  new (
-    init?: string[][] | Record<string, string> | string | URLSearchParams,
-  ): URLSearchParams;
+  new (init?: string[][] | Record<string, string> | string | URLSearchParams): URLSearchParams;
   toString(): string;
 };
 
@@ -1968,19 +1912,10 @@ interface ReadableStream<R = any> {
   readonly locked: boolean;
   cancel(reason?: any): Promise<void>;
   getReader(): ReadableStreamDefaultReader<R>;
-  pipeThrough<T>(
-    transform: ReadableWritablePair<T, R>,
-    options?: StreamPipeOptions,
-  ): ReadableStream<T>;
-  pipeTo(
-    destination: WritableStream<R>,
-    options?: StreamPipeOptions,
-  ): Promise<void>;
+  pipeThrough<T>(transform: ReadableWritablePair<T, R>, options?: StreamPipeOptions): ReadableStream<T>;
+  pipeTo(destination: WritableStream<R>, options?: StreamPipeOptions): Promise<void>;
   tee(): [ReadableStream<R>, ReadableStream<R>];
-  forEach(
-    callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
-    thisArg?: any,
-  ): void;
+  forEach(callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void, thisArg?: any): void;
   [Symbol.asyncIterator](): AsyncIterableIterator<R>;
   values(options?: { preventCancel: boolean }): AsyncIterableIterator<R>;
 }
@@ -2038,8 +1973,7 @@ declare var ReadableStreamDefaultController: {
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any>
-  extends ReadableStreamGenericReader {
+interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
   read(): Promise<ReadableStreamDefaultReadResult<R>>;
   releaseLock(): void;
 }
@@ -2084,10 +2018,7 @@ interface WritableStream<W = any> {
 
 declare var WritableStream: {
   prototype: WritableStream;
-  new <W = any>(
-    underlyingSink?: UnderlyingSink<W>,
-    strategy?: QueuingStrategy<W>,
-  ): WritableStream<W>;
+  new <W = any>(underlyingSink?: UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
 };
 
 /** This Streams API interface represents a controller allowing control of a WritableStream's state. When constructing a WritableStream, the underlying sink is given a corresponding WritableStreamDefaultController instance to manipulate. */
@@ -2127,10 +2058,7 @@ interface TransformerStartCallback<O> {
 }
 
 interface TransformerTransformCallback<I, O> {
-  (
-    chunk: I,
-    controller: TransformStreamDefaultController<O>,
-  ): void | PromiseLike<void>;
+  (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
 }
 
 interface UnderlyingSinkAbortCallback {
@@ -2146,10 +2074,7 @@ interface UnderlyingSinkStartCallback {
 }
 
 interface UnderlyingSinkWriteCallback<W> {
-  (
-    chunk: W,
-    controller: WritableStreamDefaultController,
-  ): void | PromiseLike<void>;
+  (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
 }
 
 interface UnderlyingSourceCancelCallback {
@@ -2174,9 +2099,7 @@ interface UnderlyingSource<R = any> {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface DirectUnderlyingSource<R = any> {
   cancel?: UnderlyingSourceCancelCallback;
-  pull: (
-    controller: ReadableStreamDirectController,
-  ) => void | PromiseLike<void>;
+  pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
   type: "direct";
 }
 
@@ -2293,15 +2216,7 @@ declare function prompt(message?: string, _default?: string): string | null;
 
 type KeyFormat = "jwk" | "pkcs8" | "raw" | "spki";
 type KeyType = "private" | "public" | "secret";
-type KeyUsage =
-  | "decrypt"
-  | "deriveBits"
-  | "deriveKey"
-  | "encrypt"
-  | "sign"
-  | "unwrapKey"
-  | "verify"
-  | "wrapKey";
+type KeyUsage = "decrypt" | "deriveBits" | "deriveKey" | "encrypt" | "sign" | "unwrapKey" | "verify" | "wrapKey";
 type HashAlgorithmIdentifier = AlgorithmIdentifier;
 type NamedCurve = string;
 
@@ -2454,59 +2369,30 @@ type AlgorithmIdentifier = Algorithm | string;
  */
 interface SubtleCrypto {
   decrypt(
-    algorithm:
-      | AlgorithmIdentifier
-      | RsaOaepParams
-      | AesCtrParams
-      | AesCbcParams
-      | AesGcmParams,
+    algorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
     key: CryptoKey,
     data: BufferSource,
   ): Promise<ArrayBuffer>;
   deriveBits(
-    algorithm:
-      | AlgorithmIdentifier
-      | EcdhKeyDeriveParams
-      | HkdfParams
-      | Pbkdf2Params,
+    algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params,
     baseKey: CryptoKey,
     length: number,
   ): Promise<ArrayBuffer>;
   deriveKey(
-    algorithm:
-      | AlgorithmIdentifier
-      | EcdhKeyDeriveParams
-      | HkdfParams
-      | Pbkdf2Params,
+    algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params,
     baseKey: CryptoKey,
-    derivedKeyType:
-      | AlgorithmIdentifier
-      | AesDerivedKeyParams
-      | HmacImportParams
-      | HkdfParams
-      | Pbkdf2Params,
+    derivedKeyType: AlgorithmIdentifier | AesDerivedKeyParams | HmacImportParams | HkdfParams | Pbkdf2Params,
     extractable: boolean,
     keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
-  digest(
-    algorithm: AlgorithmIdentifier,
-    data: BufferSource,
-  ): Promise<ArrayBuffer>;
+  digest(algorithm: AlgorithmIdentifier, data: BufferSource): Promise<ArrayBuffer>;
   encrypt(
-    algorithm:
-      | AlgorithmIdentifier
-      | RsaOaepParams
-      | AesCtrParams
-      | AesCbcParams
-      | AesGcmParams,
+    algorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
     key: CryptoKey,
     data: BufferSource,
   ): Promise<ArrayBuffer>;
   exportKey(format: "jwk", key: CryptoKey): Promise<JsonWebKey>;
-  exportKey(
-    format: Exclude<KeyFormat, "jwk">,
-    key: CryptoKey,
-  ): Promise<ArrayBuffer>;
+  exportKey(format: Exclude<KeyFormat, "jwk">, key: CryptoKey): Promise<ArrayBuffer>;
   generateKey(
     algorithm: RsaHashedKeyGenParams | EcKeyGenParams,
     extractable: boolean,
@@ -2525,24 +2411,14 @@ interface SubtleCrypto {
   importKey(
     format: "jwk",
     keyData: JsonWebKey,
-    algorithm:
-      | AlgorithmIdentifier
-      | RsaHashedImportParams
-      | EcKeyImportParams
-      | HmacImportParams
-      | AesKeyAlgorithm,
+    algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm,
     extractable: boolean,
     keyUsages: ReadonlyArray<KeyUsage>,
   ): Promise<CryptoKey>;
   importKey(
     format: Exclude<KeyFormat, "jwk">,
     keyData: BufferSource,
-    algorithm:
-      | AlgorithmIdentifier
-      | RsaHashedImportParams
-      | EcKeyImportParams
-      | HmacImportParams
-      | AesKeyAlgorithm,
+    algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm,
     extractable: boolean,
     keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
@@ -2555,12 +2431,7 @@ interface SubtleCrypto {
     format: KeyFormat,
     wrappedKey: BufferSource,
     unwrappingKey: CryptoKey,
-    unwrapAlgorithm:
-      | AlgorithmIdentifier
-      | RsaOaepParams
-      | AesCtrParams
-      | AesCbcParams
-      | AesGcmParams,
+    unwrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
     unwrappedKeyAlgorithm:
       | AlgorithmIdentifier
       | RsaHashedImportParams
@@ -2580,12 +2451,7 @@ interface SubtleCrypto {
     format: KeyFormat,
     key: CryptoKey,
     wrappingKey: CryptoKey,
-    wrapAlgorithm:
-      | AlgorithmIdentifier
-      | RsaOaepParams
-      | AesCtrParams
-      | AesCbcParams
-      | AesGcmParams,
+    wrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
   ): Promise<ArrayBuffer>;
 }
 
@@ -2669,9 +2535,7 @@ interface ErrorConstructor {
    *
    * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
    */
-  prepareStackTrace?:
-    | ((err: Error, stackTraces: CallSite[]) => any)
-    | undefined;
+  prepareStackTrace?: ((err: Error, stackTraces: CallSite[]) => any) | undefined;
 
   stackTraceLimit: number;
 }

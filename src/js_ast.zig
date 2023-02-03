@@ -4653,7 +4653,7 @@ pub const Ast = struct {
         };
     }
 
-    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = undefined, .allocator = undefined };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{}, .allocator = bun.default_allocator };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -4717,7 +4717,7 @@ pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
 
-    pub const List = std.MultiArrayList(DeclaredSymbol);
+    pub const List = bun.MultiArrayList(DeclaredSymbol);
 };
 
 pub const Dependency = struct {

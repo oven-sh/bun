@@ -951,3 +951,5 @@ pub const ImportKind = @import("./import_record.zig").ImportKind;
 pub usingnamespace @import("./util.zig");
 pub const fast_debug_build_mode = false and
     Environment.isDebug;
+
+pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;

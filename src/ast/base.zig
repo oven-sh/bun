@@ -131,24 +131,7 @@ pub inline fn getBits(comptime TargetType: type, target: anytype, comptime start
 /// It's easy for them to get mixed up, so we use this type to make sure we don't.
 ///
 pub const Index = packed struct(u32) {
-    pub const Tag = packed struct {
-        javascript_ast: bool = false,
-        ast_id: bool = false,
-        source: bool = false,
-        part: bool = false,
-    };
-
-    const ValueIntType = if (!bun.Environment.allow_assert)
-        u32
-    else
-        std.meta.Int(.unsigned, 32 - @bitSizeOf(Tag));
-
-    value: ValueIntType = invalid_value,
-    tag: TagOrVoid = if (bun.Environment.allow_assert) Tag{} else void{},
-
-    const TagOrVoid = if (bun.Environment.allow_assert) Tag else void;
-
-    const invalid_value = std.math.maxInt(ValueIntType);
+    value: Int,
 
     pub fn set(this: *Index, val: Int) void {
         this.value = val;
@@ -158,68 +141,47 @@ pub const Index = packed struct(u32) {
         return this.value == runtime.value;
     }
 
-    pub const invalid = Index{ .value = invalid_value };
-    pub const runtime = Index{ .value = 0 };
+    pub const invalid = Index{ .value = std.math.maxInt(Int) };
+    pub const runtime = Index{
+        .value = 0,
+    };
 
-    pub const Int = ValueIntType;
+    pub const Int = u32;
 
     pub inline fn source(num: anytype) Index {
-        return init(.source, num);
+        return .{ .value = @truncate(Int, num) };
     }
 
     pub inline fn part(num: anytype) Index {
-        return init(.part, num);
+        return .{ .value = @truncate(Int, num) };
     }
 
-    pub inline fn add(this: Index, comptime tag: std.meta.FieldEnum(Tag)) Index {
-        var new = this.tag;
-        @field(new, tag) = true;
-        return Index{
-            .tag = new,
-            .value = this.value,
-        };
-    }
-
-    pub fn init(comptime tag: std.meta.FieldEnum(Tag), num: anytype) Index {
+    pub fn init(num: anytype) Index {
         const NumType = @TypeOf(num);
         if (comptime @typeInfo(NumType) == .Pointer) {
-            return init(tag, num.*);
+            return init(num.*);
         }
 
         if (comptime bun.Environment.allow_assert) {
-            var this_tag = Tag{};
-            @field(this_tag, tag) = true;
             return .{
-                .tag = this_tag,
                 .value = @intCast(Int, num),
             };
         }
 
         return .{
-            .tag = void{},
             .value = @intCast(Int, num),
         };
     }
 
     pub inline fn isValid(this: Index) bool {
-        return this.value != invalid_value;
+        return this.value != invalid.value;
     }
 
     pub inline fn isInvalid(this: Index) bool {
         return !this.isValid();
     }
 
-    pub inline fn get(this: Index, comptime tag: std.meta.FieldEnum(Tag)) Int {
-        if (comptime bun.Environment.allow_assert) {
-            if (!@field(this.tag, tag)) {
-                bun.Output.panic("Index.get expected tag to have {s}, but received {any} ({d})", .{
-                    @tagName(tag),
-                    this.tag,
-                    this.value,
-                });
-            }
-        }
-
+    pub inline fn get(this: Index) Int {
         return this.value;
     }
 };
@@ -237,13 +199,13 @@ pub const Ref = packed struct(u64) {
 
     pub const ArrayHashCtx = RefHashCtx;
 
-    pub const Int = u31;
+    pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
 
     pub fn toInt(value: anytype) Int {
-        return @truncate(Int, value);
+        return @intCast(Int, value);
     }
 
-    pub fn isSourceIndexNull(this: u32) bool {
+    pub fn isSourceIndexNull(this: anytype) bool {
         return this == std.math.maxInt(Int);
     }
 

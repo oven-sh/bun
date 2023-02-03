@@ -1,5 +1,12 @@
 name: bun-test
 on:
+  push:
+    branches:
+      - main
+      - "test/*"
+    paths:
+      - "src/**/*"
+      - "test/**/*"
   workflow_dispatch:
     inputs:
       release:

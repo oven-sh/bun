@@ -3434,15 +3434,15 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     }
 
     if (comptime check_min) {
-        for (remaining) |char| {
+        for (remaining) |char, i| {
             if (char > 127 or char < 0x20) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
         }
     } else {
-        for (remaining) |char| {
+        for (remaining) |char, i| {
             if (char > 127) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
         }
     }

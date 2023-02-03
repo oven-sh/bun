@@ -2257,6 +2257,8 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
+
+                        // TODO: implement this runtime symbol
                         "__toESM",
                         to_esm_uses,
                     ) catch unreachable;
@@ -2275,6 +2277,8 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
+
+                        // TODO: refactor this runtime symbol
                         "__require",
                         runtime_require_uses,
                     ) catch unreachable;
@@ -2329,6 +2333,7 @@ const LinkerContext = struct {
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
                         Index.part(part_index),
+
                         "__reExport",
                         re_export_uses,
                     ) catch unreachable;
@@ -3175,11 +3180,16 @@ const LinkerContext = struct {
         var named_imports: *JSAst.NamedImports = &c.graph.ast.items(.named_imports)[id];
         var import_records = c.graph.ast.items(.import_records)[id];
         const exports_kind: []js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
-        const named_import = named_imports.get(tracker.import_ref) orelse return .{
+
+        const named_import = named_imports.get(tracker.import_ref) orelse
+            // TODO: investigate if this is a bug
+            // It implies there are imports being added without being resolved
+            return .{
             .value = .{},
             .status = .external,
             .tracker = tracker,
         };
+
         // Is this an external file?
         const record = import_records.at(named_import.import_record_index);
         if (!record.source_index.isValid()) {

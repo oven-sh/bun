@@ -2554,9 +2554,8 @@ const latin1_to_utf16_conversion_table = [256]u16{
 };
 
 pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
-    const as_utf16 = latin1ToCodepointBytesAssumeNotASCII16(char);
     var bytes = [4]u8{ 0, 0, 0, 0 };
-    _ = encodeWTF8Rune(&bytes, @intCast(i32, as_utf16));
+    _ = encodeWTF8Rune(&bytes, @intCast(i32, char));
     return bytes[0..2].*;
 }
 
@@ -2640,7 +2639,6 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                         },
                         else => {},
                     }
-                    
                 },
                 4 => {
                     //only 1 to 3 written
@@ -3617,13 +3615,20 @@ test "firstNonASCII16" {
     }
 }
 
+fn getSharedBuffer() []u8 {
+    return std.mem.asBytes(shared_temp_buffer_ptr orelse brk: {
+        shared_temp_buffer_ptr = bun.default_allocator.create([32 * 1024]u8) catch unreachable;
+        break :brk shared_temp_buffer_ptr.?;
+    });
+}
+threadlocal var shared_temp_buffer_ptr: ?*[32 * 1024]u8 = null;
+
 pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
+    var chunk = getSharedBuffer();
     var slice = slice_;
-    const chunk_size = 2048;
-    var chunk: [chunk_size + 4]u8 = undefined;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(&chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);
@@ -3636,16 +3641,15 @@ pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
 }
 
 pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
+    var chunk = getSharedBuffer();
     var slice = slice_;
-    const chunk_size = 2048;
-    var chunk: [chunk_size + 4]u8 = undefined;
 
     while (strings.firstNonASCII(slice)) |i| {
         if (i > 0) {
             try writer.writeAll(slice[0..i]);
             slice = slice[i..];
         }
-        const result = strings.copyLatin1IntoUTF8(&chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
+        const result = strings.copyLatin1IntoUTF8(chunk, @TypeOf(slice), slice[0..@min(chunk.len, slice.len)]);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);

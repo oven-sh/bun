@@ -3115,6 +3115,7 @@ declare module "bun" {
      * ```
      */
     readonly params: Record<string, string>;
+    readonly filePath: string;
     readonly pathname: string;
     readonly query: Record<string, string>;
     readonly name: string;

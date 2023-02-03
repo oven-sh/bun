@@ -52,7 +52,7 @@ describe("TextEncoder", () => {
     expect(into2).toEqual(repeatedResult);
   });
 
-  it("should encode latin1 text", () => {
+  it("should encode latin1 text", async () => {
     gcTrace(true);
     const text = "Hello World!";
     const encoder = new TextEncoder();
@@ -66,6 +66,68 @@ describe("TextEncoder", () => {
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
     }
+
+    let t = [
+      {
+        str: "\u009c\u0097",
+        expected: [194, 156, 194, 151],
+      },
+      {
+        str: "世",
+        expected: [228, 184, 150],
+      },
+      // Less than 0, out of range.
+      {
+        str: -1,
+        expected: [45, 49],
+      },
+      // Greater than 0x10FFFF, out of range.
+      {
+        str: 0x110000,
+        expected: [49, 49, 49, 52, 49, 49, 50],
+      },
+      // The Unicode replacement character.
+      {
+        str: "\uFFFD",
+        expected: [239, 191, 189],
+      },
+    ];
+    for (let { str, expected } of t) {
+      let utf8 = new TextEncoder().encode(str);
+      expect([...utf8]).toEqual(expected);
+    }
+
+    expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
+
+    const fixture = new Uint8Array(await Bun.file("utf8-encoding-fixture.bin").arrayBuffer());
+    const length = 0x110000;
+    let textEncoder = new TextEncoder();
+    let textDecoder = new TextDecoder();
+    let encodeOut = new Uint8Array(length * 4);
+    let encodeIntoOut = new Uint8Array(length * 4);
+    let encodeIntoBuffer = new Uint8Array(4);
+    let encodeDecodedOut = new Uint8Array(length * 4);
+    for (let i = 0, offset = 0; i < length; i++, offset += 4) {
+      const s = String.fromCodePoint(i);
+      const u = textEncoder.encode(s);
+      encodeOut.set(u, offset);
+
+      textEncoder.encodeInto(s, encodeIntoBuffer);
+      encodeIntoOut.set(encodeIntoBuffer, offset);
+
+      const decoded = textDecoder.decode(encodeIntoBuffer);
+      const encoded = textEncoder.encode(decoded);
+      encodeDecodedOut.set(encoded, offset);
+    }
+
+    expect(encodeOut).toEqual(fixture);
+    expect(encodeIntoOut).toEqual(fixture);
+    expect(encodeOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(encodeOut);
+    expect(encodeDecodedOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(fixture);
+
+    expect(() => textEncoder.encode(String.fromCodePoint(length + 1))).toThrow();
   });
 
   it("should encode long latin1 text", async () => {

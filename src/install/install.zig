@@ -117,7 +117,7 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
         }
 
         pub fn init(buf: []const Type, in: []const Type) Slice {
-            // if (comptime isDebug or isTest) {
+            // if (comptime Environment.allow_assert) {
             //     std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr));
             //     std.debug.assert((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len));
             // }
@@ -132,7 +132,6 @@ pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type
 
 pub const PackageID = u32;
 pub const DependencyID = u32;
-pub const PackageIDMultiple = [*:invalid_package_id]PackageID;
 pub const invalid_package_id = std.math.maxInt(PackageID);
 
 pub const ExternalStringList = ExternalSlice(ExternalString);
@@ -2232,36 +2231,26 @@ pub const PackageManager = struct {
 
         if (comptime Environment.allow_assert) std.debug.assert(package.meta.id != invalid_package_id);
         defer successFn(this, dependency_id, package.meta.id);
-        switch (preinstall) {
+        return switch (preinstall) {
             // Is this package already in the cache?
             // We don't need to download the tarball, but we should enqueue dependencies
-            .done => {
-                return ResolvedPackageResult{ .package = package, .is_first_time = true };
-            },
-
+            .done => .{ .package = package, .is_first_time = true },
             // Do we need to download the tarball?
-            .extract => {
-                const task_id = Task.Id.forNPMPackage(
-                    Task.Tag.extract,
-                    this.lockfile.str(&name),
-                    package.resolution.value.npm.version,
-                );
-
-                if (try this.generateNetworkTaskForTarball(task_id, manifest.str(&find_result.package.tarball_url), package)) |network_task| {
-                    return ResolvedPackageResult{
-                        .package = package,
-                        .is_first_time = true,
-                        .network_task = network_task,
-                    };
-                }
-
-                // if we are in the middle of extracting this package, we should wait for it to finish
-                return ResolvedPackageResult{ .package = package };
+            .extract => .{
+                .package = package,
+                .is_first_time = true,
+                .network_task = try this.generateNetworkTaskForTarball(
+                    Task.Id.forNPMPackage(
+                        Task.Tag.extract,
+                        this.lockfile.str(&name),
+                        package.resolution.value.npm.version,
+                    ),
+                    manifest.str(&find_result.package.tarball_url),
+                    package,
+                ) orelse unreachable,
             },
             else => unreachable,
-        }
-
-        return ResolvedPackageResult{ .package = package };
+        };
     }
 
     pub fn generateNetworkTaskForTarball(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package) !?*NetworkTask {
@@ -2320,19 +2309,30 @@ pub const PackageManager = struct {
     const SuccessFn = *const fn (*PackageManager, PackageID, PackageID) void;
     const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(dependency_id < this.lockfile.buffers.resolutions.items.len);
+            std.debug.assert(package_id < this.lockfile.packages.len);
+            std.debug.assert(this.lockfile.buffers.resolutions.items[dependency_id] == invalid_package_id);
+        }
         this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
     }
 
     fn assignRootResolution(this: *PackageManager, dependency_id: PackageID, package_id: PackageID) void {
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(package_id < this.lockfile.packages.len);
+        }
         if (this.dynamic_root_dependencies) |*dynamic| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(dependency_id < dynamic.items.len);
+                std.debug.assert(dynamic.items[dependency_id].resolution_id == invalid_package_id);
+            }
             dynamic.items[dependency_id].resolution_id = package_id;
         } else {
-            if (this.lockfile.buffers.resolutions.items.len > dependency_id) {
-                this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
-            } else {
-                // this means a bug
-                bun.unreachablePanic("assignRootResolution: dependency_id: {d} out of bounds (package_id: {d})", .{ dependency_id, package_id });
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(dependency_id < this.lockfile.buffers.resolutions.items.len);
+                std.debug.assert(this.lockfile.buffers.resolutions.items[dependency_id] == invalid_package_id);
             }
+            this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
         }
     }
 
@@ -2581,7 +2581,7 @@ pub const PackageManager = struct {
         const name = dependency.realname();
 
         const name_hash = switch (dependency.version.tag) {
-            .dist_tag, .npm, .github => Lockfile.stringHash(this.lockfile.str(&name)),
+            .dist_tag, .npm, .github => String.Builder.stringHash(this.lockfile.str(&name)),
             else => dependency.name_hash,
         };
         const version = dependency.version;
@@ -2772,7 +2772,7 @@ pub const PackageManager = struct {
                                 this.enqueueNetworkTask(network_task);
                             }
 
-                            if (comptime Environment.isDebug) std.debug.assert(task_id != 0);
+                            if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
                             if (!manifest_entry_parse.found_existing) {
@@ -2870,7 +2870,7 @@ pub const PackageManager = struct {
                     }
 
                     // should not trigger a network call
-                    std.debug.assert(result.network_task == null);
+                    if (comptime Environment.allow_assert) std.debug.assert(result.network_task == null);
                 } else if (dependency.behavior.isRequired()) {
                     this.log.addErrorFmt(
                         null,
@@ -3177,6 +3177,7 @@ pub const PackageManager = struct {
 
         while (manager.network_channel.tryReadItem() catch null) |task_| {
             var task: *NetworkTask = task_;
+            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
             manager.pending_tasks -|= 1;
 
             switch (task.callback) {
@@ -3476,7 +3477,8 @@ pub const PackageManager = struct {
         }
 
         while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
-            manager.pending_tasks -= 1;
+            if (comptime Environment.allow_assert) std.debug.assert(manager.pending_tasks > 0);
+            manager.pending_tasks -|= 1;
 
             var task: Task = task_;
             if (task.log.msgs.items.len > 0) {
@@ -6089,7 +6091,7 @@ pub const PackageManager = struct {
                                     );
                                 },
                                 .npm => {
-                                    std.debug.assert(resolution.value.npm.url.len() > 0);
+                                    if (comptime Environment.allow_assert) std.debug.assert(!resolution.value.npm.url.isEmpty());
                                     this.manager.enqueuePackageForDownload(
                                         name,
                                         package_id,

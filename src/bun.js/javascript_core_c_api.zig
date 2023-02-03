@@ -1,3 +1,9 @@
+/// *************************************
+/// **** DO NOT USE THIS ON NEW CODE ****
+/// *************************************
+/// To generate a new class exposed to JavaScript, look at *.classes.ts
+/// Otherwise, use `JSC.JSValue`.
+/// ************************************
 const bun = @import("bun");
 const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");

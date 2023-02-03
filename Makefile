@@ -509,6 +509,9 @@ npm-install:
 	$(NPM_CLIENT) install --ignore-scripts --production
 
 print-%  : ; @echo $* = $($*)
+get-%  : ; @echo $($*)
+print-version:
+	@echo $(PACKAGE_JSON_VERSION)
 
 
 

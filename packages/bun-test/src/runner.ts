@@ -49,10 +49,9 @@ async function runTest(path: string): Promise<void> {
     while (true) {
       const { value, done } = await reader.read();
       if (value) {
+        console.write(value);
         if (isAction) {
-          write(value);
-        } else {
-          console.write(value);
+          findErrors(value);
         }
       }
       if (done) {
@@ -65,7 +64,7 @@ async function runTest(path: string): Promise<void> {
   }
 }
 
-function write(data: Uint8Array): void {
+function findErrors(data: Uint8Array): void {
   const text = new TextDecoder().decode(data);
   for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
     action.error(message, {

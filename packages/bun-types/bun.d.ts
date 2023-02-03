@@ -767,7 +767,7 @@ declare module "bun" {
      *    const query = UserQuery;
      *    ```
      */
-    macros?: MacroMap;
+    macro?: MacroMap;
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
@@ -1785,7 +1785,7 @@ declare module "bun" {
    *
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(path: string, options?: BlobPropertyBag): FileBlob;
+  export function file(path: string | URL, options?: BlobPropertyBag): FileBlob;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.

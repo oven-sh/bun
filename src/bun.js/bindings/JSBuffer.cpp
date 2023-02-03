@@ -580,14 +580,14 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
     }
 
     auto castedThisValue = callFrame->uncheckedArgument(0);
-    JSC::JSUint8Array* castedThis = JSC::jsDynamicCast<JSC::JSUint8Array*>(castedThisValue);
+    JSC::JSArrayBufferView* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(castedThisValue);
     if (UNLIKELY(!castedThis)) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (first argument)"_s);
         return JSValue::encode(jsUndefined());
     }
 
     auto buffer = callFrame->uncheckedArgument(1);
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
+    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view)) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer (2nd argument)"_s);
         return JSValue::encode(jsUndefined());
@@ -657,8 +657,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
     auto targetLength = targetEnd - targetStart;
     auto actualLength = std::min(sourceLength, targetLength);
 
-    auto sourceStartPtr = castedThis->typedVector() + sourceStart;
-    auto targetStartPtr = view->typedVector() + targetStart;
+    auto sourceStartPtr = reinterpret_cast<unsigned char*>(castedThis->vector()) + sourceStart;
+    auto targetStartPtr = reinterpret_cast<unsigned char*>(view->vector()) + targetStart;
 
     auto result = actualLength > 0 ? memcmp(sourceStartPtr, targetStartPtr, actualLength) : 0;
 
@@ -955,7 +955,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGl
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
+    JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
     if (UNLIKELY(!view)) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Buffer"_s);
         return JSValue::encode(jsUndefined());
@@ -969,7 +969,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGl
     size_t a_length = castedThis->byteLength();
     size_t b_length = view->byteLength();
     auto sourceStartPtr = castedThis->typedVector();
-    auto targetStartPtr = view->typedVector();
+    auto targetStartPtr = reinterpret_cast<unsigned char*>(view->vector());
 
     // same pointer, same length, same contents
     if (sourceStartPtr == targetStartPtr && a_length == b_length)

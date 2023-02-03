@@ -64,9 +64,12 @@ async function runTest(path: string): Promise<void> {
   }
 }
 
+let failed = false;
+
 function findErrors(data: Uint8Array): void {
   const text = new TextDecoder().decode(data);
   for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
+    failed = true;
     action.error(message, {
       file: path.replace(cwd, "").slice(1),
       startLine: parseInt(line),
@@ -80,3 +83,7 @@ for (const path of findTests(resolve(cwd, "test/bun.js"))) {
   tests.push(runTest(path).catch(console.error));
 }
 await Promise.allSettled(tests);
+
+if (isAction) {
+  action.setFailed("Found errors");
+}

@@ -7,6 +7,13 @@ on:
     paths:
       - "src/**/*"
       - "test/**/*"
+  pull_request:
+    branches:
+      - main
+      - "test/*"
+    paths:
+      - "src/**/*"
+      - "test/**/*"
   workflow_dispatch:
     inputs:
       release:

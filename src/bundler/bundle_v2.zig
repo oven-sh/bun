@@ -1344,14 +1344,12 @@ const LinkerGraph = struct {
     pub fn generateRuntimeSymbolImportAndUse(
         graph: *LinkerGraph,
         source_index: Index.Int,
-        index: Index.Int,
         entry_point_part_index: Index,
         name: []const u8,
         count: u32,
     ) !void {
         const ref = graph.ast.items(.module_scope)[Index.runtime.get()].?.members.get(name).?.ref;
         try graph.generateSymbolImportAndUse(
-            index,
             source_index,
             entry_point_part_index.get(),
             ref,
@@ -1932,6 +1930,7 @@ const LinkerContext = struct {
                 const wrap = wraps[id];
                 const export_kind = exports_kind[id];
                 const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+
                 const exports_ref = exports_refs[id];
                 var exports_symbol: ?*js_ast.Symbol = if (exports_ref.isValid())
                     this.graph.symbols.get(exports_ref)
@@ -2041,10 +2040,10 @@ const LinkerContext = struct {
                     ) catch unreachable;
                 }
 
-                var parts: []js_ast.Part = parts_list[id].slice();
-
                 var imports_to_bind = imports_to_bind_list[id];
                 var imports_to_bind_iter = imports_to_bind.iterator();
+
+                var parts: []js_ast.Part = parts_list[id].slice();
                 while (imports_to_bind_iter.next()) |import| {
                     const import_source_index = import.value_ptr.data.source_index.get();
                     const import_id = import_source_index;
@@ -2143,13 +2142,13 @@ const LinkerContext = struct {
                             .can_be_removed_if_unused = false,
                         },
                     ) catch unreachable;
+                    parts = parts_list[id].slice();
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
                     // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
                     if (force_include_exports) {
                         this.graph.generateRuntimeSymbolImportAndUse(
                             source_index,
-                            id,
                             Index.part(entry_point_part_index),
                             "__toCommonJS",
                             1,
@@ -2159,6 +2158,8 @@ const LinkerContext = struct {
 
                 // Encode import-specific constraints in the dependency graph
                 var import_records = import_records_list[id].slice();
+                debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
+
                 for (parts) |part, part_index| {
                     var to_esm_uses: u32 = 0;
                     var to_common_js_uses: u32 = 0;
@@ -2254,7 +2255,6 @@ const LinkerContext = struct {
                     // If there's an ES6 import of a non-ES6 module, then we're going to need the
                     // "__toESM" symbol from the runtime to wrap the result of "require()"
                     this.graph.generateRuntimeSymbolImportAndUse(
-                        id,
                         source_index,
                         Index.part(part_index),
                         "__toESM",
@@ -2264,7 +2264,6 @@ const LinkerContext = struct {
                     // If there's a CommonJS require of an ES6 module, then we're going to need the
                     // "__toCommonJS" symbol from the runtime to wrap the exports object
                     this.graph.generateRuntimeSymbolImportAndUse(
-                        id,
                         source_index,
                         Index.part(part_index),
                         "__toCommonJS",
@@ -2274,7 +2273,6 @@ const LinkerContext = struct {
                     // If there are unbundled calls to "require()" and we're not generating
                     // code for node, then substitute a "__require" wrapper for "require".
                     this.graph.generateRuntimeSymbolImportAndUse(
-                        id,
                         source_index,
                         Index.part(part_index),
                         "__require",
@@ -2304,7 +2302,6 @@ const LinkerContext = struct {
                                 // in code splitting situations where the "export_b" symbol might live
                                 // in a different chunk than this export star.
                                 this.graph.generateSymbolImportAndUse(
-                                    id,
                                     source_index,
                                     @intCast(u32, part_index),
                                     this.graph.ast.items(.exports_ref)[other_id],
@@ -2317,7 +2314,6 @@ const LinkerContext = struct {
                         if (happens_at_runtime) {
                             // Depend on this file's "exports" object for the first argument to "__reExport"
                             this.graph.generateSymbolImportAndUse(
-                                id,
                                 source_index,
                                 @intCast(u32, part_index),
                                 this.graph.ast.items(.exports_ref)[id],
@@ -2332,7 +2328,6 @@ const LinkerContext = struct {
 
                     this.graph.generateRuntimeSymbolImportAndUse(
                         source_index,
-                        id,
                         Index.part(part_index),
                         "__reExport",
                         re_export_uses,
@@ -3112,7 +3107,6 @@ const LinkerContext = struct {
                 ) catch unreachable;
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
-                    id,
                     source_index,
                     part_index,
                     c.cjs_runtime_ref,
@@ -3165,7 +3159,6 @@ const LinkerContext = struct {
                 ) catch unreachable;
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
-                    id,
                     source_index,
                     part_index,
                     c.esm_runtime_ref,

@@ -2059,6 +2059,8 @@ pub const Stmt = struct {
     }
 
     pub fn alloc(comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+        Stmt.Data.Store.assert();
+
         icount += 1;
         return switch (StatementData) {
             S.Block => Stmt.comptime_alloc("s_block", S.Block, origData, loc),
@@ -2239,7 +2241,7 @@ pub const Stmt = struct {
                 has_inited = false;
             }
 
-            pub fn assert() void {
+            pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (!has_inited)
                         bun.unreachablePanic("Store must be init'd", .{});
@@ -2638,6 +2640,7 @@ pub const Expr = struct {
 
     pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
+        Data.Store.assert();
 
         switch (Type) {
             E.Array => {
@@ -4046,7 +4049,7 @@ pub const Expr = struct {
                 _ = All.init(allocator);
             }
 
-            pub fn assert() void {
+            pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (!has_inited)
                         bun.unreachablePanic("Store must be init'd", .{});

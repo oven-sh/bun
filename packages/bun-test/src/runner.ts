@@ -83,7 +83,4 @@ for (const path of findTests(resolve(cwd, "test/bun.js"))) {
   tests.push(runTest(path).catch(console.error));
 }
 await Promise.allSettled(tests);
-
-if (isAction) {
-  action.setFailed("Found errors");
-}
+process.exit(failed ? 1 : 0);

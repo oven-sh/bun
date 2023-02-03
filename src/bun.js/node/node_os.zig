@@ -54,11 +54,147 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
     }
 
+    const CPU = struct {
+        model: JSC.ZigString = JSC.ZigString.init("unknown"),
+        speed: u64 = 0,
+        times: struct {
+            user: u64 = 0,
+            nice: u64 = 0,
+            sys: u64 = 0,
+            idle: u64 = 0,
+            irq: u64 = 0,
+        } = .{}
+    };
+
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        // TODO:
-        return JSC.JSArray.from(globalThis, &.{});
+        var cpu_buffer: [8192]CPU = undefined;
+        const cpus_or_error = if (comptime Environment.isLinux)
+                                cpusImplLinux(&cpu_buffer)
+                              else
+                                cpu_buffer[0..0];  // unsupported platform -> empty array
+
+        if (cpus_or_error) |list| {
+            // Convert the CPU list to a JS Array
+            const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
+            for (list) |cpu, cpu_index| {
+                const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValue(globalThis));
+                obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
+
+                const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
+                const times = JSC.JSValue.createEmptyObject(globalThis, 5);
+                inline for (timesFields) |fieldName| {
+                    times.put(globalThis, JSC.ZigString.static(fieldName),
+                                    JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
+                }
+                obj.put(globalThis, JSC.ZigString.static("times"), times);
+                values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
+            }
+            return values;
+
+        } else |zig_err| {
+            const msg = switch (zig_err) {
+                error.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
+                error.eol => "Malformed /proc/stat file",
+                else => "An error occurred while fetching cpu information",
+            };
+            //TODO more suitable error type?
+            const err = JSC.SystemError{
+                .message = JSC.ZigString.init(msg),
+            };
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        }
+    }
+
+    fn cpusImplLinux(cpu_buffer: []CPU) ![]CPU {
+        // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
+        var line_buffer: [1024*8]u8 = undefined;
+        var num_cpus: usize = 0;
+
+        // Read /proc/stat to get number of CPUs and times
+        if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
+            defer file.close();
+            var reader = file.reader();
+
+            // Skip the first line (aggregate of all CPUs)
+            try reader.skipUntilDelimiterOrEof('\n');
+
+            // Read each CPU line
+            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+
+                if (num_cpus >= cpu_buffer.len) return error.too_many_cpus;
+
+                // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
+                var toks = std.mem.tokenize(u8, line, " \t");
+                const cpu_name = toks.next();
+                if (cpu_name == null or !std.mem.startsWith(u8, cpu_name.?, "cpu")) break; // done with CPUs
+
+                // Default initialize the CPU to ensure that we never return uninitialized fields
+                cpu_buffer[num_cpus] = CPU{};
+
+                //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
+                const scale = 10;
+                cpu_buffer[num_cpus].times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.sys  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.idle = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                _ = try (toks.next() orelse error.eol); // skip iowait
+                cpu_buffer[num_cpus].times.irq  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+
+                num_cpus += 1;
+            }
+        } else |_| {
+            return error.cannot_open_proc_stat;
+        }
+
+        const slice = cpu_buffer[0..num_cpus];
+
+        // Read /proc/cpuinfo to get model information (optional)
+        if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
+            defer file.close();
+            var reader = file.reader();
+            const key_processor = "processor\t: ";
+            const key_model_name = "model name\t: ";
+
+            var cpu_index: usize = 0;
+            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+
+                if (std.mem.startsWith(u8, line, key_processor)) {
+                    // If this line starts a new processor, parse the index from the line
+                    const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
+                    cpu_index = try std.fmt.parseInt(usize, digits, 10);
+                    if (cpu_index >= slice.len) return error.too_may_cpus;
+
+                } else if (std.mem.startsWith(u8, line, key_model_name)) {
+                    // If this is the model name, extract it and store on the current cpu
+                    const model_name = line[key_model_name.len..];
+                    slice[cpu_index].model = JSC.ZigString.init(model_name);
+                }
+                //TODO: special handling for ARM64 (no model name)?
+            }
+        } else |_| {
+            // Do nothing: CPU default initializer has set model name to "unknown"
+        }
+
+        // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
+        for (slice) |*cpu, cpu_index| {
+            var path_buf: [128]u8 = undefined;
+            const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
+            if (std.fs.openFileAbsolute(path, .{})) |file| {
+                defer file.close();
+
+                const bytes_read = try file.readAll(&line_buffer);
+                const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
+                cpu.speed = try std.fmt.parseInt(u64, digits, 10) / 1000;
+            } else |_| {
+                // Do nothing: CPU default initializer has set speed to 0
+            }
+        }
+
+        return slice;
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

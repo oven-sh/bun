@@ -1219,7 +1219,9 @@ declare function clearTimeout(id?: number): void;
  *
  *
  */
+
 declare function fetch(url: string | URL, init?: FetchRequestInit): Promise<Response>;
+
 
 /**
  * Send a HTTP(s) request

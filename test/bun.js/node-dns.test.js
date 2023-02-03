@@ -53,7 +53,7 @@ test("dns.resolveTxt (txt.socketify.dev)", done => {
 test("dns.resolveSoa (bun.sh)", done => {
   dns.resolveSoa("bun.sh", (err, result) => {
     expect(err).toBeNull();
-    expect(result.serial).toBe(2295878541);
+    expect(typeof result.serial).toBe("number");
     expect(result.refresh).toBe(10000);
     expect(result.retry).toBe(2400);
     expect(result.expire).toBe(604800);

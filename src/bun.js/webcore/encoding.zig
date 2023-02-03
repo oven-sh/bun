@@ -919,7 +919,7 @@ pub const Encoder = struct {
                 if (slice.len == 0)
                     return 0;
 
-                if (strings.eqlComptime(slice[slice.len - 2 ..][0..2], "==")) {
+                if (slice.len > 1 and strings.eqlComptime(slice[slice.len - 2 ..][0..2], "==")) {
                     slice = slice[0 .. slice.len - 2];
                 } else if (slice[slice.len - 1] == '=') {
                     slice = slice[0 .. slice.len - 1];
@@ -1094,7 +1094,7 @@ pub const Encoder = struct {
                 if (slice.len == 0)
                     return &[_]u8{};
 
-                if (strings.eqlComptime(slice[slice.len - 2 ..][0..2], "==")) {
+                if (slice.len > 1 and strings.eqlComptime(slice[slice.len - 2 ..][0..2], "==")) {
                     slice = slice[0 .. slice.len - 2];
                 } else if (slice[slice.len - 1] == '=') {
                     slice = slice[0 .. slice.len - 1];

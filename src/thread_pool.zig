@@ -289,9 +289,9 @@ pub fn Do(
         }
     };
 
-    const tasks_per_worker = @max(try std.math.divCeil(u32, @intCast(u32, values.len), this.max_threads), 1);
+    const tasks_per_worker = @max(try std.math.divFloor(u32, @intCast(u32, values.len), this.max_threads), 1);
     const count = @truncate(u32, values.len / tasks_per_worker);
-    var runny = try runner(this, allocator, Runner.call, count);
+    var runny = try runner(this, allocator, Runner.call, count + 1);
     defer runny.deinit();
 
     var i: usize = 0;
@@ -308,7 +308,7 @@ pub fn Do(
             slice,
             i,
         });
-        i += slice.len;
+        i += 1;
         remain = remain[slice.len..];
         wait_group.counter += 1;
     }

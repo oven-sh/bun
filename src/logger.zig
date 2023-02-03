@@ -1152,7 +1152,7 @@ pub const Source = struct {
     /// Avoid accessing this directly most of the  time
     identifier_name: string = "",
 
-    index: Index = Index.init(.source, 0),
+    index: Index = Index.source(0),
 
     pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();

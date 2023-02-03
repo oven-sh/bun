@@ -4775,6 +4775,8 @@ pub const Part = struct {
 
     tag: Tag = Tag.none,
 
+    valid_in_development: if (bun.Environment.allow_assert) bool else void = bun.DebugOnlyDefault(true),
+
     pub const Tag = enum {
         none,
         jsx_import,

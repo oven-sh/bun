@@ -46,17 +46,19 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
     if (namedCurve != NamedCurve::Ed25519)
         return {};
 
-    uint8_t public_key[X25519_PUBLIC_VALUE_LEN], private_key[X25519_PRIVATE_KEY_LEN];
+    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
 
-    if (identifier == CryptoAlgorithmIdentifier::Ed25519) {
+    bool isEd25519 = identifier == CryptoAlgorithmIdentifier::Ed25519;
+    if (isEd25519) {
         ED25519_keypair(public_key, private_key);
     } else {
         X25519_keypair(public_key, private_key);
     }
+
     bool isPublicKeyExtractable = true;
     auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, Vector<uint8_t>(public_key), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
-    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(private_key), extractable, usages);
+    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(private_key, isEd25519 ? ED25519_PRIVATE_KEY_LEN : X25519_PRIVATE_KEY_LEN), extractable, usages);
     ASSERT(privateKey);
     return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
 }
@@ -295,6 +297,25 @@ String CryptoKeyOKP::generateJwkD() const
     return base64URLEncodeToString(m_data);
 }
 
+String CryptoKeyOKP::getEd25519PublicFromPrivate() const
+{
+    uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
+    uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
+
+    ED25519_keypair_from_seed(publicKey, privateKey, m_data.data());
+
+    return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
+}
+
+String CryptoKeyOKP::getX25519PublicFromPrivate() const
+{
+    uint8_t publicKey[X25519_PUBLIC_VALUE_LEN];
+
+    X25519_public_from_private(publicKey, m_data.data());
+
+    return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
+}
+
 String CryptoKeyOKP::generateJwkX() const
 {
     if (type() == CryptoKeyType::Public)
@@ -302,11 +323,11 @@ String CryptoKeyOKP::generateJwkX() const
 
     ASSERT(type() == CryptoKeyType::Private);
 
-    uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
-    uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
-    ED25519_keypair_from_seed(publicKey, privateKey, m_data.data());
+    if (namedCurve() == NamedCurve::Ed25519)
+        return getEd25519PublicFromPrivate();
 
-    return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
+    ASSERT(namedCurve() == NamedCurve::X25519);
+    return getX25519PublicFromPrivate();
 }
 
 Vector<uint8_t> CryptoKeyOKP::platformExportRaw() const

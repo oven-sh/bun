@@ -75,6 +75,9 @@ private:
     String generateJwkD() const;
     String generateJwkX() const;
 
+    String getEd25519PublicFromPrivate() const;
+    String getX25519PublicFromPrivate() const;
+
     static bool isPlatformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     Vector<uint8_t> platformExportRaw() const;

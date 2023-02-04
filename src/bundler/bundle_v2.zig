@@ -1255,7 +1255,7 @@ const Bitmap = struct {
     pub fn init(file_count: usize, entry_point_count: usize, allocator: std.mem.Allocator) !Bitmap {
         return Bitmap{
             .file_count = file_count,
-            .bitset = try std.DynamicBitSetUnmanaged.initEmpty(allocator, file_count * entry_point_count),
+            .bitset = try std.DynamicBitSetUnmanaged.initEmpty(allocator, file_count * entry_point_count * entry_point_count),
         };
     }
 
@@ -2732,9 +2732,11 @@ const LinkerContext = struct {
         var import_records = c.graph.ast.items(.import_records);
         var side_effects = c.parse_graph.input_files.items(.side_effects);
         var entry_point_kinds = c.graph.files.items(.entry_point_kind);
+        const entry_points = c.graph.entry_points.items(.source_index);
+        var distances = c.graph.files.items(.distance_from_entry_point);
 
         // Tree shaking: Each entry point marks all files reachable from itself
-        for (c.graph.entry_points.items(.source_index)) |entry_point| {
+        for (entry_points) |entry_point| {
             c.markFileLiveForTreeShaking(
                 entry_point,
                 side_effects,
@@ -2748,6 +2750,82 @@ const LinkerContext = struct {
         // has to happen after tree shaking because there is an implicit dependency
         // between live parts within the same file. All liveness has to be computed
         // first before determining which entry points can reach which files.
+
+        for (entry_points) |entry_point, i| {
+            c.markFileReachableForCodeSplitting(
+                entry_point,
+                i,
+                distances,
+                0,
+                parts,
+                import_records,
+            );
+        }
+    }
+
+    pub fn markFileReachableForCodeSplitting(
+        c: *LinkerContext,
+        source_index: Index.Int,
+        entry_points_count: usize,
+        distances: []u32,
+        distance: u32,
+        parts: []bun.BabyList(js_ast.Part),
+        import_records: []bun.BabyList(bun.ImportRecord),
+    ) void {
+        if (!c.graph.files_live.isSet(source_index))
+            return;
+
+        const cur_dist = distances[source_index];
+        const traverse_again = distance < cur_dist;
+        if (traverse_again) {
+            distances[source_index] = distance;
+        }
+        const out_dist = distance + 1;
+
+        // Don't mark this file more than once
+        if (c.graph.file_entry_bits.isSet(source_index, entry_points_count) and !traverse_again)
+            return;
+
+        c.graph.file_entry_bits.set(source_index, entry_points_count);
+
+        if (comptime bun.Environment.allow_assert)
+            debug(
+                "markFileReachableForCodeSplitting: {s} ({d})",
+                .{
+                    c.parse_graph.input_files.get(source_index).source.path.text,
+                    out_dist,
+                },
+            );
+
+        // TODO: CSS AST
+
+        for (import_records[source_index].slice()) |*record| {
+            if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
+                c.markFileReachableForCodeSplitting(
+                    record.source_index.get(),
+                    entry_points_count,
+                    distances,
+                    out_dist,
+                    parts,
+                    import_records,
+                );
+            }
+        }
+
+        for (parts[source_index].slice()) |*part| {
+            for (part.dependencies.slice()) |dependency| {
+                if (dependency.source_index.get() != source_index) {
+                    c.markFileReachableForCodeSplitting(
+                        dependency.source_index.get(),
+                        entry_points_count,
+                        distances,
+                        out_dist,
+                        parts,
+                        import_records,
+                    );
+                }
+            }
+        }
     }
 
     pub fn markFileLiveForTreeShaking(

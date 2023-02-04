@@ -215,7 +215,7 @@ pub const BundleV2 = struct {
     pub fn findReachableFiles(this: *BundleV2) ![]Index {
         var visitor = Visitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
-            .visited = try std.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
+            .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
             .all_import_records = this.graph.ast.items(.import_records),
         };
         defer visitor.visited.deinit();
@@ -990,7 +990,7 @@ const ParseTask = struct {
 
 const Visitor = struct {
     reachable: std.ArrayList(Index),
-    visited: std.DynamicBitSet = undefined,
+    visited: bun.bit_set.DynamicBitSet = undefined,
     all_import_records: []ImportRecord.List,
 
     // Find all files reachable from all entry points. This order should be
@@ -1249,27 +1249,29 @@ const EntryPoint = struct {
 /// Two-dimensional bitset
 /// Quickly lets us know which files are visible for which entry points
 const Bitmap = struct {
-    bitset: std.DynamicBitSetUnmanaged = undefined,
+    bitset: bun.bit_set.DynamicBitSetUnmanaged = undefined,
     file_count: usize = 0,
+    entry_point_count: usize = 0,
 
     pub fn init(file_count: usize, entry_point_count: usize, allocator: std.mem.Allocator) !Bitmap {
         return Bitmap{
             .file_count = file_count,
-            .bitset = try std.DynamicBitSetUnmanaged.initEmpty(allocator, file_count * entry_point_count * entry_point_count),
+            .entry_point_count = entry_point_count,
+            .bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count * entry_point_count * entry_point_count),
         };
     }
 
     pub fn isSet(this: *Bitmap, file_id: usize, entry_point_id: usize) bool {
-        return this.bitset.isSet(this.file_count * entry_point_id + file_id);
+        return this.bitset.isSet((this.file_count * file_id) + entry_point_id);
     }
 
     pub fn set(this: *Bitmap, file_id: usize, entry_point_id: usize) void {
-        this.bitset.set(this.file_count * entry_point_id + file_id);
+        this.bitset.set((this.file_count * file_id) + entry_point_id);
     }
 
-    // pub fn fileEntry(this: *Bitmap, file_id: usize, entry_point_id: usize) void {
-    //     this.bitset.setRangeValue(range: Range, value: bool)(this.file_count * entry_point_id + file_id);
-    // }
+    pub fn fileEntry(this: *Bitmap, file_id: usize) []const u8 {
+        return this.bitset.byteRange((this.file_count * file_id), this.entry_point_count);
+    }
 
     pub fn setter(this: *Bitmap, file_id: usize) Setter {
         return Setter{
@@ -1281,7 +1283,7 @@ const Bitmap = struct {
     // turn add add and a multiply into an add
     pub const Setter = struct {
         offset: usize = 0,
-        bitset: std.DynamicBitSetUnmanaged,
+        bitset: bun.bit_set.DynamicBitSetUnmanaged,
 
         pub fn isSet(this: Bitmap.Setter, x: usize) bool {
             return this.bitset.isSet(this.offset + x);
@@ -1302,7 +1304,7 @@ const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
 
     files: File.List = .{},
-    files_live: std.DynamicBitSetUnmanaged = undefined,
+    files_live: bun.bit_set.DynamicBitSetUnmanaged = undefined,
     entry_points: EntryPoint.List = .{},
     symbols: js_ast.Symbol.Map = .{},
 
@@ -1324,7 +1326,7 @@ const LinkerGraph = struct {
     file_entry_bits: Bitmap,
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize, entry_point_count: usize) !LinkerGraph {
-        return LinkerGraph{ .allocator = allocator, .files_live = try std.DynamicBitSetUnmanaged.initEmpty(allocator, file_count), .file_entry_bits = try Bitmap.init(file_count, entry_point_count, allocator) };
+        return LinkerGraph{ .allocator = allocator, .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count), .file_entry_bits = try Bitmap.init(file_count, entry_point_count, allocator) };
     }
 
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
@@ -1467,7 +1469,7 @@ const LinkerGraph = struct {
 
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
-        this.files_live = try std.DynamicBitSetUnmanaged.initEmpty(
+        this.files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(
             this.allocator,
             sources.len,
         );

@@ -59,7 +59,7 @@ interface ArrayConstructor {
     asyncItems: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
     mapfn?: (value: any, index: number) => any,
     thisArg?: any,
-  ): Array<T>;
+  ): Promise<Array<T>>;
 }
 
 interface Console {

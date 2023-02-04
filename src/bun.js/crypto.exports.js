@@ -6,6 +6,8 @@ var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
 
 var __require = id => import.meta.require(id);
+const crypto = globalThis.crypto;
+const globalCrypto = crypto;
 
 var __esm = (fn, res) =>
   function () {
@@ -89,7 +91,7 @@ var require_browser = __commonJS({
 Use Chrome, Firefox or Internet Explorer 11`);
     }
     var Buffer2 = require_safe_buffer().Buffer,
-      crypto2 = global.crypto || global.msCrypto;
+      crypto2 = globalCrypto;
     crypto2 && crypto2.getRandomValues ? (module.exports = randomBytes) : (module.exports = oldBrowser);
     function randomBytes(size, cb) {
       if (size > MAX_UINT32) throw new RangeError("requested too many random bytes");
@@ -1588,7 +1590,7 @@ var require_async = __commonJS({
       sync = require_sync_browser(),
       toBuffer = require_to_buffer(),
       ZERO_BUF,
-      subtle = global.crypto && global.crypto.subtle,
+      subtle = globalCrypto.subtle,
       toBrowser = {
         sha: "SHA-1",
         "sha-1": "SHA-1",
@@ -23553,15 +23555,10 @@ var require_browser10 = __commonJS({
 var require_browser11 = __commonJS({
   "node_modules/randomfill/browser.js"(exports) {
     "use strict";
-    function oldBrowser() {
-      throw new Error(`secure random number generation not supported by this browser
-use chrome, FireFox or Internet Explorer 11`);
-    }
     var safeBuffer = require_safe_buffer(),
       randombytes = require_browser(),
       Buffer2 = safeBuffer.Buffer,
       kBufferMaxLength = safeBuffer.kMaxLength,
-      crypto2 = global.crypto || global.msCrypto,
       kMaxUint32 = Math.pow(2, 32) - 1;
     function assertOffset(offset, length) {
       if (typeof offset != "number" || offset !== offset) throw new TypeError("offset must be a number");
@@ -23654,6 +23651,7 @@ var require_crypto_browserify2 = __commonJS({
     exports.privateEncrypt = publicEncrypt.privateEncrypt;
     exports.publicDecrypt = publicEncrypt.publicDecrypt;
     exports.privateDecrypt = publicEncrypt.privateDecrypt;
+    exports.getRandomValues = values => crypto.getRandomValues(values);
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
     exports.randomFillSync = rf.randomFillSync;
@@ -23692,15 +23690,6 @@ var crypto_exports = {
   ...require_crypto_browserify2(),
   [Symbol.for("CommonJS")]: 0,
 };
-__export(crypto_exports, {
-  DEFAULT_ENCODING: () => DEFAULT_ENCODING,
-  getRandomValues: () => getRandomValues,
-  randomUUID: () => randomUUID,
-  scrypt: () => scrypt,
-  scryptSync: () => scryptSync,
-  timingSafeEqual: () => timingSafeEqual,
-  webcrypto: () => webcrypto,
-});
 var DEFAULT_ENCODING = "buffer",
   getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
@@ -23754,6 +23743,17 @@ timingSafeEqual &&
     value: "::bunternal::",
   }));
 var webcrypto = crypto;
+__export(crypto_exports, {
+  DEFAULT_ENCODING: () => DEFAULT_ENCODING,
+  getRandomValues: () => getRandomValues,
+  randomUUID: () => randomUUID,
+  scrypt: () => scrypt,
+  scryptSync: () => scryptSync,
+  timingSafeEqual: () => timingSafeEqual,
+  webcrypto: () => webcrypto,
+  subtle: () => webcrypto.subtle,
+});
+
 export const {
   randomBytes,
   rng,

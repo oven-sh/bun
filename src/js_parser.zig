@@ -12797,6 +12797,7 @@ fn NewParser_(
                         if (p.declared_symbols.len > 0 or p.symbol_uses.count() > 0) {
                             p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
                             p.declared_symbols.len = 0;
+                            p.import_records_for_current_part.items.len = 0;
                         }
                         return;
                     }
@@ -12822,6 +12823,7 @@ fn NewParser_(
                 // if the part is dead, invalidate all the usage counts
                 p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
                 p.declared_symbols.len = 0;
+                p.import_records_for_current_part.clearRetainingCapacity();
             }
         }
 
@@ -18261,11 +18263,16 @@ fn NewParser_(
                             // reference those symbols.
                             part.can_be_removed_if_unused = false;
                         }
-                        part.import_record_indices.update(p.import_records_for_current_part.clone(p.allocator) catch unreachable);
                         if (part.declared_symbols.len == 0) {
                             part.declared_symbols = p.declared_symbols.clone(p.allocator) catch unreachable;
                         } else {
                             part.declared_symbols.appendList(p.allocator, p.declared_symbols) catch unreachable;
+                        }
+
+                        if (part.import_record_indices.len == 0) {
+                            part.import_record_indices.update(p.import_records_for_current_part.clone(p.allocator) catch unreachable);
+                        } else {
+                            part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
                         }
 
                         parts[parts_end] = part;

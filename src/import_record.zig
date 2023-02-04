@@ -146,6 +146,9 @@ pub const ImportRecord = struct {
     /// If a macro used <import>, it will be tracked here.
     was_injected_by_macro: bool = false,
 
+    /// If true, this import can be removed if it's unused
+    is_external_without_side_effects: bool = false,
+
     kind: ImportKind,
 
     tag: Tag = Tag.none,

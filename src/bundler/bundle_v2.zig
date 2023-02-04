@@ -282,6 +282,7 @@ pub const BundleV2 = struct {
         task.* = ParseTask.init(&result, source_index);
         task.loader = loader;
         task.task.node.next = null;
+        task.tree_shaking = this.bundler.options.tree_shaking;
         batch.push(ThreadPoolLib.Batch.from(&task.task));
         return source_index.get();
     }
@@ -598,6 +599,7 @@ const ParseTask = struct {
     jsx: options.JSX.Pragma,
     source_index: Index = Index.invalid,
     task: ThreadPoolLib.Task = .{ .callback = &callback },
+    tree_shaking: bool = false,
 
     const debug = Output.scoped(.ParseTask, false);
 
@@ -787,7 +789,7 @@ const ParseTask = struct {
                 opts.bundle = true;
                 opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.tree_shaking = false;
+                opts.tree_shaking = task.tree_shaking;
 
                 var ast = (try resolver.caches.js.parse(
                     bundler.allocator,
@@ -844,8 +846,10 @@ const ParseTask = struct {
                         debug("created ParseTask: {s}", .{path.text});
 
                         resolve_entry.value_ptr.* = ParseTask.init(&resolve_result, null);
-                        if (resolve_entry.value_ptr.loader == null)
+                        if (resolve_entry.value_ptr.loader == null) {
                             resolve_entry.value_ptr.loader = bundler.options.loader(path.name.ext);
+                            resolve_entry.value_ptr.tree_shaking = task.tree_shaking;
+                        }
                     } else |err| {
                         // Disable failing packages from being printed.
                         // This may cause broken code to write.
@@ -1476,6 +1480,8 @@ const LinkerGraph = struct {
         {
             try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len);
             this.entry_points.len = entry_points.len;
+            var source_indices = this.entry_points.items(.source_index);
+
             var path_strings: []bun.PathString = this.entry_points.items(.output_path);
             {
                 var output_was_auto_generated = std.mem.sliceAsBytes(this.entry_points.items(.output_path_was_auto_generated));
@@ -1489,6 +1495,7 @@ const LinkerGraph = struct {
                 }
                 entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
                 path_strings[j] = bun.PathString.init(source.path.text);
+                source_indices[j] = source.index.get();
             }
         }
 
@@ -1570,6 +1577,7 @@ const LinkerContext = struct {
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
+        tree_shaking: bool = true,
     };
 
     fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
@@ -1608,6 +1616,8 @@ const LinkerContext = struct {
         if (this.log.hasErrors()) {
             return;
         }
+
+        try this.treeShakingAndCodeSplitting();
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
@@ -2718,30 +2728,55 @@ const LinkerContext = struct {
     }
 
     pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
+        var parts = c.graph.ast.items(.parts);
+        var import_records = c.graph.ast.items(.import_records);
+        var side_effects = c.parse_graph.input_files.items(.side_effects);
+        var entry_point_kinds = c.graph.files.items(.entry_point_kind);
+
         // Tree shaking: Each entry point marks all files reachable from itself
         for (c.graph.entry_points.items(.source_index)) |entry_point| {
-            c.markFileLiveForTreeShaking(entry_point);
+            c.markFileLiveForTreeShaking(
+                entry_point,
+                side_effects,
+                parts,
+                import_records,
+                entry_point_kinds,
+            );
         }
+
+        // Code splitting: Determine which entry points can reach which files. This
+        // has to happen after tree shaking because there is an implicit dependency
+        // between live parts within the same file. All liveness has to be computed
+        // first before determining which entry points can reach which files.
     }
 
-    pub fn markFileLiveForTreeShaking(c: *LinkerContext, source_index: Index.Int) void {
+    pub fn markFileLiveForTreeShaking(
+        c: *LinkerContext,
+        source_index: Index.Int,
+        side_effects: []_resolver.SideEffects,
+        parts: []bun.BabyList(js_ast.Part),
+        import_records: []bun.BabyList(bun.ImportRecord),
+        entry_point_kinds: []EntryPoint.Kind,
+    ) void {
         if (c.graph.files_live.isSet(source_index))
             return;
 
         c.graph.files_live.set(source_index);
+        if (comptime bun.Environment.allow_assert)
+            debug("markFileLiveForTreeShaking: {s}", .{c.parse_graph.input_files.get(source_index).source.path.text});
 
         // TODO: CSS source index
 
         const id = source_index;
         if (@as(usize, id) >= c.graph.ast.len)
             return;
-
-        for (c.graph.ast.items(.parts)[id]) |part, part_index| {
+        var _parts = parts[id].slice();
+        for (_parts) |*part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             // Also include any statement-level imports
-            for (part.import_record_indices) |import_record_Index| {
-                var record: *ImportRecord = &c.graph.ast.items(.import_records)[import_record_Index];
+            for (part.import_record_indices.slice()) |import_record_Index| {
+                var record: *ImportRecord = &import_records[source_index].slice()[import_record_Index];
 
                 if (record.kind != .stmt)
                     continue;
@@ -2751,13 +2786,19 @@ const LinkerContext = struct {
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    if (c.parse_graph.input_files.items(.side_effects)[other_source_index] != .has_side_effects and !c.options.ignore_dce_annoations) {
+                    if (side_effects[other_source_index] != .has_side_effects and !c.options.ignore_dce_annotations) {
                         continue;
                     }
 
                     // Otherwise, include this module for its side effects
-                    c.markFileLiveForTreeShaking(other_source_index);
-                } else if (record.is_external_without_side_effects()) {
+                    c.markFileLiveForTreeShaking(
+                        other_source_index,
+                        side_effects,
+                        parts,
+                        import_records,
+                        entry_point_kinds,
+                    );
+                } else if (record.is_external_without_side_effects) {
                     // This can be removed if it's unused
                     continue;
                 }
@@ -2773,32 +2814,56 @@ const LinkerContext = struct {
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
                 !c.options.tree_shaking and
-                c.graph.files.items(.entry_point_kind)[id].isEntryPoint()))
+                entry_point_kinds[id].isEntryPoint()))
             {
-                c.markPartLiveForTreeShaking(
-                    part_index,
+                _ = c.markPartLiveForTreeShaking(
+                    @intCast(u32, part_index),
                     id,
+                    side_effects,
+                    parts,
+                    import_records,
+                    entry_point_kinds,
                 );
             }
         }
     }
 
-    pub fn markPartLiveForTreeShaking(c: *LinkerContext, part_index: u32, id: u32) bool {
-        var part: js_ast.Part = &c.graph.ast.items(.parts)[id][part_index];
+    pub fn markPartLiveForTreeShaking(
+        c: *LinkerContext,
+        part_index: Index.Int,
+        id: Index.Int,
+        side_effects: []_resolver.SideEffects,
+        parts: []bun.BabyList(js_ast.Part),
+        import_records: []bun.BabyList(bun.ImportRecord),
+        entry_point_kinds: []EntryPoint.Kind,
+    ) bool {
+        var part: *js_ast.Part = &parts[id].slice()[part_index];
         // only once
         if (part.is_live) {
             return false;
         }
 
         part.is_live = true;
+        if (comptime bun.Environment.allow_assert)
+            debug("markPartLiveForTreeShaking({d}): {s}:{d}", .{ id, c.parse_graph.input_files.get(id).source.path.text, part_index });
 
         for (part.dependencies.slice()) |dependency| {
-            const _id = dependency.source_index;
+            const _id = dependency.source_index.get();
             if (c.markPartLiveForTreeShaking(
                 dependency.part_index,
                 _id,
+                side_effects,
+                parts,
+                import_records,
+                entry_point_kinds,
             )) {
-                c.markFileLiveForTreeShaking(dependency.source_index);
+                c.markFileLiveForTreeShaking(
+                    _id,
+                    side_effects,
+                    parts,
+                    import_records,
+                    entry_point_kinds,
+                );
             }
         }
 

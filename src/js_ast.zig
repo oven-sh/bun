@@ -939,6 +939,16 @@ pub const Symbol = struct {
             return symbol;
         }
 
+        pub fn followAll(symbols: *Map) void {
+            for (symbols.symbols_for_source.slice()) |list| {
+                for (list.slice()) |*symbol| {
+                    if (symbol.hasLink()) {
+                        symbol.link = follow(symbols, symbol.link);
+                    }
+                }
+            }
+        }
+
         pub fn follow(symbols: *Map, ref: Ref) Ref {
             if (symbols.get(ref)) |symbol| {
                 const link = symbol.link;

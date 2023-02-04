@@ -1259,13 +1259,17 @@ const Bitmap = struct {
         };
     }
 
-    pub fn isSet(this: *Bitmap, file_id: usize, entry_point_count: usize) bool {
-        return this.bitset.isSet(file_id * this.file_count + entry_point_count);
+    pub fn isSet(this: *Bitmap, file_id: usize, entry_point_id: usize) bool {
+        return this.bitset.isSet(this.file_count * entry_point_id + file_id);
     }
 
-    pub fn set(this: *Bitmap, file_id: usize, entry_point_count: usize) void {
-        this.bitset.set(file_id * this.file_count + entry_point_count);
+    pub fn set(this: *Bitmap, file_id: usize, entry_point_id: usize) void {
+        this.bitset.set(this.file_count * entry_point_id + file_id);
     }
+
+    // pub fn fileEntry(this: *Bitmap, file_id: usize, entry_point_id: usize) void {
+    //     this.bitset.setRangeValue(range: Range, value: bool)(this.file_count * entry_point_id + file_id);
+    // }
 
     pub fn setter(this: *Bitmap, file_id: usize) Setter {
         return Setter{
@@ -1618,6 +1622,8 @@ const LinkerContext = struct {
         }
 
         try this.treeShakingAndCodeSplitting();
+
+        this.graph.symbols.followAll();
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {

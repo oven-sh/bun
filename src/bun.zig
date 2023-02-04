@@ -743,7 +743,7 @@ pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
 pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
-pub const bit_set = @import("./install/bit_set.zig");
+pub const bit_set = @import("./bit_set.zig");
 
 pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     const Map = struct {

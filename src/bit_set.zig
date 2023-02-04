@@ -781,6 +781,12 @@ pub const DynamicBitSetUnmanaged = struct {
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 
+    pub fn byteRange(self: Self, start: usize, len: usize) []const u8 {
+        assert(start < self.bit_length);
+        const offset = maskIndex(start);
+        return std.mem.sliceAsBytes(self.masks[offset .. offset + len]);
+    }
+
     /// Returns the total number of set bits in this bit set.
     pub fn count(self: Self) usize {
         const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);

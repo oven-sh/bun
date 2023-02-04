@@ -3783,12 +3783,23 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
     return try std.mem.join(allocator, delimiter, slices);
 }
 
+pub fn order(a: []const u8, b: []const u8) std.math.Order {
+    const len = @min(a.len, b.len);
+    const cmp = bun.C.memcmp(a.ptr, b.ptr, len);
+    return switch (cmp) {
+        0 => std.math.order(a.len, b.len),
+        1 => .gt,
+        -1 => .lt,
+        else => unreachable,
+    };
+}
+
 pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .lt;
+    return order(a, b) == .lt;
 }
 
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .gt;
+    return order(a, b) == .gt;
 }
 
 const sort_asc = std.sort.asc(u8);

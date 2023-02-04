@@ -2922,7 +2922,7 @@ pub const Timer = struct {
                         this.deinit();
 
                         // get the value out of the promise
-                        _ = promise.result(this.globalThis.vm());
+                        _ = promise.result(globalThis.vm());
                     },
                     .Pending => {
                         result.then(globalThis, this, CallbackJob__onResolve, CallbackJob__onReject);

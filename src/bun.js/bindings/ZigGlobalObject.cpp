@@ -797,11 +797,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
 
     RELEASE_ASSERT(callFrame->argumentCount() == 1);
     JSPromise* promise = jsCast<JSC::JSPromise*>(callFrame->argument(0));
+    RELEASE_ASSERT(promise);
 
-    // TODO: optimize this some more
     promise->resolve(globalObject, JSC::jsUndefined());
 
-    return JSC::JSValue::encode(jsUndefined());
+    return JSC::JSValue::encode(promise);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
@@ -818,7 +818,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
 
     Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(global->bunSleepThenCallback()), JSC::JSValue::encode(millisecondsValue), JSValue::encode(promise));
+    Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(global->bunSleepThenCallback()), JSC::JSValue::encode(millisecondsValue), JSValue::encode(promise));
+    return JSC::JSValue::encode(promise);
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -3537,7 +3538,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSFetchHeadersSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
-    
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

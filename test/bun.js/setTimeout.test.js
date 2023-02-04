@@ -104,3 +104,26 @@ it("Bun.sleep", async () => {
 
   expect(sleeps).toBe(3);
 });
+
+it("Bun.sleep propagates exceptions", async () => {
+  try {
+    await Bun.sleep(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
+});
+
+it("node.js timers/promises setTimeout propagates exceptions", async () => {
+  const { setTimeout } = require("timers/promises");
+  try {
+    await setTimeout(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
+});

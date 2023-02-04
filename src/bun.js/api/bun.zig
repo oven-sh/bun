@@ -2873,19 +2873,25 @@ pub const Timer = struct {
 
             const callback = this.callback.get() orelse @panic("Expected CallbackJob to have a callback function");
             if (this.arguments.trySwap()) |arguments| {
-                const count = arguments.getLengthOfArray(globalThis);
-                if (count > 0) {
-                    if (count > args_buf.len) {
-                        args = bun.default_allocator.alloc(JSC.JSValue, count) catch unreachable;
-                        args_needs_deinit = true;
-                    } else {
-                        args = args_buf[0..count];
-                    }
-                    var arg = args.ptr;
-                    var i: u32 = 0;
-                    while (i < count) : (i += 1) {
-                        arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @truncate(u32, i));
-                        arg += 1;
+                // Bun.sleep passes a Promise
+                if (arguments.jsType() == .JSPromise) {
+                    args_buf[0] = arguments;
+                    args = args_buf[0..1];
+                } else {
+                    const count = arguments.getLengthOfArray(globalThis);
+                    if (count > 0) {
+                        if (count > args_buf.len) {
+                            args = bun.default_allocator.alloc(JSC.JSValue, count) catch unreachable;
+                            args_needs_deinit = true;
+                        } else {
+                            args = args_buf[0..count];
+                        }
+                        var arg = args.ptr;
+                        var i: u32 = 0;
+                        while (i < count) : (i += 1) {
+                            arg[0] = JSC.JSObject.getIndex(arguments, globalThis, @truncate(u32, i));
+                            arg += 1;
+                        }
                     }
                 }
             }

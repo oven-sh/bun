@@ -89,3 +89,18 @@ it("setTimeout(() => {}, 0)", async () => {
   });
   expect(ranFirst).toBe(-1);
 });
+
+it("Bun.sleep", async () => {
+  var sleeps = 0;
+  await Bun.sleep(0);
+  const start = performance.now();
+  sleeps++;
+  await Bun.sleep(1);
+  sleeps++;
+  await Bun.sleep(2);
+  sleeps++;
+  const end = performance.now();
+  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+
+  expect(sleeps).toBe(3);
+});

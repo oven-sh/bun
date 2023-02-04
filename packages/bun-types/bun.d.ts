@@ -2152,6 +2152,32 @@ declare module "bun" {
   }
 
   /**
+   * Resolve a `Promise` after milliseconds. This is like
+   * {@link setTimeout} except it returns a `Promise`.
+   * 
+   * @param ms milliseconds to delay resolving the promise. This is a minimum number. It may take longer.
+   * 
+   * @example 
+   * ## Sleep for 1 second
+   * ```ts
+   * import { sleep } from "bun";
+   * 
+   * await sleep(1000);
+   * ```
+   * ## Sleep for 10 milliseconds
+   * ```ts
+   * await Bun.sleep(10);
+   * ```
+   * Internally, `Bun.sleep` is the equivalent of
+   * ```ts
+   * await new Promise((resolve) => setTimeout(resolve, ms));
+   * ```
+   * 
+   * As always, you can use `Bun.sleep` or the imported `sleep` function interchangeably.
+   */
+  export function sleep(ms: number): Promise<void>;
+
+  /**
    * Sleep the thread for a given number of milliseconds
    *
    * This is a blocking function.

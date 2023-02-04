@@ -108,6 +108,7 @@
 #include "ModuleLoader.h"
 
 #include "ZigGeneratedClasses.h"
+#include "JavaScriptCore/DateInstance.h"
 
 #include "BunPlugin.h"
 
@@ -810,6 +811,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSValue millisecondsValue = callFrame->argument(0);
+
+    if (millisecondsValue.inherits<JSC::DateInstance>()) {
+        auto now = MonotonicTime::now();
+        auto milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        millisecondsValue = JSC::jsNumber(milliseconds > 0 ? milliseconds : 0);
+    }
+
     if (!millisecondsValue.isNumber()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "sleep expects a number (milliseconds)"_s);

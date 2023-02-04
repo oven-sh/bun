@@ -116,6 +116,14 @@ it("Bun.sleep propagates exceptions", async () => {
   }
 });
 
+it("Bun.sleep works with a Date object", async () => {
+  var ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 10);
+  const now = performance.now();
+  await Bun.sleep(ten_ms);
+  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+});
+
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
   const { setTimeout } = require("timers/promises");
   try {

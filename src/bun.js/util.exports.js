@@ -27,8 +27,11 @@ var require_inherits_browser = __commonJS({
     };
   },
 });
-
-const exports = {};
+const deepEquals = Bun.deepEquals;
+const isDeepStrictEqual = (a, b) => deepEquals(a, b, true);
+const exports = {
+  isDeepStrictEqual,
+};
 var getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 var formatRegExp = /%[sdj%]/g;
 function format(f) {
@@ -576,4 +579,5 @@ export {
   inherits,
   promisify,
   callbackify,
+  isDeepStrictEqual,
 };

@@ -37,19 +37,20 @@ namespace WebCore {
 static const ASCIILiteral X25519 { "X25519"_s };
 static const ASCIILiteral Ed25519 { "Ed25519"_s };
 
-static constexpr size_t keySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve)
+static constexpr size_t keySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve, CryptoKeyType type)
 {
     switch (curve) {
     case CryptoKeyOKP::NamedCurve::X25519:
-    case CryptoKeyOKP::NamedCurve::Ed25519:
         return 32;
+    case CryptoKeyOKP::NamedCurve::Ed25519:
+        return type == CryptoKeyType::Private ? 64 : 32;
     }
     return 32;
 }
 
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, KeyMaterial&& platformKey, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (platformKey.size() != keySizeInBytesFromNamedCurve(curve))
+    if (platformKey.size() != keySizeInBytesFromNamedCurve(curve, type))
         return nullptr;
     return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTFMove(platformKey), extractable, usages));
 }

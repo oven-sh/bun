@@ -729,7 +729,10 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto encoding_ = callFrame->argument(0).toString(lexicalGlobalObject);
+    auto* encoding_ = callFrame->argument(0).toStringOrNull(lexicalGlobalObject);
+    if (!encoding_)
+        return JSValue::encode(jsBoolean(false));
+
     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
     return JSValue::encode(jsBoolean(!!encoded));
 }

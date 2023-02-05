@@ -1350,61 +1350,9 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
     return JSC::JSValue::encode(castedThis);
 }
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    uint32_t offset = 0;
-    uint32_t length = castedThis->length();
-    uint32_t byteLength = length;
-    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
-
-    if (length == 0)
-        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    switch (callFrame->argumentCount()) {
-    case 0: {
-        break;
-    }
-    case 2:
-    case 3:
-    case 1: {
-        EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(0);
-        if (arg1.value().isString()) {
-            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
-            if (!encoded) {
-                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-                return JSC::JSValue::encode(jsUndefined());
-            }
-
-            encoding = encoded.value();
-        }
-
-        if (callFrame->argumentCount() == 1)
-            break;
-    }
-    // any
-    case 5: {
-        JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
-        int32_t ioffset = arg2.toInt32(lexicalGlobalObject);
-        if (ioffset < 0) {
-            throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
-            return JSC::JSValue::encode(jsUndefined());
-        }
-        offset = static_cast<uint32_t>(ioffset);
-
-        if (callFrame->argumentCount() == 2)
-            break;
-    }
-
-    default: {
-        length = std::min(byteLength, static_cast<uint32_t>(callFrame->argument(2).toInt32(lexicalGlobalObject)));
-        break;
-    }
-    }
-
-    length -= std::min(offset, length);
 
     if (UNLIKELY(length == 0)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
@@ -1417,8 +1365,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         LChar* data = nullptr;
         auto str = String::createUninitialized(length, data);
         memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
-        ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
-        break;
+        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
 
     case WebCore::BufferEncodingType::ucs2:
@@ -1426,21 +1373,29 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         UChar* data = nullptr;
         size_t u16length = length / 2;
         if (u16length == 0) {
-            ret = JSC::JSValue::encode(JSC::jsEmptyString(vm));
+            return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
             auto str = String::createUninitialized(u16length, data);
             // always zero out the last byte of the string incase the buffer is not a multiple of 2
             data[u16length - 1] = 0;
             memcpy(data, reinterpret_cast<const char*>(castedThis->typedVector() + offset), length);
-            ret = JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+            return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
         }
 
         break;
     }
 
+    case WebCore::BufferEncodingType::ascii: {
+        // ascii: we always know the length
+        // so we might as well allocate upfront
+        LChar* data = nullptr;
+        auto str = String::createUninitialized(length, data);
+        Bun__encoding__writeLatin1(castedThis->typedVector() + offset, length, data, length, static_cast<uint8_t>(encoding));
+        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+    }
+
     case WebCore::BufferEncodingType::buffer:
     case WebCore::BufferEncodingType::utf8:
-    case WebCore::BufferEncodingType::ascii:
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
@@ -1461,6 +1416,92 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
 }
+
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    uint32_t offset = 0;
+    uint32_t length = castedThis->length();
+    uint32_t byteLength = length;
+    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
+
+    if (length == 0)
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+
+    switch (callFrame->argumentCount()) {
+    case 0: {
+        break;
+    }
+    case 2:
+    case 3:
+    case 1: {
+        EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(0);
+        if (arg1.value().isString()) {
+            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
+            if (!encoded) {
+                auto scope = DECLARE_THROW_SCOPE(vm);
+
+                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+
+            encoding = encoded.value();
+        }
+
+        if (callFrame->argumentCount() == 1)
+            break;
+    }
+    // any
+    case 5: {
+        JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
+        int32_t ioffset = arg2.toInt32(lexicalGlobalObject);
+        if (ioffset < 0) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+
+            throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
+            return JSC::JSValue::encode(jsUndefined());
+        }
+        offset = static_cast<uint32_t>(ioffset);
+
+        if (callFrame->argumentCount() == 2)
+            break;
+    }
+
+    default: {
+        length = std::min(byteLength, static_cast<uint32_t>(callFrame->argument(2).toInt32(lexicalGlobalObject)));
+        break;
+    }
+    }
+
+    length -= std::min(offset, length);
+
+    return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+}
+
+// DOMJIT makes it slower! TODO: investigate why
+// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
+
+// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
+// {
+//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     IGNORE_WARNINGS_BEGIN("frame-address")
+//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+//     IGNORE_WARNINGS_END
+//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+//     if (!encoded) {
+//         auto scope = DECLARE_THROW_SCOPE(vm);
+
+//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+//         return {};
+//     }
+
+//     auto encoding = encoded.value();
+
+//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
+// }
+
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

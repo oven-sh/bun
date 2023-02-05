@@ -795,43 +795,20 @@ pub const Encoder = struct {
 
         switch (comptime encoding) {
             .ascii => {
+                if (bun.simdutf.validate.ascii(input)) {
+                    return ZigString.init(input).toValueGC(global);
+                }
+
+                if (input.len < 512) {
+                    var buf: [512]u8 = undefined;
+                    var to = buf[0..input.len];
+                    strings.copyLatin1IntoASCII(to, input);
+                    return ZigString.init(to).toValueGC(global);
+                }
+
                 var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                var complete = to;
-                var remain = input;
-
-                if (comptime bun.Environment.enableSIMD) {
-                    const vector_size = 16;
-                    // https://zig.godbolt.org/z/qezsY8T3W
-                    var remain_in_u64 = remain[0 .. remain.len - (remain.len % vector_size)];
-                    var to_in_u64 = to[0 .. to.len - (to.len % vector_size)];
-                    var remain_as_u64 = std.mem.bytesAsSlice(u64, remain_in_u64);
-                    var to_as_u64 = std.mem.bytesAsSlice(u64, to_in_u64);
-                    const inner_vector_size = vector_size / 8;
-                    const end_vector_len = @min(remain_as_u64.len, to_as_u64.len);
-                    remain_as_u64 = remain_as_u64[0..end_vector_len];
-                    to_as_u64 = to_as_u64[0..end_vector_len];
-                    const end_ptr = remain_as_u64.ptr + remain_as_u64.len;
-                    // using the pointer instead of the length is super important for the codegen
-                    while (end_ptr != remain_as_u64.ptr) {
-                        const buf = @as(@Vector(inner_vector_size, u64), remain_as_u64[0..inner_vector_size].*);
-                        const mask = @splat(inner_vector_size, @as(u64, 0x7f7f7f7f7f7f7f7f));
-                        to_as_u64[0..inner_vector_size].* = buf & mask;
-
-                        remain_as_u64 = remain_as_u64[inner_vector_size..];
-                        to_as_u64 = to_as_u64[inner_vector_size..];
-                    }
-                    remain = remain[remain_in_u64.len..];
-                    to = to[to_in_u64.len..];
-                }
-
-                const end_ptr = to.ptr + to.len;
-                while (to.ptr != end_ptr) {
-                    to[0] = @as(u8, @truncate(u7, remain[0]));
-                    to = to[1..];
-                    remain = remain[1..];
-                }
-
-                return ZigString.init(complete).toExternalValue(global);
+                strings.copyLatin1IntoASCII(to, input);
+                return ZigString.init(to).toExternalValue(global);
             },
             .latin1 => {
                 var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
@@ -884,7 +861,7 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn writeU8(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
+    pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
         if (len == 0 or to_len == 0)
             return 0;
 
@@ -898,39 +875,42 @@ pub const Encoder = struct {
         switch (comptime encoding) {
             JSC.Node.Encoding.buffer => {
                 const written = @min(len, to_len);
-                @memcpy(to, input, written);
+                @memcpy(to_ptr, input, written);
 
                 return @intCast(i64, written);
             },
             .latin1, .ascii => {
                 const written = @min(len, to_len);
-                @memcpy(to, input, written);
 
-                // Hoping this gets auto vectorized
-                for (to[0..written]) |c, i| {
-                    to[i] = @as(u8, @truncate(u7, c));
+                var to = to_ptr[0..written];
+                var remain = input[0..written];
+
+                if (bun.simdutf.validate.ascii(remain)) {
+                    @memcpy(to.ptr, remain.ptr, written);
+                } else {
+                    strings.copyLatin1IntoASCII(to, remain);
                 }
 
                 return @intCast(i64, written);
             },
             .utf8 => {
                 // need to encode
-                return @intCast(i64, strings.copyLatin1IntoUTF8(to[0..to_len], []const u8, input[0..len]).written);
+                return @intCast(i64, strings.copyLatin1IntoUTF8(to_ptr[0..to_len], []const u8, input[0..len]).written);
             },
             // encode latin1 into UTF16
             JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
                 if (to_len < 2)
                     return 0;
 
-                if (std.mem.isAligned(@ptrToInt(to), @alignOf([*]u16))) {
+                if (std.mem.isAligned(@ptrToInt(to_ptr), @alignOf([*]u16))) {
                     var buf = input[0..len];
 
-                    var output = @ptrCast([*]u16, @alignCast(@alignOf(u16), to))[0 .. to_len / 2];
+                    var output = @ptrCast([*]u16, @alignCast(@alignOf(u16), to_ptr))[0 .. to_len / 2];
                     var written = strings.copyLatin1IntoUTF16([]u16, output, []const u8, buf).written;
                     return written * 2;
                 } else {
                     var buf = input[0..len];
-                    var output = @ptrCast([*]align(1) u16, to)[0 .. to_len / 2];
+                    var output = @ptrCast([*]align(1) u16, to_ptr)[0 .. to_len / 2];
 
                     var written = strings.copyLatin1IntoUTF16([]align(1) u16, output, []const u8, buf).written;
                     return written * 2;
@@ -938,7 +918,7 @@ pub const Encoder = struct {
             },
 
             JSC.Node.Encoding.hex => {
-                return @intCast(i64, strings.decodeHexToBytes(to[0..to_len], u8, input[0..len]));
+                return @intCast(i64, strings.decodeHexToBytes(to_ptr[0..to_len], u8, input[0..len]));
             },
 
             JSC.Node.Encoding.base64url => {
@@ -952,12 +932,12 @@ pub const Encoder = struct {
                     slice = slice[0 .. slice.len - 1];
                 }
 
-                const wrote = bun.base64.decodeURLSafe(to[0..to_len], slice).written;
+                const wrote = bun.base64.decodeURLSafe(to_ptr[0..to_len], slice).written;
                 return @intCast(i64, wrote);
             },
 
             JSC.Node.Encoding.base64 => {
-                return @intCast(i64, bun.base64.decode(to[0..to_len], input[0..len]).written);
+                return @intCast(i64, bun.base64.decode(to_ptr[0..to_len], input[0..len]).written);
             },
             // else => return 0,
         }

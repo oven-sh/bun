@@ -3815,6 +3815,19 @@ pub fn sortDesc(in: []string) void {
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
 
+pub const StringArrayByIndexSorter = struct {
+    keys: []const []const u8,
+    pub fn lessThan(sorter: *@This(), a: usize, b: usize) bool {
+        return strings.order(sorter.keys[a], sorter.keys[b]) == .lt;
+    }
+
+    pub fn init(keys: []const []const u8) @This() {
+        return .{
+            .keys = keys,
+        };
+    }
+};
+
 pub fn isASCIIHexDigit(c: u8) bool {
     return std.ascii.isHex(c);
 }

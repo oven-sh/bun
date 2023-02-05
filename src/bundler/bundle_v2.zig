@@ -69,6 +69,10 @@ const Batcher = bun.Batcher;
 const Symbol = js_ast.Symbol;
 const EventLoop = bun.JSC.AnyEventLoop;
 const MultiArrayList = bun.MultiArrayList;
+const Stmt = js_ast.Stmt;
+const Expr = js_ast.Expr;
+const Binding = js_ast.Binding;
+const AutoBitSet = bun.bit_set.AutoBitSet;
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -331,7 +335,6 @@ pub const BundleV2 = struct {
                 .loop = event_loop,
                 .graph = .{
                     .allocator = undefined,
-                    .file_entry_bits = undefined,
                 },
             },
         };
@@ -1246,55 +1249,6 @@ const EntryPoint = struct {
     };
 };
 
-/// Two-dimensional bitset
-/// Quickly lets us know which files are visible for which entry points
-const Bitmap = struct {
-    bitset: bun.bit_set.DynamicBitSetUnmanaged = undefined,
-    file_count: usize = 0,
-    entry_point_count: usize = 0,
-
-    pub fn init(file_count: usize, entry_point_count: usize, allocator: std.mem.Allocator) !Bitmap {
-        return Bitmap{
-            .file_count = file_count,
-            .entry_point_count = entry_point_count,
-            .bitset = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count * entry_point_count * entry_point_count),
-        };
-    }
-
-    pub fn isSet(this: *Bitmap, file_id: usize, entry_point_id: usize) bool {
-        return this.bitset.isSet((this.file_count * file_id) + entry_point_id);
-    }
-
-    pub fn set(this: *Bitmap, file_id: usize, entry_point_id: usize) void {
-        this.bitset.set((this.file_count * file_id) + entry_point_id);
-    }
-
-    pub fn fileEntry(this: *Bitmap, file_id: usize) []const u8 {
-        return this.bitset.byteRange((this.file_count * file_id), this.entry_point_count);
-    }
-
-    pub fn setter(this: *Bitmap, file_id: usize) Setter {
-        return Setter{
-            .offset = file_id * this.file_count,
-            .bitset = this.bitset,
-        };
-    }
-
-    // turn add add and a multiply into an add
-    pub const Setter = struct {
-        offset: usize = 0,
-        bitset: bun.bit_set.DynamicBitSetUnmanaged,
-
-        pub fn isSet(this: Bitmap.Setter, x: usize) bool {
-            return this.bitset.isSet(this.offset + x);
-        }
-
-        pub fn set(this: Bitmap.Setter, x: usize) void {
-            this.bitset.set(this.offset + x);
-        }
-    };
-};
-
 const AstSourceIDMapping = struct {
     id: Index.Int,
     source_index: Index.Int,
@@ -1321,12 +1275,8 @@ const LinkerGraph = struct {
 
     stable_source_indices: []const u32 = &[_]u32{},
 
-    // This holds all entry points that can reach a file
-    // it is a 2 dimensional bitset
-    file_entry_bits: Bitmap,
-
-    pub fn init(allocator: std.mem.Allocator, file_count: usize, entry_point_count: usize) !LinkerGraph {
-        return LinkerGraph{ .allocator = allocator, .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count), .file_entry_bits = try Bitmap.init(file_count, entry_point_count, allocator) };
+    pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
+        return LinkerGraph{ .allocator = allocator, .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count) };
     }
 
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
@@ -1465,8 +1415,6 @@ const LinkerGraph = struct {
     }
 
     pub fn load(this: *LinkerGraph, entry_points: []const Index, sources: []const Logger.Source) !void {
-        this.file_entry_bits = try Bitmap.init(sources.len, entry_points.len, this.allocator);
-
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
         this.files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(
@@ -1525,6 +1473,8 @@ const LinkerGraph = struct {
     }
 
     pub const File = struct {
+        entry_bits: AutoBitSet = undefined,
+
         input_file: Index = Index.source(0),
 
         /// The minimum number of links in the module graph to get from an entry point
@@ -1565,11 +1515,11 @@ const LinkerContext = struct {
     cycle_detector: std.ArrayList(ImportTracker) = undefined,
     swap_cycle_detector: std.ArrayList(ImportTracker) = undefined,
 
-    // We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
+    /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
     esm_runtime_ref: Ref = Ref.None,
 
-    // We may need to refer to the CommonJS "module" symbol for exports
+    /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
     options: LinkerOptions = LinkerOptions{},
@@ -1613,7 +1563,7 @@ const LinkerContext = struct {
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
     }
 
-    pub fn link(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index, reachable: []Index) !void {
+    pub noinline fn link(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index, reachable: []Index) !void {
         try this.load(bundle, entry_points, reachable);
 
         try this.scanImportsAndExports();
@@ -1625,7 +1575,88 @@ const LinkerContext = struct {
 
         try this.treeShakingAndCodeSplitting();
 
+        const chunks = try this.computeChunks();
+
         this.graph.symbols.followAll();
+    }
+
+    pub noinline fn computeChunks(this: *LinkerContext) ![]Chunk {
+        var stack_fallback = std.heap.stackFallback(4096, this.allocator);
+        var stack_all = stack_fallback.get();
+        var arena = std.heap.ArenaAllocator.init(stack_all);
+        defer arena.deinit();
+
+        var temp_allocator = arena.allocator();
+        var js_chunks = bun.StringArrayHashMap(Chunk).init(this.allocator);
+        try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
+
+        var entry_source_indices = this.graph.entry_points.items(.source_index);
+
+        // Create chunks for entry points
+        for (entry_source_indices) |source_index, entry_id_| {
+            const entry_bit = @truncate(Chunk.EntryPoint.ID, entry_id_);
+
+            var entry_bits = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator, this.graph.entry_points.len);
+            entry_bits.set(entry_bit);
+
+            // Create a chunk for the entry point here to ensure that the chunk is
+            // always generated even if the resulting file is empty
+            var js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes()));
+
+            js_chunk_entry.value_ptr.* = .{
+                .entry_point = .{
+                    .id = entry_bit,
+                    .source_index = source_index,
+                    .is_entry_point = true,
+                },
+                .entry_bits = entry_bits,
+                .source_index = source_index.get(),
+                .content = .{
+                    .javascript = .{},
+                },
+            };
+        }
+        var file_entry_bits: []AutoBitSet = this.graph.files.items(.entry_bits);
+
+        // Figure out which JS files are in which chunk
+        for (this.graph.reachable_files) |source_index| {
+            if (this.graph.files_live.isSet(source_index.get())) {
+                var entry_bits: *AutoBitSet = &file_entry_bits[source_index.get()];
+                var js_chunk_entry = try js_chunks.getOrPut(
+                    try temp_allocator.dupe(u8, entry_bits.bytes()),
+                );
+
+                if (!js_chunk_entry.found_existing) {
+                    js_chunk_entry.value_ptr.* = .{
+                        .entry_bits = try entry_bits.clone(this.allocator),
+                        .source_index = source_index.get(),
+                        .content = .{
+                            .javascript = .{},
+                        },
+                    };
+                }
+
+                try js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, source_index.get());
+            }
+        }
+
+        js_chunks.sort(strings.StringArrayByIndexSorter.init(js_chunks.keys()));
+
+        var chunks: []Chunk = js_chunks.values();
+
+        var entry_point_chunk_indices: []u32 = this.graph.files.items(.entry_point_chunk_index);
+        // Map from the entry point file to this chunk. We will need this later if
+        // a file contains a dynamic import to this entry point, since we'll need
+        // to look up the path for this chunk to use with the import.
+        for (chunks) |*chunk, chunk_id| {
+            if (chunk.entry_point.is_entry_point) {
+                entry_point_chunk_indices[chunk.entry_point.source_index] = @truncate(u32, chunk_id);
+            }
+        }
+
+        // TODO: -- Rest of this function ---
+
+        return chunks;
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
@@ -2758,6 +2789,12 @@ const LinkerContext = struct {
         // has to happen after tree shaking because there is an implicit dependency
         // between live parts within the same file. All liveness has to be computed
         // first before determining which entry points can reach which files.
+        var file_entry_bits: []AutoBitSet = c.graph.files.items(.entry_bits);
+        if (AutoBitSet.needsDynamic(entry_points.len)) {
+            for (file_entry_bits) |*bits| {
+                bits.* = try AutoBitSet.initEmpty(c.allocator, entry_points.len);
+            }
+        }
 
         for (entry_points) |entry_point, i| {
             c.markFileReachableForCodeSplitting(
@@ -2767,6 +2804,7 @@ const LinkerContext = struct {
                 0,
                 parts,
                 import_records,
+                file_entry_bits,
             );
         }
     }
@@ -2779,6 +2817,7 @@ const LinkerContext = struct {
         distance: u32,
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
+        file_entry_bits: []AutoBitSet,
     ) void {
         if (!c.graph.files_live.isSet(source_index))
             return;
@@ -2791,10 +2830,10 @@ const LinkerContext = struct {
         const out_dist = distance + 1;
 
         // Don't mark this file more than once
-        if (c.graph.file_entry_bits.isSet(source_index, entry_points_count) and !traverse_again)
+        if (file_entry_bits[source_index].isSet(source_index, entry_points_count) and !traverse_again)
             return;
 
-        c.graph.file_entry_bits.set(source_index, entry_points_count);
+        file_entry_bits[source_index].set(source_index, entry_points_count);
 
         if (comptime bun.Environment.allow_assert)
             debug(
@@ -2816,6 +2855,7 @@ const LinkerContext = struct {
                     out_dist,
                     parts,
                     import_records,
+                    file_entry_bits,
                 );
             }
         }
@@ -2830,6 +2870,7 @@ const LinkerContext = struct {
                         out_dist,
                         parts,
                         import_records,
+                        file_entry_bits,
                     );
                 }
             }
@@ -3785,5 +3826,113 @@ pub const ImportTracker = struct {
         value: ImportTracker = .{},
         import_data: []ImportData = &.{},
         tracker: *ImportTracker,
+    };
+};
+
+pub const PathTemplate = struct {
+    data: string = "",
+    placeholder: Placeholder,
+
+    pub const Placeholder = struct {
+        dir: []const u8 = null,
+        name: []const u8 = null,
+        ext: []const u8 = null,
+        hash: []const u8 = null,
+    };
+};
+
+pub const Chunk = struct {
+    /// This is a random string and is used to represent the output path of this
+    /// chunk before the final output path has been computed.
+    unique_key: string = "",
+
+    files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    entry_bits: AutoBitSet = .{},
+
+    final_rel_path: string = "",
+
+    /// For code splitting
+    cross_chunk_imports: []Import = &.{},
+
+    content: Content,
+
+    entry_point: Chunk.EntryPoint = .{},
+
+    is_executable: bool = false,
+
+    pub const IntermediateOutput = union(enum) {
+        /// If the chunk has references to other chunks, then "pieces" contains the
+        /// contents of the chunk. Another joiner
+        /// will have to be constructed later when merging the pieces together.
+        pieces: bun.BabyList(OutputPiece),
+
+        /// If the chunk doesn't have any references to other chunks, then
+        /// "joiner" contains the contents of the chunk. This is more efficient
+        /// because it avoids doing a join operation twice.
+        joiner: *bun.Joiner,
+    };
+
+    pub const OutputPiece = struct {
+        // layed out like this so it takes up the same amount of space as a []const u8
+        data_ptr: [*]const u8 = undefined,
+        data_len: u32 = 0,
+
+        index: OutputPieceIndex = .{},
+
+        pub inline fn data(this: OutputPiece) []const u8 {
+            return this.data_ptr[0..this.data_len];
+        }
+    };
+
+    pub const OutputPieceIndex = packed struct {
+        index: u30 = 0,
+
+        kind: Kind = Kind.none,
+
+        pub const Kind = enum(u2) {
+            /// The "kind" may be "none" in which case there is one piece
+            /// with data and no chunk index. For example, the chunk may not contain any
+            /// imports.
+            none,
+
+            asset,
+            chunk,
+        };
+    };
+
+    pub const EntryPoint = packed struct(u64) {
+        source_index: Index.Int = 0,
+        entry_point_id: ID = 0,
+        is_entry_point: bool = false,
+
+        // so it fits in a 64-bit integer
+        pub const ID = u31;
+    };
+
+    pub const Import = struct {
+        chunk_index: Index.Int = 0,
+        import_kind: ImportKind,
+    };
+
+    pub const CrossChunkImportItem = struct {
+        export_alias: string = "",
+        ref: Ref = Ref.None,
+
+        pub const List = []CrossChunkImportItem;
+    };
+
+    pub const JavaScriptChunk = struct {
+        files_in_chunk_order: []const Index.Int = &.{},
+        parts_in_chunk_in_order: []const PartRange = &.{},
+
+        // for code splitting
+        exports_to_other_chunks: std.ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) = .{},
+        imports_from_other_chunks: std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImportItem.List, Index.ArrayHashCtx, false) = .{},
+        cross_chunk_prefix_stmts: BabyList(Stmt) = .{},
+        cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
+    };
+
+    pub const Content = union(enum) {
+        javascript: JavaScriptChunk,
     };
 };

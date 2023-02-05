@@ -247,6 +247,8 @@ public:
     Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
     JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
 
+    JSFunction* bunSleepThenCallback() { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
+
     JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
@@ -453,6 +455,7 @@ private:
     LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
     LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
+    LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

@@ -1276,7 +1276,7 @@ extern "C"
     return uwsReq->getYield();
   }
 
-  void uws_req_set_field(uws_req_t *res, bool yield)
+  void uws_req_set_yield(uws_req_t *res, bool yield)
   {
     uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
     return uwsReq->setYield(yield);
@@ -1462,9 +1462,10 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
     }
-    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
   }
   
   void uws_res_cork(int ssl, uws_res_t *res, void *ctx,

@@ -108,6 +108,7 @@
 #include "ModuleLoader.h"
 
 #include "ZigGeneratedClasses.h"
+#include "JavaScriptCore/DateInstance.h"
 
 #include "BunPlugin.h"
 
@@ -713,7 +714,7 @@ JSC_DEFINE_CUSTOM_GETTER(lazyProcessEnvGetter,
         globalObject->processEnvObject());
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
+JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -741,7 +742,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
+JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -788,6 +789,45 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
         arguments = JSValue(argumentsArray);
     }
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunSleepThenCallback,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    RELEASE_ASSERT(callFrame->argumentCount() == 1);
+    JSPromise* promise = jsCast<JSC::JSPromise*>(callFrame->argument(0));
+    RELEASE_ASSERT(promise);
+
+    promise->resolve(globalObject, JSC::jsUndefined());
+
+    return JSC::JSValue::encode(promise);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue millisecondsValue = callFrame->argument(0);
+
+    if (millisecondsValue.inherits<JSC::DateInstance>()) {
+        auto now = MonotonicTime::now();
+        auto milliseconds = jsCast<JSC::DateInstance*>(millisecondsValue)->internalNumber() - now.approximateWallTime().secondsSinceEpoch().milliseconds();
+        millisecondsValue = JSC::jsNumber(milliseconds > 0 ? milliseconds : 0);
+    }
+
+    if (!millisecondsValue.isNumber()) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "sleep expects a number (milliseconds)"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(global->bunSleepThenCallback()), JSC::JSValue::encode(millisecondsValue), JSValue::encode(promise));
+    return JSC::JSValue::encode(promise);
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -2490,6 +2530,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "emitReadable"_s, WebCore::jsReadable_emitReadable_, ImplementationVisibility::Public));
         });
 
+    m_bunSleepThenCallback.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "onSleep"_s, functionBunSleepThenCallback, ImplementationVisibility::Public));
+        });
+
     m_performMicrotaskVariadicFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
@@ -3344,6 +3389,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
 
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "sleep"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunSleep, ImplementationVisibility::Public, NoIntrinsic,
+                JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "env"_s);
             object->putDirectCustomAccessor(vm, identifier,
                 JSC::CustomGetterSetter::create(vm, lazyProcessEnvGetter, lazyProcessEnvSetter),
@@ -3529,6 +3581,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_requireResolveFunctionStructure.visit(visitor);
     thisObject->m_resolveFunctionPrototype.visit(visitor);
     thisObject->m_dnsObject.visit(visitor);
+    thisObject->m_bunSleepThenCallback.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

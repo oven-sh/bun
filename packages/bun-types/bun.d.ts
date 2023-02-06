@@ -767,7 +767,7 @@ declare module "bun" {
      *    const query = UserQuery;
      *    ```
      */
-    macros?: MacroMap;
+    macro?: MacroMap;
 
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
@@ -1785,7 +1785,7 @@ declare module "bun" {
    *
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(path: string, options?: BlobPropertyBag): FileBlob;
+  export function file(path: string | URL, options?: BlobPropertyBag): FileBlob;
 
   /**
    * `Blob` that leverages the fastest system calls available to operate on files.
@@ -2150,6 +2150,40 @@ declare module "bun" {
      */
     static readonly algorithms: SupportedCryptoAlgorithms[];
   }
+
+  /**
+   * Resolve a `Promise` after milliseconds. This is like
+   * {@link setTimeout} except it returns a `Promise`.
+   * 
+   * @param ms milliseconds to delay resolving the promise. This is a minimum
+   * number. It may take longer. If a {@link Date} is passed, it will sleep until the
+   * {@link Date} is reached.
+   * 
+   * @example 
+   * ## Sleep for 1 second
+   * ```ts
+   * import { sleep } from "bun";
+   * 
+   * await sleep(1000);
+   * ```
+   * ## Sleep for 10 milliseconds
+   * ```ts
+   * await Bun.sleep(10);
+   * ```
+   * ## Sleep until `Date`
+   * 
+   * ```ts
+   * const target = new Date();
+   * target.setSeconds(target.getSeconds() + 1);
+   * await Bun.sleep(target);
+   * ```
+   * Internally, `Bun.sleep` is the equivalent of
+   * ```ts
+   * await new Promise((resolve) => setTimeout(resolve, ms));
+   * ```
+   * As always, you can use `Bun.sleep` or the imported `sleep` function interchangeably.
+   */
+  export function sleep(ms: number | Date): Promise<void>;
 
   /**
    * Sleep the thread for a given number of milliseconds

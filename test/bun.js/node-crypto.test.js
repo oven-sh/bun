@@ -21,3 +21,9 @@ it("crypto.createHmac", () => {
 
   expect(result).toBe("bp7ym3X//Ft6uuUn1Y/a2y/kLnIZARl2kXNDBl9Y7Uo=");
 });
+
+it("web crypto", async () => {
+  let bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  await crypto.subtle.digest("SHA-256", bytes);
+});

@@ -89,3 +89,49 @@ it("setTimeout(() => {}, 0)", async () => {
   });
   expect(ranFirst).toBe(-1);
 });
+
+it("Bun.sleep", async () => {
+  var sleeps = 0;
+  await Bun.sleep(0);
+  const start = performance.now();
+  sleeps++;
+  await Bun.sleep(1);
+  sleeps++;
+  await Bun.sleep(2);
+  sleeps++;
+  const end = performance.now();
+  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+
+  expect(sleeps).toBe(3);
+});
+
+it("Bun.sleep propagates exceptions", async () => {
+  try {
+    await Bun.sleep(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
+});
+
+it("Bun.sleep works with a Date object", async () => {
+  var ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 10);
+  const now = performance.now();
+  await Bun.sleep(ten_ms);
+  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+});
+
+it("node.js timers/promises setTimeout propagates exceptions", async () => {
+  const { setTimeout } = require("timers/promises");
+  try {
+    await setTimeout(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
+});

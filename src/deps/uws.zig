@@ -946,7 +946,7 @@ pub const Request = opaque {
         return uws_req_get_yield(req);
     }
     pub fn setYield(req: *Request, yield: bool) void {
-        uws_req_set_field(req, yield);
+        uws_req_set_yield(req, yield);
     }
     pub fn url(req: *Request) []const u8 {
         var ptr: [*]const u8 = undefined;
@@ -975,7 +975,7 @@ pub const Request = opaque {
 
     extern fn uws_req_is_ancient(res: *Request) bool;
     extern fn uws_req_get_yield(res: *Request) bool;
-    extern fn uws_req_set_field(res: *Request, yield: bool) void;
+    extern fn uws_req_set_yield(res: *Request, yield: bool) void;
     extern fn uws_req_get_url(res: *Request, dest: *[*]const u8) usize;
     extern fn uws_req_get_method(res: *Request, dest: *[*]const u8) usize;
     extern fn uws_req_get_header(res: *Request, lower_case_header: [*]const u8, lower_case_header_length: usize, dest: *[*]const u8) usize;

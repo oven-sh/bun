@@ -1,5 +1,5 @@
 // HUGE thanks to:
-// - @williamstein and https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js
+// - @williamstein and https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js
 // - @syrusakbary for wasmer-js https://github.com/wasmerio/wasmer-js
 // - Gus Caplan for node-wasi https://github.com/devsnek/node-wasi
 //

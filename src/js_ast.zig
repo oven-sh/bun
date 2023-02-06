@@ -875,6 +875,21 @@ pub const Symbol = struct {
         // "Ref" for more detail.
         symbols_for_source: NestedList = NestedList{},
 
+        pub fn assignChunkIndex(this: *Map, decls_: DeclaredSymbol.List, chunk_index: u32) void {
+            const Iterator = struct {
+                map: *Map,
+                chunk_index: u32,
+
+                pub fn next(self: @This(), ref: Ref) void {
+                    var symbol = self.map.get(ref).?;
+                    symbol.chunk_index = self.chunk_index;
+                }
+            };
+            var decls = decls_;
+
+            DeclaredSymbol.forEachTopLevelSymbol(&decls, Iterator{ .map = this, .chunk_index = chunk_index }, Iterator.next);
+        }
+
         pub fn merge(this: *Map, old: Ref, new: Ref) Ref {
             if (old.eql(new)) {
                 return new;
@@ -4731,6 +4746,73 @@ pub const DeclaredSymbol = struct {
     is_top_level: bool = false,
 
     pub const List = bun.MultiArrayList(DeclaredSymbol);
+
+    pub fn forEachTopLevelSymbol(decls_: *List, ctx: anytype, comptime Fn: anytype) void {
+        const FnType = @TypeOf(Fn);
+        const ReturnType = bun.meta.ReturnOfType(FnType);
+        var decls = decls_.slice();
+        var is_top_levels_bool = decls.items(.is_top_level);
+        var refs = decls.items(.ref);
+
+        if (comptime Environment.enableSIMD) {
+            const vector_size = 16;
+            if (refs.len >= vector_size) {
+                const refs_end = refs.ptr + (refs.len - refs.len % vector_size);
+                while (refs.ptr != refs_end) {
+                    const vec = @as(@Vector(vector_size, bool), @bitCast([vector_size]bool, is_top_levels_bool.ptr[0..vector_size]));
+
+                    if (@reduce(.Max, vec) > 0) {
+                        var j = 0;
+                        while (j < vector_size) : (j += 1) {
+                            if (vec[j]) {
+                                if (comptime ReturnType == void) {
+                                    Fn(ctx, refs[j]);
+                                } else if (Fn(ctx, refs[j])) |result| {
+                                    refs[j] = result;
+                                }
+                            }
+                        }
+                    }
+
+                    is_top_levels_bool = is_top_levels_bool[vector_size..];
+                    refs = refs[vector_size..];
+                }
+            }
+        }
+
+        const scalar = 8;
+        while (refs.len >= scalar) : (refs = refs[scalar..]) {
+            const eight: u64 = @as(u64, is_top_levels_bool[0..scalar].*);
+            if (eight == 0) {
+                is_top_levels_bool = is_top_levels_bool[scalar..];
+                continue;
+            }
+
+            comptime var j: usize = 0;
+
+            inline while (j < scalar) : (j += 1) {
+                if (is_top_levels_bool[j]) {
+                    if (comptime ReturnType == void) {
+                        Fn(ctx, refs[j]);
+                    } else if (Fn(ctx, refs[j])) |result| {
+                        refs[j] = result;
+                    }
+                }
+            }
+
+            is_top_levels_bool = is_top_levels_bool[scalar..];
+        }
+
+        while (refs.len > 0) : (refs = refs[1..]) {
+            if (comptime ReturnType == void) {
+                Fn(ctx, refs[0]);
+            } else if (Fn(ctx, refs[0])) |result| {
+                refs[0] = result;
+            }
+
+            is_top_levels_bool = is_top_levels_bool[1..];
+        }
+    }
 };
 
 pub const Dependency = struct {

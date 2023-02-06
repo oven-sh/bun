@@ -120,7 +120,9 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
                 var orig = lhs.data.e_string.*;
                 const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
-                orig.push(rhs_clone.data.e_string);
+                orig.push(
+                    rhs_clone.data.e_string,
+                );
 
                 return Expr.init(E.String, orig, lhs.loc);
             }
@@ -18803,28 +18805,34 @@ fn NewParser_(
                 var i: u32 = 0;
                 const count = @truncate(u32, parts.len);
                 while (i < count) : (i += 1) {
-                    const decls = parts[i].declared_symbols;
-                    var is_top_level_slice = decls.items(.is_top_level);
-                    var refs = decls.items(.ref);
-                    // TODO: SIMD this loop
-                    for (is_top_level_slice) |is_top_level, j| {
-                        if (is_top_level) {
+                    var decls = &parts[i].declared_symbols;
+                    var ctx_ = .{
+                        .allocator = p.allocator,
+                        .top_level_symbols_to_parts = &top_level_symbols_to_parts,
+                        .symbols = p.symbols.items,
+                        .part_index = i,
+                    };
+                    const Ctx = @TypeOf(ctx_);
+                    const Iterator = struct {
+                        pub fn next(ctx: Ctx, input: Ref) void {
                             // If this symbol was merged, use the symbol at the end of the
                             // linked list in the map. This is the case for multiple "var"
                             // declarations with the same name, for example.
-                            var ref = refs[j];
-                            while (p.symbols.items[ref.innerIndex()].link.isValid()) {
-                                ref = p.symbols.items[ref.innerIndex()].link;
+                            var ref = input;
+                            while (ctx.symbols[ref.innerIndex()].link.isValid()) {
+                                ref = ctx.symbols[ref.innerIndex()].link;
                             }
 
-                            var entry = top_level_symbols_to_parts.getOrPut(p.allocator, ref) catch unreachable;
+                            var entry = ctx.top_level_symbols_to_parts.getOrPut(ctx.allocator, ref) catch unreachable;
                             if (!entry.found_existing) {
                                 entry.value_ptr.* = .{};
                             }
 
-                            entry.value_ptr.push(p.allocator, @truncate(u32, i)) catch unreachable;
+                            entry.value_ptr.push(ctx.allocator, @truncate(u32, ctx.part_index)) catch unreachable;
                         }
-                    }
+                    };
+
+                    DeclaredSymbol.forEachTopLevelSymbol(&decls, ctx_, Iterator.next);
                 }
 
                 // Pulling in the exports of this module always pulls in the export part

@@ -23,6 +23,8 @@ import {
   unlinkSync,
   mkdtempSync,
   constants,
+  Dirent,
+  Stats,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -766,4 +768,13 @@ it("fs.constants", () => {
   expect(constants.S_IRWXO).toBeDefined();
   expect(constants.S_IROTH).toBeDefined();
   expect(constants.S_IWOTH).toBeDefined();
+});
+
+
+it("fs.Dirent", () => {
+  expect(Dirent).toBeDefined();
+});
+
+it("fs.Stats", () => {
+  expect(Stats).toBeDefined();
 });

@@ -63,7 +63,7 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
-    Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>> m_entries;
+    Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
 };
 

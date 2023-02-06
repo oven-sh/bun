@@ -761,7 +761,7 @@ it("Buffer.alloc", () => {
     // Test unmatched surrogates not producing invalid utf8 output
     // ef bf bd = utf-8 representation of unicode replacement character
     // see https://codereview.chromium.org/121173009/
-    const buf = Buffer.from("ab\ud800cd", "utf8");
+    let buf = Buffer.from("ab\ud800cd", "utf8");
     assert.strictEqual(buf[0], 0x61);
     assert.strictEqual(buf[1], 0x62);
     assert.strictEqual(buf[2], 0xef);
@@ -769,6 +769,24 @@ it("Buffer.alloc", () => {
     assert.strictEqual(buf[4], 0xbd);
     assert.strictEqual(buf[5], 0x63);
     assert.strictEqual(buf[6], 0x64);
+
+    buf = Buffer.from("abcd\ud800", "utf8");
+    expect(buf[0]).toBe(0x61);
+    expect(buf[1]).toBe(0x62);
+    expect(buf[2]).toBe(0x63);
+    expect(buf[3]).toBe(0x64);
+    expect(buf[4]).toBe(0xef);
+    expect(buf[5]).toBe(0xbf);
+    expect(buf[6]).toBe(0xbd);
+
+    buf = Buffer.from("\ud800abcd", "utf8");
+    expect(buf[0]).toBe(0xef);
+    expect(buf[1]).toBe(0xbf);
+    expect(buf[2]).toBe(0xbd);
+    expect(buf[3]).toBe(0x61);
+    expect(buf[4]).toBe(0x62);
+    expect(buf[5]).toBe(0x63);
+    expect(buf[6]).toBe(0x64);
   }
 
   {

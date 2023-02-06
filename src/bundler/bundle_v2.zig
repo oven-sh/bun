@@ -217,6 +217,38 @@ pub const BundleV2 = struct {
     }
 
     pub fn findReachableFiles(this: *BundleV2) ![]Index {
+        const Visitor = struct {
+            reachable: std.ArrayList(Index),
+            visited: bun.bit_set.DynamicBitSet = undefined,
+            all_import_records: []ImportRecord.List,
+
+            // Find all files reachable from all entry points. This order should be
+            // deterministic given that the entry point order is deterministic, since the
+            // returned order is the postorder of the graph traversal and import record
+            // order within a given file is deterministic.
+            pub fn visit(v: *@This(), source_index: Index) void {
+                if (source_index.isInvalid()) return;
+                if (v.visited.isSet(source_index.get())) {
+                    return;
+                }
+                v.visited.set(source_index.get());
+
+                const import_record_list_id = source_index;
+                // when there are no import records, v index will be invalid
+                if (import_record_list_id.get() < v.all_import_records.len) {
+                    for (v.all_import_records[import_record_list_id.get()].slice()) |*import_record| {
+                        const other_source = import_record.source_index;
+                        if (other_source.isValid()) {
+                            v.visit(other_source);
+                        }
+                    }
+                }
+
+                // Each file must come after its dependencies
+                v.reachable.append(source_index) catch unreachable;
+            }
+        };
+
         var visitor = Visitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
@@ -300,6 +332,7 @@ pub const BundleV2 = struct {
         estimated_input_lines_of_code: *usize,
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
+        unique_key: u64,
     ) !?Schema.JavascriptBundleContainer {
         _ = try bundler.fs.fs.openTmpDir();
         var tmpname_buf: [64]u8 = undefined;
@@ -481,6 +514,7 @@ pub const BundleV2 = struct {
 
         this.graph.pool.pool.schedule(batch);
         this.waitForParse();
+
         this.linker.allocator = this.bundler.allocator;
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
@@ -489,6 +523,7 @@ pub const BundleV2 = struct {
             this,
             this.graph.entry_points.items,
             try this.findReachableFiles(),
+            std.mem.asBytes(&unique_key),
         );
 
         return null;
@@ -988,38 +1023,6 @@ const ParseTask = struct {
             BundleV2.onParseTaskComplete,
             .task,
         );
-    }
-};
-
-const Visitor = struct {
-    reachable: std.ArrayList(Index),
-    visited: bun.bit_set.DynamicBitSet = undefined,
-    all_import_records: []ImportRecord.List,
-
-    // Find all files reachable from all entry points. This order should be
-    // deterministic given that the entry point order is deterministic, since the
-    // returned order is the postorder of the graph traversal and import record
-    // order within a given file is deterministic.
-    pub fn visit(this: *Visitor, source_index: Index) void {
-        if (source_index.isInvalid()) return;
-        if (this.visited.isSet(source_index.get())) {
-            return;
-        }
-        this.visited.set(source_index.get());
-
-        const import_record_list_id = source_index;
-        // when there are no import records, this index will be invalid
-        if (import_record_list_id.get() < this.all_import_records.len) {
-            for (this.all_import_records[import_record_list_id.get()].slice()) |*import_record| {
-                const other_source = import_record.source_index;
-                if (other_source.isValid()) {
-                    this.visit(other_source);
-                }
-            }
-        }
-
-        // Each file must come after its dependencies
-        this.reachable.append(source_index) catch unreachable;
     }
 };
 
@@ -1529,6 +1532,7 @@ const LinkerContext = struct {
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
     loop: EventLoop,
+    unique_key_buf: []u8 = "",
 
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
@@ -1563,7 +1567,13 @@ const LinkerContext = struct {
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
     }
 
-    pub noinline fn link(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index, reachable: []Index) !void {
+    pub noinline fn link(
+        this: *LinkerContext,
+        bundle: *BundleV2,
+        entry_points: []Index,
+        reachable: []Index,
+        unique_key: u64,
+    ) !void {
         try this.load(bundle, entry_points, reachable);
 
         try this.scanImportsAndExports();
@@ -1575,12 +1585,16 @@ const LinkerContext = struct {
 
         try this.treeShakingAndCodeSplitting();
 
-        const chunks = try this.computeChunks();
+        const chunks = try this.computeChunks(unique_key);
+        _ = chunks;
 
         this.graph.symbols.followAll();
     }
 
-    pub noinline fn computeChunks(this: *LinkerContext) ![]Chunk {
+    pub noinline fn computeChunks(
+        this: *LinkerContext,
+        unique_key: u64,
+    ) ![]Chunk {
         var stack_fallback = std.heap.stackFallback(4096, this.allocator);
         var stack_all = stack_fallback.get();
         var arena = std.heap.ArenaAllocator.init(stack_all);
@@ -1654,9 +1668,206 @@ const LinkerContext = struct {
             }
         }
 
-        // TODO: -- Rest of this function ---
+        // Determine the order of JS files (and parts) within the chunk ahead of time
+        try this.findImportedAllPartsInJSOrder(temp_allocator, chunks);
+
+        const unique_key_item_len = std.fmt.count("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
+        var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len);
+        this.unique_key_buf = unique_key_builder.allocatedSlice();
+        errdefer {
+            unique_key_builder.deinit(this.allocator);
+            this.unique_key_buf = "";
+        }
+
+        var chunk_id: usize = 0;
+        for (chunks) |*chunk| {
+            defer chunk_id += 1;
+
+            // Assign a unique key to each chunk. This key encodes the index directly so
+            // we can easily recover it later without needing to look it up in a map. The
+            // last 8 numbers of the key are the chunk index.
+            chunk.unique_key = unique_key_builder.fmt("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunk_id });
+
+            if (chunk.entry_point.is_entry_point) {
+                chunk.template = PathTemplate.file;
+                const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.source_index].slice());
+                chunk.template.placeholder.name = pathname.base;
+                chunk.template.placeholder.ext = "js";
+                chunk.template.placeholder.dir = pathname.dir;
+            } else {
+                chunk.template = PathTemplate.chunk;
+            }
+        }
 
         return chunks;
+    }
+
+    pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
+        var part_ranges_shared = std.ArrayList(PartRange).init(this.allocator);
+        var parts_prefix_shared = std.ArrayList(PartRange).init(this.allocator);
+        defer part_ranges_shared.deinit();
+        defer parts_prefix_shared.deinit();
+        for (chunks) |*chunk| {
+            try this.findImportedPartsInJSOrder(
+                temp_allocator,
+                chunk,
+                &part_ranges_shared,
+                &parts_prefix_shared,
+            );
+        }
+    }
+
+    pub fn findImportedPartsInJSOrder(
+        this: *LinkerContext,
+        chunk: *Chunk,
+        part_ranges_shared: *std.ArrayList(PartRange),
+        parts_prefix_shared: *std.ArrayList(PartRange),
+    ) !void {
+        var chunk_order_array = try std.ArrayList(Chunk.Order).initCapacity(this.allocator, chunk.files_with_parts_in_chunk.count());
+        defer chunk_order_array.deinit();
+        var distances = this.graph.files.items(.distance_from_entry_point);
+        for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
+            chunk_order_array.appendAssumeCapacity(
+                .{
+                    .source_index = source_index,
+                    .distance = distances[source_index],
+
+                    .tie_breaker = this.graph.stable_source_indices[source_index],
+                },
+            );
+        }
+
+        Chunk.Order.sort(chunk_order_array.items);
+
+        const Visitor = struct {
+            entry_bits: *const AutoBitSet,
+            wraps: []const WrapKind,
+            parts: [][]js_ast.Part,
+            import_records: [][]ImportRecord,
+            files: std.ArrayList(Index.Int) = undefined,
+            part_ranges: std.ArrayList(PartRange) = undefined,
+            visited: std.AutoHashMap(Index.Int, void) = undefined,
+            parts_prefix: std.ArrayList(PartRange) = undefined,
+            c: *LinkerContext,
+
+            fn appendOrExtendRange(
+                ranges: *std.ArrayList(PartRange),
+                source_index: Index.Int,
+                part_index: Index.Int,
+            ) void {
+                if (ranges.items.len > 0) {
+                    var last_range = &ranges.items[ranges.items.len - 1];
+                    if (last_range.source_index == source_index and last_range.part_index_end == part_index) {
+                        last_range.part_index_end += 1;
+                        return;
+                    }
+                }
+
+                ranges.append(.{
+                    .source_index = source_index,
+                    .part_index_start = part_index,
+                    .part_index_end = part_index + 1,
+                }) catch unreachable;
+            }
+
+            pub fn visit(v: *@This(), source_index: Index.Int) void {
+                if (source_index.isInvalid()) return;
+                const visited_entry = v.visited.getOrPut(source_index.get()) catch unreachable;
+                if (visited_entry.found_existing) return;
+
+                var is_file_in_chunk = v.entry_bits.isSet(
+                    source_index,
+                );
+
+                // Wrapped files can't be split because they are all inside the wrapper
+                const can_be_split = v.wraps[source_index] == .none;
+
+                const parts = v.parts[source_index];
+                if (can_be_split and is_file_in_chunk and parts[js_ast.namespace_export_part_index].is_live) {
+                    appendOrExtendRange(&v.part_ranges, source_index, js_ast.namespace_export_part_index);
+                }
+
+                const records = v.import_records[source_index];
+
+                for (parts) |*part, part_index_| {
+                    const part_index = @truncate(u32, part_index_);
+                    const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
+
+                    for (part.import_record_indices.slice()) |record_id| {
+                        const record = &records[record_id];
+                        if (record.source_index.isValid() and (record.kind == .stmt or is_part_in_this_chunk)) {
+                            if (v.c.isExternalDynamicImport(record, source_index)) {
+                                // Don't follow import() dependencies
+
+                                continue;
+                            }
+
+                            v.visit(record.source_index.get());
+                        }
+                    }
+
+                    // Then include this part after the files it imports
+                    if (is_part_in_this_chunk) {
+                        is_file_in_chunk = true;
+
+                        // if (can_be_split and part_index != js_ast.namespace_export_part_index and v.c.shouldIncludePart())
+                        var js_parts = if (source_index == Index.runtime.value)
+                            &v.parts_prefix
+                        else
+                            &v.part_ranges;
+
+                        appendOrExtendRange(js_parts, source_index, part_index);
+                    }
+                }
+
+                if (is_file_in_chunk) {
+                    v.files.append(source_index) catch unreachable;
+
+                    // CommonJS files are all-or-nothing so all parts must be contiguous
+                    if (!can_be_split) {
+                        v.parts_prefix.append(
+                            .{
+                                .source_index = source_index,
+                                .part_index_begin = 0,
+                                .part_index_end = @truncate(u32, parts.len),
+                            },
+                        ) catch unreachable;
+                    }
+                }
+            }
+        };
+
+        part_ranges_shared.clearRetainingCapacity();
+        parts_prefix_shared.clearRetainingCapacity();
+
+        var visitor = Visitor{
+            .files = std.ArrayList(Index.Int).init(this.allocator),
+            .part_ranges = part_ranges_shared.*,
+            .parts_prefix = parts_prefix_shared.*,
+            .visited = std.AutoHashMap(Index.Int, void).init(this.allocator),
+            .wraps = this.graph.meta.items(.wrap),
+            .parts = this.graph.ast.items(.parts),
+            .import_records = this.graph.ast.items(.import_records),
+            .entry_bits = chunk.entryBits(),
+            .c = this,
+        };
+        defer {
+            part_ranges_shared.* = visitor.part_ranges_shared;
+            parts_prefix_shared.* = visitor.parts_prefix_shared;
+            visitor.visited.deinit();
+            visitor.parts_prefix.deinit();
+        }
+
+        visitor.visit(Index.runtime.value);
+        for (chunk_order_array.items) |order| {
+            visitor.visit(order.source_index);
+        }
+
+        chunk.content.javascript.files_in_chunk_order = visitor.files.items;
+        var parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
+        std.mem.copy(PartRange, parts_in_chunk_order, visitor.parts_prefix.items);
+        std.mem.copy(PartRange, parts_in_chunk_order[visitor.parts_prefix.items.len..], visitor.part_ranges.items);
+        chunk.content.javascript.parts_in_chunk_order = parts_in_chunk_order;
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
@@ -3834,10 +4045,24 @@ pub const PathTemplate = struct {
     placeholder: Placeholder,
 
     pub const Placeholder = struct {
-        dir: []const u8 = null,
-        name: []const u8 = null,
-        ext: []const u8 = null,
-        hash: []const u8 = null,
+        dir: []const u8 = "",
+        name: []const u8 = "",
+        ext: []const u8 = "",
+        hash: ?u64 = null,
+    };
+
+    pub const chunk = PathTemplate{
+        .data = "./chunk-[hash].[ext]",
+        .placeholder = .{
+            .name = "chunk",
+            .ext = "js",
+            .dir = "",
+        },
+    };
+
+    pub const file = PathTemplate{
+        .data = "./[name]-[hash].[ext]",
+        .placeholder = .{},
     };
 };
 
@@ -3847,9 +4072,12 @@ pub const Chunk = struct {
     unique_key: string = "",
 
     files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+
+    /// We must not keep pointers to this type until all chunks have been allocated.
     entry_bits: AutoBitSet = .{},
 
     final_rel_path: string = "",
+    template: PathTemplate = .{},
 
     /// For code splitting
     cross_chunk_imports: []Import = &.{},
@@ -3859,6 +4087,29 @@ pub const Chunk = struct {
     entry_point: Chunk.EntryPoint = .{},
 
     is_executable: bool = false,
+
+    pub inline fn entryBits(this: *const Chunk) *const AutoBitSet {
+        return &this.entry_bits;
+    }
+
+    pub const Order = struct {
+        source_index: Index.Int = 0,
+        distance: u32 = 0,
+        tie_breaker: u32 = 0,
+
+        pub fn lessThan(_: @This(), a: Order, b: Order) bool {
+            if (a.distance < b.distance) return true;
+            if (a.distance > b.distance) return false;
+            return a.tie_breaker < b.tie_breaker;
+        }
+
+        /// Sort so files closest to an entry point come first. If two files are
+        /// equidistant to an entry point, then break the tie by sorting on the
+        /// stable source index derived from the DFS over all entry points.
+        pub fn sort(a: []Order) void {
+            std.sort.sort(Order, a, Order{}, lessThan);
+        }
+    };
 
     pub const IntermediateOutput = union(enum) {
         /// If the chunk has references to other chunks, then "pieces" contains the

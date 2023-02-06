@@ -187,6 +187,7 @@ pub const BunCommand = struct {
                 &estimated_input_lines_of_code_,
                 ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
+                std.crypto.random.int(u64),
             );
 
             // const estimated_input_lines_of_code = estimated_input_lines_of_code_;

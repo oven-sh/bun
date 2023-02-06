@@ -1498,6 +1498,9 @@ pub const JSNodeJSFS = struct {
             @compileLog("Expected NodeJSFS.rmSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.rmSync)));
         if (@TypeOf(NodeJSFS.stat) != CallbackType)
             @compileLog("Expected NodeJSFS.stat to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.stat)));
+        if (@TypeOf(NodeJSFS.getStats) != GetterType)
+            @compileLog("Expected NodeJSFS.getStats to be a getter");
+
         if (@TypeOf(NodeJSFS.statSync) != CallbackType)
             @compileLog("Expected NodeJSFS.statSync to be a callback but received " ++ @typeName(@TypeOf(NodeJSFS.statSync)));
         if (@TypeOf(NodeJSFS.symlink) != CallbackType)
@@ -1559,6 +1562,7 @@ pub const JSNodeJSFS = struct {
             @export(NodeJSFS.futimes, .{ .name = "NodeJSFSPrototype__futimes" });
             @export(NodeJSFS.futimesSync, .{ .name = "NodeJSFSPrototype__futimesSync" });
             @export(NodeJSFS.getDirent, .{ .name = "NodeJSFSPrototype__getDirent" });
+            @export(NodeJSFS.getStats, .{ .name = "NodeJSFSPrototype__getStats" });
             @export(NodeJSFS.lchmod, .{ .name = "NodeJSFSPrototype__lchmod" });
             @export(NodeJSFS.lchmodSync, .{ .name = "NodeJSFSPrototype__lchmodSync" });
             @export(NodeJSFS.lchown, .{ .name = "NodeJSFSPrototype__lchown" });

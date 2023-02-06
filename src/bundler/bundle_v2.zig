@@ -3234,6 +3234,8 @@ const LinkerContext = struct {
                 continue;
             }
 
+            var js = &chunk.content.javascript;
+
             var chunk_meta = &chunk_metas[chunk_index];
             // Find all uses in this chunk of symbols from other chunks
             for (chunk_meta.imports.keys()) |import_ref| {
@@ -3241,7 +3243,30 @@ const LinkerContext = struct {
 
                 // Ignore uses that aren't top-level symbols
                 if (symbol.chunk_index) |other_chunk_index| {
-                    if (other_chunk_index != chunk_index) {}
+                    if (@as(usize, other_chunk_index) != chunk_index) {
+                        {
+                            var entry = try js.imports_from_other_chunks.getOrPutValue(c.allocator, .{});
+                            try entry.value_ptr.push(c.allocator, .{
+                                .ref = import_ref,
+                            });
+                        }
+
+                        chunk_metas[other_chunk_index].exports.put(import_ref, void{}) catch unreachable;
+                    }
+                }
+            }
+
+            // If this is an entry point, make sure we import all chunks belonging to
+            // this entry point, even if there are no imports. We need to make sure
+            // these chunks are evaluated for their side effects too.
+            if (chunk.entry_point.is_entry_point) {
+                for (chunks) |*other_chunk, other_chunk_index| {
+                    if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
+
+                    if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
+                        var imports = js.imports_from_other_chunks.get(c.allocator, @truncate(u32, other_chunk_index)) orelse .{};
+                        try js.imports_from_other_chunks.put(c.allocator, other_chunk_index, imports);
+                    }
                 }
             }
         }
@@ -4329,7 +4354,7 @@ pub const Chunk = struct {
 
         pub fn lessThan(_: @This(), a: Order, b: Order) bool {
             if (a.distance < b.distance) return true;
-            if (a.distance > b.distance) return false;
+
             return a.tie_breaker < b.tie_breaker;
         }
 
@@ -4416,7 +4441,7 @@ pub const CrossChunkImport = struct {
         export_alias: string = "",
         ref: Ref = Ref.None,
 
-        pub const List = []Item;
+        pub const List = bun.BabyList(Item);
 
         pub fn lessThan(_: void, a: CrossChunkImport.Item, b: CrossChunkImport.Item) bool {
             return strings.order(a.export_alias, b.export_alias) == .lt;
@@ -4448,15 +4473,15 @@ pub const CrossChunkImport = struct {
             const exports_to_other_chunks = &chunk.content.javascript.exports_to_other_chunks;
             // TODO: do we need to clone this array?
             var import_items = import_items_list[i];
-            for (import_items) |*item| {
+            for (import_items.slice()) |*item| {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.sort(void, import_items, void{}, CrossChunkImport.Item.lessThan);
+            std.sort.sort(void, import_items.slice(), void{}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
-                .sorted_import_items = import_items,
+                .sorted_import_items = import_items.slice(),
             }) catch unreachable;
         }
 

@@ -1157,35 +1157,39 @@ pub const JSMeta = struct {
     /// entry point files have one of these.
     entry_point_part_index: Index = Index.invalid,
 
-    /// This is true if this file is affected by top-level await, either by having
-    /// a top-level await inside this file or by having an import/export statement
-    /// that transitively imports such a file. It is forbidden to call "require()"
-    /// on these files since they are evaluated asynchronously.
-    is_async_or_has_async_dependency: bool = false,
+    flags: Flags = .{},
 
-    wrap: WrapKind = WrapKind.none,
+    pub const Flags = packed struct {
+        wrap: WrapKind = WrapKind.none,
 
-    /// If true, we need to insert "var exports = {};". This is the case for ESM
-    /// files when the import namespace is captured via "import * as" and also
-    /// when they are the target of a "require()" call.
-    needs_exports_variable: bool = false,
+        /// This is true if this file is affected by top-level await, either by having
+        /// a top-level await inside this file or by having an import/export statement
+        /// that transitively imports such a file. It is forbidden to call "require()"
+        /// on these files since they are evaluated asynchronously.
+        is_async_or_has_async_dependency: bool = false,
 
-    /// If true, the "__export(exports, { ... })" call will be force-included even
-    /// if there are no parts that reference "exports". Otherwise this call will
-    /// be removed due to the tree shaking pass. This is used when for entry point
-    /// files when code related to the current output format needs to reference
-    /// the "exports" variable.
-    force_include_exports_for_entry_point: bool = false,
+        /// If true, we need to insert "var exports = {};". This is the case for ESM
+        /// files when the import namespace is captured via "import * as" and also
+        /// when they are the target of a "require()" call.
+        needs_exports_variable: bool = false,
 
-    /// This is set when we need to pull in the "__export" symbol in to the part
-    /// at "nsExportPartIndex". This can't be done in "createExportsForFile"
-    /// because of concurrent map hazards. Instead, it must be done later.
-    needs_export_symbol_from_runtime: bool = false,
+        /// If true, the "__export(exports, { ... })" call will be force-included even
+        /// if there are no parts that reference "exports". Otherwise this call will
+        /// be removed due to the tree shaking pass. This is used when for entry point
+        /// files when code related to the current output format needs to reference
+        /// the "exports" variable.
+        force_include_exports_for_entry_point: bool = false,
 
-    /// Wrapped files must also ensure that their dependencies are wrapped. This
-    /// flag is used during the traversal that enforces this invariant, and is used
-    /// to detect when the fixed point has been reached.
-    did_wrap_dependencies: bool = false,
+        /// This is set when we need to pull in the "__export" symbol in to the part
+        /// at "nsExportPartIndex". This can't be done in "createExportsForFile"
+        /// because of concurrent map hazards. Instead, it must be done later.
+        needs_export_symbol_from_runtime: bool = false,
+
+        /// Wrapped files must also ensure that their dependencies are wrapped. This
+        /// flag is used during the traversal that enforces this invariant, and is used
+        /// to detect when the fixed point has been reached.
+        did_wrap_dependencies: bool = false,
+    };
 };
 
 pub const Graph = struct {
@@ -1330,30 +1334,37 @@ const LinkerGraph = struct {
         const part_id = parts.len;
         try parts.push(graph.allocator, part);
         var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
-        var sliced = part.declared_symbols.slice();
-        var is_top_level = sliced.items(.is_top_level);
-        var refs = sliced.items(.ref);
-        for (is_top_level) |is_top, i| {
-            if (is_top) {
-                const ref = refs[i];
-                if (top_level_symbol_to_parts_overlay == null) {
-                    top_level_symbol_to_parts_overlay = &graph.meta.items(.top_level_symbol_to_parts_overlay)[id];
+
+        var ctx = .{
+            .graph = graph,
+            .id = id,
+            .part_id = part_id,
+            .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
+        };
+        const Ctx = @TypeOf(ctx);
+
+        const Iterator = struct {
+            pub fn next(self: *Ctx, ref: Ref) void {
+                if (self.top_level_symbol_to_parts_overlay.* == null) {
+                    self.top_level_symbol_to_parts_overlay.* = &graph.meta.items(.top_level_symbol_to_parts_overlay)[self.id];
                 }
 
-                var entry = try top_level_symbol_to_parts_overlay.?.getOrPut(graph.allocator, ref);
+                var entry = try self.top_level_symbol_to_parts_overlay.getOrPut(self.graph.allocator, ref);
                 if (!entry.found_existing) {
                     entry.value_ptr.* = try bun.from(
                         BabyList(u32),
-                        graph.allocator,
+                        self.graph.allocator,
                         &[_]u32{
-                            part_id,
+                            self.part_id,
                         },
                     );
                 } else {
-                    try entry.value_ptr.push(graph.allocator, part_id);
+                    try entry.value_ptr.push(self.graph.allocator, self.part_id);
                 }
             }
-        }
+        };
+
+        js_ast.DeclaredSymbol.forEachTopLevelSymbol(part.declared_symbols, &ctx, Iterator.next);
 
         return part_id;
     }
@@ -1586,7 +1597,8 @@ const LinkerContext = struct {
         try this.treeShakingAndCodeSplitting();
 
         const chunks = try this.computeChunks(unique_key);
-        _ = chunks;
+
+        try this.computeCrossChunkDependencies(chunks);
 
         this.graph.symbols.followAll();
     }
@@ -1845,7 +1857,7 @@ const LinkerContext = struct {
             .part_ranges = part_ranges_shared.*,
             .parts_prefix = parts_prefix_shared.*,
             .visited = std.AutoHashMap(Index.Int, void).init(this.allocator),
-            .wraps = this.graph.meta.items(.wrap),
+            .wraps = this.graph.meta.items(.flags),
             .parts = this.graph.ast.items(.parts),
             .import_records = this.graph.ast.items(.import_records),
             .entry_bits = chunk.entryBits(),
@@ -1885,15 +1897,13 @@ const LinkerContext = struct {
             var exports_kind: []js_ast.ExportsKind = this.graph.ast.items(.exports_kind);
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
             var named_imports: []js_ast.Ast.NamedImports = this.graph.ast.items(.named_imports);
-            var wraps: []WrapKind = this.graph.meta.items(.wrap);
+            var flags: []JSMeta.Flags = this.graph.meta.items(.flags);
 
             var export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             var exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             var module_refs: []?Ref = this.graph.ast.items(.module_ref);
             var symbols = &this.graph.symbols;
             defer this.graph.symbols = symbols.*;
-            var force_include_exports_for_entry_points: []bool = this.graph.meta.items(.force_include_exports_for_entry_point);
-            var needs_exports_variable: []bool = this.graph.meta.items(.needs_exports_variable);
 
             // Step 1: Figure out what modules must be CommonJS
             for (reachable) |source_index_| {
@@ -1912,7 +1922,7 @@ const LinkerContext = struct {
                     // other file is empty
                     if (other_file >= exports_kind.len) continue;
                     const other_kind = exports_kind[other_file];
-                    const other_wrap = wraps[other_file];
+                    const other_wrap = flags[other_file].wrap;
 
                     switch (record.kind) {
                         ImportKind.stmt => {
@@ -1941,16 +1951,16 @@ const LinkerContext = struct {
                                 (other_wrap == .none))
                             {
                                 exports_kind[other_file] = .cjs;
-                                wraps[other_file] = .cjs;
+                                flags[other_file].wrap = .cjs;
                             }
                         },
                         ImportKind.require =>
                         // Files that are imported with require() must be CommonJS modules
                         {
                             if (other_kind == .esm) {
-                                wraps[other_file] = .esm;
+                                flags[other_file].wrap = .esm;
                             } else {
-                                wraps[other_file] = .cjs;
+                                flags[other_file].wrap = .cjs;
                                 exports_kind[other_file] = .cjs;
                             }
                         },
@@ -1959,9 +1969,9 @@ const LinkerContext = struct {
                                 // If we're not splitting, then import() is just a require() that
                                 // returns a promise, so the imported file must be a CommonJS module
                                 if (exports_kind[other_file] == .esm) {
-                                    wraps[other_file] = .esm;
+                                    flags[other_file].wrap = .esm;
                                 } else {
-                                    wraps[other_file] = .cjs;
+                                    flags[other_file].wrap = .cjs;
                                     exports_kind[other_file] = .cjs;
                                 }
                             }
@@ -1977,7 +1987,7 @@ const LinkerContext = struct {
                 // resulting wrapper won't be invoked by other files. An exception is made
                 // for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
-                    wraps[id] = .cjs;
+                    flags[id].wrap = .cjs;
                 }
             }
 
@@ -2000,8 +2010,7 @@ const LinkerContext = struct {
             {
                 var dependency_wrapper = DependencyWrapper{
                     .linker = this,
-                    .did_wrap_dependencies = this.graph.meta.items(.did_wrap_dependencies),
-                    .wraps = wraps,
+                    .flags = flags,
                     .import_records = import_records_list,
                     .exports_kind = exports_kind,
                     .entry_point_kinds = entry_point_kinds,
@@ -2018,7 +2027,7 @@ const LinkerContext = struct {
                     // does it have a JS AST?
                     if (!(id < import_records_list.len)) continue;
 
-                    if (wraps[id] != .none) {
+                    if (flags[id].wrap != .none) {
                         dependency_wrapper.wrap(id);
                     }
 
@@ -2130,19 +2139,19 @@ const LinkerContext = struct {
                     // get minified.
                     if ((output_format == .cjs or output_format == .preserve) and
                         entry_point_kinds[source_index].isEntryPoint() and
-                        export_kind == .cjs and wraps[id] == .none)
+                        export_kind == .cjs and flags[id].wrap == .none)
                     {
                         const exports_ref = symbols.follow(exports_refs[id]);
                         const module_ref = symbols.follow(module_refs[id].?);
                         symbols.get(exports_ref).?.kind = .unbound;
                         symbols.get(module_ref).?.kind = .unbound;
-                    } else if (force_include_exports_for_entry_points[id] or export_kind != .cjs) {
-                        needs_exports_variable[id] = true;
+                    } else if (flags[id].force_include_exports_for_entry_points or export_kind != .cjs) {
+                        flags[id].needs_exports_variable = true;
                     }
 
                     // Create the wrapper part for wrapped files. This is needed by a later step.
                     this.createWrapperForFile(
-                        wraps[id],
+                        flags[id].wrap,
                         // if this one is null, the AST does not need to be wrapped.
                         this.graph.ast.items(.wrapper_ref)[id] orelse continue,
                         &wrapper_part_indices[id],
@@ -2169,13 +2178,11 @@ const LinkerContext = struct {
             var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
             var runtime_export_symbol_ref: Ref = Ref.None;
             var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
-            const wraps = this.graph.meta.items(.wrap);
+            const flags: []const JSMeta.Flags = this.graph.meta.items(.flags);
             const exports_kind = this.graph.ast.items(.exports_kind);
             const exports_refs = this.graph.ast.items(.exports_ref);
             const module_refs = this.graph.ast.items(.module_ref);
-            const needs_exports_variable = this.graph.meta.items(.needs_exports_variable);
             const named_imports = this.graph.ast.items(.named_imports);
-            const force_include_exports_for_entry_points: []bool = this.graph.meta.items(.force_include_exports_for_entry_point);
             const import_records_list = this.graph.ast.items(.import_records);
             const export_star_import_records = this.graph.ast.items(.export_star_import_records);
             for (reachable) |source_index_| {
@@ -2187,7 +2194,8 @@ const LinkerContext = struct {
 
                 const is_entry_point = entry_point_kinds[source_index].isEntryPoint();
                 const aliases = this.graph.meta.items(.sorted_and_filtered_export_aliases)[id];
-                const wrap = wraps[id];
+                const flag = flags[id];
+                const wrap = flag.wrap;
                 const export_kind = exports_kind[id];
                 const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
 
@@ -2284,7 +2292,7 @@ const LinkerContext = struct {
                 // Include the "__export" symbol from the runtime if it was used in the
                 // previous step. The previous step can't do this because it's running in
                 // parallel and can't safely mutate the "importsToBind" map of another file.
-                if (needs_exports_variable[id]) {
+                if (flag.needs_exports_variable) {
                     if (!runtime_export_symbol_ref.isValid()) {
                         runtime_export_symbol_ref = this.graph.ast.items(.module_scope)[Index.runtime.get()].?.members.get("__export").?.ref;
                     }
@@ -2341,7 +2349,7 @@ const LinkerContext = struct {
 
                 // If this is an entry point, depend on all exports so they are included
                 if (is_entry_point) {
-                    const force_include_exports = force_include_exports_for_entry_points[id];
+                    const force_include_exports = flag.force_include_exports_for_entry_point;
                     const add_wrapper = wrap != .none;
                     var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(
                         this.allocator,
@@ -2420,7 +2428,7 @@ const LinkerContext = struct {
                 var import_records = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
 
-                for (parts) |part, part_index| {
+                for (parts) |*part, part_index| {
                     var to_esm_uses: u32 = 0;
                     var to_common_js_uses: u32 = 0;
                     var runtime_require_uses: u32 = 0;
@@ -2615,7 +2623,7 @@ const LinkerContext = struct {
         var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
         ns_export_symbol_uses.ensureTotalCapacity(allocator_, export_aliases.len) catch unreachable;
 
-        const needs_exports_variable = c.graph.meta.items(.needs_exports_variable)[id];
+        const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
 
         const stmts_count =
             // 3 statements for every export
@@ -2996,17 +3004,21 @@ const LinkerContext = struct {
             );
         }
 
-        // Code splitting: Determine which entry points can reach which files. This
-        // has to happen after tree shaking because there is an implicit dependency
-        // between live parts within the same file. All liveness has to be computed
-        // first before determining which entry points can reach which files.
         var file_entry_bits: []AutoBitSet = c.graph.files.items(.entry_bits);
+        // AutoBitSet needs to be initialized if it is dynamic
         if (AutoBitSet.needsDynamic(entry_points.len)) {
             for (file_entry_bits) |*bits| {
                 bits.* = try AutoBitSet.initEmpty(c.allocator, entry_points.len);
             }
+        } else if (file_entry_bits.len > 0) {
+            // assert that the tag is correct
+            std.debug.assert(file_entry_bits[0] == .static);
         }
 
+        // Code splitting: Determine which entry points can reach which files. This
+        // has to happen after tree shaking because there is an implicit dependency
+        // between live parts within the same file. All liveness has to be computed
+        // first before determining which entry points can reach which files.
         for (entry_points) |entry_point, i| {
             c.markFileReachableForCodeSplitting(
                 entry_point,
@@ -3017,6 +3029,221 @@ const LinkerContext = struct {
                 import_records,
                 file_entry_bits,
             );
+        }
+    }
+
+    pub noinline fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
+        var js_chunks_count: usize = 0;
+        for (chunks) |*chunk| {
+            js_chunks_count += chunk.content == .javascript;
+        }
+
+        // TODO: remove this branch before release. We are keeping it to assert this code is correct
+        if (comptime !Environment.allow_assert) {
+            // No need to compute cross-chunk dependencies if there can't be any
+            if (js_chunks_count < 2)
+                return;
+        }
+
+        const ChunkMeta = struct {
+            imports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
+            exports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
+            dynamic_imports: std.ArrayHashMap(Index.Int, void, Ref.ArrayHashCtx, false),
+        };
+        var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
+        for (chunks) |*meta| {
+            // these must be global allocator
+            meta.* = .{
+                .imports = try std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+                .exports = try std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+                .dynamic_imports = try std.ArrayHashMap(Index.Int, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+            };
+        }
+        defer {
+            for (chunk_metas) |meta| {
+                meta.imports.deinit();
+                meta.exports.deinit();
+                meta.dynamic_imports.deinit();
+            }
+            c.allocators.free(chunk_metas);
+        }
+
+        const CrossChunkDependencies = struct {
+            chunk_meta: []ChunkMeta,
+            parts: [][]js_ast.Part,
+            import_records: [][]bun.ImportRecord,
+            flags: []const JSMeta.Flags,
+            entry_point_chunk_indices: [][]Index.Int,
+            imports_to_bind: []RefImportData,
+            wrapper_refs: []const Ref,
+            sorted_and_filtered_export_aliases: []const string,
+            resolved_exports: []const RefExportData,
+            ctx: *LinkerContext,
+            symbols: *Symbol.Map,
+
+            pub fn walk(deps: *@This(), chunk: *Chunk, chunk_index: usize) void {
+                var chunk_meta = &deps.chunk_meta[chunk_index];
+                const entry_point_chunk_indices = deps.entry_point_chunk_indices[chunk_index];
+
+                // Go over each file in this chunk
+                for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
+                    if (chunk.content != .javascript) continue;
+
+                    // Go over each part in this file that's marked for inclusion in this chunk
+                    var parts = deps.parts[source_index];
+                    var import_records = deps.import_records[source_index];
+                    const imports_to_bind = deps.imports_to_bind[source_index];
+                    const wrap = deps.flags[source_index].wrap;
+                    const wrapper_ref = deps.wrapper_refs[source_index];
+
+                    for (parts) |*part| {
+                        if (!part.is_live)
+                            continue;
+
+                        // Rewrite external dynamic imports to point to the chunk for that entry point
+                        for (part.import_record_indices.slice()) |import_record_id| {
+                            var import_record = &import_records[import_record_id];
+                            if (import_record.source_index.isValid() and deps.ctx.isExternalDynamicImport(import_record, source_index)) {
+                                const other_chunk_index = entry_point_chunk_indices[import_record.source_index.get()];
+                                import_record.path.text = chunks[other_chunk_index].unique_key;
+                                import_record.source_index = Index.invalid;
+
+                                // Track this cross-chunk dynamic import so we make sure to
+                                // include its hash when we're calculating the hashes of all
+                                // dependencies of this chunk.
+                                if (other_chunk_index != chunk_index)
+                                    chunk_meta.dynamic_imports.put(other_chunk_index) catch unreachable;
+                            }
+                        }
+
+                        // Remember what chunk each top-level symbol is declared in. Symbols
+                        // with multiple declarations such as repeated "var" statements with
+                        // the same name should already be marked as all being in a single
+                        // chunk. In that case this will overwrite the same value below which
+                        // is fine.
+                        deps.symbols.assignChunkIndex(part.declared_symbols, chunk_index);
+
+                        for (part.symbol_uses.keys()) |ref_| {
+                            var ref = ref_;
+                            var symbol = deps.symbols.get(ref).?;
+
+                            // Ignore unbound symbols
+                            if (symbol.kind == .unbound)
+                                continue;
+
+                            // Ignore symbols that are going to be replaced by undefined
+                            if (symbol.import_item_status == .missing) {
+                                continue;
+                            }
+
+                            // If this is imported from another file, follow the import
+                            // reference and reference the symbol in that file instead
+                            if (imports_to_bind.get(ref)) |import_data| {
+                                ref = import_data.ref;
+                                symbol = deps.symbols.get(ref).?;
+                            } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
+                                // The only internal symbol that wrapped CommonJS files export
+                                // is the wrapper itself.
+                                continue;
+                            }
+
+                            // If this is an ES6 import from a CommonJS file, it will become a
+                            // property access off the namespace symbol instead of a bare
+                            // identifier. In that case we want to pull in the namespace symbol
+                            // instead. The namespace symbol stores the result of "require()".
+                            if (symbol.namespace_alias) |*namespace_alias| {
+                                ref = namespace_alias.ref;
+                            }
+
+                            // We must record this relationship even for symbols that are not
+                            // imports. Due to code splitting, the definition of a symbol may
+                            // be moved to a separate chunk than the use of a symbol even if
+                            // the definition and use of that symbol are originally from the
+                            // same source file.
+                            chunk_meta.imports.put(ref, void{}) catch unreachable;
+                        }
+                    }
+                }
+
+                // Include the exports if this is an entry point chunk
+                if (chunk.content == .javascript) {
+                    if (chunk.entry_point.is_entry_point) {
+                        const flags = deps.flags[chunk.entry_point.source_index.get()];
+                        if (flags.wrap != .cjs) {
+                            for (deps.sorted_and_filtered_export_aliases[chunk.entry_point.source_index]) |alias| {
+                                const export_ = deps.resolved_exports[chunk.entry_point.source_index].get(alias).?;
+                                var target_ref = export_.data.import_ref;
+
+                                // If this is an import, then target what the import points to
+                                if (deps.imports_to_bind[export_.data.source_index.get()].get(target_ref)) |import_data| {
+                                    target_ref = import_data.data.import_ref;
+                                }
+
+                                // If this is an ES6 import from a CommonJS file, it will become a
+                                // property access off the namespace symbol instead of a bare
+                                // identifier. In that case we want to pull in the namespace symbol
+                                // instead. The namespace symbol stores the result of "require()".
+                                if (deps.symbols.get(target_ref).?.namespace_alias) |namespace_alias| {
+                                    target_ref = namespace_alias.ref;
+                                }
+
+                                chunk_meta.imports.put(target_ref, void{}) catch unreachable;
+                            }
+                        }
+
+                        // Ensure "exports" is included if the current output format needs it
+                        if (flags.force_include_exports_for_entry_point) {
+                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index.get()], void{}) catch unreachable;
+                        }
+
+                        // Include the wrapper if present
+                        if (flags.wrap != .none) {
+                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index], void{}) catch unreachable;
+                        }
+                    }
+                }
+            }
+        };
+
+        var cross_chunk_dependencies = CrossChunkDependencies{
+            .chunks = chunks,
+            .chunk_meta = chunk_metas,
+
+            .parts = c.graph.ast.items(.parts),
+            .import_records = c.graph.ast.items(.import_records),
+            .flags = c.graph.meta.items(.flags),
+            .entry_point_chunk_indices = c.graph.files.items(.entry_point_chunk_index),
+            .imports_to_bind = c.graph.meta.items(.imports_to_bind),
+            .wrapper_refs = c.graph.ast.items(.wrapper_ref),
+            .sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases),
+            .resolved_exports = c.graph.meta.items(.resolved_exports),
+            .ctx = c,
+            .symbols = &c.graph.symbols,
+        };
+
+        c.parse_graph.pool.pool.doPtr(
+            c.allocator,
+            &c.wait_group,
+            cross_chunk_dependencies,
+            chunks,
+        );
+
+        // Mark imported symbols as exported in the chunk from which they are declared
+        for (chunks) |*chunk, chunk_index| {
+            if (chunk.content != .javascript) {
+                continue;
+            }
+
+            var chunk_meta = &chunk_metas[chunk_index];
+            // Find all uses in this chunk of symbols from other chunks
+            for (chunk_meta.imports.keys()) |import_ref| {
+                const symbol = c.graph.symbols.get(import_ref).?;
+
+                // Ignore uses that aren't top-level symbols
+                if (symbol.chunk_index) |other_chunk_index| {
+                    if (other_chunk_index != chunk_index) {}
+                }
+            }
         }
     }
 
@@ -3924,8 +4151,7 @@ const LinkerContext = struct {
 
     const DependencyWrapper = struct {
         linker: *LinkerContext,
-        did_wrap_dependencies: []bool,
-        wraps: []WrapKind,
+        flags: []JSMeta.Flags,
         exports_kind: []js_ast.ExportsKind,
         import_records: []ImportRecord.List,
         export_star_map: std.AutoHashMap(Index.Int, void),
@@ -3973,15 +4199,19 @@ const LinkerContext = struct {
                 return;
             }
 
-            if (this.did_wrap_dependencies[source_index]) return;
+            var flags = this.flags[source_index];
+
+            if (flags.did_wrap_dependencies) return;
+            flags.did_wrap_dependencies = true;
 
             // This module must be wrapped
-            if (this.wraps[source_index] == .none) {
-                this.wraps[source_index] = switch (this.exports_kind[source_index]) {
+            if (flags.wrap == .none) {
+                flags.wrap = switch (this.exports_kind[source_index]) {
                     .cjs => .cjs,
                     else => .esm,
                 };
             }
+            this.flags[source_index] = flags;
 
             const records = this.import_records[source_index].slice();
             for (records) |record| {
@@ -4080,7 +4310,7 @@ pub const Chunk = struct {
     template: PathTemplate = .{},
 
     /// For code splitting
-    cross_chunk_imports: []Import = &.{},
+    cross_chunk_imports: []CrossChunkImport = &.{},
 
     content: Content,
 
@@ -4160,30 +4390,76 @@ pub const Chunk = struct {
         pub const ID = u31;
     };
 
-    pub const Import = struct {
-        chunk_index: Index.Int = 0,
-        import_kind: ImportKind,
-    };
-
-    pub const CrossChunkImportItem = struct {
-        export_alias: string = "",
-        ref: Ref = Ref.None,
-
-        pub const List = []CrossChunkImportItem;
-    };
-
     pub const JavaScriptChunk = struct {
         files_in_chunk_order: []const Index.Int = &.{},
         parts_in_chunk_in_order: []const PartRange = &.{},
 
         // for code splitting
         exports_to_other_chunks: std.ArrayHashMapUnmanaged(Ref, string, Ref.ArrayHashCtx, false) = .{},
-        imports_from_other_chunks: std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImportItem.List, Index.ArrayHashCtx, false) = .{},
+        imports_from_other_chunks: ImportsFromOtherChunks = .{},
         cross_chunk_prefix_stmts: BabyList(Stmt) = .{},
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
     };
 
+    pub const ImportsFromOtherChunks = std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List, Index.ArrayHashCtx, false);
+
     pub const Content = union(enum) {
         javascript: JavaScriptChunk,
     };
+};
+
+pub const CrossChunkImport = struct {
+    chunk_index: Index.Int = 0,
+    sorted_import_Items: List = &.{},
+
+    pub const Item = struct {
+        export_alias: string = "",
+        ref: Ref = Ref.None,
+
+        pub const List = []Item;
+
+        pub fn lessThan(_: void, a: CrossChunkImport.Item, b: CrossChunkImport.Item) bool {
+            return strings.order(a.export_alias, b.export_alias) == .lt;
+        }
+    };
+
+    pub fn lessThan(_: void, a: CrossChunkImport, b: CrossChunkImport) bool {
+        return std.mem.order(a.chunk_index, b.chunk_index) == .lt;
+    }
+
+    pub const List = std.ArrayList(CrossChunkImport);
+
+    pub fn sortedCrossChunkImports(list: *List, chunks: []Chunk, imports_from_other_chunks: *Chunk.ImportsFromOtherChunks) !void {
+        var result = list.*;
+        defer {
+            list.* = result;
+        }
+
+        try result.ensureTotalCapacity(imports_from_other_chunks.count());
+
+        var import_items_list = imports_from_other_chunks.values();
+        var chunk_indices = imports_from_other_chunks.keys();
+        var i: usize = 0;
+        while (i < chunk_indices.len) : (i += 1) {
+            const chunk_index = chunk_indices[i];
+            var chunk = &chunks[chunk_index];
+
+            // Sort imports from a single chunk by alias for determinism
+            const exports_to_other_chunks = &chunk.content.javascript.exports_to_other_chunks;
+            // TODO: do we need to clone this array?
+            var import_items = import_items_list[i];
+            for (import_items) |*item| {
+                item.export_alias = exports_to_other_chunks.get(item.ref).?;
+                std.debug.assert(item.export_alias.len > 0);
+            }
+            std.sort.sort(void, import_items, void{}, CrossChunkImport.Item.lessThan);
+
+            result.append(CrossChunkImport{
+                .chunk_index = chunk_index,
+                .sorted_import_items = import_items,
+            }) catch unreachable;
+        }
+
+        std.sort.sort(void, result.items, void{}, CrossChunkImport.lessThan);
+    }
 };

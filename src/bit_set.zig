@@ -1060,7 +1060,7 @@ pub const AutoBitSet = union(enum) {
     static: Static,
     dynamic: DynamicBitSetUnmanaged,
 
-    pub fn needsDynamic(bit_length: usize) bool {
+    pub inline fn needsDynamic(bit_length: usize) bool {
         return bit_length > Static.bit_length;
     }
 

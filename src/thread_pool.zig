@@ -247,7 +247,18 @@ pub fn do(
     comptime Run: anytype,
     values: anytype,
 ) !void {
-    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values);
+    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, false);
+}
+
+pub fn doPtr(
+    this: *ThreadPool,
+    allocator: std.mem.Allocator,
+    wg: ?*WaitGroup,
+    ctx: anytype,
+    comptime Run: anytype,
+    values: anytype,
+) !void {
+    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values, true);
 }
 
 pub fn Do(
@@ -259,6 +270,7 @@ pub fn Do(
     comptime Function: anytype,
     comptime ValuesType: type,
     values: ValuesType,
+    comptime as_ptr: bool,
 ) !void {
     if (values.len == 0)
         return;
@@ -282,9 +294,16 @@ pub fn Do(
 
     const Runner = struct {
         pub fn call(ctx_: WaitContext, values_: ValuesType, i: usize) void {
-            for (values_) |v, j| {
-                Function(ctx_.ctx, v, i + j);
+            if (comptime as_ptr) {
+                for (values_) |*v, j| {
+                    Function(ctx_.ctx, v, i + j);
+                }
+            } else {
+                for (values_) |v, j| {
+                    Function(ctx_.ctx, v, i + j);
+                }
             }
+
             ctx_.wait_group.finish();
         }
     };

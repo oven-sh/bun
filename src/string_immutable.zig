@@ -1215,7 +1215,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         var list = try std.ArrayList(u8).initCapacity(allocator, length);
-        list = try convertUTF8ToUTF16(list, Type, utf16);
+        list = try convertUTF16ToUTF8(list, Type, utf16);
         return list.items;
     }
 
@@ -1229,7 +1229,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length);
-        return convertUTF8ToUTF16(list, Type, utf16);
+        return convertUTF16ToUTF8(list, Type, utf16);
     }
 
     return toUTF8ListWithTypeBun(list_, Type, utf16);

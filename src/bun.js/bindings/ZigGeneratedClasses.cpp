@@ -4458,6 +4458,9 @@ JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__rmSyncCallback);
 extern "C" EncodedJSValue NodeJSFSPrototype__stat(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__statCallback);
 
+extern "C" JSC::EncodedJSValue NodeJSFSPrototype__getStats(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(NodeJSFSPrototype__StatsGetterWrap);
+
 extern "C" EncodedJSValue NodeJSFSPrototype__statSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__statSyncCallback);
 
@@ -4572,6 +4575,7 @@ static const HashTableValue JSNodeJSFSPrototypeTableValues[] = {
     { "rmdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmdirSyncCallback, 2 } },
     { "rmSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmSyncCallback, 2 } },
     { "stat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statCallback, 1 } },
+    { "Stats"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, NodeJSFSPrototype__StatsGetterWrap, 0 } },
     { "statSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statSyncCallback, 1 } },
     { "symlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkCallback, 4 } },
     { "symlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkSyncCallback, 3 } },
@@ -5653,6 +5657,18 @@ JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__statCallback, (JSGlobalObject * lexi
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return NodeJSFSPrototype__stat(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(NodeJSFSPrototype__StatsGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSNodeJSFS* thisObject = jsCast<JSNodeJSFS*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = NodeJSFSPrototype__getStats(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(NodeJSFSPrototype__statSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

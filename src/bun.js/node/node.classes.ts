@@ -143,7 +143,7 @@ export default [
       // TODO:
       // Dir: { fn: 'Dir', length: 3 },
       Dirent: { getter: "getDirent" },
-      // Stats: { fn: 'Stats', length: 14 },
+      Stats: { getter: 'getStats' },
       // ReadStream: { fn: 'ReadStream', length: 2 },
       // WriteStream: { fn: 'WriteStream', length: 2 },
       // FileReadStream: { fn: 'FileReadStream', length: 2 },

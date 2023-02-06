@@ -62,8 +62,8 @@ it("should add existing package", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    ` + foo@${add_path}`,
     "",
+    ` installed file:${add_path}@${add_path}`,
     "",
     "",
     " 1 packages installed",
@@ -403,8 +403,9 @@ it("should add aliased dependency (npm)", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + bar@0.0.3",
     "",
+    " installed bar@0.0.3 with binaries:",
+    "  - baz-run",
     "",
     "",
     " 1 packages installed",
@@ -457,8 +458,9 @@ it("should add aliased dependency (GitHub)", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    " + uglify@github:mishoo/UglifyJS#e219a9a",
     "",
+    " installed uglify@github:mishoo/UglifyJS#e219a9a with binaries:",
+    "  - uglifyjs",
     "",
     "",
     " 1 packages installed",

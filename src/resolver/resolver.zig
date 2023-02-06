@@ -330,7 +330,7 @@ pub const PendingResolution = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
-    root_dependency_id: Install.PackageID = Install.invalid_package_id,
+    root_dependency_id: Install.DependencyID = Install.invalid_package_id,
     import_record_id: u32 = std.math.maxInt(u32),
     string_buf: []u8 = "",
     tag: Tag,
@@ -1684,16 +1684,23 @@ pub const Resolver = struct {
                                 builder.allocate(manager.allocator) catch unreachable;
                                 const cloned = esm.clone(&builder);
 
-                                if (st == .extract)
-                                    manager.enqueuePackageForDownload(
-                                        esm.name,
-                                        resolved_package_id,
-                                        resolution.value.npm.version,
-                                        manager.lockfile.str(&resolution.value.npm.url),
-                                        .{
-                                            .root_request_id = 0,
-                                        },
-                                    );
+                                if (st == .extract) {
+                                    for (manager.lockfile.buffers.resolutions.items) |pkg_id, dep_id| {
+                                        if (pkg_id == resolved_package_id) {
+                                            manager.enqueuePackageForDownload(
+                                                esm.name,
+                                                @truncate(Install.PackageID, dep_id),
+                                                pkg_id,
+                                                resolution.value.npm.version,
+                                                manager.lockfile.str(&resolution.value.npm.url),
+                                                .{
+                                                    .root_request_id = 0,
+                                                },
+                                            );
+                                            break;
+                                        }
+                                    }
+                                }
 
                                 return .{
                                     .pending = .{

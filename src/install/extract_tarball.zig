@@ -6,9 +6,7 @@ const logger = bun.logger;
 const Output = bun.Output;
 const FileSystem = @import("../fs.zig").FileSystem;
 const Install = @import("./install.zig");
-const Features = Install.Features;
-const Lockfile = Install.Lockfile;
-const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
 const PackageManager = Install.PackageManager;
 const Integrity = @import("./integrity.zig").Integrity;
 const Npm = @import("./npm.zig");
@@ -24,7 +22,7 @@ resolution: Resolution,
 registry: string,
 cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
-package_id: PackageID,
+dependency_id: DependencyID,
 skip_verify: bool = false,
 integrity: Integrity = Integrity{},
 url: string = "",

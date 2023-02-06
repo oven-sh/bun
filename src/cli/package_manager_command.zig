@@ -6,6 +6,7 @@ const strings = @import("bun").strings;
 const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.NodeModulesFolder;
 const PackageID = @import("../install/install.zig").PackageID;
+const DependencyID = @import("../install/install.zig").DependencyID;
 const PackageInstaller = @import("../install/install.zig").PackageInstaller;
 const Global = @import("bun").Global;
 const Output = @import("bun").Output;
@@ -166,16 +167,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             Output.disableBuffering();
             const lockfile = load_lockfile.ok;
-
-            const parts = lockfile.packages.slice();
-            const names = parts.items(.name);
-
-            var iterator = Lockfile.Tree.Iterator.init(
-                lockfile.buffers.trees.items,
-                lockfile.buffers.hoisted_packages.items,
-                names,
-                lockfile.buffers.string_bytes.items,
-            );
+            var iterator = Lockfile.Tree.Iterator.init(lockfile);
 
             var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
@@ -183,13 +175,13 @@ pub const PackageManagerCommand = struct {
                 const path = try ctx.allocator.alloc(u8, node_modules.relative_path.len);
                 std.mem.copy(u8, path, node_modules.relative_path);
 
-                const packages = try ctx.allocator.alloc(PackageID, node_modules.packages.len);
-                std.mem.copy(PackageID, packages, node_modules.packages);
+                const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
+                std.mem.copy(PackageID, dependencies, node_modules.dependencies);
 
-                const folder: NodeModulesFolder = .{
+                const folder = NodeModulesFolder{
                     .relative_path = @ptrCast(stringZ, path),
                     .in = node_modules.in,
-                    .packages = packages,
+                    .dependencies = dependencies,
                 };
                 directories.append(folder) catch unreachable;
             }
@@ -198,7 +190,7 @@ pub const PackageManagerCommand = struct {
 
             // TODO: find max depth beforehand
             var more_packages = [_]bool{false} ** 16;
-            if (first_directory.packages.len > 1) more_packages[0] = true;
+            if (first_directory.dependencies.len > 1) more_packages[0] = true;
             const recurse = strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" });
 
             if (recurse) {
@@ -214,6 +206,7 @@ pub const PackageManagerCommand = struct {
 
                 Output.println("{s} node_modules ({d})", .{ path, package_ids.len });
                 Output.enableBuffering();
+                const names = lockfile.packages.items(.name);
                 const string_bytes = lockfile.buffers.string_bytes.items;
 
                 for (package_ids) |package_id, i| {
@@ -232,7 +225,7 @@ pub const PackageManagerCommand = struct {
 
         Output.prettyln(
             \\bun pm - package manager related commands
-            \\   
+            \\
             \\  bun pm <b>bin<r>          print the path to bin folder
             \\  bun pm <b>-g bin<r>       print the <b>global<r> path to bin folder
             \\  bun pm <b>ls<r>           list the dependency tree according to the current lockfile
@@ -266,9 +259,7 @@ fn printNodeModulesFolderStructure(
 ) void {
     const allocator = lockfile.allocator;
     var more_packages = more_packages_;
-    const parts = lockfile.packages.slice();
-    const names = parts.items(.name);
-    const resolutions = parts.items(.resolution);
+    const resolutions = lockfile.packages.items(.resolution);
     const string_bytes = lockfile.buffers.string_bytes.items;
 
     {
@@ -318,8 +309,8 @@ fn printNodeModulesFolderStructure(
         }
     }
 
-    for (directory.packages) |package_id, package_index| {
-        const package_name_ = names[package_id].slice(string_bytes);
+    for (directory.dependencies) |dependency_id, index| {
+        const package_name_ = lockfile.buffers.dependencies.items[dependency_id].name.slice(string_bytes);
         const package_name = allocator.alloc(u8, package_name_.len) catch unreachable;
         defer allocator.free(package_name);
         std.mem.copy(u8, package_name, package_name_);
@@ -327,10 +318,11 @@ fn printNodeModulesFolderStructure(
         var possible_path = std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name }) catch unreachable;
         defer allocator.free(possible_path);
 
-        if (package_index + 1 == directory.packages.len) {
+        if (index + 1 == directory.dependencies.len) {
             more_packages[depth] = false;
         }
 
+        const package_id = lockfile.buffers.resolutions.items[dependency_id];
         var dir_index: usize = 0;
         var found_node_modules = false;
         while (dir_index < directories.items.len) : (dir_index += 1) {

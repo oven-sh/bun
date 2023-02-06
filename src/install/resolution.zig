@@ -121,8 +121,8 @@ pub const Resolution = extern struct {
         return Formatter{ .resolution = this, .buf = buf };
     }
 
-    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = buf, .package_name = name, .options = options };
+    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, buf: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = buf, .options = options };
     }
 
     pub fn eql(
@@ -193,7 +193,6 @@ pub const Resolution = extern struct {
     pub const URLFormatter = struct {
         resolution: *const Resolution,
         options: *const PackageManager.Options,
-        package_name: string,
 
         buf: []const u8,
 

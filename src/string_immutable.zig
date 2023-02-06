@@ -1185,7 +1185,7 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-pub fn convertUTF8ToUTF16(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
     const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
     try list.ensureTotalCapacityPrecise(length);

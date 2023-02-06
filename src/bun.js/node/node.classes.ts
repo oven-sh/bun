@@ -84,7 +84,7 @@ export default [
       futimes: { fn: "futimes", length: 4 },
       futimesSync: { fn: "futimesSync", length: 3 },
       lchown: { fn: "lchown", length: 4 },
-      lchownSync: { fn: "lchownSync", lengthfn: 3 },
+      lchownSync: { fn: "lchownSync", length: 3 },
       lchmod: { fn: "lchmod", length: 3 },
       lchmodSync: { fn: "lchmodSync", length: 2 },
       link: { fn: "link", length: 3 },

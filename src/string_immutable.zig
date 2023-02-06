@@ -1085,6 +1085,53 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
 
 const strings = @This();
 
+pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
+    var remain = src;
+    var to = dest;
+
+    const non_ascii_offset = strings.firstNonASCII(remain) orelse @truncate(u32, remain.len);
+    if (non_ascii_offset > 0) {
+        @memcpy(to.ptr, remain.ptr, non_ascii_offset);
+        remain = remain[non_ascii_offset..];
+        to = to[non_ascii_offset..];
+
+        // ascii fast path
+        if (remain.len == 0) {
+            return;
+        }
+    }
+
+    if (to.len >= 16 and bun.Environment.enableSIMD) {
+        const vector_size = 16;
+        // https://zig.godbolt.org/z/qezsY8T3W
+        var remain_in_u64 = remain[0 .. remain.len - (remain.len % vector_size)];
+        var to_in_u64 = to[0 .. to.len - (to.len % vector_size)];
+        var remain_as_u64 = std.mem.bytesAsSlice(u64, remain_in_u64);
+        var to_as_u64 = std.mem.bytesAsSlice(u64, to_in_u64);
+        const end_vector_len = @min(remain_as_u64.len, to_as_u64.len);
+        remain_as_u64 = remain_as_u64[0..end_vector_len];
+        to_as_u64 = to_as_u64[0..end_vector_len];
+        const end_ptr = remain_as_u64.ptr + remain_as_u64.len;
+        // using the pointer instead of the length is super important for the codegen
+        while (end_ptr != remain_as_u64.ptr) {
+            const buf = remain_as_u64[0];
+            // this gets auto-vectorized
+            const mask = @as(u64, 0x7f7f7f7f7f7f7f7f);
+            to_as_u64[0] = buf & mask;
+
+            remain_as_u64 = remain_as_u64[1..];
+            to_as_u64 = to_as_u64[1..];
+        }
+        remain = remain[remain_in_u64.len..];
+        to = to[to_in_u64.len..];
+    }
+
+    for (to) |*to_byte| {
+        to_byte.* = @as(u8, @truncate(u7, remain[0]));
+        remain = remain[1..];
+    }
+}
+
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
@@ -1096,28 +1143,23 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         if (bytes.len == 0)
             return &[_]u16{};
         use_simdutf: {
-            const validated = bun.simdutf.validate.with_errors.ascii(bytes);
-            if (validated.status == .success)
+            if (bun.simdutf.validate.ascii(bytes))
                 return null;
 
-            const offset = @truncate(u32, validated.count);
-
-            const trimmed = bun.simdutf.trim.utf8(bytes[offset..]);
+            const trimmed = bun.simdutf.trim.utf8(bytes);
 
             if (trimmed.len == 0)
                 break :use_simdutf;
 
             const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
 
-            if (out_length != trimmed.len)
+            if (out_length == 0)
                 break :use_simdutf;
 
-            var out = try allocator.alloc(u16, out_length + offset);
+            var out = try allocator.alloc(u16, out_length);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
-            if (offset > 0)
-                strings.copyU8IntoU16(out[0..offset], bytes[0..offset]);
 
-            const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out[offset..]);
+            const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
             switch (result.status) {
                 .success => {
                     return out;
@@ -1128,7 +1170,7 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                         return error.InvalidByteSequence;
                     }
 
-                    first_non_ascii = @truncate(u32, result.count) + offset;
+                    first_non_ascii = @truncate(u32, result.count);
                     output_ = std.ArrayList(u16){
                         .items = out[0..first_non_ascii.?],
                         .capacity = out.len,

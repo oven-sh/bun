@@ -30,7 +30,6 @@ const fileContents: string[] = [];
 
 for (let i = 0; i < filesToCat.length; i++) {
   const name = filesToCat[i];
-  console.log(name);
   fileContents.push(
     "// " +
       name +

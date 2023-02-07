@@ -1,0 +1,17 @@
+service: bun
+provider:
+  name: aws
+layers:
+  bun:
+    path: "${param:path}"
+    name: "${param:name}"
+    description: "An incredibly fast JavaScript runtime, bundler, transpiler and package manager."
+    licenseInfo: MIT
+    compatibleRuntimes:
+      - provided.al2
+      - provided
+    compatibleArchitectures:
+      - "${param:arch}"
+    allowedAccounts:
+      - "*"
+    retain: true

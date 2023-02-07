@@ -1,0 +1,4 @@
+.DS_Store
+.serverless/
+node_modules/
+bun-*/

@@ -1,0 +1,16 @@
+{
+  "devDependencies": {
+    "bun-types": "^0.4.0",
+    "@octokit/types": "^8.0.0",
+    "jszip": "^3.10.1",
+    "serverless": "^3.26.0",
+    "prettier": "^2.8.2"
+  },
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.17"
+  }
+}

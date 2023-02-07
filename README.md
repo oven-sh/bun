@@ -23,7 +23,9 @@ Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 ## Install
 
-Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
+Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon). If you want to use Bun on Windows, you will need to use Windows Subsystem for Linux. Bun will [soon](https://github.com/oven-sh/bun/issues/43) support Windows, natively.
+
+curl:
 
 ```sh
 curl -fsSL https://bun.sh/install | bash
@@ -35,18 +37,18 @@ npm:
 npm install -g bun
 ```
 
-Homebrew: (MacOS and Linux)
+Homebrew:
 
 ```sh
 brew tap oven-sh/bun
 brew install bun
 ```
 
-Docker: (Linux x64)
+Docker:
 
 ```sh
-docker pull jarredsumner/bun:edge
-docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
+docker pull oven/bun
+docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.

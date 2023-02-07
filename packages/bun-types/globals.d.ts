@@ -963,7 +963,7 @@ declare class Request implements BlobInterface {
   clone(): Request;
 }
 
-interface Crypto {
+declare interface Crypto {
   readonly subtle: SubtleCrypto;
 
   getRandomValues<T extends BufferSource = BufferSource>(array: T): T;

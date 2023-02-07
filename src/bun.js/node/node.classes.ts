@@ -6,7 +6,7 @@ export default [
     construct: true,
     finalize: true,
     klass: {},
-
+    JSType: "0b11101110",
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",

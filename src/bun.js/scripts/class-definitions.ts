@@ -16,7 +16,7 @@ export type Field =
       length?: number;
       DOMJIT?: {
         returns: string;
-        args?: [string, string] | [string, string, string] | [string];
+        args?: [string, string] | [string, string, string] | [string] | [];
       };
     } & PropertyAttribute)
   | { internal: true };

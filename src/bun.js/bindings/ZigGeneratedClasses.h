@@ -1058,7 +1058,7 @@ public:
     static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(ObjectType), StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
     }
 
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);

@@ -1229,8 +1229,6 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 
 pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
     var list = list_;
-    const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-    try list.ensureTotalCapacityPrecise(length);
 
     var remaining_input = utf16;
     var start: usize = 0;
@@ -1239,10 +1237,11 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     var result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remaining_input, list.items.ptr[start..list.capacity]);
     list.items.len = result.count;
     while (result.status == .surrogate) {
-        try list.resize(list.items.len + 3);
+        try list.ensureUnusedCapacity(3);
+        list.items.len += 3;
         start += result.count;
 
-        std.mem.copy(u8, list.items[start..], &replacement_char);
+        list.items[start..][0..replacement_char.len].* = replacement_char;
         remaining_input = remaining_input[result.count + 1 ..];
         start += replacement_char.len;
 
@@ -3482,16 +3481,22 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     }
 
     if (comptime check_min) {
-        for (remaining) |char, i| {
+        var i: usize = 0;
+        for (remaining) |char| {
             if (char > 127 or char < 0x20) {
                 return @truncate(u32, i);
             }
+
+            i += 1;
         }
     } else {
-        for (remaining) |char, i| {
+        var i: usize = 0;
+        for (remaining) |char| {
             if (char > 127) {
                 return @truncate(u32, i);
             }
+
+            i += 1;
         }
     }
 

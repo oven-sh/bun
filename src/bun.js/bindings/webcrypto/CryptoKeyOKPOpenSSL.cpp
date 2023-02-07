@@ -346,9 +346,10 @@ Vector<uint8_t> CryptoKeyOKP::platformExportRaw() const
 {
     if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
         ASSERT(m_exportKey);
-        return *m_exportKey;
+        const auto& exportKey = *m_exportKey;
+        return WTFMove(Vector<uint8_t>(exportKey.data(), exportKey.size()));
     }
-    return m_data;
+    return WTFMove(Vector<uint8_t>(m_data.data(), m_data.size()));
 }
 
 } // namespace WebCore

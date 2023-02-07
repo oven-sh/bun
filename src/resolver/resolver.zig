@@ -330,7 +330,7 @@ pub const PendingResolution = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
-    root_dependency_id: Install.PackageID = Install.invalid_package_id,
+    root_dependency_id: Install.DependencyID = Install.invalid_package_id,
     import_record_id: u32 = std.math.maxInt(u32),
     string_buf: []u8 = "",
     tag: Tag,
@@ -1687,6 +1687,7 @@ pub const Resolver = struct {
                                 if (st == .extract)
                                     manager.enqueuePackageForDownload(
                                         esm.name,
+                                        manager.lockfile.buffers.legacyPackageToDependencyID(resolved_package_id) catch unreachable,
                                         resolved_package_id,
                                         resolution.value.npm.version,
                                         manager.lockfile.str(&resolution.value.npm.url),

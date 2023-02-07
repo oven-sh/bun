@@ -76,3 +76,8 @@ exports;
 module.exports;
 
 global.AbortController;
+global.Bun;
+
+const er = new DOMException();
+er.name;
+er.HIERARCHY_REQUEST_ERR;

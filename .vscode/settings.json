@@ -13,7 +13,7 @@
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "tiehuis.zig",
+    "editor.defaultFormatter": "JarredSumner.zig-unofficial",
     "editor.formatOnSave": true
   },
   "[ts]": {
@@ -182,7 +182,11 @@
     "ethernet.h": "c",
     "inet.h": "c",
     "packet.h": "c",
-    "queue": "cpp"
+    "queue": "cpp",
+    "compare": "cpp",
+    "concepts": "cpp",
+    "typeindex": "cpp",
+    "__verbose_abort": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "Enabled",

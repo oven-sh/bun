@@ -356,12 +356,24 @@ describe("writeFileSync", () => {
   });
 });
 
+function triggerDOMJIT(target, fn, result) {
+  for (let i = 0; i < 9999; i++) {
+    if (fn.apply(target) !== result) {
+      throw new Error("DOMJIT failed");
+    }
+  }
+}
+
 describe("lstat", () => {
   it("file metadata is correct", () => {
     const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, true);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, false);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("folder metadata is correct", () => {
@@ -369,6 +381,10 @@ describe("lstat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, false);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, true);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("symlink metadata is correct", () => {
@@ -376,6 +392,10 @@ describe("lstat", () => {
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(linkStats, linkStats.isFile, false);
+    triggerDOMJIT(linkStats, linkStats.isDirectory, false);
+    triggerDOMJIT(linkStats, linkStats.isSymbolicLink, true);
   });
 });
 
@@ -385,6 +405,10 @@ describe("stat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, true);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, false);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("folder metadata is correct", () => {
@@ -410,6 +434,10 @@ describe("stat", () => {
     expect(typeof fileStats.mtime).toBe("object");
     expect(typeof fileStats.ctime).toBe("object");
     expect(typeof fileStats.birthtime).toBe("object");
+
+    triggerDOMJIT(fileStats, fileStats.isFile, false);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, true);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("stat returns ENOENT", () => {
@@ -769,7 +797,6 @@ it("fs.constants", () => {
   expect(constants.S_IROTH).toBeDefined();
   expect(constants.S_IWOTH).toBeDefined();
 });
-
 
 it("fs.Dirent", () => {
   expect(Dirent).toBeDefined();

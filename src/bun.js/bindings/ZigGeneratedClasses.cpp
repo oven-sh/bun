@@ -9981,23 +9981,149 @@ JSC_DECLARE_CUSTOM_GETTER(StatsPrototype__inoGetterWrap);
 extern "C" EncodedJSValue StatsPrototype__isBlockDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isBlockDeviceCallback);
 
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isBlockDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isBlockDevice(StatsPrototype__isBlockDeviceWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isBlockDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isBlockDevice_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
 extern "C" EncodedJSValue StatsPrototype__isCharacterDevice_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isCharacterDeviceCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isCharacterDevice_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isCharacterDevice(StatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isCharacterDeviceWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isCharacterDevice_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
 
 extern "C" EncodedJSValue StatsPrototype__isDirectory_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isDirectoryCallback);
 
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isDirectory_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isDirectory(StatsPrototype__isDirectoryWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isDirectoryWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isDirectory_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
 extern "C" EncodedJSValue StatsPrototype__isFIFO_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isFIFOCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isFIFO_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isFIFO(StatsPrototype__isFIFOWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isFIFOWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isFIFO_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
 
 extern "C" EncodedJSValue StatsPrototype__isFile_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isFileCallback);
 
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isFile_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isFile(StatsPrototype__isFileWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isFileWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isFile_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
 extern "C" EncodedJSValue StatsPrototype__isSocket_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isSocketCallback);
 
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isSocket_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isSocket(StatsPrototype__isSocketWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isSocketWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isSocket_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
+
 extern "C" EncodedJSValue StatsPrototype__isSymbolicLink_(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(StatsPrototype__isSymbolicLinkCallback);
+
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(StatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue));
+extern "C" EncodedJSValue StatsPrototype__isSymbolicLink_WithoutTypeChecks(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForStatsPrototype__isSymbolicLink(StatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper,
+    JSStats::info(),
+    JSC::DOMJIT::Effect::forPure(),
+    JSC::SpecHeapTop);
+
+JSC_DEFINE_JIT_OPERATION(StatsPrototype__isSymbolicLinkWithoutTypeChecksWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return StatsPrototype__isSymbolicLink_WithoutTypeChecks(reinterpret_cast<JSStats*>(thisValue)->wrapped(), lexicalGlobalObject);
+}
 
 extern "C" JSC::EncodedJSValue StatsPrototype__mode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(StatsPrototype__modeGetterWrap);
@@ -10034,13 +10160,13 @@ static const HashTableValue JSStatsPrototypeTableValues[] = {
     { "dev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__devGetterWrap, 0 } },
     { "gid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__gidGetterWrap, 0 } },
     { "ino"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__inoGetterWrap, 0 } },
-    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isBlockDeviceCallback, 0 } },
-    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isCharacterDeviceCallback, 0 } },
-    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isDirectoryCallback, 0 } },
-    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isFIFOCallback, 0 } },
-    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isFileCallback, 0 } },
-    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isSocketCallback, 0 } },
-    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, StatsPrototype__isSymbolicLinkCallback, 0 } },
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isBlockDeviceCallback, &DOMJITSignatureForStatsPrototype__isBlockDevice } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isCharacterDeviceCallback, &DOMJITSignatureForStatsPrototype__isCharacterDevice } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isDirectoryCallback, &DOMJITSignatureForStatsPrototype__isDirectory } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFIFOCallback, &DOMJITSignatureForStatsPrototype__isFIFO } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFileCallback, &DOMJITSignatureForStatsPrototype__isFile } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSocketCallback, &DOMJITSignatureForStatsPrototype__isSocket } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSymbolicLinkCallback, &DOMJITSignatureForStatsPrototype__isSymbolicLink } },
     { "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__modeGetterWrap, 0 } },
     { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeGetterWrap, 0 } },
     { "mtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeMsGetterWrap, 0 } },

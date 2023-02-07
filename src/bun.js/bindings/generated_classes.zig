@@ -2898,18 +2898,53 @@ pub const JSStats = struct {
         if (@TypeOf(Stats.ino) != GetterType)
             @compileLog("Expected Stats.ino to be a getter");
 
+        if (@TypeOf(Stats.isBlockDevice_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isBlockDevice_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isBlockDevice_) != CallbackType)
             @compileLog("Expected Stats.isBlockDevice_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isBlockDevice_)));
+        if (@TypeOf(Stats.isCharacterDevice_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isCharacterDevice_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isCharacterDevice_) != CallbackType)
             @compileLog("Expected Stats.isCharacterDevice_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isCharacterDevice_)));
+        if (@TypeOf(Stats.isDirectory_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isDirectory_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isDirectory_) != CallbackType)
             @compileLog("Expected Stats.isDirectory_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isDirectory_)));
+        if (@TypeOf(Stats.isFIFO_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isFIFO_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isFIFO_) != CallbackType)
             @compileLog("Expected Stats.isFIFO_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isFIFO_)));
+        if (@TypeOf(Stats.isFile_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isFile_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isFile_) != CallbackType)
             @compileLog("Expected Stats.isFile_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isFile_)));
+        if (@TypeOf(Stats.isSocket_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isSocket_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isSocket_) != CallbackType)
             @compileLog("Expected Stats.isSocket_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isSocket_)));
+        if (@TypeOf(Stats.isSymbolicLink_WithoutTypeChecks) != fn (
+            *Stats,
+            *JSC.JSGlobalObject,
+        ) callconv(.C) JSC.JSValue)
+            @compileLog("Expected Stats.isSymbolicLink_WithoutTypeChecks to be a DOMJIT function");
         if (@TypeOf(Stats.isSymbolicLink_) != CallbackType)
             @compileLog("Expected Stats.isSymbolicLink_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isSymbolicLink_)));
         if (@TypeOf(Stats.mode) != GetterType)
@@ -2948,12 +2983,19 @@ pub const JSStats = struct {
             @export(Stats.gid, .{ .name = "StatsPrototype__gid" });
             @export(Stats.ino, .{ .name = "StatsPrototype__ino" });
             @export(Stats.isBlockDevice_, .{ .name = "StatsPrototype__isBlockDevice_" });
+            @export(Stats.isBlockDevice_WithoutTypeChecks, .{ .name = "StatsPrototype__isBlockDevice_WithoutTypeChecks" });
             @export(Stats.isCharacterDevice_, .{ .name = "StatsPrototype__isCharacterDevice_" });
+            @export(Stats.isCharacterDevice_WithoutTypeChecks, .{ .name = "StatsPrototype__isCharacterDevice_WithoutTypeChecks" });
             @export(Stats.isDirectory_, .{ .name = "StatsPrototype__isDirectory_" });
+            @export(Stats.isDirectory_WithoutTypeChecks, .{ .name = "StatsPrototype__isDirectory_WithoutTypeChecks" });
             @export(Stats.isFIFO_, .{ .name = "StatsPrototype__isFIFO_" });
+            @export(Stats.isFIFO_WithoutTypeChecks, .{ .name = "StatsPrototype__isFIFO_WithoutTypeChecks" });
             @export(Stats.isFile_, .{ .name = "StatsPrototype__isFile_" });
+            @export(Stats.isFile_WithoutTypeChecks, .{ .name = "StatsPrototype__isFile_WithoutTypeChecks" });
             @export(Stats.isSocket_, .{ .name = "StatsPrototype__isSocket_" });
+            @export(Stats.isSocket_WithoutTypeChecks, .{ .name = "StatsPrototype__isSocket_WithoutTypeChecks" });
             @export(Stats.isSymbolicLink_, .{ .name = "StatsPrototype__isSymbolicLink_" });
+            @export(Stats.isSymbolicLink_WithoutTypeChecks, .{ .name = "StatsPrototype__isSymbolicLink_WithoutTypeChecks" });
             @export(Stats.mode, .{ .name = "StatsPrototype__mode" });
             @export(Stats.mtime, .{ .name = "StatsPrototype__mtime" });
             @export(Stats.mtimeMs, .{ .name = "StatsPrototype__mtimeMs" });

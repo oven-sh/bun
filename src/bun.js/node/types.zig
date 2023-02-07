@@ -1071,6 +1071,7 @@ fn StatsDataType(comptime T: type) type {
             const atime = stat_.atime();
             const mtime = stat_.mtime();
             const ctime = stat_.ctime();
+
             return @This(){
                 .dev = @truncate(T, @intCast(i64, stat_.dev)),
                 .ino = @truncate(T, @intCast(i64, stat_.ino)),
@@ -1130,6 +1131,29 @@ pub const Stats = union(enum) {
     pub const isFile_ = JSC.wrapInstanceMethod(Stats, "isFile", false);
     pub const isSocket_ = JSC.wrapInstanceMethod(Stats, "isSocket", false);
     pub const isSymbolicLink_ = JSC.wrapInstanceMethod(Stats, "isSymbolicLink", false);
+
+    pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
+    pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
+    pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
+    pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
+    pub const isFile_WithoutTypeChecks = domCall(.isFile);
+    pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
+    pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
+
+    const DOMCallFn = fn (
+        *Stats,
+        *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue;
+    fn domCall(comptime decl: std.meta.DeclEnum(Stats)) DOMCallFn {
+        return struct {
+            pub fn run(
+                this: *Stats,
+                _: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue {
+                return @call(.auto, @field(Stats, @tagName(decl)), .{this});
+            }
+        }.run;
+    }
 
     pub const dev = unionGetter(.dev);
     pub const ino = unionGetter(.ino);
@@ -1212,6 +1236,16 @@ pub const Stats = union(enum) {
         globalThis.throw("Stats is not constructable. use fs.stat()", .{});
 
         return null;
+    }
+
+    comptime {
+        _ = isBlockDevice_WithoutTypeChecks;
+        _ = isCharacterDevice_WithoutTypeChecks;
+        _ = isDirectory_WithoutTypeChecks;
+        _ = isFIFO_WithoutTypeChecks;
+        _ = isFile_WithoutTypeChecks;
+        _ = isSocket_WithoutTypeChecks;
+        _ = isSymbolicLink_WithoutTypeChecks;
     }
 };
 

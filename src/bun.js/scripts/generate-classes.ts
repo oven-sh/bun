@@ -93,38 +93,47 @@ function DOMJITReturnType(type) {
   }[type];
 }
 
-function DOMJITFunctionDeclaration(jsClassName, fnName, { args, returns }) {
+function DOMJITFunctionDeclaration(jsClassName, fnName, symName, { args, returns, pure = false }) {
   const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
+  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
+  const domJITArgs = args.length > 0 ? `, ${args.map(DOMJITType).join(", ")}` : "";
   return `
   extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(${DOMJITName(
     fnName,
-  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, ${argNames.join(", ")}));
-  extern "C" EncodedJSValue ${DOMJITName(fnName)}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject, ${argNames.join(
-    ", ",
-  )});
+  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}));
+  extern "C" EncodedJSValue ${DOMJITName(
+    symName,
+  )}(void* ptr, JSC::JSGlobalObject * lexicalGlobalObject${formattedArgs});
 
   static const JSC::DOMJIT::Signature DOMJITSignatureFor${fnName}(${DOMJITName(fnName)}Wrapper, 
   ${jsClassName}::info(), 
-  JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()), 
-  ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}, ${args.map(DOMJITType).join(", ")});
+  ${
+    pure
+      ? "JSC::DOMJIT::Effect::forPure()"
+      : "JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top())"
+  }, 
+  ${returns === "JSString" ? "JSC::SpecString" : DOMJITType("JSValue")}${domJITArgs});
 `.trim();
 }
 
-function DOMJITFunctionDefinition(jsClassName, fnName, { args }) {
+function DOMJITFunctionDefinition(jsClassName, fnName, symName, { args }) {
   const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
+  const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
+  const retArgs = argNames.length > 0 ? `, ${args.map((b, i) => "arg" + i).join(", ")}` : "";
+
   return `
 JSC_DEFINE_JIT_OPERATION(${DOMJITName(
     fnName,
-  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, ${argNames.join(", ")}))
+  )}Wrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue${formattedArgs}))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return ${DOMJITName(fnName)}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject, ${args
-    .map((b, i) => "arg" + i)
-    .join(", ")});
+    return ${DOMJITName(
+      symName,
+    )}(reinterpret_cast<${jsClassName}*>(thisValue)->wrapped(), lexicalGlobalObject${retArgs});
 }
 `;
 }
@@ -568,8 +577,18 @@ function renderDecls(symbolName, typeName, proto) {
 
       if (proto[name].DOMJIT) {
         rows.push(
-          DOMJITFunctionDeclaration(className(typeName), symbolName(typeName, name), proto[name].DOMJIT),
-          DOMJITFunctionDefinition(className(typeName), symbolName(typeName, name), proto[name].DOMJIT),
+          DOMJITFunctionDeclaration(
+            className(typeName),
+            symbolName(typeName, name),
+            symbolName(typeName, proto[name].fn),
+            proto[name].DOMJIT,
+          ),
+          DOMJITFunctionDefinition(
+            className(typeName),
+            symbolName(typeName, name),
+            symbolName(typeName, proto[name].fn),
+            proto[name].DOMJIT,
+          ),
         );
       }
     }

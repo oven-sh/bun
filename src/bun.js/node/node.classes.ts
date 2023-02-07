@@ -12,36 +12,71 @@ export default [
         fn: "isBlockDevice_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isCharacterDevice: {
         fn: "isCharacterDevice_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isDirectory: {
         fn: "isDirectory_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isFIFO: {
         fn: "isFIFO_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isFile: {
         fn: "isFile_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isSocket: {
         fn: "isSocket_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       isSymbolicLink: {
         fn: "isSymbolicLink_",
         length: 0,
         enumerable: false,
+        DOMJIT: {
+          returns: "bool",
+          args: [],
+          pure: true,
+        },
       },
       dev: {
         getter: "dev",

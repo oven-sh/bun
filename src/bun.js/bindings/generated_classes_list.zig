@@ -25,4 +25,5 @@ pub const Classes = struct {
     pub const Dirent = JSC.Node.Dirent;
     pub const NodeJSFS = JSC.Node.NodeJSFS;
     pub const Transpiler = JSC.API.Transpiler;
+    pub const Stats = JSC.Node.Stats;
 };

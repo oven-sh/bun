@@ -35,7 +35,51 @@ fn ObjectPtrType(comptime Type: type) type {
     return *Type;
 }
 
+const Internal = struct {
+    pub fn toJSWithType(globalThis: *JSC.JSGlobalObject, comptime Type: type, value: Type, exception: JSC.C.ExceptionRef) JSValue {
+        // TODO: refactor withType to use this instead of the other way around
+        return JSC.JSValue.c(To.JS.withType(Type, value, globalThis, exception));
+    }
+
+    pub fn toJS(globalThis: *JSC.JSGlobalObject, value: anytype, exception: JSC.C.ExceptionRef) JSValue {
+        return toJSWithType(globalThis, @TypeOf(value), value, exception);
+    }
+};
+
+pub usingnamespace Internal;
+
 pub const To = struct {
+    pub const Cpp = struct {
+        pub fn PropertyGetter(
+            comptime Type: type,
+        ) type {
+            return comptime fn (
+                this: ObjectPtrType(Type),
+                globalThis: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue;
+        }
+
+        const toJS = Internal.toJSWithType;
+
+        pub fn GetterFn(comptime Type: type, comptime decl: std.meta.DeclEnum(Type)) PropertyGetter(Type) {
+            return struct {
+                pub fn getter(
+                    this: ObjectPtrType(Type),
+                    globalThis: *JSC.JSGlobalObject,
+                ) callconv(.C) JSC.JSValue {
+                    var exception_ref = [_]JSC.C.JSValueRef{null};
+                    var exception: JSC.C.ExceptionRef = &exception_ref;
+                    const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
+                    if (exception.* != null) {
+                        globalThis.throwValue(JSC.JSValue.c(exception.*));
+                        return .zero;
+                    }
+
+                    return result;
+                }
+            }.getter;
+        }
+    };
     pub const JS = struct {
         pub inline fn str(_: anytype, val: anytype) js.JSStringRef {
             return js.JSStringCreateWithUTF8CString(val[0.. :0]);
@@ -2112,9 +2156,6 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
-const DirEnt = JSC.Node.DirEnt;
-const Stats = JSC.Node.Stats;
-const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
@@ -2143,7 +2184,6 @@ const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
-    BigIntStats,
     BuildError,
     Comment,
     DebugServer,
@@ -2164,7 +2204,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Server,
 
     SSLServer,
-    Stats,
     TextChunk,
     FFI,
 });

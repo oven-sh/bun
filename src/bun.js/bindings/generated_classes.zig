@@ -2737,6 +2737,233 @@ pub const JSServerWebSocket = struct {
         }
     }
 };
+pub const JSStats = struct {
+    const Stats = Classes.Stats;
+    const GetterType = fn (*Stats, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Stats, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Stats, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Stats, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Stats, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Stats {
+        JSC.markBinding(@src());
+        return Stats__fromJS(value);
+    }
+
+    extern fn StatsPrototype__atimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatsPrototype__atimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Stats.atime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatsPrototype__atimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Stats.atime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn atimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatsPrototype__atimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn StatsPrototype__ctimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatsPrototype__ctimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Stats.ctime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatsPrototype__ctimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Stats.ctime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn ctimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatsPrototype__ctimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    extern fn StatsPrototype__mtimeSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn StatsPrototype__mtimeGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Stats.mtime` setter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        StatsPrototype__mtimeSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Stats.mtime` getter
+    /// This value will be visited by the garbage collector.
+    pub fn mtimeGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = StatsPrototype__mtimeGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
+    /// Get the Stats constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        return Stats__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Stats
+    pub fn toJS(this: *Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Stats__create(globalObject, this);
+            std.debug.assert(value__.as(Stats).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Stats__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Stats.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Stats) bool {
+        JSC.markBinding(@src());
+        return Stats__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Stats, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Stats__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Stats__fromJS(JSC.JSValue) ?*Stats;
+    extern fn Stats__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Stats__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Stats) JSC.JSValue;
+
+    extern fn Stats__dangerouslySetPtr(JSC.JSValue, ?*Stats) bool;
+
+    comptime {
+        if (@TypeOf(Stats.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Stats)) {
+            @compileLog("Stats.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Stats.finalize) != (fn (*Stats) callconv(.C) void)) {
+            @compileLog("Stats.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Stats.atime) != GetterType)
+            @compileLog("Expected Stats.atime to be a getter");
+
+        if (@TypeOf(Stats.atimeMs) != GetterType)
+            @compileLog("Expected Stats.atimeMs to be a getter");
+
+        if (@TypeOf(Stats.birthtime) != GetterType)
+            @compileLog("Expected Stats.birthtime to be a getter");
+
+        if (@TypeOf(Stats.birthtimeMs) != GetterType)
+            @compileLog("Expected Stats.birthtimeMs to be a getter");
+
+        if (@TypeOf(Stats.blksize) != GetterType)
+            @compileLog("Expected Stats.blksize to be a getter");
+
+        if (@TypeOf(Stats.blocks) != GetterType)
+            @compileLog("Expected Stats.blocks to be a getter");
+
+        if (@TypeOf(Stats.ctime) != GetterType)
+            @compileLog("Expected Stats.ctime to be a getter");
+
+        if (@TypeOf(Stats.ctimeMs) != GetterType)
+            @compileLog("Expected Stats.ctimeMs to be a getter");
+
+        if (@TypeOf(Stats.dev) != GetterType)
+            @compileLog("Expected Stats.dev to be a getter");
+
+        if (@TypeOf(Stats.gid) != GetterType)
+            @compileLog("Expected Stats.gid to be a getter");
+
+        if (@TypeOf(Stats.ino) != GetterType)
+            @compileLog("Expected Stats.ino to be a getter");
+
+        if (@TypeOf(Stats.isBlockDevice_) != CallbackType)
+            @compileLog("Expected Stats.isBlockDevice_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isBlockDevice_)));
+        if (@TypeOf(Stats.isCharacterDevice_) != CallbackType)
+            @compileLog("Expected Stats.isCharacterDevice_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isCharacterDevice_)));
+        if (@TypeOf(Stats.isDirectory_) != CallbackType)
+            @compileLog("Expected Stats.isDirectory_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isDirectory_)));
+        if (@TypeOf(Stats.isFIFO_) != CallbackType)
+            @compileLog("Expected Stats.isFIFO_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isFIFO_)));
+        if (@TypeOf(Stats.isFile_) != CallbackType)
+            @compileLog("Expected Stats.isFile_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isFile_)));
+        if (@TypeOf(Stats.isSocket_) != CallbackType)
+            @compileLog("Expected Stats.isSocket_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isSocket_)));
+        if (@TypeOf(Stats.isSymbolicLink_) != CallbackType)
+            @compileLog("Expected Stats.isSymbolicLink_ to be a callback but received " ++ @typeName(@TypeOf(Stats.isSymbolicLink_)));
+        if (@TypeOf(Stats.mode) != GetterType)
+            @compileLog("Expected Stats.mode to be a getter");
+
+        if (@TypeOf(Stats.mtime) != GetterType)
+            @compileLog("Expected Stats.mtime to be a getter");
+
+        if (@TypeOf(Stats.mtimeMs) != GetterType)
+            @compileLog("Expected Stats.mtimeMs to be a getter");
+
+        if (@TypeOf(Stats.nlink) != GetterType)
+            @compileLog("Expected Stats.nlink to be a getter");
+
+        if (@TypeOf(Stats.rdev) != GetterType)
+            @compileLog("Expected Stats.rdev to be a getter");
+
+        if (@TypeOf(Stats.size) != GetterType)
+            @compileLog("Expected Stats.size to be a getter");
+
+        if (@TypeOf(Stats.uid) != GetterType)
+            @compileLog("Expected Stats.uid to be a getter");
+
+        if (!JSC.is_bindgen) {
+            @export(Stats.atime, .{ .name = "StatsPrototype__atime" });
+            @export(Stats.atimeMs, .{ .name = "StatsPrototype__atimeMs" });
+            @export(Stats.birthtime, .{ .name = "StatsPrototype__birthtime" });
+            @export(Stats.birthtimeMs, .{ .name = "StatsPrototype__birthtimeMs" });
+            @export(Stats.blksize, .{ .name = "StatsPrototype__blksize" });
+            @export(Stats.blocks, .{ .name = "StatsPrototype__blocks" });
+            @export(Stats.constructor, .{ .name = "StatsClass__construct" });
+            @export(Stats.ctime, .{ .name = "StatsPrototype__ctime" });
+            @export(Stats.ctimeMs, .{ .name = "StatsPrototype__ctimeMs" });
+            @export(Stats.dev, .{ .name = "StatsPrototype__dev" });
+            @export(Stats.finalize, .{ .name = "StatsClass__finalize" });
+            @export(Stats.gid, .{ .name = "StatsPrototype__gid" });
+            @export(Stats.ino, .{ .name = "StatsPrototype__ino" });
+            @export(Stats.isBlockDevice_, .{ .name = "StatsPrototype__isBlockDevice_" });
+            @export(Stats.isCharacterDevice_, .{ .name = "StatsPrototype__isCharacterDevice_" });
+            @export(Stats.isDirectory_, .{ .name = "StatsPrototype__isDirectory_" });
+            @export(Stats.isFIFO_, .{ .name = "StatsPrototype__isFIFO_" });
+            @export(Stats.isFile_, .{ .name = "StatsPrototype__isFile_" });
+            @export(Stats.isSocket_, .{ .name = "StatsPrototype__isSocket_" });
+            @export(Stats.isSymbolicLink_, .{ .name = "StatsPrototype__isSymbolicLink_" });
+            @export(Stats.mode, .{ .name = "StatsPrototype__mode" });
+            @export(Stats.mtime, .{ .name = "StatsPrototype__mtime" });
+            @export(Stats.mtimeMs, .{ .name = "StatsPrototype__mtimeMs" });
+            @export(Stats.nlink, .{ .name = "StatsPrototype__nlink" });
+            @export(Stats.rdev, .{ .name = "StatsPrototype__rdev" });
+            @export(Stats.size, .{ .name = "StatsPrototype__size" });
+            @export(Stats.uid, .{ .name = "StatsPrototype__uid" });
+        }
+    }
+};
 pub const JSSubprocess = struct {
     const Subprocess = Classes.Subprocess;
     const GetterType = fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -3408,6 +3635,7 @@ comptime {
     _ = JSSHA512;
     _ = JSSHA512_256;
     _ = JSServerWebSocket;
+    _ = JSStats;
     _ = JSSubprocess;
     _ = JSTCPSocket;
     _ = JSTLSSocket;

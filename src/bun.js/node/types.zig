@@ -1044,113 +1044,8 @@ pub const Date = enum(u64) {
     }
 };
 
-fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
+fn StatsDataType(comptime T: type) type {
     return struct {
-        const This = @This();
-
-        pub const Class = JSC.NewClass(
-            This,
-            .{ .name = name },
-            .{
-                .isBlockDevice = .{
-                    .rfn = JSC.wrap(This, "isBlockDevice", false),
-                },
-                .isCharacterDevice = .{
-                    .rfn = JSC.wrap(This, "isCharacterDevice", false),
-                },
-                .isDirectory = .{
-                    .rfn = JSC.wrap(This, "isDirectory", false),
-                },
-                .isFIFO = .{
-                    .rfn = JSC.wrap(This, "isFIFO", false),
-                },
-                .isFile = .{
-                    .rfn = JSC.wrap(This, "isFile", false),
-                },
-                .isSocket = .{
-                    .rfn = JSC.wrap(This, "isSocket", false),
-                },
-                .isSymbolicLink = .{
-                    .rfn = JSC.wrap(This, "isSymbolicLink", false),
-                },
-                .finalize = finalize,
-            },
-            .{
-                .dev = .{
-                    .get = JSC.To.JS.Getter(This, .dev),
-                    .name = "dev",
-                },
-                .ino = .{
-                    .get = JSC.To.JS.Getter(This, .ino),
-                    .name = "ino",
-                },
-                .mode = .{
-                    .get = JSC.To.JS.Getter(This, .mode),
-                    .name = "mode",
-                },
-                .nlink = .{
-                    .get = JSC.To.JS.Getter(This, .nlink),
-                    .name = "nlink",
-                },
-                .uid = .{
-                    .get = JSC.To.JS.Getter(This, .uid),
-                    .name = "uid",
-                },
-                .gid = .{
-                    .get = JSC.To.JS.Getter(This, .gid),
-                    .name = "gid",
-                },
-                .rdev = .{
-                    .get = JSC.To.JS.Getter(This, .rdev),
-                    .name = "rdev",
-                },
-                .size = .{
-                    .get = JSC.To.JS.Getter(This, .size),
-                    .name = "size",
-                },
-                .blksize = .{
-                    .get = JSC.To.JS.Getter(This, .blksize),
-                    .name = "blksize",
-                },
-                .blocks = .{
-                    .get = JSC.To.JS.Getter(This, .blocks),
-                    .name = "blocks",
-                },
-                .atime = .{
-                    .get = JSC.To.JS.Getter(This, .atime),
-                    .name = "atime",
-                },
-                .mtime = .{
-                    .get = JSC.To.JS.Getter(This, .mtime),
-                    .name = "mtime",
-                },
-                .ctime = .{
-                    .get = JSC.To.JS.Getter(This, .ctime),
-                    .name = "ctime",
-                },
-                .birthtime = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime),
-                    .name = "birthtime",
-                },
-                .atimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .atime_ms),
-                    .name = "atimeMs",
-                },
-                .mtimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .mtime_ms),
-                    .name = "mtimeMs",
-                },
-                .ctimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .ctime_ms),
-                    .name = "ctimeMs",
-                },
-                .birthtimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime_ms),
-                    .name = "birthtimeMs",
-                },
-            },
-        );
-
         dev: T,
         ino: T,
         mode: T,
@@ -1161,10 +1056,12 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         size: T,
         blksize: T,
         blocks: T,
-        atime_ms: T,
-        mtime_ms: T,
-        ctime_ms: T,
+        atime_ms: f64,
+        mtime_ms: f64,
+        ctime_ms: f64,
         birthtime_ms: T,
+
+        // TODO: don't store these 4 fields
         atime: Date,
         mtime: Date,
         ctime: Date,
@@ -1185,9 +1082,9 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .size = @truncate(T, @intCast(i64, stat_.size)),
                 .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
                 .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
-                .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .atime_ms = (@intToFloat(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .mtime_ms = (@intToFloat(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .ctime_ms = (@intToFloat(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
                 .atime = @intToEnum(Date, @intCast(u64, @max(atime.tv_sec, 0))),
                 .mtime = @intToEnum(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
                 .ctime = @intToEnum(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
@@ -1205,54 +1102,118 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                     @intToEnum(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
             };
         }
-
-        pub fn isBlockDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isCharacterDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isDirectory(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFIFO(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isSocket(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.mode)));
-        }
-
-        // Node.js says this method is only valid on the result of lstat()
-        // so it's fine if we just include it on stat() because it would
-        // still just return false.
-        //
-        // See https://nodejs.org/api/fs.html#statsissymboliclink
-        pub fn isSymbolicLink(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            var _this = bun.default_allocator.create(Stats) catch unreachable;
-            _this.* = this;
-            return Class.make(ctx, _this);
-        }
-
-        pub fn finalize(this: *This) void {
-            bun.default_allocator.destroy(this);
-        }
     };
 }
 
-pub const Stats = StatsLike("Stats", i32);
-pub const BigIntStats = StatsLike("BigIntStats", i64);
+pub const Stats = union(enum) {
+    big: StatsDataType(i64),
+    small: StatsDataType(i32),
+
+    const This = Stats;
+    pub usingnamespace JSC.Codegen.JSStats;
+
+    fn unionGetter(comptime field: std.meta.FieldEnum(StatsDataType(i64))) JSC.To.Cpp.PropertyGetter(This) {
+        return struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                return switch (this.*) {
+                    .big => JSC.toJS(globalThis, @field(this.big, @tagName(field)), null),
+                    .small => JSC.toJS(globalThis, @field(this.small, @tagName(field)), null),
+                };
+            }
+        }.callback;
+    }
+
+    pub const isBlockDevice_ = JSC.wrapInstanceMethod(Stats, "isBlockDevice", false);
+    pub const isCharacterDevice_ = JSC.wrapInstanceMethod(Stats, "isCharacterDevice", false);
+    pub const isDirectory_ = JSC.wrapInstanceMethod(Stats, "isDirectory", false);
+    pub const isFIFO_ = JSC.wrapInstanceMethod(Stats, "isFIFO", false);
+    pub const isFile_ = JSC.wrapInstanceMethod(Stats, "isFile", false);
+    pub const isSocket_ = JSC.wrapInstanceMethod(Stats, "isSocket", false);
+    pub const isSymbolicLink_ = JSC.wrapInstanceMethod(Stats, "isSymbolicLink", false);
+
+    pub const dev = unionGetter(.dev);
+    pub const ino = unionGetter(.ino);
+    pub const mode = unionGetter(.mode);
+    pub const nlink = unionGetter(.nlink);
+    pub const uid = unionGetter(.uid);
+    pub const gid = unionGetter(.gid);
+    pub const rdev = unionGetter(.rdev);
+    pub const size = unionGetter(.size);
+    pub const blksize = unionGetter(.blksize);
+    pub const blocks = unionGetter(.blocks);
+    pub const atime = unionGetter(.atime);
+    pub const mtime = unionGetter(.mtime);
+    pub const ctime = unionGetter(.ctime);
+    pub const birthtime = unionGetter(.birthtime);
+    pub const atimeMs = unionGetter(.atime_ms);
+    pub const mtimeMs = unionGetter(.mtime_ms);
+    pub const ctimeMs = unionGetter(.ctime_ms);
+    pub const birthtimeMs = unionGetter(.birthtime_ms);
+
+    fn modeInternal(this: *This) i32 {
+        return switch (this.*) {
+            .big => @truncate(i32, this.big.mode),
+            .small => this.small.mode,
+        };
+    }
+
+    pub fn isBlockDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isCharacterDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isDirectory(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFIFO(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFile(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isSocket(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.modeInternal())));
+    }
+
+    // Node.js says this method is only valid on the result of lstat()
+    // so it's fine if we just include it on stat() because it would
+    // still just return false.
+    //
+    // See https://nodejs.org/api/fs.html#statsissymboliclink
+    pub fn isSymbolicLink(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn finalize(this: *This) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn init(stat: std.os.Stat, big: bool) This {
+        if (big) {
+            return .{ .big = StatsDataType(i64).init(stat) };
+        } else {
+            return .{ .small = StatsDataType(i32).init(stat) };
+        }
+    }
+
+    pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat, big: bool) *This {
+        var this = allocator.create(Stats) catch unreachable;
+        this.* = init(stat, big);
+        return this;
+    }
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
+        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
+
+        return null;
+    }
+};
 
 /// A class representing a directory stream.
 ///

@@ -3331,7 +3331,7 @@ const Buffers = struct {
         }
 
         // Legacy tree structure stores package IDs instead of dependency IDs
-        if (this.trees.items[0].dependency_id != Tree.root_dep_id) {
+        if (this.trees.items.len > 0 and this.trees.items[0].dependency_id != Tree.root_dep_id) {
             for (this.trees.items) |*tree| {
                 tree.dependency_id = try this.legacyPackageToDependencyID(tree.dependency_id);
             }

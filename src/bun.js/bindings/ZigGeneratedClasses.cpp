@@ -522,10 +522,10 @@ JSC_DECLARE_HOST_FUNCTION(CryptoHasherPrototype__updateCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCryptoHasherPrototype, JSCryptoHasherPrototype::Base);
 
 static const HashTableValue JSCryptoHasherPrototypeTableValues[] = {
-    { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__algorithmGetterWrap, 0 } },
-    { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__byteLengthGetterWrap, 0 } },
-    { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__digestCallback, 0 } },
-    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__updateCallback, 2 } }
+    { "algorithm"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__algorithmGetterWrap, 0 } },
+    { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherPrototype__byteLengthGetterWrap, 0 } },
+    { "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__digestCallback, 0 } },
+    { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherPrototype__updateCallback, 2 } }
 };
 
 const ClassInfo JSCryptoHasherPrototype::s_info = { "CryptoHasher"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCryptoHasherPrototype) };
@@ -628,8 +628,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(CryptoHasherClass__getAlgorithms);
 extern "C" JSC_DECLARE_HOST_FUNCTION(CryptoHasherClass__hash);
 
 static const HashTableValue JSCryptoHasherConstructorTableValues[] = {
-    { "algorithms"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherClass__getAlgorithms, 0 } },
-    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherClass__hash, 2 } }
+    { "algorithms"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, CryptoHasherClass__getAlgorithms, 0 } },
+    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, CryptoHasherClass__hash, 2 } }
 };
 
 void JSCryptoHasherConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype)
@@ -910,14 +910,14 @@ JSC_DECLARE_CUSTOM_GETTER(DirentPrototype__nameGetterWrap);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSDirentPrototype, JSDirentPrototype::Base);
 
 static const HashTableValue JSDirentPrototypeTableValues[] = {
-    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isBlockDeviceCallback, 0 } },
-    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isCharacterDeviceCallback, 0 } },
-    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isDirectoryCallback, 0 } },
-    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isFIFOCallback, 0 } },
-    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isFileCallback, 0 } },
-    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isSocketCallback, 0 } },
-    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isSymbolicLinkCallback, 0 } },
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, DirentPrototype__nameGetterWrap, 0 } }
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isBlockDeviceCallback, 0 } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isCharacterDeviceCallback, 0 } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isDirectoryCallback, 0 } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isFIFOCallback, 0 } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isFileCallback, 0 } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isSocketCallback, 0 } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, DirentPrototype__isSymbolicLinkCallback, 0 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, DirentPrototype__nameGetterWrap, 0 } }
 };
 
 const ClassInfo JSDirentPrototype::s_info = { "Dirent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDirentPrototype) };
@@ -2811,14 +2811,14 @@ JSC_DECLARE_HOST_FUNCTION(ListenerPrototype__unrefCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSListenerPrototype, JSListenerPrototype::Base);
 
 static const HashTableValue JSListenerPrototypeTableValues[] = {
-    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__dataGetterWrap, ListenerPrototype__dataSetterWrap } },
-    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__hostnameGetterWrap, 0 } },
-    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__portGetterWrap, 0 } },
-    { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__refCallback, 0 } },
-    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__reloadCallback, 1 } },
-    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__stopCallback, 1 } },
-    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__unixGetterWrap, 0 } },
-    { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__unrefCallback, 0 } }
+    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__dataGetterWrap, ListenerPrototype__dataSetterWrap } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__hostnameGetterWrap, 0 } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__portGetterWrap, 0 } },
+    { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__refCallback, 0 } },
+    { "reload"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__reloadCallback, 1 } },
+    { "stop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__stopCallback, 1 } },
+    { "unix"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ListenerPrototype__unixGetterWrap, 0 } },
+    { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ListenerPrototype__unrefCallback, 0 } }
 };
 
 const ClassInfo JSListenerPrototype::s_info = { "Listener"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSListenerPrototype) };
@@ -3787,14 +3787,14 @@ JSC_DECLARE_CUSTOM_GETTER(MatchedRoutePrototype__srcGetterWrap);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMatchedRoutePrototype, JSMatchedRoutePrototype::Base);
 
 static const HashTableValue JSMatchedRoutePrototypeTableValues[] = {
-    { "filePath"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__filePathGetterWrap, 0 } },
-    { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__kindGetterWrap, 0 } },
-    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
-    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__paramsGetterWrap, 0 } },
-    { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__pathnameGetterWrap, 0 } },
-    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } },
-    { "scriptSrc"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__scriptSrcGetterWrap, 0 } },
-    { "src"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__srcGetterWrap, 0 } }
+    { "filePath"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__filePathGetterWrap, 0 } },
+    { "kind"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__kindGetterWrap, 0 } },
+    { "name"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__nameGetterWrap, 0 } },
+    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__paramsGetterWrap, 0 } },
+    { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__pathnameGetterWrap, 0 } },
+    { "query"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__queryGetterWrap, 0 } },
+    { "scriptSrc"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__scriptSrcGetterWrap, 0 } },
+    { "src"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, MatchedRoutePrototype__srcGetterWrap, 0 } }
 };
 
 const ClassInfo JSMatchedRoutePrototype::s_info = { "MatchedRoute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMatchedRoutePrototype) };
@@ -4509,88 +4509,88 @@ JSC_DECLARE_HOST_FUNCTION(NodeJSFSPrototype__writevSyncCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSNodeJSFSPrototype, JSNodeJSFSPrototype::Base);
 
 static const HashTableValue JSNodeJSFSPrototypeTableValues[] = {
-    { "access"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessCallback, 3 } },
-    { "accessSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessSyncCallback, 2 } },
-    { "appendFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileCallback, 4 } },
-    { "appendFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileSyncCallback, 3 } },
-    { "chmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chmodCallback, 3 } },
-    { "chmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chmodSyncCallback, 2 } },
-    { "chown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chownCallback, 4 } },
-    { "chownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chownSyncCallback, 3 } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__closeCallback, 1 } },
-    { "closeSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__closeSyncCallback, 1 } },
-    { "copyFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__copyFileCallback, 4 } },
-    { "copyFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__copyFileSyncCallback, 3 } },
-    { "Dirent"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, NodeJSFSPrototype__DirentGetterWrap, 0 } },
-    { "exists"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__existsCallback, 2 } },
-    { "existsSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__existsSyncCallback, 1 } },
-    { "fchmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchmodCallback, 3 } },
-    { "fchmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchmodSyncCallback, 2 } },
-    { "fchown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchownCallback, 4 } },
-    { "fchownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchownSyncCallback, 3 } },
-    { "fdatasync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fdatasyncCallback, 2 } },
-    { "fdatasyncSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fdatasyncSyncCallback, 1 } },
-    { "fstat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fstatCallback, 1 } },
-    { "fstatSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fstatSyncCallback, 1 } },
-    { "fsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fsyncCallback, 2 } },
-    { "fsyncSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fsyncSyncCallback, 1 } },
-    { "ftruncate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__ftruncateCallback, 1 } },
-    { "ftruncateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__ftruncateSyncCallback, 1 } },
-    { "futimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__futimesCallback, 4 } },
-    { "futimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__futimesSyncCallback, 3 } },
-    { "lchmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchmodCallback, 3 } },
-    { "lchmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchmodSyncCallback, 2 } },
-    { "lchown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchownCallback, 4 } },
-    { "lchownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchownSyncCallback, 3 } },
-    { "link"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__linkCallback, 3 } },
-    { "linkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__linkSyncCallback, 2 } },
-    { "lstat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lstatCallback, 1 } },
-    { "lstatSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lstatSyncCallback, 1 } },
-    { "lutimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lutimesCallback, 4 } },
-    { "lutimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lutimesSyncCallback, 3 } },
-    { "mkdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdirCallback, 3 } },
-    { "mkdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdirSyncCallback, 2 } },
-    { "mkdtemp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdtempCallback, 3 } },
-    { "mkdtempSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdtempSyncCallback, 2 } },
-    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__openCallback, 4 } },
-    { "opendir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__opendirCallback, 3 } },
-    { "opendirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__opendirSyncCallback, 2 } },
-    { "openSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__openSyncCallback, 3 } },
-    { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readCallback, 6 } },
-    { "readdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readdirCallback, 3 } },
-    { "readdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readdirSyncCallback, 2 } },
-    { "readFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readFileCallback, 3 } },
-    { "readFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readFileSyncCallback, 2 } },
-    { "readlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readlinkCallback, 3 } },
-    { "readlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readlinkSyncCallback, 2 } },
-    { "readSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readSyncCallback, 5 } },
-    { "readv"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readvCallback, 4 } },
-    { "readvSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readvSyncCallback, 3 } },
-    { "realpath"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__realpathCallback, 3 } },
-    { "realpathSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__realpathSyncCallback, 2 } },
-    { "rename"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__renameCallback, 3 } },
-    { "renameSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__renameSyncCallback, 2 } },
-    { "rm"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmCallback, 3 } },
-    { "rmdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmdirCallback, 3 } },
-    { "rmdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmdirSyncCallback, 2 } },
-    { "rmSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmSyncCallback, 2 } },
-    { "stat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statCallback, 1 } },
-    { "Stats"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, NodeJSFSPrototype__StatsGetterWrap, 0 } },
-    { "statSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statSyncCallback, 1 } },
-    { "symlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkCallback, 4 } },
-    { "symlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkSyncCallback, 3 } },
-    { "truncate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__truncateCallback, 3 } },
-    { "truncateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__truncateSyncCallback, 2 } },
-    { "unlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__unlinkCallback, 2 } },
-    { "unlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__unlinkSyncCallback, 1 } },
-    { "utimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesCallback, 4 } },
-    { "utimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesSyncCallback, 3 } },
-    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeCallback, 6 } },
-    { "writeFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileCallback, 4 } },
-    { "writeFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileSyncCallback, 3 } },
-    { "writeSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeSyncCallback, 5 } },
-    { "writev"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writevCallback, 4 } },
-    { "writevSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writevSyncCallback, 3 } }
+    { "access"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessCallback, 3 } },
+    { "accessSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__accessSyncCallback, 2 } },
+    { "appendFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileCallback, 4 } },
+    { "appendFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__appendFileSyncCallback, 3 } },
+    { "chmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chmodCallback, 3 } },
+    { "chmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chmodSyncCallback, 2 } },
+    { "chown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chownCallback, 4 } },
+    { "chownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__chownSyncCallback, 3 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__closeCallback, 1 } },
+    { "closeSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__closeSyncCallback, 1 } },
+    { "copyFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__copyFileCallback, 4 } },
+    { "copyFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__copyFileSyncCallback, 3 } },
+    { "Dirent"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, NodeJSFSPrototype__DirentGetterWrap, 0 } },
+    { "exists"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__existsCallback, 2 } },
+    { "existsSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__existsSyncCallback, 1 } },
+    { "fchmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchmodCallback, 3 } },
+    { "fchmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchmodSyncCallback, 2 } },
+    { "fchown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchownCallback, 4 } },
+    { "fchownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fchownSyncCallback, 3 } },
+    { "fdatasync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fdatasyncCallback, 2 } },
+    { "fdatasyncSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fdatasyncSyncCallback, 1 } },
+    { "fstat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fstatCallback, 1 } },
+    { "fstatSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fstatSyncCallback, 1 } },
+    { "fsync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fsyncCallback, 2 } },
+    { "fsyncSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__fsyncSyncCallback, 1 } },
+    { "ftruncate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__ftruncateCallback, 1 } },
+    { "ftruncateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__ftruncateSyncCallback, 1 } },
+    { "futimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__futimesCallback, 4 } },
+    { "futimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__futimesSyncCallback, 3 } },
+    { "lchmod"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchmodCallback, 3 } },
+    { "lchmodSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchmodSyncCallback, 2 } },
+    { "lchown"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchownCallback, 4 } },
+    { "lchownSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lchownSyncCallback, 3 } },
+    { "link"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__linkCallback, 3 } },
+    { "linkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__linkSyncCallback, 2 } },
+    { "lstat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lstatCallback, 1 } },
+    { "lstatSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lstatSyncCallback, 1 } },
+    { "lutimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lutimesCallback, 4 } },
+    { "lutimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__lutimesSyncCallback, 3 } },
+    { "mkdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdirCallback, 3 } },
+    { "mkdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdirSyncCallback, 2 } },
+    { "mkdtemp"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdtempCallback, 3 } },
+    { "mkdtempSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__mkdtempSyncCallback, 2 } },
+    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__openCallback, 4 } },
+    { "opendir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__opendirCallback, 3 } },
+    { "opendirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__opendirSyncCallback, 2 } },
+    { "openSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__openSyncCallback, 3 } },
+    { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readCallback, 6 } },
+    { "readdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readdirCallback, 3 } },
+    { "readdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readdirSyncCallback, 2 } },
+    { "readFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readFileCallback, 3 } },
+    { "readFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readFileSyncCallback, 2 } },
+    { "readlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readlinkCallback, 3 } },
+    { "readlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readlinkSyncCallback, 2 } },
+    { "readSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readSyncCallback, 5 } },
+    { "readv"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readvCallback, 4 } },
+    { "readvSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__readvSyncCallback, 3 } },
+    { "realpath"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__realpathCallback, 3 } },
+    { "realpathSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__realpathSyncCallback, 2 } },
+    { "rename"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__renameCallback, 3 } },
+    { "renameSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__renameSyncCallback, 2 } },
+    { "rm"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmCallback, 3 } },
+    { "rmdir"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmdirCallback, 3 } },
+    { "rmdirSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmdirSyncCallback, 2 } },
+    { "rmSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__rmSyncCallback, 2 } },
+    { "stat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statCallback, 1 } },
+    { "Stats"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, NodeJSFSPrototype__StatsGetterWrap, 0 } },
+    { "statSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__statSyncCallback, 1 } },
+    { "symlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkCallback, 4 } },
+    { "symlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__symlinkSyncCallback, 3 } },
+    { "truncate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__truncateCallback, 3 } },
+    { "truncateSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__truncateSyncCallback, 2 } },
+    { "unlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__unlinkCallback, 2 } },
+    { "unlinkSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__unlinkSyncCallback, 1 } },
+    { "utimes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesCallback, 4 } },
+    { "utimesSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__utimesSyncCallback, 3 } },
+    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeCallback, 6 } },
+    { "writeFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileCallback, 4 } },
+    { "writeFileSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeFileSyncCallback, 3 } },
+    { "writeSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writeSyncCallback, 5 } },
+    { "writev"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writevCallback, 4 } },
+    { "writevSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, NodeJSFSPrototype__writevSyncCallback, 3 } }
 };
 
 const ClassInfo JSNodeJSFSPrototype::s_info = { "NodeJSFS"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSNodeJSFSPrototype) };
@@ -9355,22 +9355,22 @@ JSC_DECLARE_HOST_FUNCTION(ServerWebSocketPrototype__unsubscribeCallback);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSServerWebSocketPrototype, JSServerWebSocketPrototype::Base);
 
 static const HashTableValue JSServerWebSocketPrototypeTableValues[] = {
-    { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__binaryTypeGetterWrap, ServerWebSocketPrototype__binaryTypeSetterWrap } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } },
-    { "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } },
-    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } },
-    { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } },
-    { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } },
-    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__publishCallback, 3 } },
-    { "publishBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__publishBinary } },
-    { "publishText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishTextCallback, &DOMJITSignatureForServerWebSocketPrototype__publishText } },
-    { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__readyStateGetterWrap, 0 } },
-    { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__remoteAddressGetterWrap, 0 } },
-    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__sendCallback, 2 } },
-    { "sendBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__sendBinary } },
-    { "sendText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendTextCallback, &DOMJITSignatureForServerWebSocketPrototype__sendText } },
-    { "subscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__subscribeCallback, 1 } },
-    { "unsubscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__unsubscribeCallback, 1 } }
+    { "binaryType"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__binaryTypeGetterWrap, ServerWebSocketPrototype__binaryTypeSetterWrap } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__closeCallback, 1 } },
+    { "cork"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__corkCallback, 1 } },
+    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__dataGetterWrap, ServerWebSocketPrototype__dataSetterWrap } },
+    { "getBufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__getBufferedAmountCallback, 0 } },
+    { "isSubscribed"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__isSubscribedCallback, 1 } },
+    { "publish"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__publishCallback, 3 } },
+    { "publishBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__publishBinary } },
+    { "publishText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__publishTextCallback, &DOMJITSignatureForServerWebSocketPrototype__publishText } },
+    { "readyState"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__readyStateGetterWrap, 0 } },
+    { "remoteAddress"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ServerWebSocketPrototype__remoteAddressGetterWrap, 0 } },
+    { "send"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__sendCallback, 2 } },
+    { "sendBinary"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendBinaryCallback, &DOMJITSignatureForServerWebSocketPrototype__sendBinary } },
+    { "sendText"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, ServerWebSocketPrototype__sendTextCallback, &DOMJITSignatureForServerWebSocketPrototype__sendText } },
+    { "subscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__subscribeCallback, 1 } },
+    { "unsubscribe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ServerWebSocketPrototype__unsubscribeCallback, 1 } }
 };
 
 const ClassInfo JSServerWebSocketPrototype::s_info = { "ServerWebSocket"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSServerWebSocketPrototype) };
@@ -10149,31 +10149,31 @@ JSC_DECLARE_CUSTOM_GETTER(StatsPrototype__uidGetterWrap);
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStatsPrototype, JSStatsPrototype::Base);
 
 static const HashTableValue JSStatsPrototypeTableValues[] = {
-    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeGetterWrap, 0 } },
-    { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeMsGetterWrap, 0 } },
-    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__birthtimeGetterWrap, 0 } },
-    { "birthtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__birthtimeMsGetterWrap, 0 } },
-    { "blksize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__blksizeGetterWrap, 0 } },
-    { "blocks"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__blocksGetterWrap, 0 } },
-    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__ctimeGetterWrap, 0 } },
-    { "ctimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__ctimeMsGetterWrap, 0 } },
-    { "dev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__devGetterWrap, 0 } },
-    { "gid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__gidGetterWrap, 0 } },
-    { "ino"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__inoGetterWrap, 0 } },
-    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isBlockDeviceCallback, &DOMJITSignatureForStatsPrototype__isBlockDevice } },
-    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isCharacterDeviceCallback, &DOMJITSignatureForStatsPrototype__isCharacterDevice } },
-    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isDirectoryCallback, &DOMJITSignatureForStatsPrototype__isDirectory } },
-    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFIFOCallback, &DOMJITSignatureForStatsPrototype__isFIFO } },
-    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFileCallback, &DOMJITSignatureForStatsPrototype__isFile } },
-    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSocketCallback, &DOMJITSignatureForStatsPrototype__isSocket } },
-    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSymbolicLinkCallback, &DOMJITSignatureForStatsPrototype__isSymbolicLink } },
-    { "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__modeGetterWrap, 0 } },
-    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeGetterWrap, 0 } },
-    { "mtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeMsGetterWrap, 0 } },
-    { "nlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__nlinkGetterWrap, 0 } },
-    { "rdev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__rdevGetterWrap, 0 } },
-    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__sizeGetterWrap, 0 } },
-    { "uid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__uidGetterWrap, 0 } }
+    { "atime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeGetterWrap, 0 } },
+    { "atimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__atimeMsGetterWrap, 0 } },
+    { "birthtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__birthtimeGetterWrap, 0 } },
+    { "birthtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__birthtimeMsGetterWrap, 0 } },
+    { "blksize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__blksizeGetterWrap, 0 } },
+    { "blocks"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__blocksGetterWrap, 0 } },
+    { "ctime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__ctimeGetterWrap, 0 } },
+    { "ctimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__ctimeMsGetterWrap, 0 } },
+    { "dev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__devGetterWrap, 0 } },
+    { "gid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__gidGetterWrap, 0 } },
+    { "ino"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__inoGetterWrap, 0 } },
+    { "isBlockDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isBlockDeviceCallback, &DOMJITSignatureForStatsPrototype__isBlockDevice } },
+    { "isCharacterDevice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isCharacterDeviceCallback, &DOMJITSignatureForStatsPrototype__isCharacterDevice } },
+    { "isDirectory"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isDirectoryCallback, &DOMJITSignatureForStatsPrototype__isDirectory } },
+    { "isFIFO"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFIFOCallback, &DOMJITSignatureForStatsPrototype__isFIFO } },
+    { "isFile"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isFileCallback, &DOMJITSignatureForStatsPrototype__isFile } },
+    { "isSocket"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSocketCallback, &DOMJITSignatureForStatsPrototype__isSocket } },
+    { "isSymbolicLink"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::DOMJITFunctionType, StatsPrototype__isSymbolicLinkCallback, &DOMJITSignatureForStatsPrototype__isSymbolicLink } },
+    { "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__modeGetterWrap, 0 } },
+    { "mtime"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeGetterWrap, 0 } },
+    { "mtimeMs"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__mtimeMsGetterWrap, 0 } },
+    { "nlink"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__nlinkGetterWrap, 0 } },
+    { "rdev"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__rdevGetterWrap, 0 } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__sizeGetterWrap, 0 } },
+    { "uid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, StatsPrototype__uidGetterWrap, 0 } }
 };
 
 const ClassInfo JSStatsPrototype::s_info = { "Stats"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStatsPrototype) };

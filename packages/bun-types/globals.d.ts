@@ -1207,6 +1207,16 @@ declare function clearInterval(id?: number): void;
  * @param id timer id
  */
 declare function clearTimeout(id?: number): void;
+/**
+ * Cancel a delayed function call by its timer ID.
+ * @param id timer id
+ */
+declare function clearTimeout(id?: number): void;
+/**
+ * Cancel an immediate function call by its immediate ID.
+ * @param id immediate id
+ */
+declare function clearImmediate(id?: number): void;
 // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 /**
@@ -1221,7 +1231,6 @@ declare function clearTimeout(id?: number): void;
  */
 
 declare function fetch(url: string | URL, init?: FetchRequestInit): Promise<Response>;
-
 
 /**
  * Send a HTTP(s) request

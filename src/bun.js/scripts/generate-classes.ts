@@ -181,7 +181,7 @@ function propRow(
     DOMJIT,
     enumerable = true,
     configurable = false,
-  } = (defaultPropertyAttributes ? Object.assign({}, prop, defaultPropertyAttributes) : prop) as any;
+  } = (defaultPropertyAttributes ? Object.assign({}, defaultPropertyAttributes, prop) : prop) as any;
 
   var extraPropertyAttributes = "";
   if (!enumerable) {
@@ -252,10 +252,17 @@ function propRow(
 
 export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
   const rows = [];
-  const defaultPropertyAttributes =
-    "enumerable" in obj || "configurable" in obj
-      ? { enumerable: obj.enumerable, configurable: obj.configurable }
-      : undefined;
+  let defaultPropertyAttributes = undefined;
+
+  if ("enumerable" in obj) {
+    defaultPropertyAttributes ||= {};
+    defaultPropertyAttributes.enumerable = obj.enumerable;
+  }
+
+  if ("configurable" in obj) {
+    defaultPropertyAttributes ||= {};
+    defaultPropertyAttributes.configurable = obj.configurable;
+  }
 
   for (const name in props) {
     if ("internal" in props[name]) continue;

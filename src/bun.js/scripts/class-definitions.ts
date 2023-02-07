@@ -17,6 +17,7 @@ export type Field =
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];
+        pure?: boolean;
       };
     } & PropertyAttribute)
   | { internal: true };

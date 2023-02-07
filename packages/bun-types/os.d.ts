@@ -40,9 +40,7 @@ declare module "os" {
     shell: T;
     homedir: T;
   }
-  type NetworkInterfaceInfo =
-    | NetworkInterfaceInfoIPv4
-    | NetworkInterfaceInfoIPv6;
+  type NetworkInterfaceInfo = NetworkInterfaceInfoIPv4 | NetworkInterfaceInfoIPv6;
   /**
    * Returns the host name of the operating system as a string.
    */

@@ -6,13 +6,7 @@
  */
 declare module "readline/promises" {
   import { Readable, Writable } from "node:stream";
-  import {
-    Interface as _Interface,
-    ReadLineOptions,
-    Completer,
-    AsyncCompleter,
-    Direction,
-  } from "node:readline";
+  import { Interface as _Interface, ReadLineOptions, Completer, AsyncCompleter, Direction } from "node:readline";
   import { Abortable } from "node:events";
 
   class Interface extends _Interface {

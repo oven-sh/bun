@@ -47,10 +47,7 @@ declare module "bun" {
    * @param {string} options.cwd Limits the search to a particular directory in which to searc
    *
    */
-  export function which(
-    command: string,
-    options?: { PATH?: string; cwd?: string },
-  ): string;
+  export function which(command: string, options?: { PATH?: string; cwd?: string }): string;
 
   /**
    * Start a fast HTTP server.
@@ -88,9 +85,7 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<WebSocketDataType>(
-    options: Serve<WebSocketDataType>,
-  ): Server;
+  export function serve<WebSocketDataType>(options: Serve<WebSocketDataType>): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -137,10 +132,7 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  export function write(
-    destination: FileBlob,
-    input: Response,
-  ): Promise<number>;
+  export function write(destination: FileBlob, input: Response): Promise<number>;
 
   /**
    *
@@ -154,10 +146,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destinationPath: PathLike,
-    input: Response,
-  ): Promise<number>;
+  export function write(destinationPath: PathLike, input: Response): Promise<number>;
 
   /**
    *
@@ -179,10 +168,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob,
-    input: FileBlob,
-  ): Promise<number>;
+  export function write(destination: FileBlob, input: FileBlob): Promise<number>;
 
   /**
    *
@@ -204,10 +190,7 @@ declare module "bun" {
    * @returns A promise that resolves with the number of bytes written.
    */
   // tslint:disable-next-line:unified-signatures
-  export function write(
-    destinationPath: PathLike,
-    input: FileBlob,
-  ): Promise<number>;
+  export function write(destinationPath: PathLike, input: FileBlob): Promise<number>;
 
   export interface SystemError extends Error {
     errno?: number | undefined;
@@ -247,9 +230,7 @@ declare module "bun" {
    * This function is faster because it uses uninitialized memory when copying. Since the entire
    * length of the buffer is known, it is safe to use uninitialized memory.
    */
-  export function concatArrayBuffers(
-    buffers: Array<ArrayBufferView | ArrayBufferLike>,
-  ): ArrayBuffer;
+  export function concatArrayBuffers(buffers: Array<ArrayBufferView | ArrayBufferLike>): ArrayBuffer;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -262,9 +243,7 @@ declare module "bun" {
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
-  export function readableStreamToArrayBuffer(
-    stream: ReadableStream,
-  ): Promise<ArrayBuffer> | ArrayBuffer;
+  export function readableStreamToArrayBuffer(stream: ReadableStream): Promise<ArrayBuffer> | ArrayBuffer;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.
@@ -303,9 +282,7 @@ declare module "bun" {
    * @returns A promise that resolves with the chunks as an array
    *
    */
-  export function readableStreamToArray<T>(
-    stream: ReadableStream,
-  ): Promise<T[]> | T[];
+  export function readableStreamToArray<T>(stream: ReadableStream): Promise<T[]> | T[];
 
   /**
    * Escape the following characters in a string:
@@ -343,9 +320,7 @@ declare module "bun" {
 
   export interface Peek {
     <T = undefined>(promise: T | Promise<T>): Promise<T> | T;
-    status<T = undefined>(
-      promise: T | Promise<T>,
-    ): "pending" | "fulfilled" | "rejected";
+    status<T = undefined>(promise: T | Promise<T>): "pending" | "fulfilled" | "rejected";
   }
   /**
    * Extract the value from the Promise in the same tick of the event loop
@@ -639,41 +614,16 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  export const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer,
-    seed?: number,
-  ) => number | bigint) &
-    Hash;
+  export const hash: ((data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint) & Hash;
 
   interface Hash {
-    wyhash: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    crc32: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    adler32: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    cityHash32: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    cityHash64: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    murmur32v3: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
-    murmur64v2: (
-      data: string | ArrayBufferView | ArrayBuffer,
-      seed?: number,
-    ) => number | bigint;
+    wyhash: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    crc32: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    adler32: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    cityHash32: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    cityHash64: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    murmur32v3: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
+    murmur64v2: (data: string | ArrayBufferView | ArrayBuffer, seed?: number) => number | bigint;
   }
 
   export type Platform =
@@ -836,11 +786,7 @@ declare module "bun" {
      * @param code The code to transpile
      *
      */
-    transformSync(
-      code: StringOrBuffer,
-      loader: JavaScriptLoader,
-      ctx: object,
-    ): string;
+    transformSync(code: StringOrBuffer, loader: JavaScriptLoader, ctx: object): string;
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
      * This function does not resolve imports.
@@ -977,10 +923,7 @@ declare module "bun" {
      * ```
      *
      */
-    send(
-      data: string | ArrayBufferView | ArrayBuffer,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    send(data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      *
@@ -1088,11 +1031,7 @@ declare module "bun" {
      * ws.publish("chat", new DataView(new ArrayBuffer(4)));
      * ```
      */
-    publish(
-      topic: string,
-      data: string | ArrayBufferView | ArrayBuffer,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Send a message to all subscribers of a topic
@@ -1112,11 +1051,7 @@ declare module "bun" {
      * ```
      *
      */
-    publishText(
-      topic: string,
-      data: string,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publishText(topic: string, data: string, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Send a message to all subscribers of a topic
@@ -1150,11 +1085,7 @@ declare module "bun" {
      * ws.publishBinary("chat", new DataView(new ArrayBuffer(4)));
      * ```
      */
-    publishBinary(
-      topic: string,
-      data: Uint8Array,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publishBinary(topic: string, data: Uint8Array, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * Subscribe to a topic
@@ -1293,10 +1224,7 @@ declare module "bun" {
      *
      * To change `message` to be an `ArrayBuffer` instead of a `Uint8Array`, set `ws.binaryType = "arraybuffer"`
      */
-    message: (
-      ws: ServerWebSocket<T>,
-      message: string | Uint8Array,
-    ) => void | Promise<void>;
+    message: (ws: ServerWebSocket<T>, message: string | Uint8Array) => void | Promise<void>;
 
     /**
      * The {@link ServerWebSocket} has been opened
@@ -1316,11 +1244,7 @@ declare module "bun" {
      * @param code The close code
      * @param message The close message
      */
-    close?: (
-      ws: ServerWebSocket<T>,
-      code: number,
-      message: string,
-    ) => void | Promise<void>;
+    close?: (ws: ServerWebSocket<T>, code: number, message: string) => void | Promise<void>;
 
     /**
      * Enable compression for clients that support it. By default, compression is disabled.
@@ -1453,10 +1377,7 @@ declare module "bun" {
      */
     development?: boolean;
 
-    error?: (
-      this: Server,
-      request: Errorlike,
-    ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
+    error?: (this: Server, request: Errorlike) => Response | Promise<Response> | undefined | void | Promise<undefined>;
   }
 
   export interface ServeOptions extends GenericServeOptions {
@@ -1466,15 +1387,10 @@ declare module "bun" {
      * Respond to {@link Request} objects with a {@link Response} object.
      *
      */
-    fetch(
-      this: Server,
-      request: Request,
-      server: Server,
-    ): Response | Promise<Response>;
+    fetch(this: Server, request: Request, server: Server): Response | Promise<Response>;
   }
 
-  export interface WebSocketServeOptions<WebSocketDataType = undefined>
-    extends GenericServeOptions {
+  export interface WebSocketServeOptions<WebSocketDataType = undefined> extends GenericServeOptions {
     /**
      * Enable websockets with {@link Bun.serve}
      *
@@ -1520,11 +1436,7 @@ declare module "bun" {
      * Respond to {@link Request} objects with a {@link Response} object.
      *
      */
-    fetch(
-      this: Server,
-      request: Request,
-      server: Server,
-    ): Response | undefined | Promise<Response | undefined>;
+    fetch(this: Server, request: Request, server: Server): Response | undefined | Promise<Response | undefined>;
   }
 
   export interface Errorlike extends Error {
@@ -1717,11 +1629,7 @@ declare module "bun" {
      * server.publish("chat", new DataView(new ArrayBuffer(4)));
      * ```
      */
-    publish(
-      topic: string,
-      data: string | ArrayBufferView | ArrayBuffer,
-      compress?: boolean,
-    ): ServerWebSocketSendStatus;
+    publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): ServerWebSocketSendStatus;
 
     /**
      * How many requests are in-flight right now?
@@ -1804,10 +1712,7 @@ declare module "bun" {
    * @param path The path to the file as a byte buffer (the buffer is copied)
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(
-    path: ArrayBufferLike | Uint8Array,
-    options?: BlobPropertyBag,
-  ): FileBlob;
+  export function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): FileBlob;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1824,10 +1729,7 @@ declare module "bun" {
    * @param fileDescriptor The file descriptor of the file
    */
   // tslint:disable-next-line:unified-signatures
-  export function file(
-    fileDescriptor: number,
-    options?: BlobPropertyBag,
-  ): FileBlob;
+  export function file(fileDescriptor: number, options?: BlobPropertyBag): FileBlob;
 
   /**
    * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
@@ -2124,11 +2026,7 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    static hash(
-      algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
-      hashInto?: TypedArray,
-    ): TypedArray;
+    static hash(algorithm: SupportedCryptoAlgorithms, input: StringOrBuffer, hashInto?: TypedArray): TypedArray;
 
     /**
      * Run the hash over the given data
@@ -2137,11 +2035,7 @@ declare module "bun" {
      *
      * @param encoding `DigestEncoding` to return the hash in
      */
-    static hash(
-      algorithm: SupportedCryptoAlgorithms,
-      input: StringOrBuffer,
-      encoding: DigestEncoding,
-    ): string;
+    static hash(algorithm: SupportedCryptoAlgorithms, input: StringOrBuffer, encoding: DigestEncoding): string;
 
     /**
      * List of supported hash algorithms
@@ -2154,16 +2048,16 @@ declare module "bun" {
   /**
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
-   * 
+   *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
    * {@link Date} is reached.
-   * 
-   * @example 
+   *
+   * @example
    * ## Sleep for 1 second
    * ```ts
    * import { sleep } from "bun";
-   * 
+   *
    * await sleep(1000);
    * ```
    * ## Sleep for 10 milliseconds
@@ -2171,7 +2065,7 @@ declare module "bun" {
    * await Bun.sleep(10);
    * ```
    * ## Sleep until `Date`
-   * 
+   *
    * ```ts
    * const target = new Date();
    * target.setSeconds(target.getSeconds() + 1);
@@ -2383,20 +2277,14 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  export function deflateSync(
-    data: Uint8Array,
-    options?: ZlibCompressionOptions,
-  ): Uint8Array;
+  export function deflateSync(data: Uint8Array, options?: ZlibCompressionOptions): Uint8Array;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  export function gzipSync(
-    data: Uint8Array,
-    options?: ZlibCompressionOptions,
-  ): Uint8Array;
+  export function gzipSync(data: Uint8Array, options?: ZlibCompressionOptions): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
@@ -2505,9 +2393,7 @@ declare module "bun" {
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject;
-  type OnLoadCallback = (
-    args: OnLoadArgs,
-  ) => OnLoadResult | Promise<OnLoadResult>;
+  type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
 
   interface OnResolveArgs {
     /**
@@ -2570,10 +2456,7 @@ declare module "bun" {
      * });
      * ```
      */
-    onResolve(
-      constraints: PluginConstraints,
-      callback: OnResolveCallback,
-    ): void;
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
     /**
      * The current target environment
      */
@@ -2657,7 +2540,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+    }): ReturnType<typeof options["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2683,11 +2566,7 @@ declare module "bun" {
      * will be slow. In the future, Bun will buffer writes and flush them at the
      * end of the tick, when the event loop is idle, or sooner if the buffer is full.
      */
-    write(
-      data: string | BufferSource,
-      byteOffset?: number,
-      byteLength?: number,
-    ): number;
+    write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
      * The data context for the socket.
@@ -2699,11 +2578,7 @@ declare module "bun" {
      *
      * Use it to send your last message and close the connection.
      */
-    end(
-      data?: string | BufferSource,
-      byteOffset?: number,
-      byteLength?: number,
-    ): number;
+    end(data?: string | BufferSource, byteOffset?: number, byteLength?: number): number;
 
     /**
      * Close the socket immediately
@@ -2782,13 +2657,11 @@ declare module "bun" {
     reload(options: Pick<Partial<Options>, "socket">): void;
     data: Options["data"];
   }
-  interface TCPSocketListener<Options extends TCPSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface TCPSocketListener<Options extends TCPSocketOptions<unknown>> extends SocketListener<Options> {
     readonly port: number;
     readonly hostname: string;
   }
-  interface UnixSocketListener<Options extends UnixSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface UnixSocketListener<Options extends UnixSocketOptions<unknown>> extends SocketListener<Options> {
     readonly unix: string;
   }
 
@@ -2804,17 +2677,11 @@ declare module "bun" {
   };
   type BinaryType = keyof BinaryTypeList;
 
-  interface SocketHandler<
-    Data = unknown,
-    DataBinaryType extends BinaryType = "buffer",
-  > {
+  interface SocketHandler<Data = unknown, DataBinaryType extends BinaryType = "buffer"> {
     open(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
-    data?(
-      socket: Socket<Data>,
-      data: BinaryTypeList[DataBinaryType],
-    ): void | Promise<void>;
+    data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
 
     /**
@@ -2903,23 +2770,11 @@ declare module "bun" {
    * @param options.unix The unix socket to connect to
    *
    */
-  export function listen<Data = undefined>(
-    options: TCPSocketOptions<Data>,
-  ): TCPSocketListener<typeof options>;
-  export function listen<Data = undefined>(
-    options: UnixSocketOptions<Data>,
-  ): UnixSocketListener<typeof options>;
+  export function listen<Data = undefined>(options: TCPSocketOptions<Data>): TCPSocketListener<typeof options>;
+  export function listen<Data = undefined>(options: UnixSocketOptions<Data>): UnixSocketListener<typeof options>;
 
   namespace SpawnOptions {
-    type Readable =
-      | "inherit"
-      | "ignore"
-      | "pipe"
-      | null
-      | undefined
-      | FileBlob
-      | ArrayBufferView
-      | number;
+    type Readable = "inherit" | "ignore" | "pipe" | null | undefined | FileBlob | ArrayBufferView | number;
 
     type Writable =
       | "inherit"
@@ -2962,11 +2817,7 @@ declare module "bun" {
        * - `number`: The process will read from the file descriptor
        * - `undefined`: The default value
        */
-      stdio?: [
-        SpawnOptions.Writable,
-        SpawnOptions.Readable,
-        SpawnOptions.Readable,
-      ];
+      stdio?: [SpawnOptions.Writable, SpawnOptions.Readable, SpawnOptions.Readable];
       stdin?: SpawnOptions.Writable;
       stdout?: SpawnOptions.Readable;
       stderr?: SpawnOptions.Readable;
@@ -3216,11 +3067,7 @@ declare module "bun" {
     options?: Opts,
   ): Subprocess<OptionsToSubprocessIO<Opts>>;
   type OptionsToSubprocessIO<Opts extends SpawnOptions.OptionsObject> = {
-    stdin?: Opts["stdin"] extends number
-      ? number
-      : Opts["stdin"] extends "pipe"
-      ? FileSink
-      : ReadableStream;
+    stdin?: Opts["stdin"] extends number ? number : Opts["stdin"] extends "pipe" ? FileSink : ReadableStream;
     stdout?: Opts["stdout"] extends number ? number : ReadableStream;
     stderr?: Opts["stderr"] extends number ? number : ReadableStream;
   };
@@ -3298,10 +3145,7 @@ declare module "bun" {
    *
    * This is sort of like readline() except without the IO.
    */
-  export function indexOfLine(
-    buffer: ArrayBufferView | ArrayBufferLike,
-    offset?: number,
-  ): number;
+  export function indexOfLine(buffer: ArrayBufferView | ArrayBufferLike, offset?: number): number;
 }
 
 type TypedArray =

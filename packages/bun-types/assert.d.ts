@@ -61,10 +61,7 @@ declare module "assert" {
        * @return that wraps `fn`.
        */
       calls(exact?: number): () => void;
-      calls<Func extends (...args: any[]) => any>(
-        fn?: Func,
-        exact?: number,
-      ): Func;
+      calls<Func extends (...args: any[]) => any>(fn?: Func, exact?: number): Func;
       /**
        * The arrays contains information about the expected and actual number of calls of
        * the functions that have not been called the expected number of times.
@@ -134,12 +131,7 @@ declare module "assert" {
       /** A stack trace of the function. */
       stack: object;
     }
-    type AssertPredicate =
-      | RegExp
-      | (new () => object)
-      | ((thrown: unknown) => boolean)
-      | object
-      | Error;
+    type AssertPredicate = RegExp | (new () => object) | ((thrown: unknown) => boolean) | object | Error;
     /**
      * Throws an `AssertionError` with the provided error message or a default
      * error message. If the `message` parameter is an instance of an `Error` then
@@ -260,11 +252,7 @@ declare module "assert" {
      * If the values are not equal, an `AssertionError` is thrown with a `message`property set equal to the value of the `message` parameter. If the `message`parameter is undefined, a default
      * error message is assigned. If the `message`parameter is an instance of an `Error` then it will be thrown instead of the`AssertionError`.
      */
-    function equal(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function equal(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * **Strict assertion mode**
      *
@@ -293,11 +281,7 @@ declare module "assert" {
      * If the values are equal, an `AssertionError` is thrown with a `message`property set equal to the value of the `message` parameter. If the `message`parameter is undefined, a default error
      * message is assigned. If the `message`parameter is an instance of an `Error` then it will be thrown instead of the`AssertionError`.
      */
-    function notEqual(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function notEqual(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * **Strict assertion mode**
      *
@@ -314,11 +298,7 @@ declare module "assert" {
      * _Deep equality_ means that the enumerable "own" properties of child objects
      * are also recursively evaluated by the following rules.
      */
-    function deepEqual(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function deepEqual(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * **Strict assertion mode**
      *
@@ -367,11 +347,7 @@ declare module "assert" {
      * error message is assigned. If the`message` parameter is an instance of an `Error` then it will be thrown
      * instead of the `AssertionError`.
      */
-    function notDeepEqual(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function notDeepEqual(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * Tests strict equality between the `actual` and `expected` parameters as
      * determined by [`Object.is()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is).
@@ -408,11 +384,7 @@ declare module "assert" {
      * default error message is assigned. If the`message` parameter is an instance of an `Error` then it will be thrown
      * instead of the `AssertionError`.
      */
-    function strictEqual<T>(
-      actual: unknown,
-      expected: T,
-      message?: string | Error,
-    ): asserts actual is T;
+    function strictEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T;
     /**
      * Tests strict inequality between the `actual` and `expected` parameters as
      * determined by [`Object.is()`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is).
@@ -436,21 +408,13 @@ declare module "assert" {
      * default error message is assigned. If the`message` parameter is an instance of an `Error` then it will be thrown
      * instead of the `AssertionError`.
      */
-    function notStrictEqual(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function notStrictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * Tests for deep equality between the `actual` and `expected` parameters.
      * "Deep" equality means that the enumerable "own" properties of child objects
      * are recursively evaluated also by the following rules.
      */
-    function deepStrictEqual<T>(
-      actual: unknown,
-      expected: T,
-      message?: string | Error,
-    ): asserts actual is T;
+    function deepStrictEqual<T>(actual: unknown, expected: T, message?: string | Error): asserts actual is T;
     /**
      * Tests for deep strict inequality. Opposite of {@link deepStrictEqual}.
      *
@@ -467,11 +431,7 @@ declare module "assert" {
      * the `message` parameter is an instance of an `Error` then it will be thrown
      * instead of the `AssertionError`.
      */
-    function notDeepStrictEqual(
-      actual: unknown,
-      expected: unknown,
-      message?: string | Error,
-    ): void;
+    function notDeepStrictEqual(actual: unknown, expected: unknown, message?: string | Error): void;
     /**
      * Expects the function `fn` to throw an error.
      *
@@ -657,11 +617,7 @@ declare module "assert" {
      * argument.
      */
     function throws(block: () => unknown, message?: string | Error): void;
-    function throws(
-      block: () => unknown,
-      error: AssertPredicate,
-      message?: string | Error,
-    ): void;
+    function throws(block: () => unknown, error: AssertPredicate, message?: string | Error): void;
     /**
      * Asserts that the function `fn` does not throw an error.
      *
@@ -724,11 +680,7 @@ declare module "assert" {
      * ```
      */
     function doesNotThrow(block: () => unknown, message?: string | Error): void;
-    function doesNotThrow(
-      block: () => unknown,
-      error: AssertPredicate,
-      message?: string | Error,
-    ): void;
+    function doesNotThrow(block: () => unknown, error: AssertPredicate, message?: string | Error): void;
     /**
      * Throws `value` if `value` is not `undefined` or `null`. This is useful when
      * testing the `error` argument in callbacks. The stack trace contains all frames
@@ -824,10 +776,7 @@ declare module "assert" {
      * example in {@link throws} carefully if using a string as the second
      * argument gets considered.
      */
-    function rejects(
-      block: (() => Promise<unknown>) | Promise<unknown>,
-      message?: string | Error,
-    ): Promise<void>;
+    function rejects(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
     function rejects(
       block: (() => Promise<unknown>) | Promise<unknown>,
       error: AssertPredicate,
@@ -874,10 +823,7 @@ declare module "assert" {
      *   });
      * ```
      */
-    function doesNotReject(
-      block: (() => Promise<unknown>) | Promise<unknown>,
-      message?: string | Error,
-    ): Promise<void>;
+    function doesNotReject(block: (() => Promise<unknown>) | Promise<unknown>, message?: string | Error): Promise<void>;
     function doesNotReject(
       block: (() => Promise<unknown>) | Promise<unknown>,
       error: AssertPredicate,
@@ -904,11 +850,7 @@ declare module "assert" {
      * undefined, a default error message is assigned. If the `message` parameter is an
      * instance of an `Error` then it will be thrown instead of the `AssertionError`.
      */
-    function match(
-      value: string,
-      regExp: RegExp,
-      message?: string | Error,
-    ): void;
+    function match(value: string, regExp: RegExp, message?: string | Error): void;
     /**
      * Expects the `string` input not to match the regular expression.
      *

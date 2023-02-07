@@ -60,10 +60,7 @@ declare module "events" {
     /**
      * Alias for `emitter.on(eventName, listener)`.
      */
-    addListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
-    ): this;
+    addListener(eventName: string | symbol, listener: (...args: any[]) => void): this;
     /**
      * Adds the `listener` function to the end of the listeners array for the
      * event named `eventName`. No checks are made to see if the `listener` has
@@ -200,10 +197,7 @@ declare module "events" {
      *
      * Returns a reference to the `EventEmitter`, so that calls can be chained.
      */
-    removeListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
-    ): this;
+    removeListener(eventName: string | symbol, listener: (...args: any[]) => void): this;
     /**
      * Alias for `emitter.removeListener()`.
      */
@@ -334,10 +328,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    prependListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
-    ): this;
+    prependListener(eventName: string | symbol, listener: (...args: any[]) => void): this;
     /**
      * Adds a **one-time**`listener` function for the event named `eventName` to the_beginning_ of the listeners array. The next time `eventName` is triggered, this
      * listener is removed, and then invoked.
@@ -352,10 +343,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    prependOnceListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
-    ): this;
+    prependOnceListener(eventName: string | symbol, listener: (...args: any[]) => void): this;
     /**
      * Returns an array listing the events for which the emitter has registered
      * listeners. The values in the array are strings or `Symbol`s.
@@ -475,11 +463,7 @@ declare module "events" {
       eventName: string | symbol,
       options?: StaticEventEmitterOptions,
     ): Promise<any[]>;
-    static once(
-      emitter: DOMEventTarget,
-      eventName: string,
-      options?: StaticEventEmitterOptions,
-    ): Promise<any[]>;
+    static once(emitter: DOMEventTarget, eventName: string, options?: StaticEventEmitterOptions): Promise<any[]>;
     /**
      * ```js
      * const { on, EventEmitter } = require('events');
@@ -557,10 +541,7 @@ declare module "events" {
      * @param emitter The emitter to query
      * @param eventName The event name
      */
-    static listenerCount(
-      emitter: EventEmitter,
-      eventName: string | symbol,
-    ): number;
+    static listenerCount(emitter: EventEmitter, eventName: string | symbol): number;
     /**
      * Returns a copy of the array of listeners for the event named `eventName`.
      *
@@ -587,10 +568,7 @@ declare module "events" {
      * }
      * ```
      */
-    static getEventListeners(
-      emitter: DOMEventTarget | EventEmitter,
-      name: string | symbol,
-    ): Function[];
+    static getEventListeners(emitter: DOMEventTarget | EventEmitter, name: string | symbol): Function[];
     /**
      * ```js
      * const {
@@ -607,10 +585,7 @@ declare module "events" {
      * @param eventsTargets Zero or more {EventTarget} or {EventEmitter} instances. If none are specified, `n` is set as the default max for all newly created {EventTarget} and {EventEmitter}
      * objects.
      */
-    static setMaxListeners(
-      n?: number,
-      ...eventTargets: Array<DOMEventTarget | EventEmitter>
-    ): void;
+    static setMaxListeners(n?: number, ...eventTargets: Array<DOMEventTarget | EventEmitter>): void;
     /**
      * This symbol shall be used to install a listener for only monitoring `'error'`
      * events. Listeners installed using this symbol are called before the regular

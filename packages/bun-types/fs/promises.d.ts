@@ -118,11 +118,7 @@ declare module "fs/promises" {
    * `fs.constants.COPYFILE_EXCL | fs.constants.COPYFILE_FICLONE`)
    * @return Fulfills with `undefined` upon success.
    */
-  function copyFile(
-    src: PathLike,
-    dest: PathLike,
-    mode?: number,
-  ): Promise<void>;
+  function copyFile(src: PathLike, dest: PathLike, mode?: number): Promise<void>;
   /**
    * Opens a `FileHandle`.
    *
@@ -187,10 +183,7 @@ declare module "fs/promises" {
    * @param options Either the file mode, or an object optionally specifying the file mode and whether parent folders
    * should be created. If a string is passed, it is parsed as an octal integer. If not specified, defaults to `0o777`.
    */
-  function mkdir(
-    path: PathLike,
-    options?: Mode | MakeDirectoryOptions | null | undefined,
-  ): Promise<string | undefined>;
+  function mkdir(path: PathLike, options?: Mode | MakeDirectoryOptions | null | undefined): Promise<string | undefined>;
   /**
    * Reads the contents of a directory.
    *
@@ -275,28 +268,19 @@ declare module "fs/promises" {
    * @since v0.0.67
    * @return Fulfills with the `linkString` upon success.
    */
-  function readlink(
-    path: PathLike,
-    options?: EncodingOption | BufferEncoding | null,
-  ): Promise<string>;
+  function readlink(path: PathLike, options?: EncodingOption | BufferEncoding | null): Promise<string>;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function readlink(
-    path: PathLike,
-    options: BufferEncodingOption,
-  ): Promise<Buffer>;
+  function readlink(path: PathLike, options: BufferEncodingOption): Promise<Buffer>;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function readlink(
-    path: PathLike,
-    options?: EncodingOption | string | null,
-  ): Promise<string | Buffer>;
+  function readlink(path: PathLike, options?: EncodingOption | string | null): Promise<string | Buffer>;
   /**
    * Creates a symbolic link.
    *
@@ -307,11 +291,7 @@ declare module "fs/promises" {
    * @param [type="file"]
    * @return Fulfills with `undefined` upon success.
    */
-  function symlink(
-    target: PathLike,
-    path: PathLike,
-    type?: SimlinkType,
-  ): Promise<void>;
+  function symlink(target: PathLike, path: PathLike, type?: SimlinkType): Promise<void>;
   /**
    * Equivalent to `fsPromises.stat()` unless `path` refers to a symbolic link,
    * in which case the link itself is stat-ed, not the file that it refers to.
@@ -333,10 +313,7 @@ declare module "fs/promises" {
       bigint: true;
     },
   ): Promise<BigIntStats>;
-  function lstat(
-    path: PathLike,
-    options?: StatOptions,
-  ): Promise<Stats | BigIntStats>;
+  function lstat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats>;
   /**
    * @since v0.0.67
    * @return Fulfills with the {fs.Stats} object for the given `path`.
@@ -355,10 +332,7 @@ declare module "fs/promises" {
       bigint: true;
     },
   ): Promise<BigIntStats>;
-  function stat(
-    path: PathLike,
-    options?: StatOptions,
-  ): Promise<Stats | BigIntStats>;
+  function stat(path: PathLike, options?: StatOptions): Promise<Stats | BigIntStats>;
   /**
    * Creates a new link from the `existingPath` to the `newPath`. See the POSIX [`link(2)`](http://man7.org/linux/man-pages/man2/link.2.html) documentation for more detail.
    * @since v0.0.67
@@ -399,11 +373,7 @@ declare module "fs/promises" {
    * @since v0.0.67
    * @return Fulfills with `undefined` upon success.
    */
-  function lutimes(
-    path: PathLike,
-    atime: TimeLike,
-    mtime: TimeLike,
-  ): Promise<void>;
+  function lutimes(path: PathLike, atime: TimeLike, mtime: TimeLike): Promise<void>;
   /**
    * Changes the ownership of a file.
    * @since v0.0.67
@@ -421,11 +391,7 @@ declare module "fs/promises" {
    * @since v0.0.67
    * @return Fulfills with `undefined` upon success.
    */
-  function utimes(
-    path: PathLike,
-    atime: TimeLike,
-    mtime: TimeLike,
-  ): Promise<void>;
+  function utimes(path: PathLike, atime: TimeLike, mtime: TimeLike): Promise<void>;
   /**
    * Determines the actual location of `path` using the same semantics as the`fs.realpath.native()` function.
    *
@@ -442,28 +408,19 @@ declare module "fs/promises" {
    * @since v0.0.67
    * @return Fulfills with the resolved path upon success.
    */
-  function realpath(
-    path: PathLike,
-    options?: EncodingOption | null,
-  ): Promise<string>;
+  function realpath(path: PathLike, options?: EncodingOption | null): Promise<string>;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function realpath(
-    path: PathLike,
-    options: BufferEncodingOption,
-  ): Promise<Buffer>;
+  function realpath(path: PathLike, options: BufferEncodingOption): Promise<Buffer>;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function realpath(
-    path: PathLike,
-    options?: EncodingOption | null,
-  ): Promise<string | Buffer>;
+  function realpath(path: PathLike, options?: EncodingOption | null): Promise<string | Buffer>;
   /**
    * Creates a unique temporary directory. A unique directory name is generated by
    * appending six random characters to the end of the provided `prefix`. Due to
@@ -491,28 +448,19 @@ declare module "fs/promises" {
    * @since v0.0.67
    * @return Fulfills with a string containing the filesystem path of the newly created temporary directory.
    */
-  function mkdtemp(
-    prefix: string,
-    options?: EncodingOption | null,
-  ): Promise<string>;
+  function mkdtemp(prefix: string, options?: EncodingOption | null): Promise<string>;
   /**
    * Asynchronously creates a unique temporary directory.
    * Generates six random characters to be appended behind a required `prefix` to create a unique temporary directory.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function mkdtemp(
-    prefix: string,
-    options: BufferEncodingOption,
-  ): Promise<Buffer>;
+  function mkdtemp(prefix: string, options: BufferEncodingOption): Promise<Buffer>;
   /**
    * Asynchronously creates a unique temporary directory.
    * Generates six random characters to be appended behind a required `prefix` to create a unique temporary directory.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `"utf8"` is used.
    */
-  function mkdtemp(
-    prefix: string,
-    options?: EncodingOption | null,
-  ): Promise<string | Buffer>;
+  function mkdtemp(prefix: string, options?: EncodingOption | null): Promise<string | Buffer>;
   /**
    * Asynchronously writes data to a file, replacing the file if it already exists.`data` can be a string, a buffer, an
    * [AsyncIterable](https://tc39.github.io/ecma262/#sec-asynciterable-interface) or
@@ -582,11 +530,7 @@ declare module "fs/promises" {
    * @param path filename or {FileHandle}
    * @return Fulfills with `undefined` upon success.
    */
-  function appendFile(
-    path: PathOrFileDescriptor,
-    data: string | Uint8Array,
-    options?: WriteFileOptions,
-  ): Promise<void>;
+  function appendFile(path: PathOrFileDescriptor, data: string | Uint8Array, options?: WriteFileOptions): Promise<void>;
   /**
    * Asynchronously reads the entire contents of a file.
    *

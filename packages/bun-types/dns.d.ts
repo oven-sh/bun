@@ -118,11 +118,7 @@ declare module "dns" {
   export function lookup(
     hostname: string,
     family: number,
-    callback: (
-      err: ErrnoException | null,
-      address: string,
-      family: number,
-    ) => void,
+    callback: (err: ErrnoException | null, address: string, family: number) => void,
   ): void;
   // export function lookup(
   //   hostname: string,
@@ -144,19 +140,11 @@ declare module "dns" {
   export function lookup(
     hostname: string,
     options: LookupOptions,
-    callback: (
-      err: ErrnoException | null,
-      address: string | LookupAddress[],
-      family: number,
-    ) => void,
+    callback: (err: ErrnoException | null, address: string | LookupAddress[], family: number) => void,
   ): void;
   export function lookup(
     hostname: string,
-    callback: (
-      err: ErrnoException | null,
-      address: string,
-      family: number,
-    ) => void,
+    callback: (err: ErrnoException | null, address: string, family: number) => void,
   ): void;
   // export namespace lookup {
   //   function __promisify__(
@@ -195,11 +183,7 @@ declare module "dns" {
   export function lookupService(
     address: string,
     port: number,
-    callback: (
-      err: ErrnoException | null,
-      hostname: string,
-      service: string,
-    ) => void,
+    callback: (err: ErrnoException | null, hostname: string, service: string) => void,
   ): void;
   // export namespace lookupService {
   //   function __promisify__(
@@ -314,10 +298,7 @@ declare module "dns" {
    * @param hostname Host name to resolve.
    * @param [rrtype='A'] Resource record type.
    */
-  export function resolve(
-    hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void,
-  ): void;
+  export function resolve(hostname: string, callback: (err: ErrnoException | null, addresses: string[]) => void): void;
   export function resolve(
     hostname: string,
     rrtype: "A",
@@ -331,10 +312,7 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "ANY",
-    callback: (
-      err: ErrnoException | null,
-      addresses: AnyRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: AnyRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -344,18 +322,12 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "MX",
-    callback: (
-      err: ErrnoException | null,
-      addresses: MxRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "NAPTR",
-    callback: (
-      err: ErrnoException | null,
-      addresses: NaptrRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -375,69 +347,33 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "SRV",
-    callback: (
-      err: ErrnoException | null,
-      addresses: SrvRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "TXT",
-    callback: (
-      err: ErrnoException | null,
-      addresses: string[][],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: string,
     callback: (
       err: ErrnoException | null,
-      addresses:
-        | string[]
-        | MxRecord[]
-        | NaptrRecord[]
-        | SoaRecord
-        | SrvRecord[]
-        | string[][]
-        | AnyRecord[],
+      addresses: string[] | MxRecord[] | NaptrRecord[] | SoaRecord | SrvRecord[] | string[][] | AnyRecord[],
     ) => void,
   ): void;
   export namespace resolve {
-    function __promisify__(
-      hostname: string,
-      rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR",
-    ): Promise<string[]>;
-    function __promisify__(
-      hostname: string,
-      rrtype: "ANY",
-    ): Promise<AnyRecord[]>;
+    function __promisify__(hostname: string, rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR"): Promise<string[]>;
+    function __promisify__(hostname: string, rrtype: "ANY"): Promise<AnyRecord[]>;
     function __promisify__(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
-    function __promisify__(
-      hostname: string,
-      rrtype: "NAPTR",
-    ): Promise<NaptrRecord[]>;
+    function __promisify__(hostname: string, rrtype: "NAPTR"): Promise<NaptrRecord[]>;
     function __promisify__(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
-    function __promisify__(
-      hostname: string,
-      rrtype: "SRV",
-    ): Promise<SrvRecord[]>;
-    function __promisify__(
-      hostname: string,
-      rrtype: "TXT",
-    ): Promise<string[][]>;
+    function __promisify__(hostname: string, rrtype: "SRV"): Promise<SrvRecord[]>;
+    function __promisify__(hostname: string, rrtype: "TXT"): Promise<string[][]>;
     function __promisify__(
       hostname: string,
       rrtype: string,
-    ): Promise<
-      | string[]
-      | MxRecord[]
-      | NaptrRecord[]
-      | SoaRecord
-      | SrvRecord[]
-      | string[][]
-      | AnyRecord[]
-    >;
+    ): Promise<string[] | MxRecord[] | NaptrRecord[] | SoaRecord | SrvRecord[] | string[][] | AnyRecord[]>;
   }
   /**
    * Uses the DNS protocol to resolve a IPv4 addresses (`A` records) for the`hostname`. The `addresses` argument passed to the `callback` function
@@ -445,10 +381,7 @@ declare module "dns" {
    * @since v0.1.16
    * @param hostname Host name to resolve.
    */
-  export function resolve4(
-    hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void,
-  ): void;
+  export function resolve4(hostname: string, callback: (err: ErrnoException | null, addresses: string[]) => void): void;
   export function resolve4(
     hostname: string,
     options: ResolveWithTtlOptions,
@@ -457,10 +390,7 @@ declare module "dns" {
   export function resolve4(
     hostname: string,
     options: ResolveOptions,
-    callback: (
-      err: ErrnoException | null,
-      addresses: string[] | RecordWithTtl[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: string[] | RecordWithTtl[]) => void,
   ): void;
   // export namespace resolve4 {
   //   function __promisify__(hostname: string): Promise<string[]>;
@@ -479,10 +409,7 @@ declare module "dns" {
    * @since v0.1.16
    * @param hostname Host name to resolve.
    */
-  export function resolve6(
-    hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void,
-  ): void;
+  export function resolve6(hostname: string, callback: (err: ErrnoException | null, addresses: string[]) => void): void;
   export function resolve6(
     hostname: string,
     options: ResolveWithTtlOptions,
@@ -491,10 +418,7 @@ declare module "dns" {
   export function resolve6(
     hostname: string,
     options: ResolveOptions,
-    callback: (
-      err: ErrnoException | null,
-      addresses: string[] | RecordWithTtl[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: string[] | RecordWithTtl[]) => void,
   ): void;
   // export namespace resolve6 {
   //   function __promisify__(hostname: string): Promise<string[]>;

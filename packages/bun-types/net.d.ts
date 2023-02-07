@@ -22,11 +22,7 @@ declare module "net" {
   type LookupFunction = (
     hostname: string,
     options: dns.LookupOneOptions,
-    callback: (
-      err: ErrnoException | null,
-      address: string,
-      family: number,
-    ) => void,
+    callback: (err: ErrnoException | null, address: string, family: number) => void,
   ) => void;
   interface AddressInfo {
     address: string;
@@ -73,12 +69,7 @@ declare module "net" {
   //   path: string;
   // }
   type SocketConnectOpts = TcpSocketConnectOpts; // | IpcSocketConnectOpts;
-  type SocketReadyState =
-    | "opening"
-    | "open"
-    | "readOnly"
-    | "writeOnly"
-    | "closed";
+  type SocketReadyState = "opening" | "open" | "readOnly" | "writeOnly" | "closed";
   /**
    * This class is an abstraction of a TCP socket or a streaming `IPC` endpoint
    * (uses named pipes on Windows, and Unix domain sockets otherwise). It is also
@@ -111,11 +102,7 @@ declare module "net" {
      * @param [encoding='utf8'] Only used when data is `string`.
      */
     write(buffer: Uint8Array | string, cb?: (err?: Error) => void): boolean;
-    write(
-      str: Uint8Array | string,
-      encoding?: BufferEncoding,
-      cb?: (err?: Error) => void,
-    ): boolean;
+    write(str: Uint8Array | string, encoding?: BufferEncoding, cb?: (err?: Error) => void): boolean;
     /**
      * Initiate a connection on a given socket.
      *
@@ -341,11 +328,7 @@ declare module "net" {
      */
     end(callback?: () => void): this;
     end(buffer: Uint8Array | string, callback?: () => void): this;
-    end(
-      str: Uint8Array | string,
-      encoding?: BufferEncoding,
-      callback?: () => void,
-    ): this;
+    end(str: Uint8Array | string, encoding?: BufferEncoding, callback?: () => void): this;
     /**
      * events.EventEmitter
      *   1. close
@@ -367,12 +350,7 @@ declare module "net" {
     addListener(event: "error", listener: (err: Error) => void): this;
     addListener(
       event: "lookup",
-      listener: (
-        err: Error,
-        address: string,
-        family: string | number,
-        host: string,
-      ) => void,
+      listener: (err: Error, address: string, family: string | number, host: string) => void,
     ): this;
     addListener(event: "ready", listener: () => void): this;
     addListener(event: "timeout", listener: () => void): this;
@@ -383,13 +361,7 @@ declare module "net" {
     emit(event: "drain"): boolean;
     emit(event: "end"): boolean;
     emit(event: "error", err: Error): boolean;
-    emit(
-      event: "lookup",
-      err: Error,
-      address: string,
-      family: string | number,
-      host: string,
-    ): boolean;
+    emit(event: "lookup", err: Error, address: string, family: string | number, host: string): boolean;
     emit(event: "ready"): boolean;
     emit(event: "timeout"): boolean;
     on(event: string, listener: (...args: any[]) => void): this;
@@ -399,15 +371,7 @@ declare module "net" {
     on(event: "drain", listener: () => void): this;
     on(event: "end", listener: () => void): this;
     on(event: "error", listener: (err: Error) => void): this;
-    on(
-      event: "lookup",
-      listener: (
-        err: Error,
-        address: string,
-        family: string | number,
-        host: string,
-      ) => void,
-    ): this;
+    on(event: "lookup", listener: (err: Error, address: string, family: string | number, host: string) => void): this;
     on(event: "ready", listener: () => void): this;
     on(event: "timeout", listener: () => void): this;
     once(event: string, listener: (...args: any[]) => void): this;
@@ -417,22 +381,11 @@ declare module "net" {
     once(event: "drain", listener: () => void): this;
     once(event: "end", listener: () => void): this;
     once(event: "error", listener: (err: Error) => void): this;
-    once(
-      event: "lookup",
-      listener: (
-        err: Error,
-        address: string,
-        family: string | number,
-        host: string,
-      ) => void,
-    ): this;
+    once(event: "lookup", listener: (err: Error, address: string, family: string | number, host: string) => void): this;
     once(event: "ready", listener: () => void): this;
     once(event: "timeout", listener: () => void): this;
     prependListener(event: string, listener: (...args: any[]) => void): this;
-    prependListener(
-      event: "close",
-      listener: (hadError: boolean) => void,
-    ): this;
+    prependListener(event: "close", listener: (hadError: boolean) => void): this;
     prependListener(event: "connect", listener: () => void): this;
     prependListener(event: "data", listener: (data: Buffer) => void): this;
     prependListener(event: "drain", listener: () => void): this;
@@ -440,23 +393,12 @@ declare module "net" {
     prependListener(event: "error", listener: (err: Error) => void): this;
     prependListener(
       event: "lookup",
-      listener: (
-        err: Error,
-        address: string,
-        family: string | number,
-        host: string,
-      ) => void,
+      listener: (err: Error, address: string, family: string | number, host: string) => void,
     ): this;
     prependListener(event: "ready", listener: () => void): this;
     prependListener(event: "timeout", listener: () => void): this;
-    prependOnceListener(
-      event: string,
-      listener: (...args: any[]) => void,
-    ): this;
-    prependOnceListener(
-      event: "close",
-      listener: (hadError: boolean) => void,
-    ): this;
+    prependOnceListener(event: string, listener: (...args: any[]) => void): this;
+    prependOnceListener(event: "close", listener: (hadError: boolean) => void): this;
     prependOnceListener(event: "connect", listener: () => void): this;
     prependOnceListener(event: "data", listener: (data: Buffer) => void): this;
     prependOnceListener(event: "drain", listener: () => void): this;
@@ -464,12 +406,7 @@ declare module "net" {
     prependOnceListener(event: "error", listener: (err: Error) => void): this;
     prependOnceListener(
       event: "lookup",
-      listener: (
-        err: Error,
-        address: string,
-        family: string | number,
-        host: string,
-      ) => void,
+      listener: (err: Error, address: string, family: string | number, host: string) => void,
     ): this;
     prependOnceListener(event: "ready", listener: () => void): this;
     prependOnceListener(event: "timeout", listener: () => void): this;
@@ -794,9 +731,7 @@ declare module "net" {
   //   check(address: SocketAddress): boolean;
   //   check(address: string, type?: IPVersion): boolean;
   // }
-  interface TcpNetConnectOpts
-    extends TcpSocketConnectOpts,
-      SocketConstructorOpts {
+  interface TcpNetConnectOpts extends TcpSocketConnectOpts, SocketConstructorOpts {
     timeout?: number | undefined;
   }
   // interface IpcNetConnectOpts
@@ -880,15 +815,8 @@ declare module "net" {
    * * {@link connect} for `IPC` connections.
    * * {@link connect} for TCP connections.
    */
-  function connect(
-    options: NetConnectOpts,
-    connectionListener?: () => void,
-  ): Socket;
-  function connect(
-    port: number,
-    host?: string,
-    connectionListener?: () => void,
-  ): Socket;
+  function connect(options: NetConnectOpts, connectionListener?: () => void): Socket;
+  function connect(port: number, host?: string, connectionListener?: () => void): Socket;
   function connect(path: string, connectionListener?: () => void): Socket;
   /**
    * A factory function, which creates a new {@link Socket},
@@ -907,19 +835,9 @@ declare module "net" {
    *
    * The {@link connect} function is an alias to this function.
    */
-  function createConnection(
-    options: NetConnectOpts,
-    connectionListener?: () => void,
-  ): Socket;
-  function createConnection(
-    port: number,
-    host?: string,
-    connectionListener?: () => void,
-  ): Socket;
-  function createConnection(
-    path: string,
-    connectionListener?: () => void,
-  ): Socket;
+  function createConnection(options: NetConnectOpts, connectionListener?: () => void): Socket;
+  function createConnection(port: number, host?: string, connectionListener?: () => void): Socket;
+  function createConnection(path: string, connectionListener?: () => void): Socket;
   /**
    * Returns `6` if `input` is an IPv6 address. Returns `4` if `input` is an IPv4
    * address in [dot-decimal notation](https://en.wikipedia.org/wiki/Dot-decimal_notation) with no leading zeroes. Otherwise, returns`0`.

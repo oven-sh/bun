@@ -82,18 +82,9 @@ declare module "dns/promises" {
    * @since v10.6.0
    */
   function lookup(hostname: string, family: number): Promise<LookupAddress>;
-  function lookup(
-    hostname: string,
-    options: LookupOneOptions,
-  ): Promise<LookupAddress>;
-  function lookup(
-    hostname: string,
-    options: LookupAllOptions,
-  ): Promise<LookupAddress[]>;
-  function lookup(
-    hostname: string,
-    options: LookupOptions,
-  ): Promise<LookupAddress | LookupAddress[]>;
+  function lookup(hostname: string, options: LookupOneOptions): Promise<LookupAddress>;
+  function lookup(hostname: string, options: LookupAllOptions): Promise<LookupAddress[]>;
+  function lookup(hostname: string, options: LookupOptions): Promise<LookupAddress | LookupAddress[]>;
   function lookup(hostname: string): Promise<LookupAddress>;
   /**
    * Resolves the given `address` and `port` into a host name and service using
@@ -149,15 +140,7 @@ declare module "dns/promises" {
   function resolve(
     hostname: string,
     rrtype: string,
-  ): Promise<
-    | string[]
-    | MxRecord[]
-    | NaptrRecord[]
-    | SoaRecord
-    | SrvRecord[]
-    | string[][]
-    | AnyRecord[]
-  >;
+  ): Promise<string[] | MxRecord[] | NaptrRecord[] | SoaRecord | SrvRecord[] | string[][] | AnyRecord[]>;
   /**
    * Uses the DNS protocol to resolve IPv4 addresses (`A` records) for the`hostname`. On success, the `Promise` is resolved with an array of IPv4
    * addresses (e.g. `['74.125.79.104', '74.125.79.105', '74.125.79.106']`).
@@ -165,14 +148,8 @@ declare module "dns/promises" {
    * @param hostname Host name to resolve.
    */
   function resolve4(hostname: string): Promise<string[]>;
-  function resolve4(
-    hostname: string,
-    options: ResolveWithTtlOptions,
-  ): Promise<RecordWithTtl[]>;
-  function resolve4(
-    hostname: string,
-    options: ResolveOptions,
-  ): Promise<string[] | RecordWithTtl[]>;
+  function resolve4(hostname: string, options: ResolveWithTtlOptions): Promise<RecordWithTtl[]>;
+  function resolve4(hostname: string, options: ResolveOptions): Promise<string[] | RecordWithTtl[]>;
   /**
    * Uses the DNS protocol to resolve IPv6 addresses (`AAAA` records) for the`hostname`. On success, the `Promise` is resolved with an array of IPv6
    * addresses.
@@ -180,14 +157,8 @@ declare module "dns/promises" {
    * @param hostname Host name to resolve.
    */
   function resolve6(hostname: string): Promise<string[]>;
-  function resolve6(
-    hostname: string,
-    options: ResolveWithTtlOptions,
-  ): Promise<RecordWithTtl[]>;
-  function resolve6(
-    hostname: string,
-    options: ResolveOptions,
-  ): Promise<string[] | RecordWithTtl[]>;
+  function resolve6(hostname: string, options: ResolveWithTtlOptions): Promise<RecordWithTtl[]>;
+  function resolve6(hostname: string, options: ResolveOptions): Promise<string[] | RecordWithTtl[]>;
   /**
    * Uses the DNS protocol to resolve all records (also known as `ANY` or `*` query).
    * On success, the `Promise` is resolved with an array containing various types of

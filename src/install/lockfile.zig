@@ -3326,9 +3326,15 @@ const Buffers = struct {
 
         this.dependencies.expandToCapacity();
         this.dependencies.items.len = external_dependency_list.len;
-        for (external_dependency_list) |*external_dep| {
-            const dep = external_dep.*;
-            external_dep.* = Dependency.toDependency(dep, extern_context);
+
+        {
+            var external_deps = external_dependency_list.ptr;
+            var dependencies = this.dependencies.items;
+            std.debug.assert(external_dependency_list.len == dependencies.len);
+            for (dependencies) |*dep| {
+                dep.* = Dependency.toDependency(external_deps[0], extern_context);
+                external_deps += 1;
+            }
         }
 
         // Legacy tree structure stores package IDs instead of dependency IDs

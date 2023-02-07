@@ -74,3 +74,5 @@ console.log(e);
 
 exports;
 module.exports;
+
+global.AbortController;

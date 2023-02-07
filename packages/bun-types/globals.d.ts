@@ -2667,3 +2667,12 @@ interface SharedArrayBuffer {
    */
   grow(size: number): SharedArrayBuffer;
 }
+
+interface NodeModule {
+  exports: any;
+}
+
+declare var module: NodeModule;
+
+// Same as module.exports
+declare var exports: any;

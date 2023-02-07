@@ -71,3 +71,6 @@ arg;
 
 const e = new CustomEvent("asdf");
 console.log(e);
+
+exports;
+module.exports;

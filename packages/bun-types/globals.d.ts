@@ -1212,11 +1212,6 @@ declare function clearInterval(id?: number): void;
  */
 declare function clearTimeout(id?: number): void;
 /**
- * Cancel a delayed function call by its timer ID.
- * @param id timer id
- */
-declare function clearTimeout(id?: number): void;
-/**
  * Cancel an immediate function call by its immediate ID.
  * @param id immediate id
  */

@@ -180,7 +180,7 @@ function propRow(
     cache,
     DOMJIT,
     enumerable = true,
-    configurable = true,
+    configurable = false,
   } = (defaultPropertyAttributes ? Object.assign({}, prop, defaultPropertyAttributes) : prop) as any;
 
   var extraPropertyAttributes = "";

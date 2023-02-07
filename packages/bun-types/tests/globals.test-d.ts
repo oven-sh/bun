@@ -65,3 +65,9 @@ setInterval;
 clearInterval;
 setTimeout;
 clearTimeout;
+
+const arg = new AbortSignal();
+arg;
+
+const e = new CustomEvent("asdf");
+console.log(e);

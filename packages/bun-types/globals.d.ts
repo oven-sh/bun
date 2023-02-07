@@ -1581,6 +1581,22 @@ declare var MessageEvent: {
   new <T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
 };
 
+interface CustomEventInit<T = any> extends EventInit {
+  detail?: T;
+}
+
+interface CustomEvent<T = any> extends Event {
+  /** Returns any custom data event was created with. Typically used for synthetic events. */
+  readonly detail: T;
+  /** @deprecated */
+  initCustomEvent(type: string, bubbles?: boolean, cancelable?: boolean, detail?: T): void;
+}
+
+declare var CustomEvent: {
+  prototype: CustomEvent;
+  new <T>(type: string, eventInitDict?: CustomEventInit<T>): CustomEvent<T>;
+};
+
 /**
  * An implementation of the [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
  */

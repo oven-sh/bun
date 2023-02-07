@@ -178,3 +178,7 @@ it("process.emitWarning", () => {
 it("process.execArgv", () => {
   expect(process.execArgv instanceof Array).toBe(true);
 });
+
+it("process.binding", () => {
+  expect(() => process.binding("buffer")).toThrow();
+});

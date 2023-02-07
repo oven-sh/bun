@@ -7,7 +7,7 @@
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",
     "bundle": "bun scripts/bundle.ts ./dist",
     "test": "tsd",
-    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}' --config ../../.prettierrc"
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'"
   },
   "devDependencies": {
     "tsd": "^0.22.0",

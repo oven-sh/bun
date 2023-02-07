@@ -1684,23 +1684,17 @@ pub const Resolver = struct {
                                 builder.allocate(manager.allocator) catch unreachable;
                                 const cloned = esm.clone(&builder);
 
-                                if (st == .extract) {
-                                    for (manager.lockfile.buffers.resolutions.items) |pkg_id, dep_id| {
-                                        if (pkg_id == resolved_package_id) {
-                                            manager.enqueuePackageForDownload(
-                                                esm.name,
-                                                @truncate(Install.PackageID, dep_id),
-                                                pkg_id,
-                                                resolution.value.npm.version,
-                                                manager.lockfile.str(&resolution.value.npm.url),
-                                                .{
-                                                    .root_request_id = 0,
-                                                },
-                                            );
-                                            break;
-                                        }
-                                    }
-                                }
+                                if (st == .extract)
+                                    manager.enqueuePackageForDownload(
+                                        esm.name,
+                                        manager.lockfile.buffers.legacyPackageToDependencyID(resolved_package_id) catch unreachable,
+                                        resolved_package_id,
+                                        resolution.value.npm.version,
+                                        manager.lockfile.str(&resolution.value.npm.url),
+                                        .{
+                                            .root_request_id = 0,
+                                        },
+                                    );
 
                                 return .{
                                     .pending = .{

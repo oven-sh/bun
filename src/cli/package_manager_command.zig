@@ -180,7 +180,6 @@ pub const PackageManagerCommand = struct {
 
                 const folder = NodeModulesFolder{
                     .relative_path = @ptrCast(stringZ, path),
-                    .in = node_modules.in,
                     .dependencies = dependencies,
                 };
                 directories.append(folder) catch unreachable;

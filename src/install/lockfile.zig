@@ -253,7 +253,7 @@ pub const Tree = struct {
         };
     }
 
-    pub const root_dep_id = invalid_package_id - 1;
+    pub const root_dep_id: DependencyID = invalid_package_id - 1;
     const invalid_id: Id = std.math.maxInt(Id);
     const dependency_loop = invalid_id - 1;
     const hoisted = invalid_id - 2;
@@ -263,7 +263,6 @@ pub const Tree = struct {
 
     pub const NodeModulesFolder = struct {
         relative_path: stringZ,
-        in: PackageID,
         dependencies: []const DependencyID,
     };
 
@@ -340,10 +339,6 @@ pub const Tree = struct {
             var relative_path: [:0]u8 = this.path_buf[0..this.path_buf_len :0];
             return .{
                 .relative_path = relative_path,
-                .in = switch (tree.dependency_id) {
-                    Tree.root_dep_id => 0,
-                    else => |id| this.resolutions[id],
-                },
                 .dependencies = tree.dependencies.get(this.dependency_ids),
             };
         }
@@ -3268,6 +3263,17 @@ const Buffers = struct {
         }
     }
 
+    pub fn legacyPackageToDependencyID(this: Buffers, package_id: PackageID) !DependencyID {
+        switch (package_id) {
+            0 => return Tree.root_dep_id,
+            invalid_package_id => return invalid_package_id,
+            else => for (this.resolutions.items) |pkg_id, dep_id| {
+                if (pkg_id == package_id) return @truncate(DependencyID, dep_id);
+            },
+        }
+        return error.@"Lockfile is missing resolution data";
+    }
+
     pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
@@ -3322,6 +3328,16 @@ const Buffers = struct {
         this.dependencies.items.len = external_dependency_list.len;
         for (external_dependency_list) |external_dep, i| {
             this.dependencies.items[i] = Dependency.toDependency(external_dep, extern_context);
+        }
+
+        // Legacy tree structure stores package IDs instead of dependency IDs
+        if (this.trees.items[0].dependency_id != Tree.root_dep_id) {
+            for (this.trees.items) |*tree| {
+                tree.dependency_id = try this.legacyPackageToDependencyID(tree.dependency_id);
+            }
+            for (this.hoisted_dependencies.items) |package_id, i| {
+                this.hoisted_dependencies.items[i] = try this.legacyPackageToDependencyID(package_id);
+            }
         }
 
         return this;

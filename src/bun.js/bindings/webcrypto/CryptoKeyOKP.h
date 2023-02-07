@@ -62,9 +62,9 @@ public:
     bool isEd25519PrivateKey() { return namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private; };
 
     static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
-    static Span<const uint8_t> ed25519PublicFromPrivate(KeyMaterial& privateKey);
-    static Span<const uint8_t> x25519PublicFromPrivate(KeyMaterial& privateKey);
-    static Vector<uint8_t> ed25519PrivateFromSeed(KeyMaterial&& seed);
+    static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
+    static KeyMaterial x25519PublicFromPrivate(const KeyMaterial& privateKey);
+    static KeyMaterial ed25519PrivateFromSeed(KeyMaterial&& seed);
 
     size_t keySizeInBits() const { return platformKey().size() * 8; }
     size_t keySizeInBytes() const { return platformKey().size(); }

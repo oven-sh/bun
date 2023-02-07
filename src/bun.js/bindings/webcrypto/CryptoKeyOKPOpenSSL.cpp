@@ -301,31 +301,33 @@ String CryptoKeyOKP::generateJwkD() const
     return base64URLEncodeToString(m_data);
 }
 
-Span<const uint8_t> CryptoKeyOKP::ed25519PublicFromPrivate(KeyMaterial& privateKey)
+CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PublicFromPrivate(const KeyMaterial& seed)
 {
-    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
+    auto publicKey = KeyMaterial(ED25519_PUBLIC_KEY_LEN);
+    uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
 
-    ED25519_keypair_from_seed(public_key, private_key, privateKey.data());
+    ED25519_keypair_from_seed(publicKey.data(), privateKey, seed.data());
 
-    return Span<const uint8_t> { public_key, sizeof(public_key) };
+    return WTFMove(publicKey);
 }
 
-Span<const uint8_t> CryptoKeyOKP::x25519PublicFromPrivate(KeyMaterial& privateKey)
+CryptoKeyOKP::KeyMaterial CryptoKeyOKP::x25519PublicFromPrivate(const KeyMaterial& privateKey)
 {
-    uint8_t public_key[X25519_PUBLIC_VALUE_LEN];
+    auto publicKey = KeyMaterial(X25519_PUBLIC_VALUE_LEN);
 
-    X25519_public_from_private(public_key, privateKey.data());
+    X25519_public_from_private(publicKey.data(), privateKey.data());
 
-    return Span<const uint8_t> { public_key, sizeof(public_key) };
+    return WTFMove(publicKey);
 }
 
-Vector<uint8_t> CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& seed)
+CryptoKeyOKP::KeyMaterial CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& seed)
 {
-    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
+    uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
+    auto privateKey = KeyMaterial(ED25519_PRIVATE_KEY_LEN);
 
-    ED25519_keypair_from_seed(public_key, private_key, seed.data());
+    ED25519_keypair_from_seed(publicKey, privateKey.data(), seed.data());
 
-    return WTFMove(Vector<uint8_t>(private_key, ED25519_PRIVATE_KEY_LEN));
+    return WTFMove(privateKey);
 }
 
 String CryptoKeyOKP::generateJwkX() const
@@ -336,20 +338,20 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+        return base64URLEncodeToString(WTFMove(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
+    return base64URLEncodeToString(WTFMove(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data))));
 }
 
-Vector<uint8_t> CryptoKeyOKP::platformExportRaw() const
+CryptoKeyOKP::KeyMaterial CryptoKeyOKP::platformExportRaw() const
 {
     if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
         ASSERT(m_exportKey);
         const auto& exportKey = *m_exportKey;
         return WTFMove(Vector<uint8_t>(exportKey.data(), exportKey.size()));
     }
-    return WTFMove(Vector<uint8_t>(m_data.data(), m_data.size()));
+    return WTFMove(KeyMaterial(m_data.data(), m_data.size()));
 }
 
 } // namespace WebCore

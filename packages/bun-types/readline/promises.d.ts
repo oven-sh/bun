@@ -141,7 +141,7 @@ declare module "readline/promises" {
     input: Readable,
     output?: Writable,
     completer?: Completer | AsyncCompleter,
-    terminal?: boolean
+    terminal?: boolean,
   ): Interface;
   function createInterface(options: ReadLineOptions): Interface;
 }

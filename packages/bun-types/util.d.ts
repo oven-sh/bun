@@ -66,7 +66,7 @@ declare module "util" {
     | "module";
   export type CustomInspectFunction = (
     depth: number,
-    options: InspectOptionsStylized
+    options: InspectOptionsStylized,
   ) => string;
   export interface InspectOptionsStylized extends InspectOptions {
     stylize(text: string, styleType: Style): string;
@@ -348,7 +348,7 @@ declare module "util" {
     object: any,
     showHidden?: boolean,
     depth?: number | null,
-    color?: boolean
+    color?: boolean,
   ): string;
   export function inspect(object: any, options?: InspectOptions): string;
   export namespace inspect {
@@ -504,7 +504,7 @@ declare module "util" {
    */
   export function inherits(
     constructor: unknown,
-    superConstructor: unknown
+    superConstructor: unknown,
   ): void;
   export type DebugLoggerFunction = (msg: string, ...param: unknown[]) => void;
   export interface DebugLogger extends DebugLoggerFunction {
@@ -568,7 +568,7 @@ declare module "util" {
    */
   export function debuglog(
     section: string,
-    callback?: (fn: DebugLoggerFunction) => void
+    callback?: (fn: DebugLoggerFunction) => void,
   ): DebugLogger;
   export const debug: typeof debuglog;
   /**
@@ -655,7 +655,7 @@ declare module "util" {
    * @deprecated Since v4.0.0 - Use `value === undefined || value === null` instead.
    */
   export function isNullOrUndefined(
-    object: unknown
+    object: unknown,
   ): object is null | undefined;
   /**
    * Returns `true` if the given `object` is a `Number`. Otherwise, returns `false`.
@@ -823,7 +823,7 @@ declare module "util" {
   export function deprecate<T extends Function>(
     fn: T,
     msg: string,
-    code?: string
+    code?: string,
   ): T;
   /**
    * Returns `true` if there is deep strict equality between `val1` and `val2`.
@@ -892,83 +892,83 @@ declare module "util" {
    * @return a callback style function
    */
   export function callbackify(
-    fn: () => Promise<void>
+    fn: () => Promise<void>,
   ): (callback: (err: ErrnoException) => void) => void;
   export function callbackify<TResult>(
-    fn: () => Promise<TResult>
+    fn: () => Promise<TResult>,
   ): (callback: (err: ErrnoException, result: TResult) => void) => void;
   export function callbackify<T1>(
-    fn: (arg1: T1) => Promise<void>
+    fn: (arg1: T1) => Promise<void>,
   ): (arg1: T1, callback: (err: ErrnoException) => void) => void;
   export function callbackify<T1, TResult>(
-    fn: (arg1: T1) => Promise<TResult>
+    fn: (arg1: T1) => Promise<TResult>,
   ): (
     arg1: T1,
-    callback: (err: ErrnoException, result: TResult) => void
+    callback: (err: ErrnoException, result: TResult) => void,
   ) => void;
   export function callbackify<T1, T2>(
-    fn: (arg1: T1, arg2: T2) => Promise<void>
+    fn: (arg1: T1, arg2: T2) => Promise<void>,
   ): (arg1: T1, arg2: T2, callback: (err: ErrnoException) => void) => void;
   export function callbackify<T1, T2, TResult>(
-    fn: (arg1: T1, arg2: T2) => Promise<TResult>
+    fn: (arg1: T1, arg2: T2) => Promise<TResult>,
   ): (
     arg1: T1,
     arg2: T2,
-    callback: (err: ErrnoException | null, result: TResult) => void
+    callback: (err: ErrnoException | null, result: TResult) => void,
   ) => void;
   export function callbackify<T1, T2, T3>(
-    fn: (arg1: T1, arg2: T2, arg3: T3) => Promise<void>
+    fn: (arg1: T1, arg2: T2, arg3: T3) => Promise<void>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
-    callback: (err: ErrnoException) => void
+    callback: (err: ErrnoException) => void,
   ) => void;
   export function callbackify<T1, T2, T3, TResult>(
-    fn: (arg1: T1, arg2: T2, arg3: T3) => Promise<TResult>
+    fn: (arg1: T1, arg2: T2, arg3: T3) => Promise<TResult>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
-    callback: (err: ErrnoException | null, result: TResult) => void
+    callback: (err: ErrnoException | null, result: TResult) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4>(
-    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<void>
+    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<void>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
     arg4: T4,
-    callback: (err: ErrnoException) => void
+    callback: (err: ErrnoException) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4, TResult>(
-    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<TResult>
+    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<TResult>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
     arg4: T4,
-    callback: (err: ErrnoException | null, result: TResult) => void
+    callback: (err: ErrnoException | null, result: TResult) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4, T5>(
-    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<void>
+    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<void>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
     arg4: T4,
     arg5: T5,
-    callback: (err: ErrnoException) => void
+    callback: (err: ErrnoException) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4, T5, TResult>(
-    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<TResult>
+    fn: (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<TResult>,
   ): (
     arg1: T1,
     arg2: T2,
     arg3: T3,
     arg4: T4,
     arg5: T5,
-    callback: (err: ErrnoException | null, result: TResult) => void
+    callback: (err: ErrnoException | null, result: TResult) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4, T5, T6>(
     fn: (
@@ -977,8 +977,8 @@ declare module "util" {
       arg3: T3,
       arg4: T4,
       arg5: T5,
-      arg6: T6
-    ) => Promise<void>
+      arg6: T6,
+    ) => Promise<void>,
   ): (
     arg1: T1,
     arg2: T2,
@@ -986,7 +986,7 @@ declare module "util" {
     arg4: T4,
     arg5: T5,
     arg6: T6,
-    callback: (err: ErrnoException) => void
+    callback: (err: ErrnoException) => void,
   ) => void;
   export function callbackify<T1, T2, T3, T4, T5, T6, TResult>(
     fn: (
@@ -995,8 +995,8 @@ declare module "util" {
       arg3: T3,
       arg4: T4,
       arg5: T5,
-      arg6: T6
-    ) => Promise<TResult>
+      arg6: T6,
+    ) => Promise<TResult>,
   ): (
     arg1: T1,
     arg2: T2,
@@ -1004,7 +1004,7 @@ declare module "util" {
     arg4: T4,
     arg5: T5,
     arg6: T6,
-    callback: (err: ErrnoException | null, result: TResult) => void
+    callback: (err: ErrnoException | null, result: TResult) => void,
   ) => void;
   export interface CustomPromisifyLegacy<TCustom extends Function>
     extends Function {
@@ -1084,40 +1084,40 @@ declare module "util" {
    * ```
    */
   export function promisify<TCustom extends Function>(
-    fn: CustomPromisify<TCustom>
+    fn: CustomPromisify<TCustom>,
   ): TCustom;
   export function promisify<TResult>(
-    fn: (callback: (err: any, result: TResult) => void) => void
+    fn: (callback: (err: any, result: TResult) => void) => void,
   ): () => Promise<TResult>;
   export function promisify(
-    fn: (callback: (err?: any) => void) => void
+    fn: (callback: (err?: any) => void) => void,
   ): () => Promise<void>;
   export function promisify<T1, TResult>(
-    fn: (arg1: T1, callback: (err: any, result: TResult) => void) => void
+    fn: (arg1: T1, callback: (err: any, result: TResult) => void) => void,
   ): (arg1: T1) => Promise<TResult>;
   export function promisify<T1>(
-    fn: (arg1: T1, callback: (err?: any) => void) => void
+    fn: (arg1: T1, callback: (err?: any) => void) => void,
   ): (arg1: T1) => Promise<void>;
   export function promisify<T1, T2, TResult>(
     fn: (
       arg1: T1,
       arg2: T2,
-      callback: (err: any, result: TResult) => void
-    ) => void
+      callback: (err: any, result: TResult) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2) => Promise<TResult>;
   export function promisify<T1, T2>(
-    fn: (arg1: T1, arg2: T2, callback: (err?: any) => void) => void
+    fn: (arg1: T1, arg2: T2, callback: (err?: any) => void) => void,
   ): (arg1: T1, arg2: T2) => Promise<void>;
   export function promisify<T1, T2, T3, TResult>(
     fn: (
       arg1: T1,
       arg2: T2,
       arg3: T3,
-      callback: (err: any, result: TResult) => void
-    ) => void
+      callback: (err: any, result: TResult) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2, arg3: T3) => Promise<TResult>;
   export function promisify<T1, T2, T3>(
-    fn: (arg1: T1, arg2: T2, arg3: T3, callback: (err?: any) => void) => void
+    fn: (arg1: T1, arg2: T2, arg3: T3, callback: (err?: any) => void) => void,
   ): (arg1: T1, arg2: T2, arg3: T3) => Promise<void>;
   export function promisify<T1, T2, T3, T4, TResult>(
     fn: (
@@ -1125,8 +1125,8 @@ declare module "util" {
       arg2: T2,
       arg3: T3,
       arg4: T4,
-      callback: (err: any, result: TResult) => void
-    ) => void
+      callback: (err: any, result: TResult) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<TResult>;
   export function promisify<T1, T2, T3, T4>(
     fn: (
@@ -1134,8 +1134,8 @@ declare module "util" {
       arg2: T2,
       arg3: T3,
       arg4: T4,
-      callback: (err?: any) => void
-    ) => void
+      callback: (err?: any) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2, arg3: T3, arg4: T4) => Promise<void>;
   export function promisify<T1, T2, T3, T4, T5, TResult>(
     fn: (
@@ -1144,8 +1144,8 @@ declare module "util" {
       arg3: T3,
       arg4: T4,
       arg5: T5,
-      callback: (err: any, result: TResult) => void
-    ) => void
+      callback: (err: any, result: TResult) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<TResult>;
   export function promisify<T1, T2, T3, T4, T5>(
     fn: (
@@ -1154,8 +1154,8 @@ declare module "util" {
       arg3: T3,
       arg4: T4,
       arg5: T5,
-      callback: (err?: any) => void
-    ) => void
+      callback: (err?: any) => void,
+    ) => void,
   ): (arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) => Promise<void>;
   export function promisify(fn: Function): Function;
   export namespace promisify {
@@ -1306,7 +1306,7 @@ declare module "util/types" {
    * @since v10.11.0
    */
   function isBoxedPrimitive(
-    object: unknown
+    object: unknown,
   ): object is String | Number | BigInt | Boolean | Symbol;
   /**
    * Returns `true` if the value is a built-in [`DataView`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView) instance.
@@ -1460,7 +1460,7 @@ declare module "util/types" {
    * @since v10.0.0
    */
   function isMap<T>(
-    object: T | {}
+    object: T | {},
   ): object is T extends ReadonlyMap<any, any>
     ? unknown extends T
       ? never
@@ -1552,7 +1552,7 @@ declare module "util/types" {
    * @since v10.0.0
    */
   function isSet<T>(
-    object: T | {}
+    object: T | {},
   ): object is T extends ReadonlySet<any>
     ? unknown extends T
       ? never

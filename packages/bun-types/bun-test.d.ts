@@ -22,14 +22,14 @@ declare module "bun:test" {
   export interface Test {
     (
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>
+      test: (done: (err?: any) => void) => void | Promise<any>,
     ): any;
     /**
      * Note: does not fully work yet.
      */
     only(
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>
+      test: (done: (err?: any) => void) => void | Promise<any>,
     ): any;
 
     /**
@@ -37,7 +37,7 @@ declare module "bun:test" {
      */
     skip(
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>
+      test: (done: (err?: any) => void) => void | Promise<any>,
     ): any;
   }
   export const test: Test;
@@ -45,17 +45,17 @@ declare module "bun:test" {
 
   export function expect(value: any): Expect;
   export function afterAll(
-    fn: (done: (err?: any) => void) => void | Promise<any>
+    fn: (done: (err?: any) => void) => void | Promise<any>,
   ): void;
   export function beforeAll(
-    fn: (done: (err?: any) => void) => void | Promise<any>
+    fn: (done: (err?: any) => void) => void | Promise<any>,
   ): void;
 
   export function afterEach(
-    fn: (done: (err?: any) => void) => void | Promise<any>
+    fn: (done: (err?: any) => void) => void | Promise<any>,
   ): void;
   export function beforeEach(
-    fn: (done: (err?: any) => void) => void | Promise<any>
+    fn: (done: (err?: any) => void) => void | Promise<any>,
   ): void;
 
   interface Expect {

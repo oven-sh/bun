@@ -50,7 +50,7 @@ declare module "events" {
       listener: (...args: any[]) => void,
       opts?: {
         once: boolean;
-      }
+      },
     ): any;
   }
   interface StaticEventEmitterOptions {
@@ -62,7 +62,7 @@ declare module "events" {
      */
     addListener(
       eventName: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * Adds the `listener` function to the end of the listeners array for the
@@ -202,7 +202,7 @@ declare module "events" {
      */
     removeListener(
       eventName: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * Alias for `emitter.removeListener()`.
@@ -336,7 +336,7 @@ declare module "events" {
      */
     prependListener(
       eventName: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * Adds a **one-time**`listener` function for the event named `eventName` to the_beginning_ of the listeners array. The next time `eventName` is triggered, this
@@ -354,7 +354,7 @@ declare module "events" {
      */
     prependOnceListener(
       eventName: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * Returns an array listing the events for which the emitter has registered
@@ -473,12 +473,12 @@ declare module "events" {
     static once(
       emitter: NodeEventTarget,
       eventName: string | symbol,
-      options?: StaticEventEmitterOptions
+      options?: StaticEventEmitterOptions,
     ): Promise<any[]>;
     static once(
       emitter: DOMEventTarget,
       eventName: string,
-      options?: StaticEventEmitterOptions
+      options?: StaticEventEmitterOptions,
     ): Promise<any[]>;
     /**
      * ```js
@@ -540,7 +540,7 @@ declare module "events" {
     static on(
       emitter: EventEmitter,
       eventName: string,
-      options?: StaticEventEmitterOptions
+      options?: StaticEventEmitterOptions,
     ): AsyncIterableIterator<any>;
     /**
      * A class method that returns the number of listeners for the given `eventName`registered on the given `emitter`.
@@ -559,7 +559,7 @@ declare module "events" {
      */
     static listenerCount(
       emitter: EventEmitter,
-      eventName: string | symbol
+      eventName: string | symbol,
     ): number;
     /**
      * Returns a copy of the array of listeners for the event named `eventName`.
@@ -589,7 +589,7 @@ declare module "events" {
      */
     static getEventListeners(
       emitter: DOMEventTarget | EventEmitter,
-      name: string | symbol
+      name: string | symbol,
     ): Function[];
     /**
      * ```js

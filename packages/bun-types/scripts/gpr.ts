@@ -7,5 +7,5 @@ const __dirname = new URL(".", import.meta.url).pathname;
 pkg.name = `@oven-sh/${pkg.name}`;
 await Bun.write(
   join(__dirname, "..", "dist", "package.json"),
-  JSON.stringify(pkg)
+  JSON.stringify(pkg),
 );

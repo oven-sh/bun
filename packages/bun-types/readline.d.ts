@@ -107,7 +107,7 @@ declare module "readline" {
       input: Readable,
       output?: Writable,
       completer?: Completer | AsyncCompleter,
-      terminal?: boolean
+      terminal?: boolean,
     );
     /**
      * NOTE: According to the documentation:
@@ -205,7 +205,7 @@ declare module "readline" {
     question(
       query: string,
       options: Abortable,
-      callback: (answer: string) => void
+      callback: (answer: string) => void,
     ): void;
     /**
      * The `rl.pause()` method pauses the `input` stream, allowing it to be resumed
@@ -318,11 +318,11 @@ declare module "readline" {
     prependListener(event: "SIGTSTP", listener: () => void): this;
     prependListener(
       event: "history",
-      listener: (history: string[]) => void
+      listener: (history: string[]) => void,
     ): this;
     prependOnceListener(
       event: string,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     prependOnceListener(event: "close", listener: () => void): this;
     prependOnceListener(event: "line", listener: (input: string) => void): this;
@@ -333,7 +333,7 @@ declare module "readline" {
     prependOnceListener(event: "SIGTSTP", listener: () => void): this;
     prependOnceListener(
       event: "history",
-      listener: (history: string[]) => void
+      listener: (history: string[]) => void,
     ): this;
     [Symbol.asyncIterator](): AsyncIterableIterator<string>;
   }
@@ -341,7 +341,7 @@ declare module "readline" {
   export type Completer = (line: string) => CompleterResult;
   export type AsyncCompleter = (
     line: string,
-    callback: (err?: null | Error, result?: CompleterResult) => void
+    callback: (err?: null | Error, result?: CompleterResult) => void,
   ) => void;
   export type CompleterResult = [string[], string];
   export interface ReadLineOptions {
@@ -409,7 +409,7 @@ declare module "readline" {
     input: Readable,
     output?: Writable,
     completer?: Completer | AsyncCompleter,
-    terminal?: boolean
+    terminal?: boolean,
   ): Interface;
   export function createInterface(options: ReadLineOptions): Interface;
   /**
@@ -535,7 +535,7 @@ declare module "readline" {
    */
   export function emitKeypressEvents(
     stream: Readable,
-    readlineInterface?: Interface
+    readlineInterface?: Interface,
   ): void;
   export type Direction = -1 | 0 | 1;
   export interface CursorPos {
@@ -552,7 +552,7 @@ declare module "readline" {
   export function clearLine(
     stream: Writable,
     dir: Direction,
-    callback?: () => void
+    callback?: () => void,
   ): boolean;
   /**
    * The `readline.clearScreenDown()` method clears the given `TTY` stream from
@@ -563,7 +563,7 @@ declare module "readline" {
    */
   export function clearScreenDown(
     stream: Writable,
-    callback?: () => void
+    callback?: () => void,
   ): boolean;
   /**
    * The `readline.cursorTo()` method moves cursor to the specified position in a
@@ -576,7 +576,7 @@ declare module "readline" {
     stream: Writable,
     x: number,
     y?: number,
-    callback?: () => void
+    callback?: () => void,
   ): boolean;
   /**
    * The `readline.moveCursor()` method moves the cursor _relative_ to its current
@@ -692,7 +692,7 @@ declare module "readline" {
     stream: Writable,
     dx: number,
     dy: number,
-    callback?: () => void
+    callback?: () => void,
   ): boolean;
 }
 declare module "node:readline" {

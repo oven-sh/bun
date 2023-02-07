@@ -100,10 +100,10 @@ declare class HTMLRewriter {
   constructor();
   on(
     selector: string,
-    handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers
+    handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers,
   ): HTMLRewriter;
   onDocument(
-    handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers
+    handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers,
   ): HTMLRewriter;
   /**
    * @param input - The HTML to transform

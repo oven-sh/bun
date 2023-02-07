@@ -403,7 +403,7 @@ declare module "tls" {
     addListener(event: string, listener: (...args: any[]) => void): this;
     addListener(
       event: "OCSPResponse",
-      listener: (response: Buffer) => void
+      listener: (response: Buffer) => void,
     ): this;
     addListener(event: "secureConnect", listener: () => void): this;
     addListener(event: "session", listener: (session: Buffer) => void): this;
@@ -426,30 +426,30 @@ declare module "tls" {
     prependListener(event: string, listener: (...args: any[]) => void): this;
     prependListener(
       event: "OCSPResponse",
-      listener: (response: Buffer) => void
+      listener: (response: Buffer) => void,
     ): this;
     prependListener(event: "secureConnect", listener: () => void): this;
     prependListener(
       event: "session",
-      listener: (session: Buffer) => void
+      listener: (session: Buffer) => void,
     ): this;
     prependListener(event: "keylog", listener: (line: Buffer) => void): this;
     prependOnceListener(
       event: string,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     prependOnceListener(
       event: "OCSPResponse",
-      listener: (response: Buffer) => void
+      listener: (response: Buffer) => void,
     ): this;
     prependOnceListener(event: "secureConnect", listener: () => void): this;
     prependOnceListener(
       event: "session",
-      listener: (session: Buffer) => void
+      listener: (session: Buffer) => void,
     ): this;
     prependOnceListener(
       event: "keylog",
-      listener: (line: Buffer) => void
+      listener: (line: Buffer) => void,
     ): this;
   }
   interface CommonConnectionOptions {
@@ -486,7 +486,7 @@ declare module "tls" {
     SNICallback?:
       | ((
           servername: string,
-          cb: (err: Error | null, ctx?: SecureContext) => void
+          cb: (err: Error | null, ctx?: SecureContext) => void,
         ) => void)
       | undefined;
     /**
@@ -539,7 +539,7 @@ declare module "tls" {
      */
     pskCallback?(
       socket: TLSSocket,
-      identity: string
+      identity: string,
     ): DataView | TypedArray | null;
     /**
      * hint to send to a client to help
@@ -1136,18 +1136,18 @@ declare module "tls" {
    */
   function connect(
     options: ConnectionOptions,
-    secureConnectListener?: () => void
+    secureConnectListener?: () => void,
   ): TLSSocket;
   function connect(
     port: number,
     host?: string,
     options?: ConnectionOptions,
-    secureConnectListener?: () => void
+    secureConnectListener?: () => void,
   ): TLSSocket;
   function connect(
     port: number,
     options?: ConnectionOptions,
-    secureConnectListener?: () => void
+    secureConnectListener?: () => void,
   ): TLSSocket;
   /**
    * Creates a new secure pair object with two streams, one of which reads and writes
@@ -1186,7 +1186,7 @@ declare module "tls" {
     context?: SecureContext,
     isServer?: boolean,
     requestCert?: boolean,
-    rejectUnauthorized?: boolean
+    rejectUnauthorized?: boolean,
   ): SecurePair;
   /**
    * {@link createServer} sets the default value of the `honorCipherOrder` option

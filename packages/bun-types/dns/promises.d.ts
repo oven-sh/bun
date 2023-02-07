@@ -84,15 +84,15 @@ declare module "dns/promises" {
   function lookup(hostname: string, family: number): Promise<LookupAddress>;
   function lookup(
     hostname: string,
-    options: LookupOneOptions
+    options: LookupOneOptions,
   ): Promise<LookupAddress>;
   function lookup(
     hostname: string,
-    options: LookupAllOptions
+    options: LookupAllOptions,
   ): Promise<LookupAddress[]>;
   function lookup(
     hostname: string,
-    options: LookupOptions
+    options: LookupOptions,
   ): Promise<LookupAddress | LookupAddress[]>;
   function lookup(hostname: string): Promise<LookupAddress>;
   /**
@@ -115,7 +115,7 @@ declare module "dns/promises" {
    */
   function lookupService(
     address: string,
-    port: number
+    port: number,
   ): Promise<{
     hostname: string;
     service: string;
@@ -148,7 +148,7 @@ declare module "dns/promises" {
   function resolve(hostname: string, rrtype: "TXT"): Promise<string[][]>;
   function resolve(
     hostname: string,
-    rrtype: string
+    rrtype: string,
   ): Promise<
     | string[]
     | MxRecord[]
@@ -167,11 +167,11 @@ declare module "dns/promises" {
   function resolve4(hostname: string): Promise<string[]>;
   function resolve4(
     hostname: string,
-    options: ResolveWithTtlOptions
+    options: ResolveWithTtlOptions,
   ): Promise<RecordWithTtl[]>;
   function resolve4(
     hostname: string,
-    options: ResolveOptions
+    options: ResolveOptions,
   ): Promise<string[] | RecordWithTtl[]>;
   /**
    * Uses the DNS protocol to resolve IPv6 addresses (`AAAA` records) for the`hostname`. On success, the `Promise` is resolved with an array of IPv6
@@ -182,11 +182,11 @@ declare module "dns/promises" {
   function resolve6(hostname: string): Promise<string[]>;
   function resolve6(
     hostname: string,
-    options: ResolveWithTtlOptions
+    options: ResolveWithTtlOptions,
   ): Promise<RecordWithTtl[]>;
   function resolve6(
     hostname: string,
-    options: ResolveOptions
+    options: ResolveOptions,
   ): Promise<string[] | RecordWithTtl[]>;
   /**
    * Uses the DNS protocol to resolve all records (also known as `ANY` or `*` query).

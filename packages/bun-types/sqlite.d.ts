@@ -82,7 +82,7 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
-          }
+          },
     );
 
     /**
@@ -113,7 +113,7 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
-          }
+          },
     ): Database;
 
     /**
@@ -203,7 +203,7 @@ declare module "bun:sqlite" {
      *
      */
     query<ParamsType = SQLQueryBindings, ReturnType = any>(
-      sqlQuery: string
+      sqlQuery: string,
     ): Statement<ParamsType, ReturnType>;
 
     /**

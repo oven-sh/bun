@@ -198,7 +198,7 @@ declare module "fs" {
   function rename(
     oldPath: PathLike,
     newPath: PathLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace rename {
   //   /**
@@ -241,7 +241,7 @@ declare module "fs" {
   function truncate(
     path: PathLike,
     len: number | undefined | null,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronous truncate(2) - Truncate a file to a specified length.
@@ -312,7 +312,7 @@ declare module "fs" {
   function ftruncate(
     fd: number,
     len: number | undefined | null,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronous ftruncate(2) - Truncate a file to a specified length.
@@ -347,7 +347,7 @@ declare module "fs" {
     path: PathLike,
     uid: number,
     gid: number,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace chown {
   //   /**
@@ -379,7 +379,7 @@ declare module "fs" {
     fd: number,
     uid: number,
     gid: number,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace fchown {
   //   /**
@@ -407,7 +407,7 @@ declare module "fs" {
     path: PathLike,
     uid: number,
     gid: number,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace lchown {
   //   /**
@@ -441,7 +441,7 @@ declare module "fs" {
     path: PathLike,
     atime: TimeLike,
     mtime: TimeLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace lutimes {
   //   /**
@@ -633,7 +633,7 @@ declare module "fs" {
    */
   function stat(
     path: PathLike,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function stat(
     path: PathLike,
@@ -642,19 +642,19 @@ declare module "fs" {
           bigint?: false | undefined;
         })
       | undefined,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function stat(
     path: PathLike,
     options: StatOptions & {
       bigint: true;
     },
-    callback: (err: SystemError | null, stats: BigIntStats) => void
+    callback: (err: SystemError | null, stats: BigIntStats) => void,
   ): void;
   function stat(
     path: PathLike,
     options: StatOptions | undefined,
-    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void
+    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void,
   ): void;
   // namespace stat {
   //   /**
@@ -687,14 +687,14 @@ declare module "fs" {
       options?: StatSyncOptions & {
         bigint?: false | undefined;
         throwIfNoEntry: false;
-      }
+      },
     ): Stats | undefined;
     (
       path: PathLike,
       options: StatSyncOptions & {
         bigint: true;
         throwIfNoEntry: false;
-      }
+      },
     ): BigIntStats | undefined;
     // tslint:disable-next-line:unified-signatures
     (
@@ -702,20 +702,20 @@ declare module "fs" {
       // tslint:disable-next-line:unified-signatures
       options?: StatSyncOptions & {
         bigint?: false | undefined;
-      }
+      },
     ): Stats;
     (
       path: PathLike,
       options: StatSyncOptions & {
         bigint: true;
-      }
+      },
     ): BigIntStats;
     (
       path: PathLike,
       options: StatSyncOptions & {
         bigint: boolean;
         throwIfNoEntry?: false | undefined;
-      }
+      },
     ): Stats | BigIntStats;
     (path: PathLike, options?: StatSyncOptions):
       | Stats
@@ -735,7 +735,7 @@ declare module "fs" {
    */
   function fstat(
     fd: number,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function fstat(
     fd: number,
@@ -744,19 +744,19 @@ declare module "fs" {
           bigint?: false | undefined;
         })
       | undefined,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function fstat(
     fd: number,
     options: StatOptions & {
       bigint: true;
     },
-    callback: (err: SystemError | null, stats: BigIntStats) => void
+    callback: (err: SystemError | null, stats: BigIntStats) => void,
   ): void;
   function fstat(
     fd: number,
     options: StatOptions | undefined,
-    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void
+    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void,
   ): void;
   // namespace fstat {
   //   /**
@@ -790,13 +790,13 @@ declare module "fs" {
     fd: number,
     options?: StatOptions & {
       bigint?: false | undefined;
-    }
+    },
   ): Stats;
   function fstatSync(
     fd: number,
     options: StatOptions & {
       bigint: true;
-    }
+    },
   ): BigIntStats;
   function fstatSync(fd: number, options?: StatOptions): Stats | BigIntStats;
   /**
@@ -809,7 +809,7 @@ declare module "fs" {
    */
   function lstat(
     path: PathLike,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function lstat(
     path: PathLike,
@@ -818,19 +818,19 @@ declare module "fs" {
           bigint?: false | undefined;
         })
       | undefined,
-    callback: (err: SystemError | null, stats: Stats) => void
+    callback: (err: SystemError | null, stats: Stats) => void,
   ): void;
   function lstat(
     path: PathLike,
     options: StatOptions & {
       bigint: true;
     },
-    callback: (err: SystemError | null, stats: BigIntStats) => void
+    callback: (err: SystemError | null, stats: BigIntStats) => void,
   ): void;
   function lstat(
     path: PathLike,
     options: StatOptions | undefined,
-    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void
+    callback: (err: SystemError | null, stats: Stats | BigIntStats) => void,
   ): void;
   // namespace lstat {
   //   /**
@@ -868,7 +868,7 @@ declare module "fs" {
   function link(
     existingPath: PathLike,
     newPath: PathLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace link {
   //   /**
@@ -921,7 +921,7 @@ declare module "fs" {
     target: PathLike,
     path: PathLike,
     type: SimlinkType,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronous symlink(2) - Create a new symbolic link to an existing file.
@@ -931,7 +931,7 @@ declare module "fs" {
   function symlink(
     target: PathLike,
     path: PathLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace symlink {
   //   /**
@@ -958,7 +958,7 @@ declare module "fs" {
   function symlinkSync(
     target: PathLike,
     path: PathLike,
-    type?: SimlinkType
+    type?: SimlinkType,
   ): void;
   /**
    * Reads the contents of the symbolic link referred to by `path`. The callback gets
@@ -975,7 +975,7 @@ declare module "fs" {
   function readlink(
     path: PathLike,
     options: EncodingOption,
-    callback: (err: SystemError | null, linkString: string) => void
+    callback: (err: SystemError | null, linkString: string) => void,
   ): void;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
@@ -986,7 +986,7 @@ declare module "fs" {
   function readlink(
     path: PathLike,
     options: BufferEncodingOption,
-    callback: (err: SystemError | null, linkString: Buffer) => void
+    callback: (err: SystemError | null, linkString: Buffer) => void,
   ): void;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
@@ -998,7 +998,7 @@ declare module "fs" {
     path: PathLike,
     options: EncodingOption,
     // tslint:disable-next-line:unified-signatures
-    callback: (err: SystemError | null, linkString: string | Buffer) => void
+    callback: (err: SystemError | null, linkString: string | Buffer) => void,
   ): void;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
@@ -1007,7 +1007,7 @@ declare module "fs" {
   // tslint:disable-next-line:unified-signatures
   function readlink(
     path: PathLike,
-    callback: (err: SystemError | null, linkString: string) => void
+    callback: (err: SystemError | null, linkString: string) => void,
   ): void;
   // namespace readlink {
   //   /**
@@ -1063,7 +1063,7 @@ declare module "fs" {
    */
   function readlinkSync(
     path: PathLike,
-    options?: EncodingOption
+    options?: EncodingOption,
   ): string | Buffer;
   /**
    * Asynchronously computes the canonical pathname by resolving `.`, `..` and
@@ -1094,7 +1094,7 @@ declare module "fs" {
   function realpath(
     path: PathLike,
     options: EncodingOption,
-    callback: (err: SystemError | null, resolvedPath: string) => void
+    callback: (err: SystemError | null, resolvedPath: string) => void,
   ): void;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
@@ -1105,7 +1105,7 @@ declare module "fs" {
   function realpath(
     path: PathLike,
     options: BufferEncodingOption,
-    callback: (err: SystemError | null, resolvedPath: Buffer) => void
+    callback: (err: SystemError | null, resolvedPath: Buffer) => void,
   ): void;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
@@ -1117,7 +1117,7 @@ declare module "fs" {
     path: PathLike,
     options: EncodingOption,
     // tslint:disable-next-line:unified-signatures
-    callback: (err: SystemError | null, resolvedPath: string | Buffer) => void
+    callback: (err: SystemError | null, resolvedPath: string | Buffer) => void,
   ): void;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
@@ -1126,7 +1126,7 @@ declare module "fs" {
   // tslint:disable-next-line:unified-signatures
   function realpath(
     path: PathLike,
-    callback: (err: SystemError | null, resolvedPath: string) => void
+    callback: (err: SystemError | null, resolvedPath: string) => void,
   ): void;
   // namespace realpath {
   //   /**
@@ -1217,7 +1217,7 @@ declare module "fs" {
    */
   function realpathSync(
     path: PathLike,
-    options?: EncodingOption
+    options?: EncodingOption,
   ): string | Buffer;
   namespace realpathSync {
     function native(path: PathLike, options?: EncodingOption): string;
@@ -1297,7 +1297,7 @@ declare module "fs" {
   function rmdir(
     path: PathLike,
     options: RmDirOptions,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace rmdir {
   //   /**
@@ -1356,7 +1356,7 @@ declare module "fs" {
   export function rm(
     path: PathLike,
     options: RmOptions,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   export namespace rm {
     /**
@@ -1435,7 +1435,7 @@ declare module "fs" {
     options: MakeDirectoryOptions & {
       recursive: true;
     },
-    callback: (err: SystemError | null, path?: string) => void
+    callback: (err: SystemError | null, path?: string) => void,
   ): void;
   /**
    * Asynchronous mkdir(2) - create a directory.
@@ -1452,7 +1452,7 @@ declare module "fs" {
         })
       | null
       | undefined,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronous mkdir(2) - create a directory.
@@ -1464,7 +1464,7 @@ declare module "fs" {
     path: PathLike,
     // tslint:disable-next-line:unified-signatures
     options: Mode | MakeDirectoryOptions | null | undefined,
-    callback: (err: SystemError | null, path?: string) => void
+    callback: (err: SystemError | null, path?: string) => void,
   ): void;
   /**
    * Asynchronous mkdir(2) - create a directory with a mode of `0o777`.
@@ -1521,7 +1521,7 @@ declare module "fs" {
     path: PathLike,
     options: MakeDirectoryOptions & {
       recursive: true;
-    }
+    },
   ): string | undefined;
   /**
    * Synchronous mkdir(2) - create a directory.
@@ -1536,7 +1536,7 @@ declare module "fs" {
       | (MakeDirectoryOptions & {
           recursive?: false | undefined;
         })
-      | null
+      | null,
   ): void;
   /**
    * Synchronous mkdir(2) - create a directory.
@@ -1546,7 +1546,7 @@ declare module "fs" {
    */
   function mkdirSync(
     path: PathLike,
-    options?: Mode | MakeDirectoryOptions | null
+    options?: Mode | MakeDirectoryOptions | null,
   ): string | undefined;
   /**
    * Creates a unique temporary directory.
@@ -1608,7 +1608,7 @@ declare module "fs" {
   function mkdtemp(
     prefix: string,
     options: EncodingOption,
-    callback: (err: SystemError | null, folder: string) => void
+    callback: (err: SystemError | null, folder: string) => void,
   ): void;
   /**
    * Asynchronously creates a unique temporary directory.
@@ -1622,7 +1622,7 @@ declare module "fs" {
       | {
           encoding: "buffer";
         },
-    callback: (err: SystemError | null, folder: Buffer) => void
+    callback: (err: SystemError | null, folder: Buffer) => void,
   ): void;
   /**
    * Asynchronously creates a unique temporary directory.
@@ -1633,7 +1633,7 @@ declare module "fs" {
     prefix: string,
     options: EncodingOption,
     // tslint:disable-next-line:unified-signatures
-    callback: (err: SystemError | null, folder: string | Buffer) => void
+    callback: (err: SystemError | null, folder: string | Buffer) => void,
   ): void;
   /**
    * Asynchronously creates a unique temporary directory.
@@ -1642,7 +1642,7 @@ declare module "fs" {
   // tslint:disable-next-line:unified-signatures
   function mkdtemp(
     prefix: string,
-    callback: (err: SystemError | null, folder: string) => void
+    callback: (err: SystemError | null, folder: string) => void,
   ): void;
   // namespace mkdtemp {
   //   /**
@@ -1697,7 +1697,7 @@ declare module "fs" {
    */
   function mkdtempSync(
     prefix: string,
-    options?: EncodingOption
+    options?: EncodingOption,
   ): string | Buffer;
   /**
    * Reads the contents of a directory. The callback gets two arguments `(err, files)`where `files` is an array of the names of the files in the directory excluding`'.'` and `'..'`.
@@ -1722,7 +1722,7 @@ declare module "fs" {
       | BufferEncoding
       | undefined
       | null,
-    callback: (err: SystemError | null, files: string[]) => void
+    callback: (err: SystemError | null, files: string[]) => void,
   ): void;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -1737,7 +1737,7 @@ declare module "fs" {
           withFileTypes?: false | undefined;
         }
       | "buffer",
-    callback: (err: SystemError | null, files: Buffer[]) => void
+    callback: (err: SystemError | null, files: Buffer[]) => void,
   ): void;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -1753,7 +1753,7 @@ declare module "fs" {
       | BufferEncoding
       | undefined
       | null,
-    callback: (err: SystemError | null, files: string[] | Buffer[]) => void
+    callback: (err: SystemError | null, files: string[] | Buffer[]) => void,
   ): void;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -1761,7 +1761,7 @@ declare module "fs" {
    */
   function readdir(
     path: PathLike,
-    callback: (err: SystemError | null, files: string[]) => void
+    callback: (err: SystemError | null, files: string[]) => void,
   ): void;
   /**
    * Asynchronous readdir(3) - read a directory.
@@ -1773,7 +1773,7 @@ declare module "fs" {
     options: ObjectEncodingOptions & {
       withFileTypes: true;
     },
-    callback: (err: SystemError | null, files: Dirent[]) => void
+    callback: (err: SystemError | null, files: Dirent[]) => void,
   ): void;
   // namespace readdir {
   //   /**
@@ -1852,7 +1852,7 @@ declare module "fs" {
           withFileTypes?: false | undefined;
         }
       | BufferEncoding
-      | null
+      | null,
   ): string[];
   /**
    * Synchronous readdir(3) - read a directory.
@@ -1866,7 +1866,7 @@ declare module "fs" {
           encoding: "buffer";
           withFileTypes?: false | undefined;
         }
-      | "buffer"
+      | "buffer",
   ): Buffer[];
   /**
    * Synchronous readdir(3) - read a directory.
@@ -1880,7 +1880,7 @@ declare module "fs" {
           withFileTypes?: false | undefined;
         })
       | BufferEncoding
-      | null
+      | null,
   ): string[] | Buffer[];
   /**
    * Synchronous readdir(3) - read a directory.
@@ -1891,7 +1891,7 @@ declare module "fs" {
     path: PathLike,
     options: ObjectEncodingOptions & {
       withFileTypes: true;
-    }
+    },
   ): Dirent[];
   /**
    * Closes the file descriptor. No arguments other than a possible exception are
@@ -1942,7 +1942,7 @@ declare module "fs" {
     path: PathLike,
     flags: OpenMode,
     mode: Mode | undefined | null,
-    callback: (err: SystemError | null, fd: number) => void
+    callback: (err: SystemError | null, fd: number) => void,
   ): void;
   /**
    * Asynchronous open(2) - open and possibly create a file. If the file is created, its mode will be `0o666`.
@@ -1951,7 +1951,7 @@ declare module "fs" {
   function open(
     path: PathLike,
     flags: OpenMode,
-    callback: (err: SystemError | null, fd: number) => void
+    callback: (err: SystemError | null, fd: number) => void,
   ): void;
   // namespace open {
   //   /**
@@ -1977,7 +1977,7 @@ declare module "fs" {
   function openSync(
     path: PathLike,
     flags: OpenMode,
-    mode?: Mode | null
+    mode?: Mode | null,
   ): number;
   /**
    * Change the file system timestamps of the object referenced by `path`.
@@ -1992,7 +1992,7 @@ declare module "fs" {
     path: PathLike,
     atime: TimeLike,
     mtime: TimeLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace utimes {
   //   /**
@@ -2024,7 +2024,7 @@ declare module "fs" {
     fd: number,
     atime: TimeLike,
     mtime: TimeLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace futimes {
   //   /**
@@ -2099,8 +2099,8 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       written: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   /**
    * Asynchronously writes `buffer` to the file referenced by the supplied file descriptor.
@@ -2116,8 +2116,8 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       written: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   /**
    * Asynchronously writes `buffer` to the file referenced by the supplied file descriptor.
@@ -2131,8 +2131,8 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       written: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   /**
    * Asynchronously writes `buffer` to the file referenced by the supplied file descriptor.
@@ -2144,8 +2144,8 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       written: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   /**
    * Asynchronously writes `string` to the file referenced by the supplied file descriptor.
@@ -2159,7 +2159,7 @@ declare module "fs" {
     string: string,
     position: number | undefined | null,
     encoding: BufferEncoding | undefined | null,
-    callback: (err: SystemError | null, written: number, str: string) => void
+    callback: (err: SystemError | null, written: number, str: string) => void,
   ): void;
   /**
    * Asynchronously writes `string` to the file referenced by the supplied file descriptor.
@@ -2171,7 +2171,7 @@ declare module "fs" {
     fd: number,
     string: string,
     position: number | undefined | null,
-    callback: (err: SystemError | null, written: number, str: string) => void
+    callback: (err: SystemError | null, written: number, str: string) => void,
   ): void;
   /**
    * Asynchronously writes `string` to the file referenced by the supplied file descriptor.
@@ -2181,7 +2181,7 @@ declare module "fs" {
   function write(
     fd: number,
     string: string,
-    callback: (err: SystemError | null, written: number, str: string) => void
+    callback: (err: SystemError | null, written: number, str: string) => void,
   ): void;
   // namespace write {
   //   /**
@@ -2231,7 +2231,7 @@ declare module "fs" {
     buffer: ArrayBufferView,
     offset?: number | null,
     length?: number | null,
-    position?: number | null
+    position?: number | null,
   ): number;
   /**
    * Synchronously writes `string` to the file referenced by the supplied file descriptor, returning the number of bytes written.
@@ -2244,7 +2244,7 @@ declare module "fs" {
     fd: number,
     string: string,
     position?: number | null,
-    encoding?: BufferEncoding | null
+    encoding?: BufferEncoding | null,
   ): number;
   type ReadPosition = number | bigint;
   interface ReadSyncOptions {
@@ -2291,8 +2291,8 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       bytesRead: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   /**
    * Similar to the above `fs.read` function, this version takes an optional `options` object.
@@ -2309,16 +2309,16 @@ declare module "fs" {
     callback: (
       err: SystemError | null,
       bytesRead: number,
-      buffer: TBuffer
-    ) => void
+      buffer: TBuffer,
+    ) => void,
   ): void;
   function read(
     fd: number,
     callback: (
       err: SystemError | null,
       bytesRead: number,
-      buffer: ArrayBufferView
-    ) => void
+      buffer: ArrayBufferView,
+    ) => void,
   ): void;
   // namespace read {
   //   /**
@@ -2367,7 +2367,7 @@ declare module "fs" {
     buffer: ArrayBufferView,
     offset: number,
     length: number,
-    position: ReadPosition | null
+    position: ReadPosition | null,
   ): number;
   /**
    * Similar to the above `fs.readSync` function, this version takes an optional `options` object.
@@ -2376,7 +2376,7 @@ declare module "fs" {
   function readSync(
     fd: number,
     buffer: ArrayBufferView,
-    opts?: ReadSyncOptions
+    opts?: ReadSyncOptions,
   ): number;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -2453,7 +2453,7 @@ declare module "fs" {
         } & Abortable)
       | undefined
       | null,
-    callback: (err: SystemError | null, data: Buffer) => void
+    callback: (err: SystemError | null, data: Buffer) => void,
   ): void;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -2470,7 +2470,7 @@ declare module "fs" {
           flag?: string | undefined;
         } & Abortable)
       | BufferEncoding,
-    callback: (err: SystemError | null, data: string) => void
+    callback: (err: SystemError | null, data: string) => void,
   ): void;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -2488,7 +2488,7 @@ declare module "fs" {
       | BufferEncoding
       | undefined
       | null,
-    callback: (err: SystemError | null, data: string | Buffer) => void
+    callback: (err: SystemError | null, data: string | Buffer) => void,
   ): void;
   /**
    * Asynchronously reads the entire contents of a file.
@@ -2497,7 +2497,7 @@ declare module "fs" {
    */
   function readFile(
     path: PathOrFileDescriptor,
-    callback: (err: SystemError | null, data: Buffer) => void
+    callback: (err: SystemError | null, data: Buffer) => void,
   ): void;
   // namespace readFile {
   //   /**
@@ -2578,7 +2578,7 @@ declare module "fs" {
     options?: {
       encoding?: null | undefined;
       flag?: string | undefined;
-    } | null
+    } | null,
   ): Buffer;
   /**
    * Synchronously reads the entire contents of a file.
@@ -2594,7 +2594,7 @@ declare module "fs" {
           encoding: BufferEncoding;
           flag?: string | undefined;
         }
-      | BufferEncoding
+      | BufferEncoding,
   ): string;
   /**
    * Synchronously reads the entire contents of a file.
@@ -2610,7 +2610,7 @@ declare module "fs" {
           flag?: string | undefined;
         })
       | BufferEncoding
-      | null
+      | null,
   ): string | Buffer;
   type WriteFileOptions =
     | (ObjectEncodingOptions &
@@ -2685,7 +2685,7 @@ declare module "fs" {
     file: PathOrFileDescriptor,
     data: string | ArrayBufferView | ArrayBufferLike,
     options: WriteFileOptions,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronously writes data to a file, replacing the file if it already exists.
@@ -2696,7 +2696,7 @@ declare module "fs" {
   function writeFile(
     path: PathOrFileDescriptor,
     data: string | ArrayBufferView | ArrayBufferLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace writeFile {
   //   /**
@@ -2732,7 +2732,7 @@ declare module "fs" {
   function writeFileSync(
     file: PathOrFileDescriptor,
     data: string | ArrayBufferView | ArrayBufferLike,
-    options?: WriteFileOptions
+    options?: WriteFileOptions,
   ): void;
   /**
    * Asynchronously append data to a file, creating the file if it does not yet
@@ -2791,7 +2791,7 @@ declare module "fs" {
     path: PathOrFileDescriptor,
     data: string | Uint8Array,
     options: WriteFileOptions,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronously append data to a file, creating the file if it does not exist.
@@ -2802,7 +2802,7 @@ declare module "fs" {
   function appendFile(
     file: PathOrFileDescriptor,
     data: string | Uint8Array,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace appendFile {
   //   /**
@@ -2873,7 +2873,7 @@ declare module "fs" {
   function appendFileSync(
     path: PathOrFileDescriptor,
     data: string | Uint8Array,
-    options?: WriteFileOptions
+    options?: WriteFileOptions,
   ): void;
 
   /**
@@ -3305,7 +3305,7 @@ declare module "fs" {
   function access(
     path: PathLike,
     mode: number | undefined,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   /**
    * Asynchronously tests a user's permissions for the file specified by path.
@@ -3428,7 +3428,7 @@ declare module "fs" {
    */
   export function createReadStream(
     path: PathLike,
-    options?: BufferEncoding | ReadStreamOptions
+    options?: BufferEncoding | ReadStreamOptions,
   ): ReadStream;
   /**
    * `options` may also include a `start` option to allow writing data at some
@@ -3459,7 +3459,7 @@ declare module "fs" {
    */
   export function createWriteStream(
     path: PathLike,
-    options?: BufferEncoding | StreamOptions
+    options?: BufferEncoding | StreamOptions,
   ): WriteStream;
 
   /**
@@ -3502,7 +3502,7 @@ declare module "fs" {
     addListener(event: "close", listener: () => void): this;
     addListener(
       event: "data",
-      listener: (chunk: Buffer | string) => void
+      listener: (chunk: Buffer | string) => void,
     ): this;
     addListener(event: "end", listener: () => void): this;
     addListener(event: "error", listener: (err: Error) => void): this;
@@ -3513,7 +3513,7 @@ declare module "fs" {
     addListener(event: "resume", listener: () => void): this;
     addListener(
       event: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     on(event: "close", listener: () => void): this;
     on(event: "data", listener: (chunk: Buffer | string) => void): this;
@@ -3603,11 +3603,11 @@ declare module "fs" {
     addListener(event: "ready", listener: () => void): this;
     addListener(
       event: "unpipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     addListener(
       event: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     on(event: "close", listener: () => void): this;
     on(event: "drain", listener: () => void): this;
@@ -3702,13 +3702,13 @@ declare module "fs" {
   function copyFile(
     src: PathLike,
     dest: PathLike,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   function copyFile(
     src: PathLike,
     dest: PathLike,
     mode: number,
-    callback: NoParamCallback
+    callback: NoParamCallback,
   ): void;
   // namespace copyFile {
   //   function __promisify__(
@@ -3775,8 +3775,8 @@ declare module "fs" {
     cb: (
       err: SystemError | null,
       bytesWritten: number,
-      buffers: ArrayBufferView[]
-    ) => void
+      buffers: ArrayBufferView[],
+    ) => void,
   ): void;
   function writev(
     fd: number,
@@ -3785,8 +3785,8 @@ declare module "fs" {
     cb: (
       err: SystemError | null,
       bytesWritten: number,
-      buffers: ArrayBufferView[]
-    ) => void
+      buffers: ArrayBufferView[],
+    ) => void,
   ): void;
   interface WriteVResult {
     bytesWritten: number;
@@ -3808,7 +3808,7 @@ declare module "fs" {
   function writevSync(
     fd: number,
     buffers: ReadonlyArray<ArrayBufferView>,
-    position?: number
+    position?: number,
   ): number;
   /**
    * Read from a file specified by `fd` and write to an array of `ArrayBufferView`s
@@ -3830,8 +3830,8 @@ declare module "fs" {
     cb: (
       err: SystemError | null,
       bytesRead: number,
-      buffers: ArrayBufferView[]
-    ) => void
+      buffers: ArrayBufferView[],
+    ) => void,
   ): void;
   function readv(
     fd: number,
@@ -3840,8 +3840,8 @@ declare module "fs" {
     cb: (
       err: SystemError | null,
       bytesRead: number,
-      buffers: ArrayBufferView[]
-    ) => void
+      buffers: ArrayBufferView[],
+    ) => void,
   ): void;
   interface ReadVResult {
     bytesRead: number;
@@ -3863,7 +3863,7 @@ declare module "fs" {
   function readvSync(
     fd: number,
     buffers: ReadonlyArray<ArrayBufferView>,
-    position?: number
+    position?: number,
   ): number;
   interface OpenDirOptions {
     encoding?: BufferEncoding | undefined;

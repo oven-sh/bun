@@ -238,7 +238,7 @@ declare module "http" {
     maxHeadersCount: number;
     constructor(
       url: string | URL | ClientRequestArgs,
-      cb?: (res: IncomingMessage) => void
+      cb?: (res: IncomingMessage) => void,
     );
     /**
      * The request method.
@@ -267,7 +267,7 @@ declare module "http" {
      */
     setHeader(
       name: string,
-      value: number | string | ReadonlyArray<string>
+      value: number | string | ReadonlyArray<string>,
     ): this;
     /**
      * Gets the value of HTTP header with the given name. If such a name doesn't
@@ -324,11 +324,11 @@ declare module "http" {
     addListener(event: "continue", listener: () => void): this;
     addListener(
       event: "information",
-      listener: (info: InformationEvent) => void
+      listener: (info: InformationEvent) => void,
     ): this;
     addListener(
       event: "response",
-      listener: (response: IncomingMessage) => void
+      listener: (response: IncomingMessage) => void,
     ): this;
     addListener(event: "timeout", listener: () => void): this;
     addListener(event: "close", listener: () => void): this;
@@ -338,11 +338,11 @@ declare module "http" {
     addListener(event: "pipe", listener: (src: stream.Readable) => void): this;
     addListener(
       event: "unpipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     addListener(
       event: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * @deprecated
@@ -366,11 +366,11 @@ declare module "http" {
     once(event: "continue", listener: () => void): this;
     once(
       event: "information",
-      listener: (info: InformationEvent) => void
+      listener: (info: InformationEvent) => void,
     ): this;
     once(
       event: "response",
-      listener: (response: IncomingMessage) => void
+      listener: (response: IncomingMessage) => void,
     ): this;
     once(event: "timeout", listener: () => void): this;
     once(event: "close", listener: () => void): this;
@@ -387,11 +387,11 @@ declare module "http" {
     prependListener(event: "continue", listener: () => void): this;
     prependListener(
       event: "information",
-      listener: (info: InformationEvent) => void
+      listener: (info: InformationEvent) => void,
     ): this;
     prependListener(
       event: "response",
-      listener: (response: IncomingMessage) => void
+      listener: (response: IncomingMessage) => void,
     ): this;
     prependListener(event: "timeout", listener: () => void): this;
     prependListener(event: "close", listener: () => void): this;
@@ -400,15 +400,15 @@ declare module "http" {
     prependListener(event: "finish", listener: () => void): this;
     prependListener(
       event: "pipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     prependListener(
       event: "unpipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     prependListener(
       event: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
     /**
      * @deprecated
@@ -417,11 +417,11 @@ declare module "http" {
     prependOnceListener(event: "continue", listener: () => void): this;
     prependOnceListener(
       event: "information",
-      listener: (info: InformationEvent) => void
+      listener: (info: InformationEvent) => void,
     ): this;
     prependOnceListener(
       event: "response",
-      listener: (response: IncomingMessage) => void
+      listener: (response: IncomingMessage) => void,
     ): this;
     prependOnceListener(event: "timeout", listener: () => void): this;
     prependOnceListener(event: "close", listener: () => void): this;
@@ -430,15 +430,15 @@ declare module "http" {
     prependOnceListener(event: "finish", listener: () => void): this;
     prependOnceListener(
       event: "pipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     prependOnceListener(
       event: "unpipe",
-      listener: (src: stream.Readable) => void
+      listener: (src: stream.Readable) => void,
     ): this;
     prependOnceListener(
       event: string | symbol,
-      listener: (...args: any[]) => void
+      listener: (...args: any[]) => void,
     ): this;
   }
   /**
@@ -809,12 +809,12 @@ declare module "http" {
    */
   function request(
     options: RequestOptions | string | URL,
-    callback?: (res: IncomingMessage) => void
+    callback?: (res: IncomingMessage) => void,
   ): ClientRequest;
   function request(
     url: string | URL,
     options: RequestOptions,
-    callback?: (res: IncomingMessage) => void
+    callback?: (res: IncomingMessage) => void,
   ): ClientRequest;
   /**
    * Since most requests are GET requests without bodies, Node.js provides this
@@ -877,12 +877,12 @@ declare module "http" {
    */
   function get(
     options: RequestOptions | string | URL,
-    callback?: (res: IncomingMessage) => void
+    callback?: (res: IncomingMessage) => void,
   ): ClientRequest;
   function get(
     url: string | URL,
     options: RequestOptions,
-    callback?: (res: IncomingMessage) => void
+    callback?: (res: IncomingMessage) => void,
   ): ClientRequest;
   /**
    * Read-only property specifying the maximum allowed size of HTTP headers in bytes.

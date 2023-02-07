@@ -121,8 +121,8 @@ declare module "dns" {
     callback: (
       err: ErrnoException | null,
       address: string,
-      family: number
-    ) => void
+      family: number,
+    ) => void,
   ): void;
   // export function lookup(
   //   hostname: string,
@@ -147,16 +147,16 @@ declare module "dns" {
     callback: (
       err: ErrnoException | null,
       address: string | LookupAddress[],
-      family: number
-    ) => void
+      family: number,
+    ) => void,
   ): void;
   export function lookup(
     hostname: string,
     callback: (
       err: ErrnoException | null,
       address: string,
-      family: number
-    ) => void
+      family: number,
+    ) => void,
   ): void;
   // export namespace lookup {
   //   function __promisify__(
@@ -198,8 +198,8 @@ declare module "dns" {
     callback: (
       err: ErrnoException | null,
       hostname: string,
-      service: string
-    ) => void
+      service: string,
+    ) => void,
   ): void;
   // export namespace lookupService {
   //   function __promisify__(
@@ -316,62 +316,62 @@ declare module "dns" {
    */
   export function resolve(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "A",
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "AAAA",
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "ANY",
-    callback: (err: ErrnoException | null, addresses: AnyRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: AnyRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "CNAME",
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "MX",
-    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "NAPTR",
-    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "NS",
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "PTR",
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "SOA",
-    callback: (err: ErrnoException | null, addresses: SoaRecord) => void
+    callback: (err: ErrnoException | null, addresses: SoaRecord) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "SRV",
-    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "TXT",
-    callback: (err: ErrnoException | null, addresses: string[][]) => void
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -385,35 +385,35 @@ declare module "dns" {
         | SoaRecord
         | SrvRecord[]
         | string[][]
-        | AnyRecord[]
-    ) => void
+        | AnyRecord[],
+    ) => void,
   ): void;
   export namespace resolve {
     function __promisify__(
       hostname: string,
-      rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR"
+      rrtype?: "A" | "AAAA" | "CNAME" | "NS" | "PTR",
     ): Promise<string[]>;
     function __promisify__(
       hostname: string,
-      rrtype: "ANY"
+      rrtype: "ANY",
     ): Promise<AnyRecord[]>;
     function __promisify__(hostname: string, rrtype: "MX"): Promise<MxRecord[]>;
     function __promisify__(
       hostname: string,
-      rrtype: "NAPTR"
+      rrtype: "NAPTR",
     ): Promise<NaptrRecord[]>;
     function __promisify__(hostname: string, rrtype: "SOA"): Promise<SoaRecord>;
     function __promisify__(
       hostname: string,
-      rrtype: "SRV"
+      rrtype: "SRV",
     ): Promise<SrvRecord[]>;
     function __promisify__(
       hostname: string,
-      rrtype: "TXT"
+      rrtype: "TXT",
     ): Promise<string[][]>;
     function __promisify__(
       hostname: string,
-      rrtype: string
+      rrtype: string,
     ): Promise<
       | string[]
       | MxRecord[]
@@ -432,20 +432,20 @@ declare module "dns" {
    */
   export function resolve4(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve4(
     hostname: string,
     options: ResolveWithTtlOptions,
-    callback: (err: ErrnoException | null, addresses: RecordWithTtl[]) => void
+    callback: (err: ErrnoException | null, addresses: RecordWithTtl[]) => void,
   ): void;
   export function resolve4(
     hostname: string,
     options: ResolveOptions,
     callback: (
       err: ErrnoException | null,
-      addresses: string[] | RecordWithTtl[]
-    ) => void
+      addresses: string[] | RecordWithTtl[],
+    ) => void,
   ): void;
   // export namespace resolve4 {
   //   function __promisify__(hostname: string): Promise<string[]>;
@@ -466,20 +466,20 @@ declare module "dns" {
    */
   export function resolve6(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export function resolve6(
     hostname: string,
     options: ResolveWithTtlOptions,
-    callback: (err: ErrnoException | null, addresses: RecordWithTtl[]) => void
+    callback: (err: ErrnoException | null, addresses: RecordWithTtl[]) => void,
   ): void;
   export function resolve6(
     hostname: string,
     options: ResolveOptions,
     callback: (
       err: ErrnoException | null,
-      addresses: string[] | RecordWithTtl[]
-    ) => void
+      addresses: string[] | RecordWithTtl[],
+    ) => void,
   ): void;
   // export namespace resolve6 {
   //   function __promisify__(hostname: string): Promise<string[]>;
@@ -499,7 +499,7 @@ declare module "dns" {
    */
   export function resolveCname(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export namespace resolveCname {
     function __promisify__(hostname: string): Promise<string[]>;
@@ -512,7 +512,7 @@ declare module "dns" {
    */
   export function resolveCaa(
     hostname: string,
-    callback: (err: ErrnoException | null, records: CaaRecord[]) => void
+    callback: (err: ErrnoException | null, records: CaaRecord[]) => void,
   ): void;
   export namespace resolveCaa {
     function __promisify__(hostname: string): Promise<CaaRecord[]>;
@@ -524,7 +524,7 @@ declare module "dns" {
    */
   export function resolveMx(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
   ): void;
   export namespace resolveMx {
     function __promisify__(hostname: string): Promise<MxRecord[]>;
@@ -554,7 +554,7 @@ declare module "dns" {
    */
   export function resolveNaptr(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
   ): void;
   export namespace resolveNaptr {
     function __promisify__(hostname: string): Promise<NaptrRecord[]>;
@@ -566,7 +566,7 @@ declare module "dns" {
    */
   export function resolveNs(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export namespace resolveNs {
     function __promisify__(hostname: string): Promise<string[]>;
@@ -578,7 +578,7 @@ declare module "dns" {
    */
   export function resolvePtr(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[]) => void
+    callback: (err: ErrnoException | null, addresses: string[]) => void,
   ): void;
   export namespace resolvePtr {
     function __promisify__(hostname: string): Promise<string[]>;
@@ -611,7 +611,7 @@ declare module "dns" {
    */
   export function resolveSoa(
     hostname: string,
-    callback: (err: ErrnoException | null, address: SoaRecord) => void
+    callback: (err: ErrnoException | null, address: SoaRecord) => void,
   ): void;
   export namespace resolveSoa {
     function __promisify__(hostname: string): Promise<SoaRecord>;
@@ -637,7 +637,7 @@ declare module "dns" {
    */
   export function resolveSrv(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
   ): void;
   export namespace resolveSrv {
     function __promisify__(hostname: string): Promise<SrvRecord[]>;
@@ -651,7 +651,7 @@ declare module "dns" {
    */
   export function resolveTxt(
     hostname: string,
-    callback: (err: ErrnoException | null, addresses: string[][]) => void
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
   ): void;
   export namespace resolveTxt {
     function __promisify__(hostname: string): Promise<string[][]>;

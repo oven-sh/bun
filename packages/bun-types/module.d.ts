@@ -7,7 +7,7 @@ declare module "module" {
   export function _resolveFileName(
     path: string,
     parent: string,
-    isMain: boolean
+    isMain: boolean,
   ): string;
   /**
    * Bun's module cache is not exposed but this property exists for compatibility.

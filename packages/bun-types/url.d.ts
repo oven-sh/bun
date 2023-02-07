@@ -73,17 +73,17 @@ declare module "url" {
   function parse(
     urlString: string,
     parseQueryString: false | undefined,
-    slashesDenoteHost?: boolean
+    slashesDenoteHost?: boolean,
   ): UrlWithStringQuery;
   function parse(
     urlString: string,
     parseQueryString: true,
-    slashesDenoteHost?: boolean
+    slashesDenoteHost?: boolean,
   ): UrlWithParsedQuery;
   function parse(
     urlString: string,
     parseQueryString: boolean,
-    slashesDenoteHost?: boolean
+    slashesDenoteHost?: boolean,
   ): Url;
   /**
    * The `url.format()` method returns a formatted URL string derived from`urlObject`.
@@ -337,7 +337,7 @@ declare module "url" {
     toString(): string;
     forEach(
       callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
-      thisArg?: any
+      thisArg?: any,
     ): void;
   }
 }

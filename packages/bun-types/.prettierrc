@@ -1,5 +1,6 @@
 {
-  "tabWidth": 2,
-  "useTabs": false,
-  "printWidth": 80
+  "arrowParens": "avoid",
+  "printWidth": 80,
+  "trailingComma": "all",
+  "useTabs": false
 }

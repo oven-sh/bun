@@ -548,7 +548,7 @@ declare module "bun:ffi" {
    *
    */
   export function CFunction(
-    fn: FFIFunction & { ptr: number | bigint }
+    fn: FFIFunction & { ptr: number | bigint },
   ): CallableFunction & {
     /**
      * Free the memory allocated by the wrapping function
@@ -628,7 +628,7 @@ declare module "bun:ffi" {
   export function toBuffer(
     ptr: number,
     byteOffset?: number,
-    byteLength?: number
+    byteLength?: number,
   ): Buffer;
 
   /**
@@ -648,7 +648,7 @@ declare module "bun:ffi" {
   export function toArrayBuffer(
     ptr: number,
     byteOffset?: number,
-    byteLength?: number
+    byteLength?: number,
   ): ArrayBuffer;
 
   /**
@@ -680,7 +680,7 @@ declare module "bun:ffi" {
    */
   export function ptr(
     view: TypedArray | ArrayBufferLike | DataView,
-    byteOffset?: number
+    byteOffset?: number,
   ): number;
 
   /**

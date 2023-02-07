@@ -49,7 +49,7 @@ declare module "bun:jsc" {
    */
   export function profile(
     callback: CallableFunction,
-    sampleInterval?: number
+    sampleInterval?: number,
   ): {
     /**
      * A formatted summary of the top functions

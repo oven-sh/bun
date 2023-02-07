@@ -152,7 +152,7 @@ declare module "buffer" {
       from(
         arrayBuffer: WithImplicitCoercion<ArrayBuffer | SharedArrayBuffer>,
         byteOffset?: number,
-        length?: number
+        length?: number,
       ): Buffer;
       /**
        * Creates a new Buffer using the passed {data}
@@ -160,7 +160,7 @@ declare module "buffer" {
        */
       from(data: Uint8Array | ReadonlyArray<number>): Buffer;
       from(
-        data: WithImplicitCoercion<Uint8Array | ReadonlyArray<number> | string>
+        data: WithImplicitCoercion<Uint8Array | ReadonlyArray<number> | string>,
       ): Buffer;
       /**
        * Creates a new Buffer containing the given JavaScript string {str}.
@@ -173,7 +173,7 @@ declare module "buffer" {
           | {
               [Symbol.toPrimitive](hint: "string"): string;
             },
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): Buffer;
       /**
        * Creates a new Buffer using the passed {data}
@@ -246,7 +246,7 @@ declare module "buffer" {
        */
       byteLength(
         string: string | ArrayBufferView | ArrayBufferLike,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): number;
       /**
        * Returns a new `Buffer` which is the result of concatenating all the `Buffer`instances in the `list` together.
@@ -352,7 +352,7 @@ declare module "buffer" {
       alloc(
         size: number,
         fill?: string | Buffer | number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): Buffer;
       /**
        * Allocates a new `Buffer` of `size` bytes. If `size` is larger than {@link constants.MAX_LENGTH} or smaller than 0, `ERR_INVALID_ARG_VALUE` is thrown.
@@ -475,7 +475,7 @@ declare module "buffer" {
         string: string,
         offset: number,
         length: number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): number;
       /**
        * Decodes `buf` to a string according to the specified character encoding in`encoding`. `start` and `end` may be passed to decode only a subset of `buf`.
@@ -623,7 +623,7 @@ declare module "buffer" {
         targetStart?: number,
         targetEnd?: number,
         sourceStart?: number,
-        sourceEnd?: number
+        sourceEnd?: number,
       ): -1 | 0 | 1;
       /**
        * Copies data from a region of `buf` to a region in `target`, even if the `target`memory region overlaps with `buf`.
@@ -681,7 +681,7 @@ declare module "buffer" {
         target: Uint8Array,
         targetStart?: number,
         sourceStart?: number,
-        sourceEnd?: number
+        sourceEnd?: number,
       ): number;
       /**
        * Returns a new `Buffer` that references the same memory as the original, but
@@ -1825,7 +1825,7 @@ declare module "buffer" {
         value: string | Uint8Array | number,
         offset?: number,
         end?: number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): this;
       /**
        * If `value` is:
@@ -1897,7 +1897,7 @@ declare module "buffer" {
       indexOf(
         value: string | number | Uint8Array,
         byteOffset?: number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): number;
       /**
        * Identical to `buf.indexOf()`, except the last occurrence of `value` is found
@@ -1968,7 +1968,7 @@ declare module "buffer" {
       lastIndexOf(
         value: string | number | Uint8Array,
         byteOffset?: number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): number;
       /**
        * Creates and returns an [iterator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols) of `[index, byte]` pairs from the contents
@@ -2025,7 +2025,7 @@ declare module "buffer" {
       includes(
         value: string | number | Buffer,
         byteOffset?: number,
-        encoding?: BufferEncoding
+        encoding?: BufferEncoding,
       ): boolean;
       /**
        * Creates and returns an [iterator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols) of `buf` keys (indices).

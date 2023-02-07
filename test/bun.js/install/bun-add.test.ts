@@ -17,6 +17,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+import { realpathSync } from "fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -24,7 +25,7 @@ afterAll(dummyAfterAll);
 let add_dir;
 
 beforeEach(async () => {
-  add_dir = await mkdtemp(join(tmpdir(), "bun-add.test"));
+  add_dir = await mkdtemp(join(realpathSync(tmpdir()), "bun-add.test"));
   await dummyBeforeEach();
 });
 afterEach(async () => {

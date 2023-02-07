@@ -236,7 +236,10 @@ declare module "http" {
      * Limits maximum response headers count. If set to 0, no limit will be applied.
      */
     maxHeadersCount: number;
-    constructor(url: string | URL | ClientRequestArgs, cb?: (res: IncomingMessage) => void);
+    constructor(
+      url: string | URL | ClientRequestArgs,
+      cb?: (res: IncomingMessage) => void
+    );
     /**
      * The request method.
      */
@@ -262,7 +265,10 @@ declare module "http" {
      * @param name Header name
      * @param value Header value
      */
-    setHeader(name: string, value: number | string | ReadonlyArray<string>): this;
+    setHeader(
+      name: string,
+      value: number | string | ReadonlyArray<string>
+    ): this;
     /**
      * Gets the value of HTTP header with the given name. If such a name doesn't
      * exist in message, it will be `undefined`.
@@ -316,16 +322,28 @@ declare module "http" {
      */
     addListener(event: "abort", listener: () => void): this;
     addListener(event: "continue", listener: () => void): this;
-    addListener(event: "information", listener: (info: InformationEvent) => void): this;
-    addListener(event: "response", listener: (response: IncomingMessage) => void): this;
+    addListener(
+      event: "information",
+      listener: (info: InformationEvent) => void
+    ): this;
+    addListener(
+      event: "response",
+      listener: (response: IncomingMessage) => void
+    ): this;
     addListener(event: "timeout", listener: () => void): this;
     addListener(event: "close", listener: () => void): this;
     addListener(event: "drain", listener: () => void): this;
     addListener(event: "error", listener: (err: Error) => void): this;
     addListener(event: "finish", listener: () => void): this;
     addListener(event: "pipe", listener: (src: stream.Readable) => void): this;
-    addListener(event: "unpipe", listener: (src: stream.Readable) => void): this;
-    addListener(event: string | symbol, listener: (...args: any[]) => void): this;
+    addListener(
+      event: "unpipe",
+      listener: (src: stream.Readable) => void
+    ): this;
+    addListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void
+    ): this;
     /**
      * @deprecated
      */
@@ -346,8 +364,14 @@ declare module "http" {
      */
     once(event: "abort", listener: () => void): this;
     once(event: "continue", listener: () => void): this;
-    once(event: "information", listener: (info: InformationEvent) => void): this;
-    once(event: "response", listener: (response: IncomingMessage) => void): this;
+    once(
+      event: "information",
+      listener: (info: InformationEvent) => void
+    ): this;
+    once(
+      event: "response",
+      listener: (response: IncomingMessage) => void
+    ): this;
     once(event: "timeout", listener: () => void): this;
     once(event: "close", listener: () => void): this;
     once(event: "drain", listener: () => void): this;
@@ -361,31 +385,61 @@ declare module "http" {
      */
     prependListener(event: "abort", listener: () => void): this;
     prependListener(event: "continue", listener: () => void): this;
-    prependListener(event: "information", listener: (info: InformationEvent) => void): this;
-    prependListener(event: "response", listener: (response: IncomingMessage) => void): this;
+    prependListener(
+      event: "information",
+      listener: (info: InformationEvent) => void
+    ): this;
+    prependListener(
+      event: "response",
+      listener: (response: IncomingMessage) => void
+    ): this;
     prependListener(event: "timeout", listener: () => void): this;
     prependListener(event: "close", listener: () => void): this;
     prependListener(event: "drain", listener: () => void): this;
     prependListener(event: "error", listener: (err: Error) => void): this;
     prependListener(event: "finish", listener: () => void): this;
-    prependListener(event: "pipe", listener: (src: stream.Readable) => void): this;
-    prependListener(event: "unpipe", listener: (src: stream.Readable) => void): this;
-    prependListener(event: string | symbol, listener: (...args: any[]) => void): this;
+    prependListener(
+      event: "pipe",
+      listener: (src: stream.Readable) => void
+    ): this;
+    prependListener(
+      event: "unpipe",
+      listener: (src: stream.Readable) => void
+    ): this;
+    prependListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void
+    ): this;
     /**
      * @deprecated
      */
     prependOnceListener(event: "abort", listener: () => void): this;
     prependOnceListener(event: "continue", listener: () => void): this;
-    prependOnceListener(event: "information", listener: (info: InformationEvent) => void): this;
-    prependOnceListener(event: "response", listener: (response: IncomingMessage) => void): this;
+    prependOnceListener(
+      event: "information",
+      listener: (info: InformationEvent) => void
+    ): this;
+    prependOnceListener(
+      event: "response",
+      listener: (response: IncomingMessage) => void
+    ): this;
     prependOnceListener(event: "timeout", listener: () => void): this;
     prependOnceListener(event: "close", listener: () => void): this;
     prependOnceListener(event: "drain", listener: () => void): this;
     prependOnceListener(event: "error", listener: (err: Error) => void): this;
     prependOnceListener(event: "finish", listener: () => void): this;
-    prependOnceListener(event: "pipe", listener: (src: stream.Readable) => void): this;
-    prependOnceListener(event: "unpipe", listener: (src: stream.Readable) => void): this;
-    prependOnceListener(event: string | symbol, listener: (...args: any[]) => void): this;
+    prependOnceListener(
+      event: "pipe",
+      listener: (src: stream.Readable) => void
+    ): this;
+    prependOnceListener(
+      event: "unpipe",
+      listener: (src: stream.Readable) => void
+    ): this;
+    prependOnceListener(
+      event: string | symbol,
+      listener: (...args: any[]) => void
+    ): this;
   }
   /**
    * An `IncomingMessage` object is created by {@link Server} or {@link ClientRequest} and passed as the first argument to the `'request'` and `'response'` event respectively. It may be used to
@@ -753,11 +807,14 @@ declare module "http" {
    * Passing an `AbortSignal` and then calling `abort` on the corresponding`AbortController` will behave the same way as calling `.destroy()` on the
    * request itself.
    */
-  function request(options: RequestOptions | string | URL, callback?: (res: IncomingMessage) => void): ClientRequest;
+  function request(
+    options: RequestOptions | string | URL,
+    callback?: (res: IncomingMessage) => void
+  ): ClientRequest;
   function request(
     url: string | URL,
     options: RequestOptions,
-    callback?: (res: IncomingMessage) => void,
+    callback?: (res: IncomingMessage) => void
   ): ClientRequest;
   /**
    * Since most requests are GET requests without bodies, Node.js provides this
@@ -818,8 +875,15 @@ declare module "http" {
    * ```
    * @param options Accepts the same `options` as {@link request}, with the `method` always set to `GET`. Properties that are inherited from the prototype are ignored.
    */
-  function get(options: RequestOptions | string | URL, callback?: (res: IncomingMessage) => void): ClientRequest;
-  function get(url: string | URL, options: RequestOptions, callback?: (res: IncomingMessage) => void): ClientRequest;
+  function get(
+    options: RequestOptions | string | URL,
+    callback?: (res: IncomingMessage) => void
+  ): ClientRequest;
+  function get(
+    url: string | URL,
+    options: RequestOptions,
+    callback?: (res: IncomingMessage) => void
+  ): ClientRequest;
   /**
    * Read-only property specifying the maximum allowed size of HTTP headers in bytes.
    * Defaults to 16KB. Configurable using the `--max-http-header-size` CLI option.

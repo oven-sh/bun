@@ -547,7 +547,9 @@ declare module "bun:ffi" {
    * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
    *
    */
-  export function CFunction(fn: FFIFunction & { ptr: number | bigint }): CallableFunction & {
+  export function CFunction(
+    fn: FFIFunction & { ptr: number | bigint }
+  ): CallableFunction & {
     /**
      * Free the memory allocated by the wrapping function
      */
@@ -623,7 +625,11 @@ declare module "bun:ffi" {
    * undefined behavior. Use with care!
    *
    */
-  export function toBuffer(ptr: number, byteOffset?: number, byteLength?: number): Buffer;
+  export function toBuffer(
+    ptr: number,
+    byteOffset?: number,
+    byteLength?: number
+  ): Buffer;
 
   /**
    * Read a pointer as an {@link ArrayBuffer}
@@ -639,7 +645,11 @@ declare module "bun:ffi" {
    * reading beyond the bounds of the pointer will crash the program or cause
    * undefined behavior. Use with care!
    */
-  export function toArrayBuffer(ptr: number, byteOffset?: number, byteLength?: number): ArrayBuffer;
+  export function toArrayBuffer(
+    ptr: number,
+    byteOffset?: number,
+    byteLength?: number
+  ): ArrayBuffer;
 
   /**
    * Get the pointer backing a {@link TypedArray} or {@link ArrayBuffer}
@@ -668,7 +678,10 @@ declare module "bun:ffi" {
    * ```
    *
    */
-  export function ptr(view: TypedArray | ArrayBufferLike | DataView, byteOffset?: number): number;
+  export function ptr(
+    view: TypedArray | ArrayBufferLike | DataView,
+    byteOffset?: number
+  ): number;
 
   /**
    * Get a string from a UTF-8 encoded C string

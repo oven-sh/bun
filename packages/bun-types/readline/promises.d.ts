@@ -6,7 +6,13 @@
  */
 declare module "readline/promises" {
   import { Readable, Writable } from "node:stream";
-  import { Interface as _Interface, ReadLineOptions, Completer, AsyncCompleter, Direction } from "node:readline";
+  import {
+    Interface as _Interface,
+    ReadLineOptions,
+    Completer,
+    AsyncCompleter,
+    Direction,
+  } from "node:readline";
   import { Abortable } from "node:events";
 
   class Interface extends _Interface {
@@ -135,7 +141,7 @@ declare module "readline/promises" {
     input: Readable,
     output?: Writable,
     completer?: Completer | AsyncCompleter,
-    terminal?: boolean,
+    terminal?: boolean
   ): Interface;
   function createInterface(options: ReadLineOptions): Interface;
 }

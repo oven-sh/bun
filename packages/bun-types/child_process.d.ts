@@ -84,7 +84,9 @@ declare module "child_process" {
    * @since v2.2.0
    */
   class ChildProcess extends EventEmitter {
-    spawn(options: SpawnOptions.OptionsObject & { args: string[]; file?: string }): ChildProcessWithoutNullStreams;
+    spawn(
+      options: SpawnOptions.OptionsObject & { args: string[]; file?: string }
+    ): ChildProcessWithoutNullStreams;
 
     /**
      * A `Writable Stream` that represents the child process's `stdin`.
@@ -193,7 +195,7 @@ declare module "child_process" {
       // stderr
       Readable | Writable | null | undefined,
       // extra
-      Readable | Writable | null | undefined, // extra
+      Readable | Writable | null | undefined // extra
     ];
     /**
      * The `subprocess.killed` property indicates whether the child process
@@ -459,7 +461,10 @@ declare module "child_process" {
      * @since v0.5.9
      * @param options The `options` argument, if present, is an object used to parameterize the sending of certain types of handles. `options` supports the following properties:
      */
-    send(message: Serializable, callback?: (error: Error | null) => void): boolean;
+    send(
+      message: Serializable,
+      callback?: (error: Error | null) => void
+    ): boolean;
     // send(
     //   message: Serializable,
     //   sendHandle?: SendHandle,
@@ -536,20 +541,34 @@ declare module "child_process" {
      * 6. spawn
      */
     addListener(event: string, listener: (...args: any[]) => void): this;
-    addListener(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    addListener(
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     addListener(event: "disconnect", listener: () => void): this;
     addListener(event: "error", listener: (err: Error) => void): this;
-    addListener(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    addListener(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     // addListener(
     //   event: "message",
     //   listener: (message: Serializable, sendHandle: SendHandle) => void,
     // ): this;
     addListener(event: "spawn", listener: () => void): this;
     emit(event: string | symbol, ...args: any[]): boolean;
-    emit(event: "close", code: number | null, signal: NodeJS.Signals | null): boolean;
+    emit(
+      event: "close",
+      code: number | null,
+      signal: NodeJS.Signals | null
+    ): boolean;
     emit(event: "disconnect"): boolean;
     emit(event: "error", err: Error): boolean;
-    emit(event: "exit", code: number | null, signal: NodeJS.Signals | null): boolean;
+    emit(
+      event: "exit",
+      code: number | null,
+      signal: NodeJS.Signals | null
+    ): boolean;
     // emit(
     //   event: "message",
     //   message: Serializable,
@@ -557,40 +576,67 @@ declare module "child_process" {
     // ): boolean;
     emit(event: "spawn", listener: () => void): boolean;
     on(event: string, listener: (...args: any[]) => void): this;
-    on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    on(
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     on(event: "disconnect", listener: () => void): this;
     on(event: "error", listener: (err: Error) => void): this;
-    on(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    on(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     // on(
     //   event: "message",
     //   listener: (message: Serializable, sendHandle: SendHandle) => void,
     // ): this;
     on(event: "spawn", listener: () => void): this;
     once(event: string, listener: (...args: any[]) => void): this;
-    once(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    once(
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     once(event: "disconnect", listener: () => void): this;
     once(event: "error", listener: (err: Error) => void): this;
-    once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    once(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     // once(
     //   event: "message",
     //   listener: (message: Serializable, sendHandle: SendHandle) => void,
     // ): this;
     once(event: "spawn", listener: () => void): this;
     prependListener(event: string, listener: (...args: any[]) => void): this;
-    prependListener(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    prependListener(
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     prependListener(event: "disconnect", listener: () => void): this;
     prependListener(event: "error", listener: (err: Error) => void): this;
-    prependListener(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    prependListener(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     // prependListener(
     //   event: "message",
     //   listener: (message: Serializable, sendHandle: SendHandle) => void,
     // ): this;
     prependListener(event: "spawn", listener: () => void): this;
-    prependOnceListener(event: string, listener: (...args: any[]) => void): this;
-    prependOnceListener(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    prependOnceListener(
+      event: string,
+      listener: (...args: any[]) => void
+    ): this;
+    prependOnceListener(
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     prependOnceListener(event: "disconnect", listener: () => void): this;
     prependOnceListener(event: "error", listener: (err: Error) => void): this;
-    prependOnceListener(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    prependOnceListener(
+      event: "exit",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void
+    ): this;
     // prependOnceListener(
     //   event: "message",
     //   listener: (message: Serializable, sendHandle: SendHandle) => void,
@@ -609,12 +655,15 @@ declare module "child_process" {
       // stderr
       Readable | Writable | null | undefined,
       // extra, no modification
-      Readable | Writable | null | undefined, // extra, no modification
+      Readable | Writable | null | undefined // extra, no modification
     ];
   }
   // return this object when stdio option is a tuple of 3
-  interface ChildProcessByStdio<I extends null | Writable, O extends null | Readable, E extends null | Readable>
-    extends ChildProcess {
+  interface ChildProcessByStdio<
+    I extends null | Writable,
+    O extends null | Readable,
+    E extends null | Readable
+  > extends ChildProcess {
     stdin: I;
     stdout: O;
     stderr: E;
@@ -624,14 +673,16 @@ declare module "child_process" {
       E,
       Readable | Writable | null | undefined,
       // extra, no modification
-      Readable | Writable | null | undefined, // extra, no modification
+      Readable | Writable | null | undefined // extra, no modification
     ];
   }
   interface MessageOptions {
     keepOpen?: boolean | undefined;
   }
   type IOType = "overlapped" | "pipe" | "ignore" | "inherit";
-  type StdioOptions = IOType | Array<IOType | "ipc" | Stream | number | null | undefined>;
+  type StdioOptions =
+    | IOType
+    | Array<IOType | "ipc" | Stream | number | null | undefined>;
   type SerializationType = "json" | "advanced";
   interface MessagingOptions extends Abortable {
     /**
@@ -665,7 +716,10 @@ declare module "child_process" {
      */
     timeout?: number | undefined;
   }
-  interface CommonSpawnOptions extends CommonOptions, MessagingOptions, Abortable {
+  interface CommonSpawnOptions
+    extends CommonOptions,
+      MessagingOptions,
+      Abortable {
     argv0?: string | undefined;
     stdio?: StdioOptions | undefined;
     shell?: boolean | string | undefined;
@@ -683,7 +737,7 @@ declare module "child_process" {
   interface SpawnOptionsWithStdioTuple<
     Stdin extends StdioNull | StdioPipe,
     Stdout extends StdioNull | StdioPipe,
-    Stderr extends StdioNull | StdioPipe,
+    Stderr extends StdioNull | StdioPipe
   > extends SpawnOptions {
     stdio: [Stdin, Stdout, Stderr];
   }
@@ -806,87 +860,94 @@ declare module "child_process" {
    * @param command The command to run.
    * @param args List of string arguments.
    */
-  function spawn(command: string, options?: SpawnOptionsWithoutStdio): ChildProcessWithoutNullStreams;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioPipe>,
+    options?: SpawnOptionsWithoutStdio
+  ): ChildProcessWithoutNullStreams;
+  function spawn(
+    command: string,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioPipe>
   ): ChildProcessByStdio<Writable, Readable, Readable>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioNull>
   ): ChildProcessByStdio<Writable, Readable, null>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioPipe>
   ): ChildProcessByStdio<Writable, null, Readable>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioPipe>
   ): ChildProcessByStdio<null, Readable, Readable>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioNull>
   ): ChildProcessByStdio<Writable, null, null>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioNull>
   ): ChildProcessByStdio<null, Readable, null>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioPipe>
   ): ChildProcessByStdio<null, null, Readable>;
   function spawn(
     command: string,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioNull>
   ): ChildProcessByStdio<null, null, null>;
   function spawn(command: string, options: SpawnOptions): ChildProcess;
   // overloads of spawn with 'args'
   function spawn(
     command: string,
     args?: ReadonlyArray<string>,
-    options?: SpawnOptionsWithoutStdio,
+    options?: SpawnOptionsWithoutStdio
   ): ChildProcessWithoutNullStreams;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioPipe>
   ): ChildProcessByStdio<Writable, Readable, Readable>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioPipe, StdioNull>
   ): ChildProcessByStdio<Writable, Readable, null>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioPipe>
   ): ChildProcessByStdio<Writable, null, Readable>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioPipe>
   ): ChildProcessByStdio<null, Readable, Readable>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioPipe, StdioNull, StdioNull>
   ): ChildProcessByStdio<Writable, null, null>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioPipe, StdioNull>
   ): ChildProcessByStdio<null, Readable, null>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioPipe>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioPipe>
   ): ChildProcessByStdio<null, null, Readable>;
   function spawn(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioNull>,
+    options: SpawnOptionsWithStdioTuple<StdioNull, StdioNull, StdioNull>
   ): ChildProcessByStdio<null, null, null>;
-  function spawn(command: string, args: ReadonlyArray<string>, options: SpawnOptions): ChildProcess;
+  function spawn(
+    command: string,
+    args: ReadonlyArray<string>,
+    options: SpawnOptions
+  ): ChildProcess;
   interface ExecOptions extends CommonOptions {
     shell?: string | undefined;
     signal?: AbortSignal | undefined;
@@ -992,7 +1053,11 @@ declare module "child_process" {
    */
   function exec(
     command: string,
-    callback?: (error: ExecException | null, stdout: string, stderr: string) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // `options` with `"buffer"` or `null` for `encoding` means stdout/stderr are definitely `Buffer`.
   function exec(
@@ -1000,7 +1065,11 @@ declare module "child_process" {
     options: {
       encoding: "buffer" | null;
     } & ExecOptions,
-    callback?: (error: ExecException | null, stdout: Buffer, stderr: Buffer) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: Buffer,
+      stderr: Buffer
+    ) => void
   ): ChildProcess;
   // `options` with well known `encoding` means stdout/stderr are definitely `string`.
   function exec(
@@ -1008,7 +1077,11 @@ declare module "child_process" {
     options: {
       encoding: BufferEncoding;
     } & ExecOptions,
-    callback?: (error: ExecException | null, stdout: string, stderr: string) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // `options` with an `encoding` whose type is `string` means stdout/stderr could either be `Buffer` or `string`.
   // There is no guarantee the `encoding` is unknown as `string` is a superset of `BufferEncoding`.
@@ -1017,19 +1090,31 @@ declare module "child_process" {
     options: {
       encoding: BufferEncoding;
     } & ExecOptions,
-    callback?: (error: ExecException | null, stdout: string | Buffer, stderr: string | Buffer) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: string | Buffer,
+      stderr: string | Buffer
+    ) => void
   ): ChildProcess;
   // `options` without an `encoding` means stdout/stderr are definitely `string`.
   function exec(
     command: string,
     options: ExecOptions,
-    callback?: (error: ExecException | null, stdout: string, stderr: string) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // fallback if nothing else matches. Worst case is always `string | Buffer`.
   function exec(
     command: string,
     options: (ObjectEncodingOptions & ExecOptions) | undefined | null,
-    callback?: (error: ExecException | null, stdout: string | Buffer, stderr: string | Buffer) => void,
+    callback?: (
+      error: ExecException | null,
+      stdout: string | Buffer,
+      stderr: string | Buffer
+    ) => void
   ): ChildProcess;
   interface PromiseWithChild<T> extends Promise<T> {
     child: ChildProcess;
@@ -1043,7 +1128,7 @@ declare module "child_process" {
       command: string,
       options: {
         encoding: "buffer" | null;
-      } & ExecOptions,
+      } & ExecOptions
     ): PromiseWithChild<{
       stdout: Buffer;
       stderr: Buffer;
@@ -1052,21 +1137,21 @@ declare module "child_process" {
       command: string,
       options: {
         encoding: BufferEncoding;
-      } & ExecOptions,
+      } & ExecOptions
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
     }>;
     function __promisify__(
       command: string,
-      options: ExecOptions,
+      options: ExecOptions
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
     }>;
     function __promisify__(
       command: string,
-      options?: (ObjectEncodingOptions & ExecOptions) | null,
+      options?: (ObjectEncodingOptions & ExecOptions) | null
     ): PromiseWithChild<{
       stdout: string | Buffer;
       stderr: string | Buffer;
@@ -1153,89 +1238,143 @@ declare module "child_process" {
    * @param callback Called with the output when process terminates.
    */
   function execFile(file: string): ChildProcess;
-  function execFile(file: string, options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null): ChildProcess;
-  function execFile(file: string, args?: ReadonlyArray<string> | null): ChildProcess;
+  function execFile(
+    file: string,
+    options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null
+  ): ChildProcess;
+  function execFile(
+    file: string,
+    args?: ReadonlyArray<string> | null
+  ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
-    options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null,
+    options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null
   ): ChildProcess;
   // no `options` definitely means stdout/stderr are `string`.
   function execFile(
     file: string,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // `options` with `"buffer"` or `null` for `encoding` means stdout/stderr are definitely `Buffer`.
   function execFile(
     file: string,
     options: ExecFileOptionsWithBufferEncoding,
-    callback: (error: ExecFileException | null, stdout: Buffer, stderr: Buffer) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: Buffer,
+      stderr: Buffer
+    ) => void
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
     options: ExecFileOptionsWithBufferEncoding,
-    callback: (error: ExecFileException | null, stdout: Buffer, stderr: Buffer) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: Buffer,
+      stderr: Buffer
+    ) => void
   ): ChildProcess;
   // `options` with well known `encoding` means stdout/stderr are definitely `string`.
   function execFile(
     file: string,
     options: ExecFileOptionsWithStringEncoding,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
     options: ExecFileOptionsWithStringEncoding,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // `options` with an `encoding` whose type is `string` means stdout/stderr could either be `Buffer` or `string`.
   // There is no guarantee the `encoding` is unknown as `string` is a superset of `BufferEncoding`.
   function execFile(
     file: string,
     options: ExecFileOptionsWithOtherEncoding,
-    callback: (error: ExecFileException | null, stdout: string | Buffer, stderr: string | Buffer) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string | Buffer,
+      stderr: string | Buffer
+    ) => void
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
     options: ExecFileOptionsWithOtherEncoding,
-    callback: (error: ExecFileException | null, stdout: string | Buffer, stderr: string | Buffer) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string | Buffer,
+      stderr: string | Buffer
+    ) => void
   ): ChildProcess;
   // `options` without an `encoding` means stdout/stderr are definitely `string`.
   function execFile(
     file: string,
     options: ExecFileOptions,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
     options: ExecFileOptions,
-    callback: (error: ExecFileException | null, stdout: string, stderr: string) => void,
+    callback: (
+      error: ExecFileException | null,
+      stdout: string,
+      stderr: string
+    ) => void
   ): ChildProcess;
   // fallback if nothing else matches. Worst case is always `string | Buffer`.
   function execFile(
     file: string,
     options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null,
     callback:
-      | ((error: ExecFileException | null, stdout: string | Buffer, stderr: string | Buffer) => void)
+      | ((
+          error: ExecFileException | null,
+          stdout: string | Buffer,
+          stderr: string | Buffer
+        ) => void)
       | undefined
-      | null,
+      | null
   ): ChildProcess;
   function execFile(
     file: string,
     args: ReadonlyArray<string> | undefined | null,
     options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null,
     callback:
-      | ((error: ExecFileException | null, stdout: string | Buffer, stderr: string | Buffer) => void)
+      | ((
+          error: ExecFileException | null,
+          stdout: string | Buffer,
+          stderr: string | Buffer
+        ) => void)
       | undefined
-      | null,
+      | null
   ): ChildProcess;
   namespace execFile {
     function __promisify__(file: string): PromiseWithChild<{
@@ -1244,14 +1383,14 @@ declare module "child_process" {
     }>;
     function __promisify__(
       file: string,
-      args: ReadonlyArray<string> | undefined | null,
+      args: ReadonlyArray<string> | undefined | null
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
     }>;
     function __promisify__(
       file: string,
-      options: ExecFileOptionsWithBufferEncoding,
+      options: ExecFileOptionsWithBufferEncoding
     ): PromiseWithChild<{
       stdout: Buffer;
       stderr: Buffer;
@@ -1259,14 +1398,14 @@ declare module "child_process" {
     function __promisify__(
       file: string,
       args: ReadonlyArray<string> | undefined | null,
-      options: ExecFileOptionsWithBufferEncoding,
+      options: ExecFileOptionsWithBufferEncoding
     ): PromiseWithChild<{
       stdout: Buffer;
       stderr: Buffer;
     }>;
     function __promisify__(
       file: string,
-      options: ExecFileOptionsWithStringEncoding,
+      options: ExecFileOptionsWithStringEncoding
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
@@ -1274,14 +1413,14 @@ declare module "child_process" {
     function __promisify__(
       file: string,
       args: ReadonlyArray<string> | undefined | null,
-      options: ExecFileOptionsWithStringEncoding,
+      options: ExecFileOptionsWithStringEncoding
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
     }>;
     function __promisify__(
       file: string,
-      options: ExecFileOptionsWithOtherEncoding,
+      options: ExecFileOptionsWithOtherEncoding
     ): PromiseWithChild<{
       stdout: string | Buffer;
       stderr: string | Buffer;
@@ -1289,14 +1428,14 @@ declare module "child_process" {
     function __promisify__(
       file: string,
       args: ReadonlyArray<string> | undefined | null,
-      options: ExecFileOptionsWithOtherEncoding,
+      options: ExecFileOptionsWithOtherEncoding
     ): PromiseWithChild<{
       stdout: string | Buffer;
       stderr: string | Buffer;
     }>;
     function __promisify__(
       file: string,
-      options: ExecFileOptions,
+      options: ExecFileOptions
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
@@ -1304,14 +1443,14 @@ declare module "child_process" {
     function __promisify__(
       file: string,
       args: ReadonlyArray<string> | undefined | null,
-      options: ExecFileOptions,
+      options: ExecFileOptions
     ): PromiseWithChild<{
       stdout: string;
       stderr: string;
     }>;
     function __promisify__(
       file: string,
-      options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null,
+      options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null
     ): PromiseWithChild<{
       stdout: string | Buffer;
       stderr: string | Buffer;
@@ -1319,7 +1458,7 @@ declare module "child_process" {
     function __promisify__(
       file: string,
       args: ReadonlyArray<string> | undefined | null,
-      options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null,
+      options: (ObjectEncodingOptions & ExecFileOptions) | undefined | null
     ): PromiseWithChild<{
       stdout: string | Buffer;
       stderr: string | Buffer;
@@ -1383,7 +1522,11 @@ declare module "child_process" {
    * @param args List of string arguments.
    */
   function fork(modulePath: string, options?: ForkOptions): ChildProcess;
-  function fork(modulePath: string, args?: ReadonlyArray<string>, options?: ForkOptions): ChildProcess;
+  function fork(
+    modulePath: string,
+    args?: ReadonlyArray<string>,
+    options?: ForkOptions
+  ): ChildProcess;
   interface SpawnSyncOptions extends CommonSpawnOptions {
     input?: string | ArrayBufferView | undefined;
     maxBuffer?: number | undefined;
@@ -1420,24 +1563,36 @@ declare module "child_process" {
    * @param args List of string arguments.
    */
   function spawnSync(command: string): SpawnSyncReturns<Buffer>;
-  function spawnSync(command: string, options: SpawnSyncOptionsWithStringEncoding): SpawnSyncReturns<string>;
-  function spawnSync(command: string, options: SpawnSyncOptionsWithBufferEncoding): SpawnSyncReturns<Buffer>;
-  function spawnSync(command: string, options?: SpawnSyncOptions): SpawnSyncReturns<string | Buffer>;
-  function spawnSync(command: string, args: ReadonlyArray<string>): SpawnSyncReturns<Buffer>;
+  function spawnSync(
+    command: string,
+    options: SpawnSyncOptionsWithStringEncoding
+  ): SpawnSyncReturns<string>;
+  function spawnSync(
+    command: string,
+    options: SpawnSyncOptionsWithBufferEncoding
+  ): SpawnSyncReturns<Buffer>;
+  function spawnSync(
+    command: string,
+    options?: SpawnSyncOptions
+  ): SpawnSyncReturns<string | Buffer>;
+  function spawnSync(
+    command: string,
+    args: ReadonlyArray<string>
+  ): SpawnSyncReturns<Buffer>;
   function spawnSync(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnSyncOptionsWithStringEncoding,
+    options: SpawnSyncOptionsWithStringEncoding
   ): SpawnSyncReturns<string>;
   function spawnSync(
     command: string,
     args: ReadonlyArray<string>,
-    options: SpawnSyncOptionsWithBufferEncoding,
+    options: SpawnSyncOptionsWithBufferEncoding
   ): SpawnSyncReturns<Buffer>;
   function spawnSync(
     command: string,
     args?: ReadonlyArray<string>,
-    options?: SpawnSyncOptions,
+    options?: SpawnSyncOptions
   ): SpawnSyncReturns<string | Buffer>;
   interface CommonExecOptions extends CommonOptions {
     input?: string | ArrayBufferView | undefined;
@@ -1472,9 +1627,18 @@ declare module "child_process" {
    * @return The stdout from the command.
    */
   function execSync(command: string): Buffer;
-  function execSync(command: string, options: ExecSyncOptionsWithStringEncoding): string;
-  function execSync(command: string, options: ExecSyncOptionsWithBufferEncoding): Buffer;
-  function execSync(command: string, options?: ExecSyncOptions): string | Buffer;
+  function execSync(
+    command: string,
+    options: ExecSyncOptionsWithStringEncoding
+  ): string;
+  function execSync(
+    command: string,
+    options: ExecSyncOptionsWithBufferEncoding
+  ): Buffer;
+  function execSync(
+    command: string,
+    options?: ExecSyncOptions
+  ): string | Buffer;
   interface ExecFileSyncOptions extends CommonExecOptions {
     shell?: boolean | string | undefined;
   }
@@ -1505,21 +1669,34 @@ declare module "child_process" {
    * @return The stdout from the command.
    */
   function execFileSync(file: string): Buffer;
-  function execFileSync(file: string, options: ExecFileSyncOptionsWithStringEncoding): string;
-  function execFileSync(file: string, options: ExecFileSyncOptionsWithBufferEncoding): Buffer;
-  function execFileSync(file: string, options?: ExecFileSyncOptions): string | Buffer;
+  function execFileSync(
+    file: string,
+    options: ExecFileSyncOptionsWithStringEncoding
+  ): string;
+  function execFileSync(
+    file: string,
+    options: ExecFileSyncOptionsWithBufferEncoding
+  ): Buffer;
+  function execFileSync(
+    file: string,
+    options?: ExecFileSyncOptions
+  ): string | Buffer;
   function execFileSync(file: string, args: ReadonlyArray<string>): Buffer;
   function execFileSync(
     file: string,
     args: ReadonlyArray<string>,
-    options: ExecFileSyncOptionsWithStringEncoding,
+    options: ExecFileSyncOptionsWithStringEncoding
   ): string;
   function execFileSync(
     file: string,
     args: ReadonlyArray<string>,
-    options: ExecFileSyncOptionsWithBufferEncoding,
+    options: ExecFileSyncOptionsWithBufferEncoding
   ): Buffer;
-  function execFileSync(file: string, args?: ReadonlyArray<string>, options?: ExecFileSyncOptions): string | Buffer;
+  function execFileSync(
+    file: string,
+    args?: ReadonlyArray<string>,
+    options?: ExecFileSyncOptions
+  ): string | Buffer;
 }
 declare module "node:child_process" {
   export * from "child_process";

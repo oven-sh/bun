@@ -82,7 +82,7 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
-          },
+          }
     );
 
     /**
@@ -113,7 +113,7 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
-          },
+          }
     ): Database;
 
     /**
@@ -165,11 +165,17 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType = SQLQueryBindings>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    run<ParamsType = SQLQueryBindings>(
+      sqlQuery: string,
+      ...bindings: ParamsType[]
+    ): void;
     /** 
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType = SQLQueryBindings>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    exec<ParamsType = SQLQueryBindings>(
+      sqlQuery: string,
+      ...bindings: ParamsType[]
+    ): void;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -196,7 +202,9 @@ declare module "bun:sqlite" {
      * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      */
-    query<ParamsType = SQLQueryBindings, ReturnType = any>(sqlQuery: string): Statement<ParamsType, ReturnType>;
+    query<ParamsType = SQLQueryBindings, ReturnType = any>(
+      sqlQuery: string
+    ): Statement<ParamsType, ReturnType>;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -507,7 +515,9 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    values(...params: ParamsType[]): Array<Array<string | bigint | number | boolean | Uint8Array>>;
+    values(
+      ...params: ParamsType[]
+    ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
      * The names of the columns returned by the prepared statement.

@@ -106,7 +106,9 @@ declare module "tls" {
      */
     passphrase?: string | undefined;
   }
-  interface TLSSocketOptions extends SecureContextOptions, CommonConnectionOptions {
+  interface TLSSocketOptions
+    extends SecureContextOptions,
+      CommonConnectionOptions {
     /**
      * If true the TLS socket will be instantiated in server-mode.
      * Defaults to false.
@@ -399,7 +401,10 @@ declare module "tls" {
     //   context: Buffer,
     // ): Buffer;
     addListener(event: string, listener: (...args: any[]) => void): this;
-    addListener(event: "OCSPResponse", listener: (response: Buffer) => void): this;
+    addListener(
+      event: "OCSPResponse",
+      listener: (response: Buffer) => void
+    ): this;
     addListener(event: "secureConnect", listener: () => void): this;
     addListener(event: "session", listener: (session: Buffer) => void): this;
     addListener(event: "keylog", listener: (line: Buffer) => void): this;
@@ -419,15 +424,33 @@ declare module "tls" {
     once(event: "session", listener: (session: Buffer) => void): this;
     once(event: "keylog", listener: (line: Buffer) => void): this;
     prependListener(event: string, listener: (...args: any[]) => void): this;
-    prependListener(event: "OCSPResponse", listener: (response: Buffer) => void): this;
+    prependListener(
+      event: "OCSPResponse",
+      listener: (response: Buffer) => void
+    ): this;
     prependListener(event: "secureConnect", listener: () => void): this;
-    prependListener(event: "session", listener: (session: Buffer) => void): this;
+    prependListener(
+      event: "session",
+      listener: (session: Buffer) => void
+    ): this;
     prependListener(event: "keylog", listener: (line: Buffer) => void): this;
-    prependOnceListener(event: string, listener: (...args: any[]) => void): this;
-    prependOnceListener(event: "OCSPResponse", listener: (response: Buffer) => void): this;
+    prependOnceListener(
+      event: string,
+      listener: (...args: any[]) => void
+    ): this;
+    prependOnceListener(
+      event: "OCSPResponse",
+      listener: (response: Buffer) => void
+    ): this;
     prependOnceListener(event: "secureConnect", listener: () => void): this;
-    prependOnceListener(event: "session", listener: (session: Buffer) => void): this;
-    prependOnceListener(event: "keylog", listener: (line: Buffer) => void): this;
+    prependOnceListener(
+      event: "session",
+      listener: (session: Buffer) => void
+    ): this;
+    prependOnceListener(
+      event: "keylog",
+      listener: (line: Buffer) => void
+    ): this;
   }
   interface CommonConnectionOptions {
     /**
@@ -460,7 +483,12 @@ declare module "tls" {
      * SecureContext.) If SNICallback wasn't provided the default callback
      * with high-level API will be used (see below).
      */
-    SNICallback?: ((servername: string, cb: (err: Error | null, ctx?: SecureContext) => void) => void) | undefined;
+    SNICallback?:
+      | ((
+          servername: string,
+          cb: (err: Error | null, ctx?: SecureContext) => void
+        ) => void)
+      | undefined;
     /**
      * If true the server will reject any connection which is not
      * authorized with the list of supplied CAs. This option only has an
@@ -469,7 +497,10 @@ declare module "tls" {
      */
     rejectUnauthorized?: boolean | undefined;
   }
-  interface TlsOptions extends SecureContextOptions, CommonConnectionOptions, net.ServerOpts {
+  interface TlsOptions
+    extends SecureContextOptions,
+      CommonConnectionOptions,
+      net.ServerOpts {
     /**
      * Abort the connection if the SSL/TLS handshake does not finish in the
      * specified number of milliseconds. A 'tlsClientError' is emitted on
@@ -506,7 +537,10 @@ declare module "tls" {
      * requires explicitly specifying a cipher suite with the `ciphers` option.
      * More information can be found in the RFC 4279.
      */
-    pskCallback?(socket: TLSSocket, identity: string): DataView | TypedArray | null;
+    pskCallback?(
+      socket: TLSSocket,
+      identity: string
+    ): DataView | TypedArray | null;
     /**
      * hint to send to a client to help
      * with selecting the identity during TLS-PSK negotiation. Will be ignored
@@ -519,7 +553,9 @@ declare module "tls" {
     psk: DataView | TypedArray;
     identity: string;
   }
-  interface ConnectionOptions extends SecureContextOptions, CommonConnectionOptions {
+  interface ConnectionOptions
+    extends SecureContextOptions,
+      CommonConnectionOptions {
     host?: string | undefined;
     port?: number | undefined;
     path?: string | undefined; // Creates unix socket connection to path. If this option is specified, `host` and `port` are ignored.
@@ -1098,14 +1134,21 @@ declare module "tls" {
    * ```
    * @since v0.11.3
    */
-  function connect(options: ConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+  function connect(
+    options: ConnectionOptions,
+    secureConnectListener?: () => void
+  ): TLSSocket;
   function connect(
     port: number,
     host?: string,
     options?: ConnectionOptions,
-    secureConnectListener?: () => void,
+    secureConnectListener?: () => void
   ): TLSSocket;
-  function connect(port: number, options?: ConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+  function connect(
+    port: number,
+    options?: ConnectionOptions,
+    secureConnectListener?: () => void
+  ): TLSSocket;
   /**
    * Creates a new secure pair object with two streams, one of which reads and writes
    * the encrypted data and the other of which reads and writes the cleartext data.
@@ -1143,7 +1186,7 @@ declare module "tls" {
     context?: SecureContext,
     isServer?: boolean,
     requestCert?: boolean,
-    rejectUnauthorized?: boolean,
+    rejectUnauthorized?: boolean
   ): SecurePair;
   /**
    * {@link createServer} sets the default value of the `honorCipherOrder` option

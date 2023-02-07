@@ -47,7 +47,13 @@ declare module "buffer" {
   import { ArrayBufferView } from "bun";
   export const INSPECT_MAX_BYTES: number;
   export const kMaxLength: number;
-  export type TranscodeEncoding = "ascii" | "utf8" | "utf16le" | "ucs2" | "latin1" | "binary";
+  export type TranscodeEncoding =
+    | "ascii"
+    | "utf8"
+    | "utf16le"
+    | "ucs2"
+    | "latin1"
+    | "binary";
   export const SlowBuffer: {
     /** @deprecated since v6.0.0, use `Buffer.allocUnsafeSlow()` */
     new (size: number): Buffer;
@@ -146,14 +152,16 @@ declare module "buffer" {
       from(
         arrayBuffer: WithImplicitCoercion<ArrayBuffer | SharedArrayBuffer>,
         byteOffset?: number,
-        length?: number,
+        length?: number
       ): Buffer;
       /**
        * Creates a new Buffer using the passed {data}
        * @param data data to create a new Buffer
        */
       from(data: Uint8Array | ReadonlyArray<number>): Buffer;
-      from(data: WithImplicitCoercion<Uint8Array | ReadonlyArray<number> | string>): Buffer;
+      from(
+        data: WithImplicitCoercion<Uint8Array | ReadonlyArray<number> | string>
+      ): Buffer;
       /**
        * Creates a new Buffer containing the given JavaScript string {str}.
        * If provided, the {encoding} parameter identifies the character encoding.
@@ -165,7 +173,7 @@ declare module "buffer" {
           | {
               [Symbol.toPrimitive](hint: "string"): string;
             },
-        encoding?: BufferEncoding,
+        encoding?: BufferEncoding
       ): Buffer;
       /**
        * Creates a new Buffer using the passed {data}
@@ -236,7 +244,10 @@ declare module "buffer" {
        * @param [encoding='utf8'] If `string` is a string, this is its encoding.
        * @return The number of bytes contained within `string`.
        */
-      byteLength(string: string | ArrayBufferView | ArrayBufferLike, encoding?: BufferEncoding): number;
+      byteLength(
+        string: string | ArrayBufferView | ArrayBufferLike,
+        encoding?: BufferEncoding
+      ): number;
       /**
        * Returns a new `Buffer` which is the result of concatenating all the `Buffer`instances in the `list` together.
        *
@@ -338,7 +349,11 @@ declare module "buffer" {
        * @param [fill=0] A value to pre-fill the new `Buffer` with.
        * @param [encoding='utf8'] If `fill` is a string, this is its encoding.
        */
-      alloc(size: number, fill?: string | Buffer | number, encoding?: BufferEncoding): Buffer;
+      alloc(
+        size: number,
+        fill?: string | Buffer | number,
+        encoding?: BufferEncoding
+      ): Buffer;
       /**
        * Allocates a new `Buffer` of `size` bytes. If `size` is larger than {@link constants.MAX_LENGTH} or smaller than 0, `ERR_INVALID_ARG_VALUE` is thrown.
        *
@@ -456,7 +471,12 @@ declare module "buffer" {
        */
       write(string: string, encoding?: BufferEncoding): number;
       write(string: string, offset: number, encoding?: BufferEncoding): number;
-      write(string: string, offset: number, length: number, encoding?: BufferEncoding): number;
+      write(
+        string: string,
+        offset: number,
+        length: number,
+        encoding?: BufferEncoding
+      ): number;
       /**
        * Decodes `buf` to a string according to the specified character encoding in`encoding`. `start` and `end` may be passed to decode only a subset of `buf`.
        *
@@ -603,7 +623,7 @@ declare module "buffer" {
         targetStart?: number,
         targetEnd?: number,
         sourceStart?: number,
-        sourceEnd?: number,
+        sourceEnd?: number
       ): -1 | 0 | 1;
       /**
        * Copies data from a region of `buf` to a region in `target`, even if the `target`memory region overlaps with `buf`.
@@ -657,7 +677,12 @@ declare module "buffer" {
        * @param [sourceEnd=buf.length] The offset within `buf` at which to stop copying (not inclusive).
        * @return The number of bytes copied.
        */
-      copy(target: Uint8Array, targetStart?: number, sourceStart?: number, sourceEnd?: number): number;
+      copy(
+        target: Uint8Array,
+        targetStart?: number,
+        sourceStart?: number,
+        sourceEnd?: number
+      ): number;
       /**
        * Returns a new `Buffer` that references the same memory as the original, but
        * offset and cropped by the `start` and `end` indices.
@@ -1796,7 +1821,12 @@ declare module "buffer" {
        * @param [encoding='utf8'] The encoding for `value` if `value` is a string.
        * @return A reference to `buf`.
        */
-      fill(value: string | Uint8Array | number, offset?: number, end?: number, encoding?: BufferEncoding): this;
+      fill(
+        value: string | Uint8Array | number,
+        offset?: number,
+        end?: number,
+        encoding?: BufferEncoding
+      ): this;
       /**
        * If `value` is:
        *
@@ -1864,7 +1894,11 @@ declare module "buffer" {
        * @param [encoding='utf8'] If `value` is a string, this is the encoding used to determine the binary representation of the string that will be searched for in `buf`.
        * @return The index of the first occurrence of `value` in `buf`, or `-1` if `buf` does not contain `value`.
        */
-      indexOf(value: string | number | Uint8Array, byteOffset?: number, encoding?: BufferEncoding): number;
+      indexOf(
+        value: string | number | Uint8Array,
+        byteOffset?: number,
+        encoding?: BufferEncoding
+      ): number;
       /**
        * Identical to `buf.indexOf()`, except the last occurrence of `value` is found
        * rather than the first occurrence.
@@ -1931,7 +1965,11 @@ declare module "buffer" {
        * @param [encoding='utf8'] If `value` is a string, this is the encoding used to determine the binary representation of the string that will be searched for in `buf`.
        * @return The index of the last occurrence of `value` in `buf`, or `-1` if `buf` does not contain `value`.
        */
-      lastIndexOf(value: string | number | Uint8Array, byteOffset?: number, encoding?: BufferEncoding): number;
+      lastIndexOf(
+        value: string | number | Uint8Array,
+        byteOffset?: number,
+        encoding?: BufferEncoding
+      ): number;
       /**
        * Creates and returns an [iterator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols) of `[index, byte]` pairs from the contents
        * of `buf`.
@@ -1984,7 +2022,11 @@ declare module "buffer" {
        * @param [encoding='utf8'] If `value` is a string, this is its encoding.
        * @return `true` if `value` was found in `buf`, `false` otherwise.
        */
-      includes(value: string | number | Buffer, byteOffset?: number, encoding?: BufferEncoding): boolean;
+      includes(
+        value: string | number | Buffer,
+        byteOffset?: number,
+        encoding?: BufferEncoding
+      ): boolean;
       /**
        * Creates and returns an [iterator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols) of `buf` keys (indices).
        *

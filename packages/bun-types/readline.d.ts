@@ -107,7 +107,7 @@ declare module "readline" {
       input: Readable,
       output?: Writable,
       completer?: Completer | AsyncCompleter,
-      terminal?: boolean,
+      terminal?: boolean
     );
     /**
      * NOTE: According to the documentation:
@@ -202,7 +202,11 @@ declare module "readline" {
      * @param callback A callback function that is invoked with the user's input in response to the `query`.
      */
     question(query: string, callback: (answer: string) => void): void;
-    question(query: string, options: Abortable, callback: (answer: string) => void): void;
+    question(
+      query: string,
+      options: Abortable,
+      callback: (answer: string) => void
+    ): void;
     /**
      * The `rl.pause()` method pauses the `input` stream, allowing it to be resumed
      * later if necessary.
@@ -312,8 +316,14 @@ declare module "readline" {
     prependListener(event: "SIGCONT", listener: () => void): this;
     prependListener(event: "SIGINT", listener: () => void): this;
     prependListener(event: "SIGTSTP", listener: () => void): this;
-    prependListener(event: "history", listener: (history: string[]) => void): this;
-    prependOnceListener(event: string, listener: (...args: any[]) => void): this;
+    prependListener(
+      event: "history",
+      listener: (history: string[]) => void
+    ): this;
+    prependOnceListener(
+      event: string,
+      listener: (...args: any[]) => void
+    ): this;
     prependOnceListener(event: "close", listener: () => void): this;
     prependOnceListener(event: "line", listener: (input: string) => void): this;
     prependOnceListener(event: "pause", listener: () => void): this;
@@ -321,12 +331,18 @@ declare module "readline" {
     prependOnceListener(event: "SIGCONT", listener: () => void): this;
     prependOnceListener(event: "SIGINT", listener: () => void): this;
     prependOnceListener(event: "SIGTSTP", listener: () => void): this;
-    prependOnceListener(event: "history", listener: (history: string[]) => void): this;
+    prependOnceListener(
+      event: "history",
+      listener: (history: string[]) => void
+    ): this;
     [Symbol.asyncIterator](): AsyncIterableIterator<string>;
   }
   export type ReadLine = Interface; // type forwarded for backwards compatibility
   export type Completer = (line: string) => CompleterResult;
-  export type AsyncCompleter = (line: string, callback: (err?: null | Error, result?: CompleterResult) => void) => void;
+  export type AsyncCompleter = (
+    line: string,
+    callback: (err?: null | Error, result?: CompleterResult) => void
+  ) => void;
   export type CompleterResult = [string[], string];
   export interface ReadLineOptions {
     input: Readable;
@@ -393,7 +409,7 @@ declare module "readline" {
     input: Readable,
     output?: Writable,
     completer?: Completer | AsyncCompleter,
-    terminal?: boolean,
+    terminal?: boolean
   ): Interface;
   export function createInterface(options: ReadLineOptions): Interface;
   /**
@@ -517,7 +533,10 @@ declare module "readline" {
    * ```
    * @since v0.7.7
    */
-  export function emitKeypressEvents(stream: Readable, readlineInterface?: Interface): void;
+  export function emitKeypressEvents(
+    stream: Readable,
+    readlineInterface?: Interface
+  ): void;
   export type Direction = -1 | 0 | 1;
   export interface CursorPos {
     rows: number;
@@ -530,7 +549,11 @@ declare module "readline" {
    * @param callback Invoked once the operation completes.
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
-  export function clearLine(stream: Writable, dir: Direction, callback?: () => void): boolean;
+  export function clearLine(
+    stream: Writable,
+    dir: Direction,
+    callback?: () => void
+  ): boolean;
   /**
    * The `readline.clearScreenDown()` method clears the given `TTY` stream from
    * the current position of the cursor down.
@@ -538,7 +561,10 @@ declare module "readline" {
    * @param callback Invoked once the operation completes.
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
-  export function clearScreenDown(stream: Writable, callback?: () => void): boolean;
+  export function clearScreenDown(
+    stream: Writable,
+    callback?: () => void
+  ): boolean;
   /**
    * The `readline.cursorTo()` method moves cursor to the specified position in a
    * given `TTY` `stream`.
@@ -546,7 +572,12 @@ declare module "readline" {
    * @param callback Invoked once the operation completes.
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
-  export function cursorTo(stream: Writable, x: number, y?: number, callback?: () => void): boolean;
+  export function cursorTo(
+    stream: Writable,
+    x: number,
+    y?: number,
+    callback?: () => void
+  ): boolean;
   /**
    * The `readline.moveCursor()` method moves the cursor _relative_ to its current
    * position in a given `TTY` `stream`.
@@ -657,7 +688,12 @@ declare module "readline" {
    * @param callback Invoked once the operation completes.
    * @return `false` if `stream` wishes for the calling code to wait for the `'drain'` event to be emitted before continuing to write additional data; otherwise `true`.
    */
-  export function moveCursor(stream: Writable, dx: number, dy: number, callback?: () => void): boolean;
+  export function moveCursor(
+    stream: Writable,
+    dx: number,
+    dy: number,
+    callback?: () => void
+  ): boolean;
 }
 declare module "node:readline" {
   export * from "readline";

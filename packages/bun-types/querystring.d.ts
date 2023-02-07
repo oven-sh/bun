@@ -22,7 +22,13 @@ declare module "querystring" {
   interface ParsedUrlQuery extends Dict<string | string[]> {}
   interface ParsedUrlQueryInput
     extends Dict<
-      string | number | boolean | ReadonlyArray<string> | ReadonlyArray<number> | ReadonlyArray<boolean> | null
+      | string
+      | number
+      | boolean
+      | ReadonlyArray<string>
+      | ReadonlyArray<number>
+      | ReadonlyArray<boolean>
+      | null
     > {}
   /**
    * The `querystring.stringify()` method produces a URL query string from a
@@ -59,7 +65,12 @@ declare module "querystring" {
    * @param [sep='&'] The substring used to delimit key and value pairs in the query string.
    * @param [eq='='] . The substring used to delimit keys and values in the query string.
    */
-  function stringify(obj?: ParsedUrlQueryInput, sep?: string, eq?: string, options?: StringifyOptions): string;
+  function stringify(
+    obj?: ParsedUrlQueryInput,
+    sep?: string,
+    eq?: string,
+    options?: StringifyOptions
+  ): string;
   /**
    * The `querystring.parse()` method parses a URL query string (`str`) into a
    * collection of key and value pairs.
@@ -91,7 +102,12 @@ declare module "querystring" {
    * @param [sep='&'] The substring used to delimit key and value pairs in the query string.
    * @param [eq='='] . The substring used to delimit keys and values in the query string.
    */
-  function parse(str: string, sep?: string, eq?: string, options?: ParseOptions): ParsedUrlQuery;
+  function parse(
+    str: string,
+    sep?: string,
+    eq?: string,
+    options?: ParseOptions
+  ): ParsedUrlQuery;
   /**
    * The querystring.encode() function is an alias for querystring.stringify().
    */

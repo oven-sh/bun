@@ -4,7 +4,11 @@ declare module "node:module" {
 
 declare module "module" {
   export function createRequire(filename: string): NodeJS.Require;
-  export function _resolveFileName(path: string, parent: string, isMain: boolean): string;
+  export function _resolveFileName(
+    path: string,
+    parent: string,
+    isMain: boolean
+  ): string;
   /**
    * Bun's module cache is not exposed but this property exists for compatibility.
    */

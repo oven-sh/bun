@@ -73,10 +73,18 @@ declare module "url" {
   function parse(
     urlString: string,
     parseQueryString: false | undefined,
-    slashesDenoteHost?: boolean,
+    slashesDenoteHost?: boolean
   ): UrlWithStringQuery;
-  function parse(urlString: string, parseQueryString: true, slashesDenoteHost?: boolean): UrlWithParsedQuery;
-  function parse(urlString: string, parseQueryString: boolean, slashesDenoteHost?: boolean): Url;
+  function parse(
+    urlString: string,
+    parseQueryString: true,
+    slashesDenoteHost?: boolean
+  ): UrlWithParsedQuery;
+  function parse(
+    urlString: string,
+    parseQueryString: boolean,
+    slashesDenoteHost?: boolean
+  ): Url;
   /**
    * The `url.format()` method returns a formatted URL string derived from`urlObject`.
    *
@@ -327,7 +335,10 @@ declare module "url" {
     sort(): void;
     /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
     toString(): string;
-    forEach(callbackfn: (value: string, key: string, parent: URLSearchParams) => void, thisArg?: any): void;
+    forEach(
+      callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
+      thisArg?: any
+    ): void;
   }
 }
 

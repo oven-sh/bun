@@ -39,7 +39,6 @@ namespace WebCore {
 
 static ExceptionOr<Vector<uint8_t>> signEd25519(const Vector<uint8_t>& sk, size_t len, const Vector<uint8_t>& data)
 {
-    uint8_t pk[32];
     uint8_t newSignature[64];
 
     ED25519_sign(newSignature, data.data(), data.size(), sk.data());

@@ -262,7 +262,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
     if (type() != CryptoKeyType::Private)
         return Exception { InvalidAccessError };
 
-    size_t keySize = keySizeInBytes();
+    size_t keySize = exportKeySizeInBytes();
 
     // SEQUENCE, length, version SEQUENCE, length, OID, Octet String Octet String
     size_t totalSize = 1 + 1 + 3 + 1 + 1 + 5 + 1 + 1 + 1 + 1 + keySize;
@@ -284,7 +284,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
     addEncodedASN1Length(result, keySize + 2);
     result.append(OctetStringMark);
     addEncodedASN1Length(result, keySize);
-    result.append(platformKey().data(), platformKey().size());
+    result.append(exportKey().data(), exportKey().size());
 
     ASSERT(result.size() == totalSize);
 
@@ -294,26 +294,38 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const
 String CryptoKeyOKP::generateJwkD() const
 {
     ASSERT(type() == CryptoKeyType::Private);
+    if (namedCurve() == NamedCurve::Ed25519) {
+        ASSERT(m_exportKey);
+        return base64URLEncodeToString(*m_exportKey);
+    }
     return base64URLEncodeToString(m_data);
 }
 
-String CryptoKeyOKP::getEd25519PublicFromPrivate() const
+Span<const uint8_t> CryptoKeyOKP::ed25519PublicFromPrivate(KeyMaterial& privateKey)
 {
-    uint8_t publicKey[ED25519_PUBLIC_KEY_LEN];
-    uint8_t privateKey[ED25519_PRIVATE_KEY_LEN];
+    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
 
-    ED25519_keypair_from_seed(publicKey, privateKey, m_data.data());
+    ED25519_keypair_from_seed(public_key, private_key, privateKey.data());
 
-    return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
+    return Span<const uint8_t> { public_key, sizeof(public_key) };
 }
 
-String CryptoKeyOKP::getX25519PublicFromPrivate() const
+Span<const uint8_t> CryptoKeyOKP::x25519PublicFromPrivate(KeyMaterial& privateKey)
 {
-    uint8_t publicKey[X25519_PUBLIC_VALUE_LEN];
+    uint8_t public_key[X25519_PUBLIC_VALUE_LEN];
 
-    X25519_public_from_private(publicKey, m_data.data());
+    X25519_public_from_private(public_key, privateKey.data());
 
-    return base64URLEncodeToString(Span<const uint8_t> { publicKey, sizeof(publicKey) });
+    return Span<const uint8_t> { public_key, sizeof(public_key) };
+}
+
+Vector<uint8_t> CryptoKeyOKP::ed25519PrivateFromSeed(KeyMaterial&& seed)
+{
+    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
+
+    ED25519_keypair_from_seed(public_key, private_key, seed.data());
+
+    return WTFMove(Vector<uint8_t>(private_key, ED25519_PRIVATE_KEY_LEN));
 }
 
 String CryptoKeyOKP::generateJwkX() const
@@ -324,14 +336,18 @@ String CryptoKeyOKP::generateJwkX() const
     ASSERT(type() == CryptoKeyType::Private);
 
     if (namedCurve() == NamedCurve::Ed25519)
-        return getEd25519PublicFromPrivate();
+        return base64URLEncodeToString(ed25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 
     ASSERT(namedCurve() == NamedCurve::X25519);
-    return getX25519PublicFromPrivate();
+    return base64URLEncodeToString(x25519PublicFromPrivate(const_cast<KeyMaterial&>(m_data)));
 }
 
 Vector<uint8_t> CryptoKeyOKP::platformExportRaw() const
 {
+    if (namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private) {
+        ASSERT(m_exportKey);
+        return *m_exportKey;
+    }
     return m_data;
 }
 

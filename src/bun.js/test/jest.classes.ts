@@ -8,6 +8,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     values: ["capturedValue", "resultValue"],
+    configurable: false,
     klass: {
       extend: {
         fn: "extend",

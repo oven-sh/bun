@@ -6,6 +6,7 @@ const named = names.map(name => {
     name: name,
     construct: true,
     finalize: true,
+    configurable: false,
     klass: {
       hash: {
         fn: "hash",

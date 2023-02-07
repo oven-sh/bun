@@ -8,6 +8,7 @@ export default [
     klass: {},
     JSType: "0b11101110",
     estimatedSize: true,
+    configurable: false,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -60,6 +61,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
+    configurable: false,
     estimatedSize: true,
     klass: {
       json: {
@@ -116,6 +118,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     klass: {},
+    configurable: false,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },

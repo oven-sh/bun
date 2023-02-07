@@ -6,6 +6,7 @@ function generate(ssl) {
     JSType: "0b11101110",
     hasPendingActivity: true,
     noConstructor: true,
+    configurable: false,
     proto: {
       write: {
         fn: "write",

@@ -9,7 +9,7 @@ const BUN_VERSION = (
   process.env.BUN_VERSION ||
   Bun.version ||
   process.versions.bun
-).replace(/^v/, "");
+).replace(/^.*v/, "");
 const folder = resolve(process.argv.at(-1)!);
 if (folder.endsWith("bundle.ts")) {
   throw new Error("Pass a folder");

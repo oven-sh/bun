@@ -59,12 +59,20 @@ public:
 
     NamedCurve namedCurve() const { return m_curve; }
     String namedCurveString() const;
+    bool isEd25519PrivateKey() { return namedCurve() == NamedCurve::Ed25519 && type() == CryptoKeyType::Private; };
 
     static bool isValidOKPAlgorithm(CryptoAlgorithmIdentifier);
+    static KeyMaterial ed25519PublicFromPrivate(const KeyMaterial& privateKey);
+    static KeyMaterial x25519PublicFromPrivate(const KeyMaterial& privateKey);
+    static KeyMaterial ed25519PrivateFromSeed(KeyMaterial&& seed);
 
     size_t keySizeInBits() const { return platformKey().size() * 8; }
     size_t keySizeInBytes() const { return platformKey().size(); }
     const KeyMaterial& platformKey() const { return m_data; }
+
+    size_t exportKeySizeInBits() const { return exportKey().size() * 8; }
+    size_t exportKeySizeInBytes() const { return exportKey().size(); }
+    const KeyMaterial& exportKey() const { return !m_exportKey ? m_data : *m_exportKey; };
 
 private:
     CryptoKeyOKP(CryptoAlgorithmIdentifier, NamedCurve, CryptoKeyType, Vector<uint8_t>&&, bool extractable, CryptoKeyUsageBitmap);
@@ -75,9 +83,6 @@ private:
     String generateJwkD() const;
     String generateJwkX() const;
 
-    String getEd25519PublicFromPrivate() const;
-    String getX25519PublicFromPrivate() const;
-
     static bool isPlatformSupportedCurve(NamedCurve);
     static std::optional<CryptoKeyPair> platformGeneratePair(CryptoAlgorithmIdentifier, NamedCurve, bool extractable, CryptoKeyUsageBitmap);
     Vector<uint8_t> platformExportRaw() const;
@@ -86,6 +91,7 @@ private:
 
     NamedCurve m_curve;
     KeyMaterial m_data;
+    std::optional<KeyMaterial> m_exportKey;
 };
 
 } // namespace WebCore

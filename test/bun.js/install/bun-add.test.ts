@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
-import { access, mkdir, mkdtemp, readlink, rm, writeFile } from "fs/promises";
+import { access, mkdir, mkdtemp, readlink, realpath, rm, writeFile } from "fs/promises";
 import { join, relative } from "path";
 import { tmpdir } from "os";
 import {
@@ -17,7 +17,6 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { realpathSync } from "fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -25,7 +24,7 @@ afterAll(dummyAfterAll);
 let add_dir;
 
 beforeEach(async () => {
-  add_dir = await mkdtemp(join(realpathSync(tmpdir()), "bun-add.test"));
+  add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
   await dummyBeforeEach();
 });
 afterEach(async () => {
@@ -243,9 +242,11 @@ it("should handle @scoped names", async () => {
 it("should add dependency with specified semver", async () => {
   const urls: string[] = [];
   setHandler(
-    dummyRegistry(urls, "0.0.3", {
-      bin: {
-        "baz-run": "index.js",
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
       },
     }),
   );
@@ -278,7 +279,7 @@ it("should add dependency with specified semver", async () => {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz.tgz`]);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
@@ -304,9 +305,11 @@ it("should add dependency with specified semver", async () => {
 it("should add dependency alongside workspaces", async () => {
   const urls: string[] = [];
   setHandler(
-    dummyRegistry(urls, "0.0.3", {
-      bin: {
-        "baz-run": "index.js",
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
       },
     }),
   );
@@ -349,7 +352,7 @@ it("should add dependency alongside workspaces", async () => {
     " 2 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz.tgz`]);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
@@ -377,9 +380,11 @@ it("should add dependency alongside workspaces", async () => {
 it("should add aliased dependency (npm)", async () => {
   const urls: string[] = [];
   setHandler(
-    dummyRegistry(urls, "0.0.3", {
-      bin: {
-        "baz-run": "index.js",
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
       },
     }),
   );
@@ -412,7 +417,7 @@ it("should add aliased dependency (npm)", async () => {
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz.tgz`]);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
@@ -510,7 +515,7 @@ it("should add aliased dependency (GitHub)", async () => {
 
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];
-  setHandler(dummyRegistry(urls, "0.0.3", {}));
+  setHandler(dummyRegistry(urls, { "0.0.3": {} }));
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -540,7 +545,7 @@ it("should let you add the same package twice", async () => {
   expect(out1).toContain("installed baz@0.0.3");
   expect(out1).toContain("1 packages installed");
   expect(await exited1).toBe(0);
-  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz.tgz`]);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({

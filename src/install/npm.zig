@@ -1119,8 +1119,8 @@ pub const PackageManifest = struct {
                                             const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
                                             const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
 
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.named_file,
+                                            package_version.bin = .{
+                                                .tag = .named_file,
                                                 .value = .{
                                                     .named_file = .{
                                                         string_builder.append(String, bin_name),
@@ -1174,8 +1174,8 @@ pub const PackageManifest = struct {
                                                 extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];
                                             }
 
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.map,
+                                            package_version.bin = .{
+                                                .tag = .map,
                                                 .value = .{ .map = ExternalStringList.init(all_extern_strings_bin_entries, group_slice) },
                                             };
                                         },
@@ -1185,8 +1185,8 @@ pub const PackageManifest = struct {
                                 },
                                 .e_string => |stri| {
                                     if (stri.data.len > 0) {
-                                        package_version.bin = Bin{
-                                            .tag = Bin.Tag.file,
+                                        package_version.bin = .{
+                                            .tag = .file,
                                             .value = .{
                                                 .file = string_builder.append(String, stri.data),
                                             },
@@ -1209,8 +1209,8 @@ pub const PackageManifest = struct {
                             if (dirs.expr.asProperty("bin")) |bin_prop| {
                                 if (bin_prop.expr.asString(allocator)) |str_| {
                                     if (str_.len > 0) {
-                                        package_version.bin = Bin{
-                                            .tag = Bin.Tag.dir,
+                                        package_version.bin = .{
+                                            .tag = .dir,
                                             .value = .{
                                                 .dir = string_builder.append(String, str_),
                                             },

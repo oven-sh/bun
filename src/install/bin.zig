@@ -257,6 +257,7 @@ pub const Bin = extern struct {
     pub const Linker = struct {
         bin: Bin,
 
+        package_installed_path: stringZ = "",
         package_installed_node_modules: std.os.fd_t = std.math.maxInt(std.os.fd_t),
         root_node_modules_folder: std.os.fd_t = std.math.maxInt(std.os.fd_t),
 
@@ -320,15 +321,19 @@ pub const Bin = extern struct {
             if (!link_global) {
                 target_buf[0..".bin/".len].* = ".bin/".*;
                 from_remain = target_buf[".bin/".len..];
-                dest_buf[0.."../".len].* = "../".*;
-                remain = dest_buf["../".len..];
+                dest_buf[0.."..".len].* = "..".*;
+                remain = dest_buf["..".len..];
+                std.mem.copy(u8, remain, this.package_installed_path);
+                remain = remain[this.package_installed_path.len..];
+                remain[0] = std.fs.path.sep;
+                remain = remain[1..];
             } else {
                 if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
 
-                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                std.mem.copy(u8, &target_buf, this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -362,8 +367,8 @@ pub const Bin = extern struct {
                 .file => {
                     var target = this.bin.value.file.slice(this.string_buf);
 
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
@@ -384,8 +389,8 @@ pub const Bin = extern struct {
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
@@ -414,8 +419,8 @@ pub const Bin = extern struct {
                         const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
 
                         var target = name_in_filesystem.slice(this.string_buf);
-                        if (strings.hasPrefix(target, "./")) {
-                            target = target[2..];
+                        if (strings.hasPrefixComptime(target, "./")) {
+                            target = target["./".len..];
                         }
                         std.mem.copy(u8, remain, target);
                         remain = remain[target.len..];
@@ -435,8 +440,8 @@ pub const Bin = extern struct {
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
 
                     var parts = [_][]const u8{ name, target };

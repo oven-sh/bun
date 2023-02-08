@@ -362,16 +362,12 @@ pub const Tree = struct {
 
         /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
         pub fn clean(this: *Builder) !DependencyIDList {
-            var end = @truncate(Id, this.list.len);
+            const end = @truncate(Id, this.list.len);
             var i: Id = 0;
             var total: u32 = 0;
-
             var trees = this.list.items(.tree);
             var dependencies = this.list.items(.dependencies);
 
-            // var real_end: Id = 0;
-
-            // TODO: can we cull empty trees here?
             while (i < end) : (i += 1) {
                 total += trees[i].dependencies.len;
             }
@@ -401,6 +397,14 @@ pub const Tree = struct {
         dependency_id: DependencyID,
         builder: *Builder,
     ) SubtreeError!void {
+        const package_id = switch (dependency_id) {
+            root_dep_id => 0,
+            else => |id| builder.resolutions[id],
+        };
+        const resolution_list = builder.resolution_lists[package_id];
+
+        if (resolution_list.len == 0) return;
+
         try builder.list.append(builder.allocator, .{
             .tree = .{
                 .parent = this.id,
@@ -414,15 +418,6 @@ pub const Tree = struct {
         const trees = list_slice.items(.tree);
         const dependency_lists = list_slice.items(.dependencies);
         const next: *Tree = &trees[builder.list.len - 1];
-
-        const package_id = switch (dependency_id) {
-            root_dep_id => 0,
-            else => |id| builder.resolutions[id],
-        };
-        const resolution_list = builder.resolution_lists[package_id];
-
-        if (resolution_list.len == 0) return;
-
         const name_hashes: []const PackageNameHash = builder.name_hashes;
         const max_package_id = @truncate(PackageID, name_hashes.len);
         var dep_id = resolution_list.off;
@@ -430,36 +425,41 @@ pub const Tree = struct {
 
         while (dep_id < end) : (dep_id += 1) {
             const pid = builder.resolutions[dep_id];
+            // Skip unresolved packages, e.g. "peerDependencies"
             if (pid >= max_package_id) continue;
+
             const dependency = builder.dependencies[dep_id];
-
-            // Do not download/install "peerDependencies"
-            if (dependency.behavior.isPeer()) continue;
-
             // Do not hoist aliased packages
-            const destination = if (dependency.name_hash == name_hashes[pid]) next.addDependency(
-                true,
-                pid,
-                dep_id,
-                &dependency,
-                dependency_lists,
-                trees,
-                builder,
-            ) else brk: {
-                dependency_lists[next.id].append(builder.allocator, dep_id) catch unreachable;
-                next.dependencies.len += 1;
-                break :brk next.id;
-            };
+            const destination = if (dependency.name_hash != name_hashes[pid])
+                next.id
+            else
+                next.hoistDependency(
+                    true,
+                    pid,
+                    dep_id,
+                    &dependency,
+                    dependency_lists,
+                    trees,
+                    builder,
+                ) catch |err| return err;
             switch (destination) {
-                Tree.dependency_loop => return error.DependencyLoop,
-                Tree.hoisted => continue,
-                else => if (builder.resolution_lists[pid].len > 0) {
-                    try builder.queue.writeItem(.{
-                        .tree_id = destination,
-                        .dependency_id = dep_id,
-                    });
+                Tree.dependency_loop, Tree.hoisted => continue,
+                else => {
+                    dependency_lists[destination].append(builder.allocator, dep_id) catch unreachable;
+                    trees[destination].dependencies.len += 1;
+                    if (builder.resolution_lists[pid].len > 0) {
+                        try builder.queue.writeItem(.{
+                            .tree_id = destination,
+                            .dependency_id = dep_id,
+                        });
+                    }
                 },
             }
+        }
+
+        if (next.dependencies.len == 0) {
+            if (comptime Environment.allow_assert) std.debug.assert(builder.list.len == next.id + 1);
+            _ = builder.list.pop();
         }
     }
 
@@ -467,7 +467,7 @@ pub const Tree = struct {
     // - de-duplicate (skip) the package
     // - move the package to the top directory
     // - leave the package at the same (relative) directory
-    fn addDependency(
+    fn hoistDependency(
         this: *Tree,
         comptime as_defined: bool,
         package_id: PackageID,
@@ -476,16 +476,21 @@ pub const Tree = struct {
         dependency_lists: []Lockfile.DependencyIDList,
         trees: []Tree,
         builder: *Builder,
-    ) Id {
+    ) !Id {
         const this_dependencies = this.dependencies.get(dependency_lists[this.id].items);
         for (this_dependencies) |dep_id| {
-            if (builder.dependencies[dep_id].name_hash != dependency.name_hash) continue;
-            if (builder.resolutions[dep_id] != package_id) return dependency_loop;
+            const dep = builder.dependencies[dep_id];
+            if (dep.name_hash != dependency.name_hash) continue;
+            if (builder.resolutions[dep_id] != package_id) {
+                if (as_defined and !dep.behavior.isPeer()) return error.DependencyLoop;
+                // ignore versioning conflicts caused by peer dependencies
+                return dependency_loop;
+            }
             return hoisted;
         }
 
         if (this.parent < error_id) {
-            const id = trees[this.parent].addDependency(
+            const id = trees[this.parent].hoistDependency(
                 false,
                 package_id,
                 dependency_id,
@@ -493,12 +498,10 @@ pub const Tree = struct {
                 dependency_lists,
                 trees,
                 builder,
-            );
+            ) catch unreachable;
             if (!as_defined or id != dependency_loop) return id;
         }
 
-        dependency_lists[this.id].append(builder.allocator, dependency_id) catch unreachable;
-        this.dependencies.len += 1;
         return this.id;
     }
 };
@@ -1279,20 +1282,20 @@ pub const Printer = struct {
                             if (dep.behavior != behavior) {
                                 if (dep.behavior.isOptional()) {
                                     try writer.writeAll("  optionalDependencies:\n");
-                                    if (comptime Environment.isDebug or Environment.isTest) dependency_behavior_change_count += 1;
+                                    if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                                 } else if (dep.behavior.isNormal()) {
                                     try writer.writeAll("  dependencies:\n");
-                                    if (comptime Environment.isDebug or Environment.isTest) dependency_behavior_change_count += 1;
+                                    if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                                 } else if (dep.behavior.isDev()) {
                                     try writer.writeAll("  devDependencies:\n");
-                                    if (comptime Environment.isDebug or Environment.isTest) dependency_behavior_change_count += 1;
+                                    if (comptime Environment.allow_assert) dependency_behavior_change_count += 1;
                                 } else {
                                     continue;
                                 }
                                 behavior = dep.behavior;
 
                                 // assert its sorted
-                                if (comptime Environment.isDebug or Environment.isTest) std.debug.assert(dependency_behavior_change_count < 3);
+                                if (comptime Environment.allow_assert) std.debug.assert(dependency_behavior_change_count < 3);
                             }
 
                             try writer.writeAll("    ");
@@ -1351,10 +1354,12 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
         for (list.get(resolutions_buffer)) |package_id, j| {
             if (package_id >= end) {
                 const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
-                if (!failed_dep.behavior.isEnabled(if (root_list.contains(@truncate(PackageID, parent_id)))
-                    local_features
-                else
-                    remote_features)) continue;
+                if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
+                    if (root_list.contains(@truncate(PackageID, parent_id)))
+                        local_features
+                    else
+                        remote_features,
+                )) continue;
                 if (log_level != .silent)
                     Output.prettyErrorln(
                         "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
@@ -1844,7 +1849,7 @@ pub const Package = extern struct {
 
         const id = @truncate(PackageID, new.packages.len);
         const new_package = try new.appendPackageWithID(
-            Lockfile.Package{
+            .{
                 .name = builder.appendWithHash(
                     String,
                     this.name.slice(old_string_buf),
@@ -2378,15 +2383,16 @@ pub const Package = extern struct {
             .workspace => if (workspace_path) |path| {
                 dependency_version.value.workspace = path;
             } else {
+                const workspace = dependency_version.value.workspace.slice(buf);
                 const path = string_builder.append(
                     String,
-                    Path.relative(
+                    if (strings.eqlComptime(workspace, "*")) "*" else Path.relative(
                         FileSystem.instance.top_level_dir,
                         Path.joinAbsString(
                             FileSystem.instance.top_level_dir,
                             &[_]string{
                                 source.path.name.dir,
-                                dependency_version.value.workspace.slice(buf),
+                                workspace,
                             },
                             .posix,
                         ),
@@ -2401,7 +2407,7 @@ pub const Package = extern struct {
         }
 
         const this_dep = Dependency{
-            .behavior = if (group.behavior.isPeer()) group.behavior else group.behavior.setWorkspace(in_workspace),
+            .behavior = group.behavior.setWorkspace(in_workspace),
             .name = external_name.value,
             .name_hash = external_name.hash,
             .version = dependency_version,
@@ -2736,8 +2742,8 @@ pub const Package = extern struct {
                                 const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
                                 const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
 
-                                package.bin = Bin{
-                                    .tag = Bin.Tag.named_file,
+                                package.bin = .{
+                                    .tag = .named_file,
                                     .value = .{
                                         .named_file = .{
                                             string_builder.append(String, bin_name),
@@ -2764,8 +2770,8 @@ pub const Package = extern struct {
                                     i += 1;
                                 }
                                 std.debug.assert(i == extern_strings.len);
-                                package.bin = Bin{
-                                    .tag = Bin.Tag.map,
+                                package.bin = .{
+                                    .tag = .map,
                                     .value = .{ .map = @import("./install.zig").ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
                                 };
                             },
@@ -2775,8 +2781,8 @@ pub const Package = extern struct {
                     },
                     .e_string => |stri| {
                         if (stri.data.len > 0) {
-                            package.bin = Bin{
-                                .tag = Bin.Tag.file,
+                            package.bin = .{
+                                .tag = .file,
                                 .value = .{
                                     .file = string_builder.append(String, stri.data),
                                 },
@@ -2799,8 +2805,8 @@ pub const Package = extern struct {
                 if (dirs.expr.asProperty("bin")) |bin_prop| {
                     if (bin_prop.expr.asString(allocator)) |str_| {
                         if (str_.len > 0) {
-                            package.bin = Bin{
-                                .tag = Bin.Tag.dir,
+                            package.bin = .{
+                                .tag = .dir,
                                 .value = .{
                                     .dir = string_builder.append(String, str_),
                                 },

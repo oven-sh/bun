@@ -37,28 +37,65 @@ namespace WebCore {
 static const ASCIILiteral X25519 { "X25519"_s };
 static const ASCIILiteral Ed25519 { "Ed25519"_s };
 
-static constexpr size_t keySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve, CryptoKeyType type)
+static constexpr size_t internalKeySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve, CryptoKeyType type)
 {
     switch (curve) {
     case CryptoKeyOKP::NamedCurve::X25519:
         return 32;
     case CryptoKeyOKP::NamedCurve::Ed25519:
         return type == CryptoKeyType::Private ? 64 : 32;
+    default:
+        return -1;
     }
-    return 32;
+}
+
+static constexpr size_t externalKeySizeInBytesFromNamedCurve(CryptoKeyOKP::NamedCurve curve)
+{
+    switch (curve) {
+    case CryptoKeyOKP::NamedCurve::X25519:
+    case CryptoKeyOKP::NamedCurve::Ed25519:
+        return 32;
+    default:
+        return -1;
+    }
 }
 
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::create(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, KeyMaterial&& platformKey, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (platformKey.size() != keySizeInBytesFromNamedCurve(curve, type))
+    auto bytesExpectedInternal = internalKeySizeInBytesFromNamedCurve(curve, type);
+    if (bytesExpectedInternal == -1)
         return nullptr;
+
+    if (platformKey.size() != bytesExpectedInternal) {
+        if (type != CryptoKeyType::Private || curve != NamedCurve::Ed25519)
+            return nullptr;
+
+        auto bytesExpectedExternal = externalKeySizeInBytesFromNamedCurve(curve);
+        if (bytesExpectedExternal == -1)
+            return nullptr;
+
+        // We need to match the internal format when importing a private key
+        // Import format only consists of 32 bytes of private key
+        // Internal format is private key + public key suffix
+        if (platformKey.size() == bytesExpectedExternal) {
+            auto&& privateKey = ed25519PrivateFromSeed(WTFMove(platformKey));
+            if (!privateKey.data())
+                return nullptr;
+
+            return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTFMove(privateKey), extractable, usages));
+        }
+
+        return nullptr;
+    }
+
     return adoptRef(*new CryptoKeyOKP(identifier, curve, type, WTFMove(platformKey), extractable, usages));
 }
 
 CryptoKeyOKP::CryptoKeyOKP(CryptoAlgorithmIdentifier identifier, NamedCurve curve, CryptoKeyType type, KeyMaterial&& data, bool extractable, CryptoKeyUsageBitmap usages)
     : CryptoKey(identifier, type, extractable, usages)
     , m_curve(curve)
-    , m_data(WTFMove(data))
+    , m_data(data)
+    , m_exportKey(curve == NamedCurve::Ed25519 && type == CryptoKeyType::Private ? std::optional<Vector<uint8_t>>(Vector<uint8_t>(data.data(), 32)) : std::nullopt)
 {
 }
 
@@ -102,7 +139,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importJwk(CryptoAlgorithmIdentifier identifie
             return nullptr;
         if (!keyData.alg.isEmpty() && keyData.alg != "EdDSA"_s)
             return nullptr;
-        if (usages && !keyData.use.isEmpty() && keyData.use != "sign"_s)
+        if (usages && !keyData.use.isEmpty() && keyData.use != "sig"_s)
             return nullptr;
         if (keyData.key_ops && ((keyData.usages & usages) != usages))
             return nullptr;
@@ -138,10 +175,10 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportRaw() const
     if (type() != CryptoKey::Type::Public)
         return Exception { InvalidAccessError };
 
-    auto result = platformExportRaw();
+    auto&& result = platformExportRaw();
     if (result.isEmpty())
         return Exception { OperationError };
-    return result;
+    return WTFMove(result);
 }
 
 ExceptionOr<JsonWebKey> CryptoKeyOKP::exportJwk() const

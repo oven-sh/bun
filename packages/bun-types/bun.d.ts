@@ -1449,7 +1449,7 @@ declare module "bun" {
      * "http://localhost:3000"
      *
      */
-    baseURI?: string;
+    // baseURI?: string;
 
     /**
      * What is the maximum size of a request body? (in bytes)

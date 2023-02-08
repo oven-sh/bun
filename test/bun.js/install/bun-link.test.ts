@@ -2,15 +2,15 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, expect, it } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "fs/promises";
 import { basename, join } from "path";
 import { tmpdir } from "os";
 
 let package_dir, link_dir;
 
 beforeEach(async () => {
-  link_dir = await mkdtemp(join(tmpdir(), "bun-link.test"));
-  package_dir = await mkdtemp(join(tmpdir(), "bun-link.pkg"));
+  link_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.test"));
+  package_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.pkg"));
 });
 afterEach(async () => {
   await rm(link_dir, { force: true, recursive: true });

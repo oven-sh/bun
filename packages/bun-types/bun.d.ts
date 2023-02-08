@@ -52,6 +52,12 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string;
 
+  export type Serve<WebSocketDataType = undefined> =
+    | ServeOptions
+    | TLSServeOptions
+    | WebSocketServeOptions<WebSocketDataType>
+    | TLSWebSocketServeOptions<WebSocketDataType>;
+
   /**
    * Start a fast HTTP server.
    *
@@ -88,8 +94,12 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<WebSocketDataType>(
-    options: Serve<WebSocketDataType>,
+  export function serve<T>(
+    options:
+      | ServeOptions
+      | TLSServeOptions
+      | WebSocketServeOptions<T>
+      | TLSWebSocketServeOptions<T>,
   ): Server;
 
   /**
@@ -1527,6 +1537,9 @@ declare module "bun" {
     ): Response | undefined | Promise<Response | undefined>;
   }
 
+  export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
+    extends WebSocketServeOptions<WebSocketDataType>,
+      TLSOptions {}
   export interface Errorlike extends Error {
     code?: string;
     errno?: number;
@@ -1547,8 +1560,18 @@ declare module "bun" {
      */
     certFile: string;
 
+    /**
+     * Passphrase for the TLS key
+     */
     passphrase?: string;
+    /**
+     *  File path to a .pem file for a custom root CA
+     */
     caFile?: string;
+
+    /**
+     * File path to a .pem file custom Diffie Helman parameters
+     */
     dhParamsFile?: string;
 
     /**
@@ -1564,17 +1587,13 @@ declare module "bun" {
     lowMemoryMode?: boolean;
   }
 
-  export type TLSServeOptions<WebSocketDataType = undefined> = (
-    | WebSocketServeOptions<WebSocketDataType>
-    | ServerWebSocket
-  ) &
-    TLSOptions & {
-      /**
-       *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-       *  The values are SSL options objects.
-       */
-      serverNames: Record<string, TLSOptions>;
-    };
+  export interface TLSServeOptions extends ServeOptions, TLSOptions {
+    /**
+     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+     *  The values are SSL options objects.
+     */
+    serverNames?: Record<string, TLSOptions>;
+  }
 
   /**
    * HTTP & HTTPS Server
@@ -1753,11 +1772,6 @@ declare module "bun" {
      */
     readonly development: boolean;
   }
-
-  export type Serve<WebSocketDataType = undefined> =
-    | TLSServeOptions<WebSocketDataType>
-    | WebSocketServeOptions<WebSocketDataType>
-    | ServeOptions;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

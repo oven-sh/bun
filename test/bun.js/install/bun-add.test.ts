@@ -371,7 +371,7 @@ it("should add dependency alongside workspaces", async () => {
     version: "0.0.1",
     workspaces: ["packages/bar"],
     dependencies: {
-      baz: "",
+      baz: "^0.0.3",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -603,7 +603,7 @@ it("should let you add the same package twice", async () => {
     name: "Foo",
     version: "0.0.1",
     dependencies: {
-      baz: "",
+      baz: "^0.0.3",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -665,14 +665,12 @@ it("should install version tagged with `latest` by default", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      baz: "",
+      baz: "^0.0.3",
     },
   });
   await access(join(package_dir, "bun.lockb"));
-  // reset cache
-  await rm(join(package_dir, "bun.lockb"));
-  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
   // re-install with updated `package.json`
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
   urls.length = 0;
   const {
     stdout: stdout2,
@@ -711,7 +709,7 @@ it("should install version tagged with `latest` by default", async () => {
     name: "foo",
     version: "0.0.1",
     dependencies: {
-      baz: "",
+      baz: "^0.0.3",
     },
   });
   await access(join(package_dir, "bun.lockb"));

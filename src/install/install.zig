@@ -4414,8 +4414,10 @@ pub const PackageManager = struct {
             for (updates) |*update| {
                 if (update.e_string) |e_string| {
                     e_string.data = switch (update.resolution.tag) {
-                        .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
-                            try allocator.dupe(u8, latest)
+                        .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
+                            std.fmt.allocPrint(allocator, "^{}", .{
+                                update.resolution.value.npm.version.fmt(update.version_buf),
+                            }) catch unreachable
                         else
                             null,
                         .uninitialized => switch (update.version.tag) {

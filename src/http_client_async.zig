@@ -437,6 +437,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+            
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -1005,13 +1006,37 @@ pub fn init(
     return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis };
 }
 
+
+// pub fn addAbortSignalEventListenner(this: *HTTPClient) void {
+//     if (this.globalThis) |globalThis| {
+//         if (this.signal != null) {
+//             var signal = this.signal.?;
+//             var obj = signal.swap().asObject();
+//             var addEventListener = obj.getDirect(globalThis, JSC.ZigString.static("addEventListener"));
+
+
+//             const args = [_]JSC.JSValue{
+//                 JSC.ZigString.static("abort"),
+//                 onAbortHandler,
+//             };
+//             addEventListener.callWithThis(addEventListener, globalThis, addEventListener, args);
+//             // return aborted.asBoolean();
+//         }
+//     }
+//     return;
+// }
 pub fn hasSignalAborted(this: *HTTPClient) bool {
+    log("hasSignalAborted", .{});
     if (this.globalThis) |globalThis| {
         if (this.signal != null) {
             var signal = this.signal.?;
-            var obj = signal.swap().asObject();
-            var aborted = obj.getDirect(globalThis, JSC.ZigString.static("aborted"));
-            return aborted.asBoolean();
+            var obj = signal.swap();
+            var aborted = obj.get(globalThis, "aborted");
+            if(aborted) |prop| {
+                return prop.toBoolean();
+            }
+            
+            return false;
         }
     }
     return false;

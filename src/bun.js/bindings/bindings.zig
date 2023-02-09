@@ -17,6 +17,8 @@ const JSC = @import("bun").JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const diff = @import("../../deps/zig-diff/main.zig").diff;
+const Edit = @import("../../deps/zig-diff/main.zig").Edit;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -3399,6 +3401,48 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn createRangeError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createRangeError", .{ message, code, global });
+    }
+
+    pub fn getDiff(v1: JSValue, v1_buf: *bun.MutableString, v2: JSValue, v2_buf: *bun.MutableString, diff_buf: *std.ArrayList(Edit), globalObject: *JSC.JSGlobalObject) void {
+        var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = v1_buf };
+        var buffered_writer = &buffered_writer_;
+
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &v1),
+            1,
+            Writer,
+            Writer,
+            writer,
+            false,
+            true,
+            false,
+        );
+        buffered_writer.flush() catch unreachable;
+        const value_str = v1_buf.toOwnedSliceLeaky();
+
+        buffered_writer_.context = v2_buf;
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &v2),
+            1,
+            Writer,
+            Writer,
+            writer,
+            false,
+            true,
+            false,
+        );
+        buffered_writer.flush() catch unreachable;
+        const expected_str = v2_buf.toOwnedSliceLeaky();
+
+        diff(value_str, expected_str, diff_buf) catch unreachable;
     }
 
     /// Object.is()

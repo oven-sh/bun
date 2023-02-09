@@ -63,7 +63,7 @@ TODO: fill this out (for now, use `JSValue.toSlice()` in most cases)
 
 #### JavaScriptCore C API
 
-Do not copy from examples leveraging the JavaScriptCore C API. Please do use this in new code. We will not accept PRs that add new code that uses the JavaScriptCore C API.
+Do not copy from examples leveraging the JavaScriptCore C API. Please do not use this in new code. We will not accept PRs that add new code that uses the JavaScriptCore C API.
 
 ## Testing
 

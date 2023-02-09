@@ -37,6 +37,7 @@ pub const ExprNodeIndex = js_ast.ExprNodeIndex;
 pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
+const DeclaredSymbol = js_ast.DeclaredSymbol;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 const JSC = @import("bun").JSC;
 
@@ -67,7 +68,7 @@ const Ref = @import("./ast/base.zig").Ref;
 const RefHashCtx = @import("./ast/base.zig").RefHashCtx;
 
 pub const StringHashMap = bun.StringHashMap;
-pub const AutoHashMap = bun.AutoHashMap;
+pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnamanged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const NodeFallbackModules = @import("./node_fallbacks.zig");
@@ -119,7 +120,9 @@ fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
             if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
                 var orig = lhs.data.e_string.*;
                 const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
-                orig.push(rhs_clone.data.e_string);
+                orig.push(
+                    rhs_clone.data.e_string,
+                );
 
                 return Expr.init(E.String, orig, lhs.loc);
             }
@@ -2247,6 +2250,7 @@ pub const Parser = struct {
         features: RuntimeFeatures = RuntimeFeatures{},
 
         tree_shaking: bool = false,
+        bundle: bool = false,
 
         macro_context: *MacroContextType() = undefined,
 
@@ -2317,7 +2321,7 @@ pub const Parser = struct {
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
                     !import_record.was_originally_bare_import and
-                    !import_record.calls_run_time_re_export_fn);
+                    !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -2483,47 +2487,47 @@ pub const Parser = struct {
             return error.SyntaxError;
         }
 
-        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        // const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        // const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
 
-        if (uses_dirname or uses_filename) {
-            const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, count);
-            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
-            if (uses_dirname) {
-                decls[0] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        // TODO: test UTF-8 file paths
-                        E.String.init(p.source.path.name.dir),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
-            }
-            if (uses_filename) {
-                decls[@as(usize, @boolToInt(uses_dirname))] = .{
-                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
-                    .value = p.newExpr(
-                        E.String.init(p.source.path.text),
-                        logger.Loc.Empty,
-                    ),
-                };
-                declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
-            }
+        // if (uses_dirname or uses_filename) {
+        //     const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
+        //     var declared_symbols = try p.allocator.alloc(DeclaredSymbol, count);
+        //     var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+        //     if (uses_dirname) {
+        //         decls[0] = .{
+        //             .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+        //             .value = p.newExpr(
+        //                 // TODO: test UTF-8 file paths
+        //                 E.String.init(p.source.path.name.dir),
+        //                 logger.Loc.Empty,
+        //             ),
+        //         };
+        //         declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
+        //     }
+        //     if (uses_filename) {
+        //         decls[@as(usize, @boolToInt(uses_dirname))] = .{
+        //             .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+        //             .value = p.newExpr(
+        //                 E.String.init(p.source.path.text),
+        //                 logger.Loc.Empty,
+        //             ),
+        //         };
+        //         declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
+        //     }
 
-            // TODO: DeclaredSymbol
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = decls,
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
-        }
+        //     // TODO: DeclaredSymbol
+        //     var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+        //     part_stmts[0] = p.s(S.Local{
+        //         .kind = .k_var,
+        //         .decls = decls,
+        //     }, logger.Loc.Empty);
+        //     before.append(js_ast.Part{
+        //         .stmts = part_stmts,
+        //         .declared_symbols = declared_symbols,
+        //         .tag = .dirname_filename,
+        //     }) catch unreachable;
+        // }
 
         var did_import_fast_refresh = false;
 
@@ -2538,26 +2542,28 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            if (p.options.transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_bundling)) {
-                var args = p.allocator.alloc(Expr, 2) catch unreachable;
+            if (!p.options.bundle) {
+                if (p.options.transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_bundling)) {
+                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
-                if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
-                    p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
-                    p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
+                    if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
+                        p.runtime_imports.__exportDefault = try p.declareGeneratedSymbol(.other, "__exportDefault");
+                        p.resolveGeneratedSymbol(&p.runtime_imports.__exportDefault.?);
+                    }
+
+                    wrapper_expr = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args);
+                    p.resolveGeneratedSymbol(&p.runtime_imports.__cJS2eSM.?);
+
+                    // Disable HMR if we're wrapping it in CommonJS
+                    // It's technically possible to support this.
+                    // But we need to cut scope for the v0.
+                    p.options.features.hot_module_reloading = false;
+                    p.options.features.react_fast_refresh = false;
+                    p.runtime_imports.__HMRModule = null;
+                    p.runtime_imports.__FastRefreshModule = null;
+                    p.runtime_imports.__FastRefreshRuntime = null;
+                    p.runtime_imports.__HMRClient = null;
                 }
-
-                wrapper_expr = p.callRuntime(logger.Loc.Empty, "__cJS2eSM", args);
-                p.resolveGeneratedSymbol(&p.runtime_imports.__cJS2eSM.?);
-
-                // Disable HMR if we're wrapping it in CommonJS
-                // It's technically possible to support this.
-                // But we need to cut scope for the v0.
-                p.options.features.hot_module_reloading = false;
-                p.options.features.react_fast_refresh = false;
-                p.runtime_imports.__HMRModule = null;
-                p.runtime_imports.__FastRefreshModule = null;
-                p.runtime_imports.__FastRefreshRuntime = null;
-                p.runtime_imports.__HMRClient = null;
             }
         } else {
             exports_kind = .esm;
@@ -2628,128 +2634,419 @@ pub const Parser = struct {
         }
 
         // Auto-import & post-process JSX
-        switch (comptime ParserType.jsx_transform_type) {
-            .react => {
-                // const jsx_filename_symbol = if (p.options.jsx.development)
-                //     p.symbols.items[p.jsx_filename.ref.innerIndex()]
-                // else
-                //     Symbol{ .original_name = "" };
+        if (!p.options.bundle) {
+            switch (comptime ParserType.jsx_transform_type) {
+                .react => {
+                    // const jsx_filename_symbol = if (p.options.jsx.development)
+                    //     p.symbols.items[p.jsx_filename.ref.innerIndex()]
+                    // else
+                    //     Symbol{ .original_name = "" };
 
-                {
-                    const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
-
-                    const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
-                    const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
-
-                    // Currently, React (and most node_modules) ship a CJS version or a UMD version
-                    // but we should assume that it'll pretty much always be CJS
-                    // Given that, we can't directly call import {jsxDEV} from 'react';
-                    // Instead, we must call require("react").default.jsxDEV
-                    // So a jsx_symbol usage means a jsx_factory_symbol usage
-                    // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
-                    if (FeatureFlags.jsx_runtime_is_cjs) {
-                        if (jsx_symbol.use_count_estimate > 0) {
-                            p.recordUsage(p.jsx_automatic.ref);
-                        }
-
-                        if (FeatureFlags.support_jsxs_in_jsx_transform) {
-                            const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
-
-                            if (jsx_static_symbol.use_count_estimate > 0) {
-                                p.recordUsage(p.jsx_automatic.ref);
-                            }
-                        }
-
-                        if (jsx_fragment_symbol.use_count_estimate > 0) {
-                            p.recordUsage(p.jsx_classic.ref);
-                        }
-
-                        if (jsx_factory_symbol.use_count_estimate > 0) {
-                            p.recordUsage(p.jsx_classic.ref);
-                        }
-                    }
-                }
-
-                p.resolveStaticJSXSymbols();
-
-                if (p.options.features.auto_import_jsx) {
-                    const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
-                    const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
-                    const react_element_symbol = if (p.options.features.jsx_optimization_inline) p.symbols.items[p.react_element_type.ref.innerIndex()] else Symbol{
-                        .original_name = "IF_YOU_SEE_THIS_ITS_A_BUG_IN_BUN_WHERE_REACT_ELEMENT_SYMBOL_IS_BEING_ADDED_WHEN_IT_SHOULDNT_BE_PLEASE_REPORT_IT",
-                    };
-
-                    // JSX auto-imports
-                    // The classic runtime is a different import than the main import
-                    // There are cases where you can use both JSX runtimes in the same file.
-                    // 1. If you use a spread operator like this: <div foo bar key="foo" {...props} baz />
-                    // 2. If you use a React.Fragment
-                    // So we have to support both.
-                    if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0 or react_element_symbol.use_count_estimate > 0) {
-                        // These must unfortunately be copied
-                        // p.symbols may grow during this scope
-                        // if it grows, the previous pointers are invalidated
+                    {
                         const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
-                        const jsx_static_symbol: Symbol = if (!FeatureFlags.support_jsxs_in_jsx_transform)
-                            undefined
-                        else
-                            p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
 
                         const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
                         const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                        const classic_namespace_ref = p.jsx_classic.ref;
-                        const automatic_namespace_ref = p.jsx_automatic.ref;
+                        // Currently, React (and most node_modules) ship a CJS version or a UMD version
+                        // but we should assume that it'll pretty much always be CJS
+                        // Given that, we can't directly call import {jsxDEV} from 'react';
+                        // Instead, we must call require("react").default.jsxDEV
+                        // So a jsx_symbol usage means a jsx_factory_symbol usage
+                        // This is kind of a broken way of doing it because it wouldn't work if it was more than one level deep
+                        if (FeatureFlags.jsx_runtime_is_cjs) {
+                            if (jsx_symbol.use_count_estimate > 0) {
+                                p.recordUsage(p.jsx_automatic.ref);
+                            }
 
-                        const decls_count: u32 =
-                            // "REACT_ELEMENT_TYPE"
-                            // "Symbol.for('react.element')"
-                            @intCast(u32, @boolToInt(react_element_symbol.use_count_estimate > 0)) * 2 +
+                            if (FeatureFlags.support_jsxs_in_jsx_transform) {
+                                const jsx_static_symbol = p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
 
-                            // "JSX"
-                            @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
-                            @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
-                            @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0));
-                        // @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
+                                if (jsx_static_symbol.use_count_estimate > 0) {
+                                    p.recordUsage(p.jsx_automatic.ref);
+                                }
+                            }
 
-                        const imports_count =
-                            @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
-                            @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
-                            @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0));
-                        const stmts_count = imports_count + 1;
-                        const symbols_count: u32 = imports_count + decls_count;
-                        const loc = logger.Loc{ .start = 0 };
+                            if (jsx_fragment_symbol.use_count_estimate > 0) {
+                                p.recordUsage(p.jsx_classic.ref);
+                            }
 
-                        // Preallocate everything we'll need here
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, symbols_count);
-                        var decls = try p.allocator.alloc(G.Decl, decls_count);
-                        var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
-                        // Use the same array for storing the require call target of potentially both JSX runtimes
-                        var require_call_args_base = p.allocator.alloc(Expr, if (p.options.can_import_from_bundle) 0 else imports_count) catch unreachable;
-                        var import_records = try p.allocator.alloc(u32, imports_count);
+                            if (jsx_factory_symbol.use_count_estimate > 0) {
+                                p.recordUsage(p.jsx_classic.ref);
+                            }
+                        }
+                    }
 
-                        var decl_i: usize = 0;
-                        var declared_symbols_i: usize = 0;
-                        var import_record_i: usize = 0;
-                        var require_call_args_i: usize = 0;
-                        var stmt_i: usize = 0;
+                    p.resolveStaticJSXSymbols();
+
+                    if (p.options.features.auto_import_jsx) {
+                        const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
+                        const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
+                        const react_element_symbol = if (p.options.features.jsx_optimization_inline) p.symbols.items[p.react_element_type.ref.innerIndex()] else Symbol{
+                            .original_name = "IF_YOU_SEE_THIS_ITS_A_BUG_IN_BUN_WHERE_REACT_ELEMENT_SYMBOL_IS_BEING_ADDED_WHEN_IT_SHOULDNT_BE_PLEASE_REPORT_IT",
+                        };
+
+                        // JSX auto-imports
+                        // The classic runtime is a different import than the main import
+                        // There are cases where you can use both JSX runtimes in the same file.
+                        // 1. If you use a spread operator like this: <div foo bar key="foo" {...props} baz />
+                        // 2. If you use a React.Fragment
+                        // So we have to support both.
+                        if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0 or react_element_symbol.use_count_estimate > 0) {
+                            // These must unfortunately be copied
+                            // p.symbols may grow during this scope
+                            // if it grows, the previous pointers are invalidated
+                            const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];
+                            const jsx_static_symbol: Symbol = if (!FeatureFlags.support_jsxs_in_jsx_transform)
+                                undefined
+                            else
+                                p.symbols.items[p.jsxs_runtime.ref.innerIndex()];
+
+                            const jsx_fragment_symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                            const jsx_factory_symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+
+                            const classic_namespace_ref = p.jsx_classic.ref;
+                            const automatic_namespace_ref = p.jsx_automatic.ref;
+
+                            const decls_count: u32 =
+                                // "REACT_ELEMENT_TYPE"
+                                // "Symbol.for('react.element')"
+                                @intCast(u32, @boolToInt(react_element_symbol.use_count_estimate > 0)) * 2 +
+
+                                // "JSX"
+                                @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
+                                @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) * 2 +
+                                @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
+                                @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0));
+                            // @intCast(u32, @boolToInt(jsx_filename_symbol.use_count_estimate > 0));
+
+                            const imports_count =
+                                @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) +
+                                @intCast(u32, @boolToInt(jsx_classic_symbol.use_count_estimate > 0)) +
+                                @intCast(u32, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) +
+                                @intCast(u32, @boolToInt(p.options.features.react_fast_refresh)) +
+                                @intCast(u32, @boolToInt(FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0));
+                            const stmts_count = imports_count + 1;
+                            const symbols_count: u32 = imports_count + decls_count;
+                            const loc = logger.Loc{ .start = 0 };
+
+                            // Preallocate everything we'll need here
+                            var declared_symbols = DeclaredSymbol.List{};
+                            try declared_symbols.ensureTotalCapacity(p.allocator, symbols_count);
+                            var decls = try p.allocator.alloc(G.Decl, decls_count);
+                            var jsx_part_stmts = try p.allocator.alloc(Stmt, stmts_count);
+                            // Use the same array for storing the require call target of potentially both JSX runtimes
+                            var require_call_args_base = p.allocator.alloc(Expr, if (p.options.can_import_from_bundle) 0 else imports_count) catch unreachable;
+                            var import_records = try p.allocator.alloc(u32, imports_count);
+
+                            var decl_i: usize = 0;
+                            var import_record_i: usize = 0;
+                            var require_call_args_i: usize = 0;
+                            var stmt_i: usize = 0;
+
+                            if (react_element_symbol.use_count_estimate > 0) {
+                                declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
+                                p.recordUsage(p.es6_symbol_global.ref);
+                                var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
+                                call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
+
+                                decls[decl_i] = G.Decl{
+                                    .binding = p.b(
+                                        B.Identifier{
+                                            .ref = p.react_element_type.ref,
+                                        },
+                                        loc,
+                                    ),
+                                    .value = p.newExpr(
+                                        E.Call{
+                                            // Symbol.for
+                                            .target = p.newExpr(
+                                                E.Dot{
+                                                    .name = "for",
+                                                    .name_loc = logger.Loc.Empty,
+                                                    .target = p.newExpr(
+                                                        E.Identifier{
+                                                            .ref = p.es6_symbol_global.ref,
+                                                            .can_be_removed_if_unused = true,
+                                                            .call_can_be_unwrapped_if_unused = true,
+                                                        },
+                                                        logger.Loc.Empty,
+                                                    ),
+                                                    .can_be_removed_if_unused = true,
+                                                    .call_can_be_unwrapped_if_unused = true,
+                                                },
+                                                logger.Loc.Empty,
+                                            ),
+                                            .args = ExprNodeList.init(call_args),
+                                            .close_paren_loc = logger.Loc.Empty,
+                                            .can_be_unwrapped_if_unused = true,
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                };
+                                decl_i += 1;
+                            }
+
+                            if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
+                                declared_symbols.appendAssumeCapacity(.{ .ref = automatic_namespace_ref, .is_top_level = true });
+
+                                const automatic_identifier = p.newExpr(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
+
+                                // We do not mark this as .require becuase we are already wrapping it manually.
+                                // unless it's bun and you're not bundling
+                                const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime);
+                                const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
+                                const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
+
+                                const dot_call_target = brk: {
+                                    if (use_automatic_identifier) {
+                                        break :brk automatic_identifier;
+                                    } else if (p.options.features.dynamic_require) {
+                                        break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+                                    } else {
+                                        require_call_args_base[require_call_args_i] = automatic_identifier;
+                                        require_call_args_i += 1;
+                                        break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
+                                    }
+                                };
+
+                                if (jsx_symbol.use_count_estimate > 0) {
+                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_runtime.ref, .is_top_level = true });
+
+                                    decls[decl_i] = G.Decl{
+                                        .binding = p.b(
+                                            B.Identifier{
+                                                .ref = p.jsx_runtime.ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = p.newExpr(
+                                            E.Dot{
+                                                .target = dot_call_target,
+                                                .name = p.options.jsx.jsx,
+                                                .name_loc = loc,
+                                                .can_be_removed_if_unused = true,
+                                            },
+                                            loc,
+                                        ),
+                                    };
+                                    decl_i += 1;
+                                }
+
+                                if (FeatureFlags.support_jsxs_in_jsx_transform) {
+                                    if (jsx_static_symbol.use_count_estimate > 0) {
+                                        declared_symbols.appendAssumeCapacity(.{ .ref = p.jsxs_runtime.ref, .is_top_level = true });
+
+                                        decls[decl_i] = G.Decl{
+                                            .binding = p.b(
+                                                B.Identifier{
+                                                    .ref = p.jsxs_runtime.ref,
+                                                },
+                                                loc,
+                                            ),
+                                            .value = p.newExpr(
+                                                E.Dot{
+                                                    .target = dot_call_target,
+                                                    .name = p.options.jsx.jsx_static,
+                                                    .name_loc = loc,
+                                                    .can_be_removed_if_unused = true,
+                                                },
+                                                loc,
+                                            ),
+                                        };
+
+                                        decl_i += 1;
+                                    }
+                                }
+                                // if (jsx_filename_symbol.use_count_estimate > 0) {
+                                //     declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_filename.ref, .is_top_level = true });
+                                //     decls[decl_i] = G.Decl{
+                                //         .binding = p.b(
+                                //             B.Identifier{
+                                //                 .ref = p.jsx_filename.ref,
+                                //             },
+                                //             loc,
+                                //         ),
+                                //         .value = p.newExpr(E.String{ .data = p.source.path.pretty }, loc),
+                                //     };
+                                //     decl_i += 1;
+                                // }
+
+                                p.import_records.items[import_record_id].tag = .jsx_import;
+                                if (dot_call_target.data != .e_require) {
+                                    // When everything is CommonJS
+                                    // We import JSX like this:
+                                    // var {jsxDev} = require("react/jsx-dev")
+                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                        .namespace_ref = automatic_namespace_ref,
+                                        .star_name_loc = loc,
+                                        .is_single_line = true,
+                                        .import_record_index = import_record_id,
+                                    }, loc);
+
+                                    stmt_i += 1;
+                                }
+
+                                p.named_imports.put(
+                                    automatic_namespace_ref,
+                                    js_ast.NamedImport{
+                                        .alias = jsx_automatic_symbol.original_name,
+                                        .alias_is_star = true,
+                                        .alias_loc = loc,
+                                        .namespace_ref = automatic_namespace_ref,
+                                        .import_record_index = import_record_id,
+                                    },
+                                ) catch unreachable;
+                                p.is_import_item.put(p.allocator, automatic_namespace_ref, {}) catch unreachable;
+                                import_records[import_record_i] = import_record_id;
+                                import_record_i += 1;
+                            }
+
+                            if (jsx_classic_symbol.use_count_estimate > 0) {
+                                const classic_identifier = p.newExpr(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
+                                const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
+                                const dot_call_target = brk: {
+                                    // var react = $aopaSD123();
+
+                                    if (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime) {
+                                        break :brk classic_identifier;
+                                    } else if (p.options.features.dynamic_require) {
+                                        break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
+                                    } else {
+                                        const require_call_args_start = require_call_args_i;
+                                        require_call_args_base[require_call_args_i] = classic_identifier;
+                                        require_call_args_i += 1;
+                                        break :brk p.callUnbundledRequire(require_call_args_base[require_call_args_start..][0..1]);
+                                    }
+                                };
+
+                                if (jsx_factory_symbol.use_count_estimate > 0) {
+                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+                                    decls[decl_i] = G.Decl{
+                                        .binding = p.b(
+                                            B.Identifier{
+                                                .ref = p.jsx_factory.ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = p.memberExpression(
+                                            loc,
+                                            dot_call_target,
+                                            if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
+                                        ),
+                                    };
+                                    decl_i += 1;
+                                }
+
+                                if (jsx_fragment_symbol.use_count_estimate > 0) {
+                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+                                    decls[decl_i] = G.Decl{
+                                        .binding = p.b(
+                                            B.Identifier{
+                                                .ref = p.jsx_fragment.ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = p.memberExpression(
+                                            loc,
+                                            dot_call_target,
+                                            if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
+                                        ),
+                                    };
+                                    decl_i += 1;
+                                }
+
+                                if (dot_call_target.data != .e_require) {
+                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                        .namespace_ref = classic_namespace_ref,
+                                        .star_name_loc = loc,
+                                        .is_single_line = true,
+                                        .import_record_index = import_record_id,
+                                    }, loc);
+                                    stmt_i += 1;
+                                }
+
+                                p.import_records.items[import_record_id].tag = .jsx_classic;
+
+                                p.named_imports.put(
+                                    classic_namespace_ref,
+                                    js_ast.NamedImport{
+                                        .alias = jsx_classic_symbol.original_name,
+                                        .alias_is_star = true,
+                                        .alias_loc = loc,
+                                        .namespace_ref = classic_namespace_ref,
+                                        .import_record_index = import_record_id,
+                                    },
+                                ) catch unreachable;
+                                p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
+                                import_records[import_record_i] = import_record_id;
+                                declared_symbols.appendAssumeCapacity(.{ .ref = classic_namespace_ref, .is_top_level = true });
+                            }
+
+                            if (p.options.features.react_fast_refresh) {
+                                defer did_import_fast_refresh = true;
+                                p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+                                if (!p.options.jsx.use_embedded_refresh_runtime) {
+                                    const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
+
+                                    declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
+
+                                    const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                                    p.import_records.items[import_record_id].tag = .react_refresh;
+                                    jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                        .namespace_ref = p.jsx_refresh_runtime.ref,
+                                        .star_name_loc = loc,
+                                        .is_single_line = true,
+                                        .import_record_index = import_record_id,
+                                    }, loc);
+
+                                    stmt_i += 1;
+                                    p.named_imports.put(
+                                        p.jsx_refresh_runtime.ref,
+                                        js_ast.NamedImport{
+                                            .alias = refresh_runtime_symbol.original_name,
+                                            .alias_is_star = true,
+                                            .alias_loc = loc,
+                                            .namespace_ref = p.jsx_refresh_runtime.ref,
+                                            .import_record_index = import_record_id,
+                                        },
+                                    ) catch unreachable;
+                                    p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
+                                    import_records[import_record_i] = import_record_id;
+                                }
+                                p.recordUsage(p.jsx_refresh_runtime.ref);
+                            }
+
+                            jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
+                            stmt_i += 1;
+
+                            before.append(js_ast.Part{
+                                .stmts = jsx_part_stmts[0..stmt_i],
+                                .declared_symbols = declared_symbols,
+                                .import_record_indices = bun.BabyList(u32).init(import_records),
+                                .tag = .jsx_import,
+                            }) catch unreachable;
+                        }
+                    } else if (p.options.features.jsx_optimization_inline) {
+                        const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
 
                         if (react_element_symbol.use_count_estimate > 0) {
-                            declared_symbols[declared_symbols_i] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
-                            declared_symbols_i += 1;
+                            var declared_symbols = DeclaredSymbol.List{};
+                            try declared_symbols.ensureTotalCapacity(p.allocator, 1);
+                            var decls = try p.allocator.alloc(G.Decl, 1);
+                            var part_stmts = try p.allocator.alloc(Stmt, 1);
+
+                            declared_symbols.appendAssumeCapacity(.{ .ref = p.react_element_type.ref, .is_top_level = true });
                             p.recordUsage(p.es6_symbol_global.ref);
                             var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
                             call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
 
-                            decls[decl_i] = G.Decl{
+                            decls[0] = G.Decl{
                                 .binding = p.b(
                                     B.Identifier{
                                         .ref = p.react_element_type.ref,
                                     },
-                                    loc,
+                                    logger.Loc.Empty,
                                 ),
                                 .value = p.newExpr(
                                     E.Call{
@@ -2778,408 +3075,112 @@ pub const Parser = struct {
                                     logger.Loc.Empty,
                                 ),
                             };
-                            decl_i += 1;
+                            part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
+                            before.append(js_ast.Part{
+                                .stmts = part_stmts,
+                                .declared_symbols = declared_symbols,
+                                .tag = .jsx_import,
+                            }) catch unreachable;
                         }
+                    } else {
+                        const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                        const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                        if (jsx_symbol.use_count_estimate > 0 or (FeatureFlags.support_jsxs_in_jsx_transform and jsx_static_symbol.use_count_estimate > 0)) {
-                            declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
-                            declared_symbols_i += 1;
+                        // inject
+                        //   var jsxFrag =
+                        if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
+                            const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
+                            var declared_symbols = DeclaredSymbol.List{};
+                            try declared_symbols.ensureTotalCapacity(p.allocator, total);
+                            var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
+                            var part_stmts = try p.allocator.alloc(Stmt, 1);
 
-                            const automatic_identifier = p.newExpr(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
+                            if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+                            if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
 
-                            // We do not mark this as .require becuase we are already wrapping it manually.
-                            // unless it's bun and you're not bundling
-                            const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime);
-                            const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
-                            const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
-
-                            const dot_call_target = brk: {
-                                if (use_automatic_identifier) {
-                                    break :brk automatic_identifier;
-                                } else if (p.options.features.dynamic_require) {
-                                    break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
-                                } else {
-                                    require_call_args_base[require_call_args_i] = automatic_identifier;
-                                    require_call_args_i += 1;
-                                    break :brk p.callUnbundledRequire(require_call_args_base[0..require_call_args_i]);
-                                }
-                            };
-
-                            if (jsx_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_runtime.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
-
-                                decls[decl_i] = G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsx_runtime.ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = p.newExpr(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.jsx,
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
-                                        loc,
-                                    ),
-                                };
-                                decl_i += 1;
-                            }
-
-                            if (FeatureFlags.support_jsxs_in_jsx_transform) {
-                                if (jsx_static_symbol.use_count_estimate > 0) {
-                                    declared_symbols[declared_symbols_i] = .{ .ref = p.jsxs_runtime.ref, .is_top_level = true };
-                                    declared_symbols_i += 1;
-
-                                    decls[decl_i] = G.Decl{
-                                        .binding = p.b(
-                                            B.Identifier{
-                                                .ref = p.jsxs_runtime.ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = p.newExpr(
-                                            E.Dot{
-                                                .target = dot_call_target,
-                                                .name = p.options.jsx.jsx_static,
-                                                .name_loc = loc,
-                                                .can_be_removed_if_unused = true,
-                                            },
-                                            loc,
-                                        ),
-                                    };
-
-                                    decl_i += 1;
-                                }
-                            }
-                            // if (jsx_filename_symbol.use_count_estimate > 0) {
-                            //     declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_filename.ref, .is_top_level = true };
-                            //     declared_symbols_i += 1;
-                            //     decls[decl_i] = G.Decl{
-                            //         .binding = p.b(
-                            //             B.Identifier{
-                            //                 .ref = p.jsx_filename.ref,
-                            //             },
-                            //             loc,
-                            //         ),
-                            //         .value = p.newExpr(E.String{ .data = p.source.path.pretty }, loc),
-                            //     };
-                            //     decl_i += 1;
-                            // }
-
-                            p.import_records.items[import_record_id].tag = .jsx_import;
-                            if (dot_call_target.data != .e_require) {
-                                // When everything is CommonJS
-                                // We import JSX like this:
-                                // var {jsxDev} = require("react/jsx-dev")
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                    .namespace_ref = automatic_namespace_ref,
-                                    .star_name_loc = loc,
-                                    .is_single_line = true,
-                                    .import_record_index = import_record_id,
-                                }, loc);
-
-                                stmt_i += 1;
-                            }
-
-                            p.named_imports.put(
-                                automatic_namespace_ref,
-                                js_ast.NamedImport{
-                                    .alias = jsx_automatic_symbol.original_name,
-                                    .alias_is_star = true,
-                                    .alias_loc = loc,
-                                    .namespace_ref = automatic_namespace_ref,
-                                    .import_record_index = import_record_id,
-                                },
-                            ) catch unreachable;
-                            p.is_import_item.put(p.allocator, automatic_namespace_ref, {}) catch unreachable;
-                            import_records[import_record_i] = import_record_id;
-                            import_record_i += 1;
-                        }
-
-                        if (jsx_classic_symbol.use_count_estimate > 0) {
-                            const classic_identifier = p.newExpr(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
-                            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
-                            const dot_call_target = brk: {
-                                // var react = $aopaSD123();
-
-                                if (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime) {
-                                    break :brk classic_identifier;
-                                } else if (p.options.features.dynamic_require) {
-                                    break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
-                                } else {
-                                    const require_call_args_start = require_call_args_i;
-                                    require_call_args_base[require_call_args_i] = classic_identifier;
-                                    require_call_args_i += 1;
-                                    break :brk p.callUnbundledRequire(require_call_args_base[require_call_args_start..][0..1]);
-                                }
-                            };
-
-                            if (jsx_factory_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_factory.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
-                                decls[decl_i] = G.Decl{
-                                    .binding = p.b(
-                                        B.Identifier{
-                                            .ref = p.jsx_factory.ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = p.memberExpression(
-                                        loc,
-                                        dot_call_target,
-                                        if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
-                                    ),
-                                };
-                                decl_i += 1;
-                            }
-
-                            if (jsx_fragment_symbol.use_count_estimate > 0) {
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_fragment.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
-                                decls[decl_i] = G.Decl{
+                            if (jsx_fragment_symbol.use_count_estimate > 0)
+                                decls.appendAssumeCapacity(G.Decl{
                                     .binding = p.b(
                                         B.Identifier{
                                             .ref = p.jsx_fragment.ref,
                                         },
-                                        loc,
+                                        logger.Loc.Empty,
                                     ),
-                                    .value = p.memberExpression(
-                                        loc,
-                                        dot_call_target,
-                                        if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
-                                    ),
-                                };
-                                decl_i += 1;
-                            }
+                                    .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
+                                });
 
-                            if (dot_call_target.data != .e_require) {
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                    .namespace_ref = classic_namespace_ref,
-                                    .star_name_loc = loc,
-                                    .is_single_line = true,
-                                    .import_record_index = import_record_id,
-                                }, loc);
-                                stmt_i += 1;
-                            }
-
-                            p.import_records.items[import_record_id].tag = .jsx_classic;
-
-                            p.named_imports.put(
-                                classic_namespace_ref,
-                                js_ast.NamedImport{
-                                    .alias = jsx_classic_symbol.original_name,
-                                    .alias_is_star = true,
-                                    .alias_loc = loc,
-                                    .namespace_ref = classic_namespace_ref,
-                                    .import_record_index = import_record_id,
-                                },
-                            ) catch unreachable;
-                            p.is_import_item.put(p.allocator, classic_namespace_ref, {}) catch unreachable;
-                            import_records[import_record_i] = import_record_id;
-                            declared_symbols[declared_symbols_i] = .{ .ref = classic_namespace_ref, .is_top_level = true };
-                            declared_symbols_i += 1;
-                        }
-
-                        if (p.options.features.react_fast_refresh) {
-                            defer did_import_fast_refresh = true;
-                            p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-                            if (!p.options.jsx.use_embedded_refresh_runtime) {
-                                const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
-
-                                declared_symbols[declared_symbols_i] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
-                                declared_symbols_i += 1;
-
-                                const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-                                p.import_records.items[import_record_id].tag = .react_refresh;
-                                jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                    .namespace_ref = p.jsx_refresh_runtime.ref,
-                                    .star_name_loc = loc,
-                                    .is_single_line = true,
-                                    .import_record_index = import_record_id,
-                                }, loc);
-
-                                stmt_i += 1;
-                                p.named_imports.put(
-                                    p.jsx_refresh_runtime.ref,
-                                    js_ast.NamedImport{
-                                        .alias = refresh_runtime_symbol.original_name,
-                                        .alias_is_star = true,
-                                        .alias_loc = loc,
-                                        .namespace_ref = p.jsx_refresh_runtime.ref,
-                                        .import_record_index = import_record_id,
-                                    },
-                                ) catch unreachable;
-                                p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
-                                import_records[import_record_i] = import_record_id;
-                            }
-                            p.recordUsage(p.jsx_refresh_runtime.ref);
-                        }
-
-                        jsx_part_stmts[stmt_i] = p.s(S.Local{ .kind = .k_var, .decls = decls[0..decl_i] }, loc);
-                        stmt_i += 1;
-
-                        before.append(js_ast.Part{
-                            .stmts = jsx_part_stmts[0..stmt_i],
-                            .declared_symbols = declared_symbols,
-                            .import_record_indices = import_records,
-                            .tag = .jsx_import,
-                        }) catch unreachable;
-                    }
-                } else if (p.options.features.jsx_optimization_inline) {
-                    const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
-
-                    if (react_element_symbol.use_count_estimate > 0) {
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
-                        var decls = try p.allocator.alloc(G.Decl, 1);
-                        var part_stmts = try p.allocator.alloc(Stmt, 1);
-
-                        declared_symbols[0] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
-                        p.recordUsage(p.es6_symbol_global.ref);
-                        var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
-
-                        decls[0] = G.Decl{
-                            .binding = p.b(
-                                B.Identifier{
-                                    .ref = p.react_element_type.ref,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                            .value = p.newExpr(
-                                E.Call{
-                                    // Symbol.for
-                                    .target = p.newExpr(
-                                        E.Dot{
-                                            .name = "for",
-                                            .name_loc = logger.Loc.Empty,
-                                            .target = p.newExpr(
-                                                E.Identifier{
-                                                    .ref = p.es6_symbol_global.ref,
-                                                    .can_be_removed_if_unused = true,
-                                                    .call_can_be_unwrapped_if_unused = true,
-                                                },
-                                                logger.Loc.Empty,
-                                            ),
-                                            .can_be_removed_if_unused = true,
-                                            .call_can_be_unwrapped_if_unused = true,
+                            if (jsx_factory_symbol.use_count_estimate > 0)
+                                decls.appendAssumeCapacity(G.Decl{
+                                    .binding = p.b(
+                                        B.Identifier{
+                                            .ref = p.jsx_factory.ref,
                                         },
                                         logger.Loc.Empty,
                                     ),
-                                    .args = ExprNodeList.init(call_args),
-                                    .close_paren_loc = logger.Loc.Empty,
-                                    .can_be_unwrapped_if_unused = true,
-                                },
-                                logger.Loc.Empty,
-                            ),
-                        };
-                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
-                        before.append(js_ast.Part{
-                            .stmts = part_stmts,
-                            .declared_symbols = declared_symbols,
-                            .tag = .jsx_import,
-                        }) catch unreachable;
+                                    .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
+                                });
+                            part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
+                            before.append(js_ast.Part{
+                                .stmts = part_stmts,
+                                .declared_symbols = declared_symbols,
+                                .tag = .jsx_import,
+                            }) catch unreachable;
+                        }
                     }
-                } else {
-                    const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
-                    const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
 
-                    // inject
-                    //   var jsxFrag =
-                    if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
-                        const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
-                        var declared_symbols = try std.ArrayList(js_ast.DeclaredSymbol).initCapacity(p.allocator, total);
-                        var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
-                        var part_stmts = try p.allocator.alloc(Stmt, 1);
+                    if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
+                        p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
+                        p.recordUsage(p.jsx_refresh_runtime.ref);
 
-                        if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
-                        if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+                        if (!p.options.jsx.use_embedded_refresh_runtime) {
+                            if (comptime Environment.allow_assert)
+                                assert(!p.options.enable_bundling);
+                            var declared_symbols = DeclaredSymbol.List{};
+                            try declared_symbols.ensureTotalCapacity(p.allocator, 1);
+                            const loc = logger.Loc.Empty;
+                            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
+                            p.import_records.items[import_record_id].tag = .react_refresh;
 
-                        if (jsx_fragment_symbol.use_count_estimate > 0)
-                            decls.appendAssumeCapacity(G.Decl{
-                                .binding = p.b(
-                                    B.Identifier{
-                                        .ref = p.jsx_fragment.ref,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
-                            });
-
-                        if (jsx_factory_symbol.use_count_estimate > 0)
-                            decls.appendAssumeCapacity(G.Decl{
-                                .binding = p.b(
-                                    B.Identifier{
-                                        .ref = p.jsx_factory.ref,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
-                            });
-                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
-                        before.append(js_ast.Part{
-                            .stmts = part_stmts,
-                            .declared_symbols = declared_symbols.items,
-                            .tag = .jsx_import,
-                        }) catch unreachable;
-                    }
-                }
-
-                if (!did_import_fast_refresh and p.options.features.react_fast_refresh) {
-                    p.resolveGeneratedSymbol(&p.jsx_refresh_runtime);
-                    p.recordUsage(p.jsx_refresh_runtime.ref);
-
-                    if (!p.options.jsx.use_embedded_refresh_runtime) {
-                        if (comptime Environment.allow_assert)
-                            assert(!p.options.enable_bundling);
-                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
-                        const loc = logger.Loc.Empty;
-                        const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.refresh_runtime);
-                        p.import_records.items[import_record_id].tag = .react_refresh;
-
-                        var import_stmt = p.s(S.Import{
-                            .namespace_ref = p.jsx_refresh_runtime.ref,
-                            .star_name_loc = loc,
-                            .is_single_line = true,
-                            .import_record_index = import_record_id,
-                        }, loc);
-
-                        const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
-
-                        p.named_imports.put(
-                            p.jsx_refresh_runtime.ref,
-                            js_ast.NamedImport{
-                                .alias = refresh_runtime_symbol.original_name,
-                                .alias_is_star = true,
-                                .alias_loc = loc,
+                            var import_stmt = p.s(S.Import{
                                 .namespace_ref = p.jsx_refresh_runtime.ref,
+                                .star_name_loc = loc,
+                                .is_single_line = true,
                                 .import_record_index = import_record_id,
-                            },
-                        ) catch unreachable;
-                        p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
-                        var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
-                        import_records[0] = import_record_id;
-                        declared_symbols[0] = .{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true };
-                        var part_stmts = try p.allocator.alloc(Stmt, 1);
-                        part_stmts[0] = import_stmt;
+                            }, loc);
 
-                        before.append(js_ast.Part{
-                            .stmts = part_stmts,
-                            .declared_symbols = declared_symbols,
-                            .import_record_indices = import_records,
-                            .tag = .react_fast_refresh,
-                        }) catch unreachable;
+                            const refresh_runtime_symbol: *const Symbol = &p.symbols.items[p.jsx_refresh_runtime.ref.innerIndex()];
+
+                            p.named_imports.put(
+                                p.jsx_refresh_runtime.ref,
+                                js_ast.NamedImport{
+                                    .alias = refresh_runtime_symbol.original_name,
+                                    .alias_is_star = true,
+                                    .alias_loc = loc,
+                                    .namespace_ref = p.jsx_refresh_runtime.ref,
+                                    .import_record_index = import_record_id,
+                                },
+                            ) catch unreachable;
+                            p.is_import_item.put(p.allocator, p.jsx_refresh_runtime.ref, {}) catch unreachable;
+                            var import_records = try p.allocator.alloc(@TypeOf(import_record_id), 1);
+                            import_records[0] = import_record_id;
+                            declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_refresh_runtime.ref, .is_top_level = true });
+                            var part_stmts = try p.allocator.alloc(Stmt, 1);
+                            part_stmts[0] = import_stmt;
+
+                            before.append(js_ast.Part{
+                                .stmts = part_stmts,
+                                .declared_symbols = declared_symbols,
+                                .import_record_indices = bun.BabyList(u32).init(import_records),
+                                .tag = .react_fast_refresh,
+                            }) catch unreachable;
+                        }
                     }
-                }
-            },
-            else => {},
+                },
+                else => {},
+            }
+
+            if (p.options.enable_bundling) p.resolveBundlingSymbols();
         }
-
-        if (p.options.enable_bundling) p.resolveBundlingSymbols();
-
         var runtime_imports_iter = p.runtime_imports.iter();
 
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
@@ -3276,16 +3277,17 @@ pub const Parser = struct {
         }
 
         if (has_cjs_imports) {
-            var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
+            var import_records = try bun.BabyList(u32).initCapacity(p.allocator, p.cjs_import_stmts.items.len);
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(p.allocator, p.cjs_import_stmts.items.len);
 
-            for (p.cjs_import_stmts.items) |entry, i| {
+            for (p.cjs_import_stmts.items) |entry| {
                 const import_statement: *S.Import = entry.data.s_import;
-                import_records[i] = import_statement.import_record_index;
-                declared_symbols[i] = .{
+                import_records.appendAssumeCapacity(import_statement.import_record_index);
+                declared_symbols.appendAssumeCapacity(.{
                     .ref = import_statement.namespace_ref,
                     .is_top_level = true,
-                };
+                });
             }
 
             before.append(js_ast.Part{
@@ -3677,8 +3679,8 @@ fn NewParser_(
 
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: js_ast.Part.SymbolUseMap = .{},
-        declared_symbols: List(js_ast.DeclaredSymbol) = .{},
-        declared_symbols_for_reuse: List(js_ast.DeclaredSymbol) = .{},
+        declared_symbols: DeclaredSymbol.List = .{},
+        declared_symbols_for_reuse: DeclaredSymbol.List = .{},
         runtime_imports: RuntimeImports = RuntimeImports{},
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
@@ -4216,9 +4218,9 @@ fn NewParser_(
             for (symbol_use_refs) |ref, i| {
                 symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
             }
-
-            for (part.declared_symbols) |declared| {
-                symbols[declared.ref.innerIndex()].use_count_estimate = 0;
+            const declared_refs = part.declared_symbols.items(.ref);
+            for (declared_refs) |declared| {
+                symbols[declared.innerIndex()].use_count_estimate = 0;
                 // }
             }
         }
@@ -4581,7 +4583,8 @@ fn NewParser_(
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
-            var declared_symbols = try allocator.alloc(js_ast.DeclaredSymbol, imports.len);
+            var declared_symbols = DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(allocator, imports.len);
             std.mem.copy(u8, namespace_identifier[0..suffix.len], suffix);
             std.mem.copy(
                 u8,
@@ -4590,7 +4593,7 @@ fn NewParser_(
             );
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
-            try p.module_scope.generated.append(allocator, namespace_ref);
+            try p.module_scope.generated.push(allocator, namespace_ref);
             for (imports) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
@@ -4600,7 +4603,7 @@ fn NewParser_(
                     .alias_loc = logger.Loc{},
                     .name = LocRef{ .ref = ref, .loc = logger.Loc{} },
                 };
-                declared_symbols[i] = js_ast.DeclaredSymbol{ .ref = ref, .is_top_level = true };
+                declared_symbols.appendAssumeCapacity(DeclaredSymbol{ .ref = ref, .is_top_level = true });
                 try p.is_import_item.put(allocator, ref, {});
                 try p.named_imports.put(ref, js_ast.NamedImport{
                     .alias = alias_name,
@@ -4627,7 +4630,7 @@ fn NewParser_(
             parts.append(js_ast.Part{
                 .stmts = stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = import_records,
+                .import_record_indices = bun.BabyList(u32).init(import_records),
                 .tag = .runtime,
             }) catch unreachable;
         }
@@ -5455,8 +5458,8 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.items) |_, i| {
-                p.hoistSymbols(scope.children.items[i]);
+            for (scope.children.slice()) |_, i| {
+                p.hoistSymbols(scope.children.mut(i).*);
             }
         }
 
@@ -5497,7 +5500,7 @@ fn NewParser_(
                 .generated = .{},
             };
 
-            try parent.children.append(allocator, scope);
+            try parent.children.push(allocator, scope);
             scope.strict_mode = parent.strict_mode;
 
             p.current_scope = scope;
@@ -5838,8 +5841,8 @@ fn NewParser_(
 
             var children = parent.children;
             // Remove the last child from the parent scope
-            var last = children.items.len - 1;
-            if (children.items[last] != to_discard) {
+            var last = children.len - 1;
+            if (children.slice()[last] != to_discard) {
                 p.panic("Internal error", .{});
             }
 
@@ -6678,7 +6681,7 @@ fn NewParser_(
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
-                try scope.generated.append(p.allocator, stmt.namespace_ref);
+                try scope.generated.push(p.allocator, stmt.namespace_ref);
             }
 
             var item_refs = ImportItemForNamespaceMap.init(p.allocator);
@@ -6842,13 +6845,13 @@ fn NewParser_(
 
             var scope = p.current_scope;
 
-            try scope.generated.append(p.allocator, name.ref.?);
+            try scope.generated.push(p.allocator, name.ref.?);
 
             return name;
         }
 
         pub fn newSymbol(p: *P, kind: Symbol.Kind, identifier: string) !Ref {
-            const inner_index = Ref.toInt(p.symbols.items.len);
+            const inner_index = @truncate(Ref.Int, p.symbols.items.len);
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
@@ -6858,7 +6861,11 @@ fn NewParser_(
                 try p.ts_use_counts.append(p.allocator, 0);
             }
 
-            return Ref.init(inner_index, Ref.toInt(p.source.index), false);
+            return Ref{
+                .inner_index = inner_index,
+                .source_index = Ref.toInt(p.source.index.get()),
+                .tag = .symbol,
+            };
         }
 
         fn parseLabelName(p: *P) !?js_ast.LocRef {
@@ -7319,7 +7326,7 @@ fn NewParser_(
 
                             if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
@@ -7358,7 +7365,7 @@ fn NewParser_(
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                    p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                    p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                                 }
 
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
@@ -8257,10 +8264,12 @@ fn NewParser_(
                 const child = _child orelse continue;
 
                 if (child.scope.parent == p.current_scope) {
-                    var i: usize = children.items.len - 1;
+                    var i: usize = children.len - 1;
                     while (i >= 0) {
-                        if (children.items[i] == child.scope) {
-                            _ = children.orderedRemove(i);
+                        if (children.mut(i).* == child.scope) {
+                            var list = children.listManaged(p.allocator);
+                            _ = list.orderedRemove(i);
+                            children.update(list);
                             break;
                         }
                         i -= 1;
@@ -8394,7 +8403,7 @@ fn NewParser_(
                     // run the renamer. For external-facing things the renamer will avoid
                     // collisions automatically so this isn't important for correctness.
                     arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
-                    p.current_scope.generated.append(p.allocator, arg_ref.?) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, arg_ref.?) catch unreachable;
                 } else {
                     arg_ref = p.newSymbol(.hoisted, name_text) catch unreachable;
                 }
@@ -9129,7 +9138,7 @@ fn NewParser_(
                     // run the renamer. For external-facing things the renamer will avoid
                     // collisions automatically so this isn't important for correctness.
                     arg_ref = p.newSymbol(.hoisted, strings.cat(p.allocator, "_", name_text) catch unreachable) catch unreachable;
-                    p.current_scope.generated.append(p.allocator, arg_ref) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, arg_ref) catch unreachable;
                 } else {
                     arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
                 }
@@ -9566,7 +9575,7 @@ fn NewParser_(
             // this module will be unable to reference this symbol. However, we must
             // still add the symbol to the scope so it gets minified (automatically-
             // generated code may still reference the symbol).
-            try p.module_scope.generated.append(p.allocator, ref);
+            try p.module_scope.generated.push(p.allocator, ref);
             return ref;
         }
 
@@ -9659,7 +9668,7 @@ fn NewParser_(
             entry.key_ptr.* = name;
             entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
             if (comptime is_generated) {
-                try p.module_scope.generated.append(p.allocator, ref);
+                try p.module_scope.generated.push(p.allocator, ref);
             }
             return ref;
         }
@@ -9848,24 +9857,21 @@ fn NewParser_(
             if (@ptrToInt(p.source.contents.ptr) <= @ptrToInt(name.ptr) and (@ptrToInt(name.ptr) + name.len) <= (@ptrToInt(p.source.contents.ptr) + p.source.contents.len)) {
                 const start = Ref.toInt(@ptrToInt(name.ptr) - @ptrToInt(p.source.contents.ptr));
                 const end = Ref.toInt(name.len);
-                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .is_source_contents_slice = true });
+                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .tag = .source_contents_slice });
             } else {
                 const inner_index = Ref.toInt(p.allocated_names.items.len);
                 try p.allocated_names.append(p.allocator, name);
-                return Ref.initSourceEnd(.{ .source_index = std.math.maxInt(Ref.Int), .inner_index = inner_index, .is_source_contents_slice = false });
+                return Ref.init(inner_index, p.source.index.get(), false);
             }
         }
 
         pub fn loadNameFromRef(p: *P, ref: Ref) string {
-            if (ref.isSourceContentsSlice()) {
-                return p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
-            } else if (ref.sourceIndex() == std.math.maxInt(Ref.Int)) {
-                if (comptime Environment.allow_assert)
-                    assert(ref.innerIndex() < p.allocated_names.items.len);
-                return p.allocated_names.items[ref.innerIndex()];
-            } else {
-                return p.symbols.items[ref.innerIndex()].original_name;
-            }
+            return switch (ref.tag) {
+                .symbol => p.symbols.items[ref.innerIndex()].original_name,
+                .source_contents_slice => p.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()],
+                .allocated_name => p.allocated_names.items[ref.innerIndex()],
+                else => @panic("Internal error: JS parser tried to load an invalid name from a Ref"),
+            };
         }
 
         // This parses an expression. This assumes we've already parsed the "async"
@@ -12850,16 +12856,18 @@ fn NewParser_(
                         for (previous_parts) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
-                            const declared_symbols = previous_part.declared_symbols;
+                            const declared_symbols = previous_part.declared_symbols.slice();
+                            var refs = declared_symbols.items(.ref);
 
-                            for (declared_symbols) |decl| {
-                                if (p.symbol_uses.contains(decl.ref)) {
+                            for (refs) |ref| {
+                                if (p.symbol_uses.contains(ref)) {
                                     // we move this part to our other file
                                     for (previous_parts[0..j]) |*this_part| {
                                         if (this_part.stmts.len == 0) continue;
                                         const this_declared_symbols = this_part.declared_symbols;
-                                        for (this_declared_symbols) |this_decl| {
-                                            if (previous_part.symbol_uses.contains(this_decl.ref)) {
+                                        var other_refs = this_declared_symbols.items(.ref);
+                                        for (other_refs) |other_ref| {
+                                            if (previous_part.symbol_uses.contains(other_ref)) {
                                                 try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
                                                 this_part.stmts = &.{};
                                                 break;
@@ -12876,8 +12884,10 @@ fn NewParser_(
 
                         // Single-statement part which uses Bun.plugin()
                         // It's effectively an unrelated file
-                        if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
-                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                        if (p.declared_symbols.len > 0 or p.symbol_uses.count() > 0) {
+                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
+                            p.declared_symbols.len = 0;
+                            p.import_records_for_current_part.items.len = 0;
                         }
                         return;
                     }
@@ -12887,19 +12897,23 @@ fn NewParser_(
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
                     .symbol_uses = p.symbol_uses,
-                    .declared_symbols = try p.declared_symbols.toOwnedSlice(
-                        p.allocator,
-                    ),
-                    .import_record_indices = try p.import_records_for_current_part.toOwnedSlice(
-                        p.allocator,
+                    .declared_symbols = p.declared_symbols.clone(p.allocator) catch unreachable,
+                    .import_record_indices = bun.BabyList(u32).init(
+                        p.import_records_for_current_part.toOwnedSlice(
+                            p.allocator,
+                        ) catch unreachable,
                     ),
                     .scopes = try p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
                 p.symbol_uses = .{};
-            } else if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
+                p.declared_symbols.len = 0;
+            } else if (p.declared_symbols.len > 0 or p.symbol_uses.count() > 0) {
+
                 // if the part is dead, invalidate all the usage counts
-                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
+                p.declared_symbols.len = 0;
+                p.import_records_for_current_part.clearRetainingCapacity();
             }
         }
 
@@ -13054,7 +13068,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
-            try p.declared_symbols.append(p.allocator, js_ast.DeclaredSymbol{
+            try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
             });
@@ -13266,7 +13280,7 @@ fn NewParser_(
                             }
                         }
 
-                        if (!p.options.enable_bundling and p.options.features.dynamic_require) {
+                        if (!p.options.bundle and p.options.features.dynamic_require) {
                             const is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref);
                             if (!is_call_target and p.require_ref.eql(e_.ref)) {
                                 // Substitute "require" for import.meta.require
@@ -15672,7 +15686,7 @@ fn NewParser_(
                     const name = p.loadNameFromRef(data.namespace_ref);
 
                     data.namespace_ref = try p.newSymbol(.other, name);
-                    try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                    try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
                     if (p.options.features.replace_exports.count() > 0) {
@@ -15692,7 +15706,7 @@ fn NewParser_(
                             const _name = p.loadNameFromRef(old_ref);
 
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                             try p.recordDeclaredSymbol(data.namespace_ref);
                             data.items[j] = item;
                             data.items[j].name.ref = ref;
@@ -15710,7 +15724,7 @@ fn NewParser_(
                         for (data.items) |*item| {
                             const _name = p.loadNameFromRef(item.name.ref.?);
                             const ref = try p.newSymbol(.other, _name);
-                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                             try p.recordDeclaredSymbol(data.namespace_ref);
                             item.name.ref = ref;
                         }
@@ -15721,7 +15735,7 @@ fn NewParser_(
                     // "export * from 'path'"
                     const name = p.loadNameFromRef(data.namespace_ref);
                     data.namespace_ref = try p.newSymbol(.other, name);
-                    try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                    try p.current_scope.generated.push(p.allocator, data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
                     // "export * as ns from 'path'"
@@ -17167,7 +17181,7 @@ fn NewParser_(
                             if (class.extends != null) {
                                 const target = p.newExpr(E.Super{}, stmt.loc);
                                 const arguments_ref = p.newSymbol(.unbound, "arguments") catch unreachable;
-                                p.current_scope.generated.append(p.allocator, arguments_ref) catch unreachable;
+                                p.current_scope.generated.push(p.allocator, arguments_ref) catch unreachable;
 
                                 const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
                                 const args = ExprNodeList.one(p.allocator, super) catch unreachable;
@@ -17753,7 +17767,7 @@ fn NewParser_(
                     // (e.g. there was a static property initializer that referenced "this"),
                     // store our generated name so the class expression ends up with a name.
                     class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
-                    p.current_scope.generated.append(p.allocator, class_name_ref) catch unreachable;
+                    p.current_scope.generated.push(p.allocator, class_name_ref) catch unreachable;
                     p.recordDeclaredSymbol(class_name_ref) catch unreachable;
                 }
             }
@@ -17795,7 +17809,7 @@ fn NewParser_(
                     break :brk generated_symbol.ref;
                 };
 
-                p.module_scope.generated.append(p.allocator, ref) catch unreachable;
+                p.module_scope.generated.push(p.allocator, ref) catch unreachable;
             } else {
                 ref = p.runtime_imports.at(name).?;
             }
@@ -18285,13 +18299,13 @@ fn NewParser_(
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
             // Remove the last child from the parent scope
-            const last = parent.children.items.len - 1;
-            if (comptime Environment.allow_assert) assert(parent.children.items[last] == to_flatten);
+            const last = parent.children.len - 1;
+            if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
             _ = parent.children.popOrNull();
 
-            for (to_flatten.children.items) |item| {
+            for (to_flatten.children.slice()) |item| {
                 item.parent = parent;
-                parent.children.append(p.allocator, item) catch unreachable;
+                parent.children.push(p.allocator, item) catch unreachable;
             }
         }
 
@@ -18330,19 +18344,31 @@ fn NewParser_(
                     var result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != null);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
-                    part.import_record_indices = part.import_record_indices;
-                    part.declared_symbols = try p.declared_symbols.toOwnedSlice(allocator);
+
                     part.stmts = result.stmts;
-                    if (part.stmts.len > 0) {
+                    if (part.stmts.len > 0 or (i == js_ast.namespace_export_part_index and p.options.bundle)) {
                         if (p.module_scope.contains_direct_eval and part.declared_symbols.len > 0) {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
                             // reference those symbols.
                             part.can_be_removed_if_unused = false;
                         }
+                        if (part.declared_symbols.len == 0) {
+                            part.declared_symbols = p.declared_symbols.clone(p.allocator) catch unreachable;
+                        } else {
+                            part.declared_symbols.appendList(p.allocator, p.declared_symbols) catch unreachable;
+                        }
+
+                        if (part.import_record_indices.len == 0) {
+                            part.import_record_indices.update(p.import_records_for_current_part.clone(p.allocator) catch unreachable);
+                        } else {
+                            part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
+                        }
+
                         parts[parts_end] = part;
                         parts_end += 1;
                     }
+                    p.declared_symbols.len = 0;
                 }
 
                 // We need to iterate multiple times if an import-equals statement was
@@ -18860,57 +18886,66 @@ fn NewParser_(
 
                 part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
             } else if (p.options.features.hot_module_reloading) {}
-
-            {
+            var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
+            if (p.options.bundle) {
 
                 // Each part tracks the other parts it depends on within this file
-                // var local_dependencies = AutoHashMap(u32, u32).init(p.allocator);
+                var i: u32 = 0;
+                const count = @truncate(u32, parts.len);
+                while (i < count) : (i += 1) {
+                    var decls = &parts[i].declared_symbols;
+                    var ctx_ = .{
+                        .allocator = p.allocator,
+                        .top_level_symbols_to_parts = &top_level_symbols_to_parts,
+                        .symbols = p.symbols.items,
+                        .part_index = i,
+                    };
+                    const Ctx = @TypeOf(ctx_);
+                    const Iterator = struct {
+                        pub fn next(ctx: Ctx, input: Ref) void {
+                            // If this symbol was merged, use the symbol at the end of the
+                            // linked list in the map. This is the case for multiple "var"
+                            // declarations with the same name, for example.
+                            var ref = input;
+                            while (ctx.symbols[ref.innerIndex()].link.isValid()) {
+                                ref = ctx.symbols[ref.innerIndex()].link;
+                            }
 
-                // while (i < parts.len) : (i += 1) {
-                //     const part = parts[i];
-                //     if (part.symbol_uses.count() > 0) {
-                //         var iter = part.symbol_uses.iterator();
-                //         var dependencies = List(js_ast.Dependency).init(p.allocator);
-                //         while (iter.next()) |entry| {
-                //             const ref = entry.key;
+                            var entry = ctx.top_level_symbols_to_parts.getOrPut(ctx.allocator, ref) catch unreachable;
+                            if (!entry.found_existing) {
+                                entry.value_ptr.* = .{};
+                            }
 
-                //             if (p.top_level_symbol_to_parts.get(ref)) |tlstp| {
-                //                 for (tlstp.items) |other_part_index| {
-                //                     if (!local_dependencies.contains(other_part_index) or other_part_index != i) {
-                //                         try local_dependencies.put(other_part_index, @intCast(u32, i));
-                //                         try dependencies.append(js_ast.Dependency{
-                //                             .source_index = p.source.index,
-                //                             .part_index = other_part_index,
-                //                         });
-                //                     }
-                //                 }
-                //             }
+                            entry.value_ptr.push(ctx.allocator, @truncate(u32, ctx.part_index)) catch unreachable;
+                        }
+                    };
 
-                //             // Also map from imports to parts that use them
-                //             // TODO: will appending to this list like this be a perf issue?
-                //             if (p.named_imports.getEntry(ref)) |named_import_entry| {
-                //                 const named_import = named_import_entry.value;
-                //                 var buf = try p.allocator.alloc(u32, named_import.local_parts_with_uses.len + 1);
-                //                 if (named_import.local_parts_with_uses.len > 0) {
-                //                     std.mem.copy(u32, buf, named_import.local_parts_with_uses);
-                //                 }
-                //                 buf[buf.len - 1] = @intCast(u32, i);
-                //                 named_import_entry.value.local_parts_with_uses = buf;
-                //             }
-                //         }
-                //     }
-                // }
+                    DeclaredSymbol.forEachTopLevelSymbol(&decls, ctx_, Iterator.next);
+                }
+
+                // Pulling in the exports of this module always pulls in the export part
+
+                {
+                    var entry = top_level_symbols_to_parts.getOrPut(p.allocator, p.exports_ref) catch unreachable;
+
+                    if (!entry.found_existing) {
+                        entry.value_ptr.* = .{};
+                    }
+
+                    entry.value_ptr.push(p.allocator, js_ast.namespace_export_part_index) catch unreachable;
+                }
             }
 
             return .{
+                .allocator = p.allocator,
                 .runtime_imports = p.runtime_imports,
-                .parts = parts,
+                .parts = bun.BabyList(js_ast.Part).init(parts),
                 .module_scope = p.module_scope.*,
-                .symbols = p.symbols.items,
+                .symbols = js_ast.Symbol.List.init(p.symbols.items),
                 .exports_ref = p.exports_ref,
-                .wrapper_ref = null,
+                .wrapper_ref = Ref.None,
                 .module_ref = p.module_ref,
-                .import_records = p.import_records.items,
+                .import_records = ImportRecord.List.init(p.import_records.items),
                 .export_star_import_records = p.export_star_import_records.items,
                 .approximate_newline_count = p.lexer.approximate_newline_count,
                 .exports_kind = exports_kind,
@@ -18918,6 +18953,7 @@ fn NewParser_(
                 .named_exports = p.named_exports,
                 .import_keyword = p.es6_import_keyword,
                 .export_keyword = p.es6_export_keyword,
+                .top_level_symbols_to_parts = top_level_symbols_to_parts,
                 .require_ref = if (p.runtime_imports.__require != null)
                     p.runtime_imports.__require.?.ref
                 else
@@ -19020,22 +19056,30 @@ fn NewParser_(
 //   Range (min … max):    24.1 ms …  39.7 ms    500 runs
 // '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
-const JavaScriptParser = NewParser(.{});
-const JSXParser = NewParser(.{ .jsx = .react });
+const JavaScriptParser = if (bun.fast_debug_build_mode)
+    TSXParser
+else
+    NewParser(.{});
+const JSXParser = if (bun.fast_debug_build_mode)
+    TSXParser
+else
+    NewParser(.{ .jsx = .react });
 const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
-const JSParserMacro = NewParser(.{
-    .jsx = .macro,
-});
+const JSParserMacro = if (bun.fast_debug_build_mode)
+    TSParserMacro
+else
+    NewParser(.{
+        .jsx = .macro,
+    });
 const TSParserMacro = NewParser(.{
     .jsx = .macro,
     .typescript = true,
 });
-
-const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
-const JSXImportScanner = NewParser(.{ .jsx = .react, .scan_only = true });
+const JavaScriptImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .scan_only = true });
+const JSXImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .jsx = .react, .scan_only = true });
 const TSXImportScanner = NewParser(.{ .jsx = .react, .typescript = true, .scan_only = true });
-const TypeScriptImportScanner = NewParser(.{ .typescript = true, .scan_only = true });
+const TypeScriptImportScanner = if (bun.fast_debug_build_mode) TSXImportScanner else NewParser(.{ .typescript = true, .scan_only = true });
 
 // The "await" and "yield" expressions are never allowed in argument lists but
 // may or may not be allowed otherwise depending on the details of the enclosing

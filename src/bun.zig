@@ -444,6 +444,11 @@ pub fn hash(content: []const u8) u64 {
     return std.hash.Wyhash.hash(0, content);
 }
 
+pub fn hash32(content: []const u8) u32 {
+    const res = hash(content);
+    return @truncate(u32, res);
+}
+
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
 pub fn rand(bytes: []u8) void {
@@ -606,6 +611,20 @@ pub const StringArrayHashMapContext = struct {
     pub fn eql(_: @This(), a: []const u8, b: []const u8, _: usize) bool {
         return strings.eqlLong(a, b, true);
     }
+
+    pub const Prehashed = struct {
+        value: u32,
+        input: []const u8,
+        pub fn hash(this: @This(), s: []const u8) u32 {
+            if (s.ptr == this.input.ptr and s.len == this.input.len)
+                return this.value;
+            return @truncate(u32, std.hash.Wyhash.hash(0, s));
+        }
+
+        pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
+            return strings.eqlLong(a, b, true);
+        }
+    };
 };
 
 pub const StringHashMapContext = struct {
@@ -743,7 +762,7 @@ pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
 pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
-pub const bit_set = @import("./install/bit_set.zig");
+pub const bit_set = @import("./bit_set.zig");
 
 pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
     const Map = struct {
@@ -947,3 +966,13 @@ pub fn cstring(input: []const u8) [:0]const u8 {
 }
 
 pub const Semver = @import("./install/semver.zig");
+pub const ImportRecord = @import("./import_record.zig").ImportRecord;
+pub const ImportKind = @import("./import_record.zig").ImportKind;
+
+pub usingnamespace @import("./util.zig");
+pub const fast_debug_build_mode = false and
+    Environment.isDebug;
+
+pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
+
+pub const Joiner = @import("./string_joiner.zig");

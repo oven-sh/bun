@@ -146,6 +146,79 @@ pub fn indexOfCharNeg(self: string, char: u8) i32 {
     return -1;
 }
 
+/// Format a string to an ECMAScript identifier.
+/// Unlike the string_mutable.zig version, this always allocate/copy
+pub fn fmtIdentifier(name: string) FormatValidIdentifier {
+    return FormatValidIdentifier{ .name = name };
+}
+
+/// Format a string to an ECMAScript identifier.
+/// Different implementation than string_mutable because string_mutable may avoid allocating
+/// This will always allocate
+pub const FormatValidIdentifier = struct {
+    name: string,
+    const js_lexer = @import("./js_lexer.zig");
+    pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var iterator = strings.CodepointIterator.init(self.name);
+        var cursor = strings.CodepointIterator.Cursor{};
+
+        var has_needed_gap = false;
+        var needs_gap = false;
+        var start_i: usize = 0;
+
+        if (!iterator.next(&cursor)) {
+            try writer.writeAll("_");
+            return;
+        }
+
+        // Common case: no gap necessary. No allocation necessary.
+        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
+        if (!needs_gap) {
+            // Are there any non-alphanumeric chars at all?
+            while (iterator.next(&cursor)) {
+                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
+                    needs_gap = true;
+                    start_i = cursor.i;
+                    break;
+                }
+            }
+        }
+
+        if (needs_gap) {
+            needs_gap = false;
+
+            var slice = self.name[start_i..];
+            iterator = strings.CodepointIterator.init(slice);
+            cursor = strings.CodepointIterator.Cursor{};
+
+            while (iterator.next(&cursor)) {
+                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
+                    if (needs_gap) {
+                        try writer.writeAll("_");
+                        needs_gap = false;
+                        has_needed_gap = true;
+                    }
+                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
+                } else if (!needs_gap) {
+                    needs_gap = true;
+                    // skip the code point, replace it with a single _
+                }
+            }
+
+            // If it ends with an emoji
+            if (needs_gap) {
+                try writer.writeAll("_");
+                needs_gap = false;
+                has_needed_gap = true;
+            }
+
+            return;
+        }
+
+        try writer.writeAll(self.name);
+    }
+};
+
 pub fn indexOfSigned(self: string, str: string) i32 {
     const i = std.mem.indexOf(u8, self, str) orelse return -1;
     return @intCast(i32, i);
@@ -3778,24 +3851,50 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
     return try std.mem.join(allocator, delimiter, slices);
 }
 
+pub fn order(a: []const u8, b: []const u8) std.math.Order {
+    const len = @min(a.len, b.len);
+    const cmp = bun.C.memcmp(a.ptr, b.ptr, len);
+    return switch (cmp) {
+        0 => std.math.order(a.len, b.len),
+        1 => .gt,
+        -1 => .lt,
+        else => unreachable,
+    };
+}
+
 pub fn cmpStringsAsc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .lt;
+    return order(a, b) == .lt;
 }
 
 pub fn cmpStringsDesc(_: void, a: string, b: string) bool {
-    return std.mem.order(u8, a, b) == .gt;
+    return order(a, b) == .gt;
 }
 
 const sort_asc = std.sort.asc(u8);
 const sort_desc = std.sort.desc(u8);
 
 pub fn sortAsc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsAsc);
 }
 
 pub fn sortDesc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
+
+pub const StringArrayByIndexSorter = struct {
+    keys: []const []const u8,
+    pub fn lessThan(sorter: *@This(), a: usize, b: usize) bool {
+        return strings.order(sorter.keys[a], sorter.keys[b]) == .lt;
+    }
+
+    pub fn init(keys: []const []const u8) @This() {
+        return .{
+            .keys = keys,
+        };
+    }
+};
 
 pub fn isASCIIHexDigit(c: u8) bool {
     return std.ascii.isHex(c);

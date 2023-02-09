@@ -39,6 +39,29 @@ pub const Renamer = struct {
     }
 };
 
+pub const BundledRenamer = struct {
+    symbols: js_ast.Symbol.Map,
+    sources: []const []const u8,
+
+    pub fn init(symbols: js_ast.Symbol.Map, sources: []const []const u8) Renamer {
+        return Renamer{ .symbols = symbols, .source = sources };
+    }
+
+    pub fn nameForSymbol(renamer: *Renamer, ref: Ref) string {
+        if (ref.isSourceContentsSlice()) {
+            unreachable;
+        }
+
+        const resolved = renamer.symbols.follow(ref);
+
+        if (renamer.symbols.getConst(resolved)) |symbol| {
+            return symbol.original_name;
+        } else {
+            Global.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
+        }
+    }
+};
+
 pub const DisabledRenamer = struct {
     pub fn init(_: js_ast.Symbol.Map) DisabledRenamer {}
     pub inline fn nameForSymbol(_: *Renamer, _: js_ast.Ref) string {

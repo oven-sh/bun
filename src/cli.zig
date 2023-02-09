@@ -36,25 +36,6 @@ const Router = @import("./router.zig");
 
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
-const AddCommand = @import("./cli/add_command.zig").AddCommand;
-const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-const BunCommand = @import("./cli/bun_command.zig").BunCommand;
-const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-const DevCommand = @import("./cli/dev_command.zig").DevCommand;
-const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-const RunCommand = @import("./cli/run_command.zig").RunCommand;
-const ShellCompletions = @import("./cli/shell_completions.zig");
-const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 
 const Reporter = @import("./report.zig");
@@ -938,7 +919,7 @@ pub const Command = struct {
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
+            RootCommandMatcher.case("wiptest") => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
@@ -978,12 +959,52 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
+        const BunCommand = @import("./cli/bun_command.zig").BunCommand;
+
+        const AddCommand = @import("./cli/add_command.zig").AddCommand;
+        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+        const DevCommand = @import("./cli/dev_command.zig").DevCommand;
+        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+        const RunCommand = @import("./cli/run_command.zig").RunCommand;
+        const ShellCompletions = @import("./cli/shell_completions.zig");
+        const TestCommand = @import("./cli/test_command.zig").TestCommand;
+        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+
+        if (comptime bun.fast_debug_build_mode) {
+            // _ = AddCommand;
+            // _ = BuildCommand;
+            // _ = CreateCommand;
+            _ = CreateListExamplesCommand;
+            // _ = DevCommand;
+            _ = DiscordCommand;
+            // _ = InstallCommand;
+            // _ = LinkCommand;
+            // _ = UnlinkCommand;
+            // _ = InstallCompletionsCommand;
+            // _ = PackageManagerCommand;
+            // _ = RemoveCommand;
+            // _ = RunCommand;
+            // _ = ShellCompletions;
+            // _ = TestCommand;
+            // _ = UpgradeCommand;
+            // _ = BunxCommand;
+        }
+
         const tag = which();
 
         switch (tag) {
-            .DiscordCommand => return try DiscordCommand.exec(allocator),
-            .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
+            // .DiscordCommand => return try DiscordCommand.exec(allocator),
+            // .HelpCommand => return try HelpCommand.exec(allocator),
+            // .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 
@@ -994,68 +1015,80 @@ pub const Command = struct {
                 try BunCommand.exec(ctx);
             },
             .DevCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .DevCommand);
 
                 try DevCommand.exec(ctx);
             },
             .BuildCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 try InstallCompletionsCommand.exec(allocator);
                 return;
             },
             .InstallCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
@@ -1142,6 +1175,7 @@ pub const Command = struct {
                 return;
             },
             .CreateCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .CreateCommand);
                 var positionals: [2]string = undefined;
                 var positional_i: usize = 0;
@@ -1165,6 +1199,7 @@ pub const Command = struct {
                 return;
             },
             .RunCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
@@ -1175,11 +1210,13 @@ pub const Command = struct {
                 }
             },
             .UpgradeCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
+                if (comptime bun.fast_debug_build_mode) unreachable;
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {

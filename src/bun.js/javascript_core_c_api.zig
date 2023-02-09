@@ -493,6 +493,8 @@ pub const CellType = enum(u8) {
     }
 };
 pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
+
+/// **DEPRECATED**: USE from JSValue instead! This whole file should be used sparingly.
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;

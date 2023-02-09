@@ -13,6 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
+const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -23,7 +24,16 @@ const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = bun.js_printer;
+const JSPrinter = @import("./js_printer.zig");
+const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+
+/// This is the index to the automatically-generated part containing code that
+/// calls "__export(exports, { ... getters ... })". This is used to generate
+/// getters on an exports object for ES6 export statements, and is both for
+/// ES6 star imports and CommonJS-style modules. All files have one of these,
+/// although it may contain no statements if there is nothing to export.
+pub const namespace_export_part_index = 0;
+
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -150,20 +160,21 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
         fn deinit() void {
             var sliced = _self.overflow.slice();
+            var allocator = _self.overflow.allocator;
 
             if (sliced.len > 1) {
                 var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
                     var ptrs = @ptrCast(*[2]Block, sliced[i]);
-                    default_allocator.free(ptrs);
+                    allocator.free(ptrs);
                     i += 2;
                 }
                 _self.overflow.allocated = 1;
             }
             var base_store = @fieldParentPtr(WithBase, "store", _self);
             if (_self.overflow.ptrs[0] == &base_store.head) {
-                default_allocator.destroy(base_store);
+                allocator.destroy(base_store);
             }
             _self = undefined;
         }
@@ -219,7 +230,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;
-pub const BabyList = @import("./baby_list.zig").BabyList;
+pub const BabyList = bun.BabyList;
 
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub const ExprNodeList = BabyList(Expr);
@@ -841,6 +852,19 @@ pub const Symbol = struct {
         count_estimate: u32 = 0,
     };
 
+    pub const List = BabyList(Symbol);
+    pub const NestedList = BabyList(List);
+
+    pub fn mergeContentsWith(this: *Symbol, old: *Symbol) void {
+        this.use_count_estimate += old.use_count_estimate;
+        if (old.must_not_be_renamed) {
+            this.original_name = old.original_name;
+            this.must_not_be_renamed = true;
+        }
+
+        // TODO: MustStartWithCapitalLetterForJSX
+    }
+
     pub const Map = struct {
         // This could be represented as a "map[Ref]Symbol" but a two-level array was
         // more efficient in profiles. This appears to be because it doesn't involve
@@ -849,30 +873,68 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: [][]Symbol,
+        symbols_for_source: NestedList = NestedList{},
+
+        pub fn assignChunkIndex(this: *Map, decls_: DeclaredSymbol.List, chunk_index: u32) void {
+            const Iterator = struct {
+                map: *Map,
+                chunk_index: u32,
+
+                pub fn next(self: @This(), ref: Ref) void {
+                    var symbol = self.map.get(ref).?;
+                    symbol.chunk_index = self.chunk_index;
+                }
+            };
+            var decls = decls_;
+
+            DeclaredSymbol.forEachTopLevelSymbol(&decls, Iterator{ .map = this, .chunk_index = chunk_index }, Iterator.next);
+        }
+
+        pub fn merge(this: *Map, old: Ref, new: Ref) Ref {
+            if (old.eql(new)) {
+                return new;
+            }
+
+            var old_symbol = this.get(old).?;
+            if (old_symbol.hasLink()) {
+                old_symbol.link = this.merge(old_symbol.link, new);
+                return old_symbol.link;
+            }
+
+            var new_symbol = this.get(new).?;
+
+            if (new_symbol.hasLink()) {
+                new_symbol.link = this.merge(old, new_symbol.link);
+                return new_symbol.link;
+            }
+
+            old_symbol.link = new;
+            new_symbol.mergeContentsWith(old_symbol);
+            return new;
+        }
 
         pub fn get(self: *Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return self.symbols_for_source.at(ref.sourceIndex()).mut(ref.innerIndex());
         }
 
-        pub fn getConst(self: *Map, ref: Ref) ?*const Symbol {
+        pub fn getConst(self: *const Map, ref: Ref) ?*const Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return self.symbols_for_source.at(ref.sourceIndex()).at(ref.innerIndex());
         }
 
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
-            var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
+            var symbols_for_source: NestedList = NestedList.init(try allocator.alloc([]Symbol, sourceCount));
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
-        pub fn initList(list: [][]Symbol) Map {
+        pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
 
@@ -890,6 +952,16 @@ pub const Symbol = struct {
                 return symbols.getConst(symbol.link) orelse symbol;
             }
             return symbol;
+        }
+
+        pub fn followAll(symbols: *Map) void {
+            for (symbols.symbols_for_source.slice()) |list| {
+                for (list.slice()) |*symbol| {
+                    if (symbol.hasLink()) {
+                        symbol.link = follow(symbols, symbol.link);
+                    }
+                }
+            }
         }
 
         pub fn follow(symbols: *Map, ref: Ref) Ref {
@@ -1095,13 +1167,13 @@ pub const E = struct {
         target: ExprNodeIndex,
         optional_chain: ?OptionalChain = null,
 
-        pub fn hasSameFlagsAs(a: *Index, b: *Index) bool {
+        pub fn hasSameFlagsAs(a: *E.Index, b: *E.Index) bool {
             return (a.optional_chain == b.optional_chain);
         }
     };
 
     pub const Arrow = struct {
-        args: []G.Arg,
+        args: []G.Arg = &[_]G.Arg{},
         body: G.FnBody,
 
         is_async: bool = false,
@@ -1930,6 +2002,8 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub const Batcher = bun.Batcher(Stmt);
+
     const Serializable = struct {
         type: Tag,
         object: string,
@@ -2010,6 +2084,8 @@ pub const Stmt = struct {
     }
 
     pub fn alloc(comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+        Stmt.Data.Store.assert();
+
         icount += 1;
         return switch (StatementData) {
             S.Block => Stmt.comptime_alloc("s_block", S.Block, origData, loc),
@@ -2190,7 +2266,7 @@ pub const Stmt = struct {
                 has_inited = false;
             }
 
-            pub fn assert() void {
+            pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (!has_inited)
                         bun.unreachablePanic("Store must be init'd", .{});
@@ -2589,6 +2665,7 @@ pub const Expr = struct {
 
     pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
+        Data.Store.assert();
 
         switch (Type) {
             E.Array => {
@@ -3997,7 +4074,7 @@ pub const Expr = struct {
                 _ = All.init(allocator);
             }
 
-            pub fn assert() void {
+            pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (!has_inited)
                         bun.unreachablePanic("Store must be init'd", .{});
@@ -4534,6 +4611,8 @@ pub const ArrayBinding = struct {
 };
 
 pub const Ast = struct {
+    pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, BabyList(u32), Ref.ArrayHashCtx, false);
+
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports,
@@ -4554,22 +4633,23 @@ pub const Ast = struct {
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
-    import_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax or "import()"
-    export_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: ?logger.Range = null,
+    import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
+    export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
+    top_level_await_keyword: logger.Range = logger.Range.None,
 
     // These are stored at the AST level instead of on individual AST nodes so
     // they can be manipulated efficiently without a full AST traversal
-    import_records: []ImportRecord = &([_]ImportRecord{}),
+    import_records: ImportRecord.List = .{},
 
     hashbang: ?string = null,
     directive: ?string = null,
     url_for_css: ?string = null,
-    parts: []Part,
-    symbols: []Symbol = &([_]Symbol{}),
+    parts: Part.List = Part.List{},
+    // This list may be mutated later, so we should store the capacity
+    symbols: Symbol.List = Symbol.List{},
     module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
-    exports_ref: ?Ref = null,
+    exports_ref: Ref = Ref.None,
     module_ref: ?Ref = null,
     wrapper_ref: ?Ref = null,
     require_ref: Ref = Ref.None,
@@ -4587,17 +4667,21 @@ pub const Ast = struct {
     named_exports: NamedExports = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
+    allocator: std.mem.Allocator,
+    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
-            .parts = parts,
+            .parts = Part.List.init(parts),
+            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
 
-    pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{}, .allocator = bun.default_allocator };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -4609,10 +4693,10 @@ pub const Ast = struct {
     /// Do not call this if it wasn't globally allocated!
     pub fn deinit(this: *Ast) void {
         // TODO: assert mimalloc-owned memory
-        if (this.parts.len > 0) bun.default_allocator.free(this.parts);
+        if (this.parts.len > 0) this.parts.deinitWithAllocator(bun.default_allocator);
         if (this.externals.len > 0) bun.default_allocator.free(this.externals);
-        if (this.symbols.len > 0) bun.default_allocator.free(this.symbols);
-        if (this.import_records.len > 0) bun.default_allocator.free(this.import_records);
+        if (this.symbols.len > 0) this.symbols.deinitWithAllocator(bun.default_allocator);
+        if (this.import_records.len > 0) this.import_records.deinitWithAllocator(bun.default_allocator);
     }
 };
 
@@ -4646,7 +4730,11 @@ pub const ExportsKind = enum {
     // "exports") with getters for the export names. All named imports to this
     // module are allowed. Direct named imports reference the corresponding export
     // directly. Other imports go through property accesses on "exports".
-    esm_with_dyn,
+    esm_with_dynamic_fallback,
+
+    pub fn isDynamic(self: ExportsKind) bool {
+        return self == .esm_with_dynamic_fallback or self == .cjs;
+    }
 
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);
@@ -4656,11 +4744,82 @@ pub const ExportsKind = enum {
 pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
+
+    pub const List = bun.MultiArrayList(DeclaredSymbol);
+
+    pub fn forEachTopLevelSymbol(decls_: *List, ctx: anytype, comptime Fn: anytype) void {
+        const FnType = @TypeOf(Fn);
+        const ReturnType = bun.meta.ReturnOfType(FnType);
+        var decls = decls_.slice();
+        var is_top_levels_bool = decls.items(.is_top_level);
+        var refs = decls.items(.ref);
+
+        if (comptime Environment.enableSIMD) {
+            const vector_size = 16;
+            if (refs.len >= vector_size) {
+                const refs_end = refs.ptr + (refs.len - refs.len % vector_size);
+                while (refs.ptr != refs_end) {
+                    const vec = @as(@Vector(vector_size, bool), @bitCast([vector_size]bool, is_top_levels_bool.ptr[0..vector_size]));
+
+                    if (@reduce(.Max, vec) > 0) {
+                        var j = 0;
+                        while (j < vector_size) : (j += 1) {
+                            if (vec[j]) {
+                                if (comptime ReturnType == void) {
+                                    Fn(ctx, refs[j]);
+                                } else if (Fn(ctx, refs[j])) |result| {
+                                    refs[j] = result;
+                                }
+                            }
+                        }
+                    }
+
+                    is_top_levels_bool = is_top_levels_bool[vector_size..];
+                    refs = refs[vector_size..];
+                }
+            }
+        }
+
+        const scalar = 8;
+        while (refs.len >= scalar) : (refs = refs[scalar..]) {
+            const eight: u64 = @as(u64, is_top_levels_bool[0..scalar].*);
+            if (eight == 0) {
+                is_top_levels_bool = is_top_levels_bool[scalar..];
+                continue;
+            }
+
+            comptime var j: usize = 0;
+
+            inline while (j < scalar) : (j += 1) {
+                if (is_top_levels_bool[j]) {
+                    if (comptime ReturnType == void) {
+                        Fn(ctx, refs[j]);
+                    } else if (Fn(ctx, refs[j])) |result| {
+                        refs[j] = result;
+                    }
+                }
+            }
+
+            is_top_levels_bool = is_top_levels_bool[scalar..];
+        }
+
+        while (refs.len > 0) : (refs = refs[1..]) {
+            if (comptime ReturnType == void) {
+                Fn(ctx, refs[0]);
+            } else if (Fn(ctx, refs[0])) |result| {
+                refs[0] = result;
+            }
+
+            is_top_levels_bool = is_top_levels_bool[1..];
+        }
+    }
 };
 
-pub const Dependency = packed struct {
-    source_index: u32 = 0,
-    part_index: u32 = 0,
+pub const Dependency = struct {
+    source_index: Index = Index.invalid,
+    part_index: Index.Int = 0,
+
+    pub const List = BabyList(Dependency);
 };
 
 pub const ExprList = std.ArrayList(Expr);
@@ -4673,24 +4832,27 @@ pub const BindingList = std.ArrayList(Binding);
 // shaking and can be assigned to separate chunks (i.e. output files) by code
 // splitting.
 pub const Part = struct {
-    stmts: []Stmt,
+    pub const ImportRecordIndices = BabyList(u32);
+    pub const List = BabyList(Part);
+
+    stmts: []Stmt = &([_]Stmt{}),
     scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
-    import_record_indices: []u32 = &([_]u32{}),
+    import_record_indices: ImportRecordIndices = .{},
 
     // All symbols that are declared in this part. Note that a given symbol may
     // have multiple declarations, and so may end up being declared in multiple
     // parts (e.g. multiple "var" declarations with the same name). Also note
     // that this list isn't deduplicated and may contain duplicates.
-    declared_symbols: []DeclaredSymbol = &([_]DeclaredSymbol{}),
+    declared_symbols: DeclaredSymbol.List = .{},
 
     // An estimate of the number of uses of all symbols used within this part.
     symbol_uses: SymbolUseMap = SymbolUseMap{},
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
-    dependencies: []Dependency = &([_]Dependency{}),
+    dependencies: Dependency.List = .{},
 
     // If true, this part can be removed if none of the declared symbols are
     // used. If the file containing this part is imported, then all parts that
@@ -4707,6 +4869,8 @@ pub const Part = struct {
     is_live: bool = false,
 
     tag: Tag = Tag.none,
+
+    valid_in_development: if (bun.Environment.allow_assert) bool else void = bun.DebugOnlyDefault(true),
 
     pub const Tag = enum {
         none,
@@ -4737,10 +4901,10 @@ pub const StmtOrExpr = union(enum) {
 
 pub const NamedImport = struct {
     // Parts within this file that use this import
-    local_parts_with_uses: []u32 = &([_]u32{}),
+    local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
     alias: ?string,
-    alias_loc: ?logger.Loc,
+    alias_loc: ?logger.Loc = null,
     namespace_ref: ?Ref,
     import_record_index: u32,
 
@@ -4760,7 +4924,7 @@ pub const NamedExport = struct {
     alias_loc: logger.Loc,
 };
 
-pub const StrictModeKind = enum(u7) {
+pub const StrictModeKind = enum(u4) {
     sloppy_mode,
     explicit_strict_mode,
     implicit_strict_mode_import,
@@ -4778,9 +4942,9 @@ pub const Scope = struct {
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
-    children: std.ArrayListUnmanaged(*Scope) = .{},
+    children: BabyList(*Scope) = .{},
     members: MemberHashMap = .{},
-    generated: std.ArrayListUnmanaged(Ref) = .{},
+    generated: BabyList(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,
@@ -4958,7 +5122,7 @@ pub const Scope = struct {
     pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {
         if (s.strict_mode == .sloppy_mode) {
             s.strict_mode = kind;
-            for (s.children.items) |child| {
+            for (s.children.slice()) |child| {
                 child.recursiveSetStrictMode(kind);
             }
         }
@@ -8525,3 +8689,4 @@ pub const Macro = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+

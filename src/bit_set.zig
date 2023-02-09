@@ -781,6 +781,10 @@ pub const DynamicBitSetUnmanaged = struct {
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 
+    pub fn bytes(self: Self) []const u8 {
+        return std.mem.sliceAsBytes(self.masks[0 .. numMasks(self.bit_length) + 1]);
+    }
+
     /// Returns the total number of set bits in this bit set.
     pub fn count(self: Self) usize {
         const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
@@ -1047,6 +1051,62 @@ pub const DynamicBitSetUnmanaged = struct {
     }
     fn numMasks(bit_length: usize) usize {
         return (bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+    }
+};
+
+pub const AutoBitSet = union(enum) {
+    const Static = ArrayBitSet(usize, (@bitSizeOf(DynamicBitSetUnmanaged) - 1));
+
+    static: Static,
+    dynamic: DynamicBitSetUnmanaged,
+
+    pub inline fn needsDynamic(bit_length: usize) bool {
+        return bit_length > Static.bit_length;
+    }
+
+    pub fn initEmpty(allocator: Allocator, bit_length: usize) !AutoBitSet {
+        if (bit_length <= Static.bit_length) {
+            return AutoBitSet{ .static = Static.initEmpty() };
+        } else {
+            return AutoBitSet{ .dynamic = try DynamicBitSetUnmanaged.initEmpty(allocator, bit_length) };
+        }
+    }
+
+    pub fn isSet(this: *const AutoBitSet, index: usize) bool {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.isSet(index),
+            .dynamic => this.dynamic.*.isSet(index),
+        };
+    }
+
+    pub fn clone(this: *const AutoBitSet, allocator: std.mem.Allocator) AutoBitSet {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => AutoBitSet{ .static = this.static },
+            .dynamic => AutoBitSet{ .dynamic = this.dynamic.*.clone(allocator) },
+        };
+    }
+
+    pub fn set(this: *const AutoBitSet, index: usize) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => this.static.set(index),
+            .dynamic => this.dynamic.set(index),
+        }
+    }
+
+    pub fn bytes(this: *const AutoBitSet) []const u8 {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => std.mem.asBytes(&this.static.masks),
+            .dynamic => this.dynamic.*.bytes(),
+        };
+    }
+
+    pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
+        switch (std.meta.activeTag(this.*)) {
+            .static => {},
+            .dynamic => {
+                this.dynamic.deinit(allocator);
+            },
+        }
     }
 };
 

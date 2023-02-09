@@ -7,22 +7,7 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
-// We're disabling Object.freeze because it breaks CJS => ESM and can cause
-// issues with Suspense and other things that expect the CJS module namespace
-// to be mutable when the ESM module namespace is NOT mutable
-// var __objectFreezePolyfill = new WeakSet();
-
-// globalThis.Object.freeze = function freeze(obj) {
-//   __objectFreezePolyfill.add(obj);
-//   return obj;
-// };
-
-// globalThis.Object.isFrozen = function isFrozen(obj) {
-//   return __objectFreezePolyfill.has(obj);
-// };
-
-export var __markAsModule = (target) =>
-  __defProp(target, "__esModule", { value: true, configurable: true });
+export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 
 // lazy require to prevent loading one icon from a design system
 export var $$lzy = (target, module, props) => {
@@ -37,7 +22,7 @@ export var $$lzy = (target, module, props) => {
   return target;
 };
 
-export var __toModule = (module) => {
+export var __toModule = module => {
   return __reExport(
     __markAsModule(
       __defProp(
@@ -81,15 +66,9 @@ export var __commonJS = (cb, name) => {
             return origExports.apply(this, arguments);
           };
           Object.setPrototypeOf(mod_exports, __getProtoOf(origExports));
-          Object.defineProperties(
-            mod_exports,
-            Object.getOwnPropertyDescriptors(origExports),
-          );
+          Object.defineProperties(mod_exports, Object.getOwnPropertyDescriptors(origExports));
         } else {
-          mod_exports = __create(
-            __getProtoOf(mod_exports),
-            Object.getOwnPropertyDescriptors(mod_exports),
-          );
+          mod_exports = __create(__getProtoOf(mod_exports), Object.getOwnPropertyDescriptors(mod_exports));
         }
       }
 
@@ -134,14 +113,13 @@ export var __commonJS = (cb, name) => {
 
 export var __cJS2eSM = __commonJS;
 
-export var __internalIsCommonJSNamespace = (namespace) =>
+export var __internalIsCommonJSNamespace = namespace =>
   namespace != null &&
   typeof namespace === "object" &&
-  ((namespace.default && namespace.default[cjsRequireSymbol]) ||
-    namespace[cjsRequireSymbol]);
+  ((namespace.default && namespace.default[cjsRequireSymbol]) || namespace[cjsRequireSymbol]);
 
 // require()
-export var __require = (namespace) => {
+export var __require = namespace => {
   if (__internalIsCommonJSNamespace(namespace)) {
     return namespace.default();
   }
@@ -152,7 +130,7 @@ export var __require = (namespace) => {
 // require().default
 // this currently does nothing
 // get rid of this wrapper once we're more confident we do not need special handling for default
-__require.d = (namespace) => {
+__require.d = namespace => {
   return namespace;
 };
 
@@ -176,7 +154,7 @@ export var __export = (target, all) => {
       get: all[name],
       enumerable: true,
       configurable: true,
-      set: (newValue) => (all[name] = () => newValue),
+      set: newValue => (all[name] = () => newValue),
     });
 };
 
@@ -184,7 +162,7 @@ export var __exportValue = (target, all) => {
   for (var name in all) {
     __defProp(target, name, {
       get: () => all[name],
-      set: (newValue) => (all[name] = newValue),
+      set: newValue => (all[name] = newValue),
       enumerable: true,
       configurable: true,
     });
@@ -194,21 +172,20 @@ export var __exportValue = (target, all) => {
 export var __exportDefault = (target, value) => {
   __defProp(target, "default", {
     get: () => value,
-    set: (newValue) => (value = newValue),
+    set: newValue => (value = newValue),
     enumerable: true,
     configurable: true,
   });
 };
 
-export var __reExport = (target, module, desc) => {
+export var __reExport = (target, module, copyDefault, desc) => {
   if ((module && typeof module === "object") || typeof module === "function")
     for (let key of __getOwnPropNames(module))
-      if (!__hasOwnProp.call(target, key) && key !== "default")
+      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== "default"))
         __defProp(target, key, {
           get: () => module[key],
           configurable: true,
-          enumerable:
-            !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
+          enumerable: !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
         });
   return target;
 };
@@ -237,15 +214,43 @@ export var __merge = (props, defaultProps) => {
 };
 
 export var __decorateClass = (decorators, target, key, kind) => {
-  var result =
-    kind > 1 ? void 0 : kind ? __getOwnPropDesc(target, key) : target;
+  var result = kind > 1 ? void 0 : kind ? __getOwnPropDesc(target, key) : target;
   for (var i = decorators.length - 1, decorator; i >= 0; i--)
-    if ((decorator = decorators[i]))
-      result =
-        (kind ? decorator(target, key, result) : decorator(result)) || result;
+    if ((decorator = decorators[i])) result = (kind ? decorator(target, key, result) : decorator(result)) || result;
   if (kind && result) __defProp(target, key, result);
   return result;
 };
 
-export var __decorateParam = (index, decorator) => (target, key) =>
-  decorator(target, key, index);
+export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
+
+// Converts the module from CommonJS to ESM
+export var __toESM = (module, isNodeMode) => {
+  return __reExport(
+    __markAsModule(
+      __defProp(
+        module != null ? __create(__getProtoOf(module)) : {},
+        "default",
+
+        // If the importer is not in node compatibility mode and this is an ESM
+        // file that has been converted to a CommonJS file using a Babel-
+        // compatible transform (i.e. "__esModule" has been set), then forward
+        // "default" to the export named "default". Otherwise set "default" to
+        // "module.exports" for node compatibility.
+        !isNodeMode && module && module.__esModule
+          ? { get: () => module.default, enumerable: true }
+          : { value: module, enumerable: true },
+      ),
+    ),
+    module,
+  );
+};
+
+// Converts the module from ESM to CommonJS
+export var __toCommonJS = /* @__PURE__ */ (cache => {
+  return (module, temp) => {
+    return (
+      (cache && cache.get(module)) ||
+      ((temp = __reExport(__markAsModule({}), module, /* copyDefault */ 1)), cache && cache.set(module, temp), temp)
+    );
+  };
+})(typeof WeakMap !== "undefined" ? new WeakMap() : 0);

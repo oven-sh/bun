@@ -744,7 +744,7 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy);
+            ), proxy, fetch_options.signal, fetch_options.globalThis);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -756,7 +756,7 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "" };
+        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "", signal: ?JSC.Strong = null, globalThis: ?*JSGlobalObject };
 
         pub fn queue(
             allocator: std.mem.Allocator,
@@ -818,6 +818,8 @@ pub const Fetch = struct {
         var verbose = false;
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
+        var signal: ?JSC.Strong = null;
+
         var url_proxy_buffer: []const u8 = undefined;
 
         if (first_arg.as(Request)) |request| {
@@ -883,6 +885,11 @@ pub const Fetch = struct {
                     }
                     if (options.get(globalThis, "verbose")) |verb| {
                         verbose = verb.toBoolean();
+                    }
+                    if (options.get(globalThis, "signal")) |signal_arg| {
+                        if (signal_arg.isObject()) {
+                            signal = JSC.Strong.create(signal_arg, globalThis);
+                        }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (!proxy_arg.isUndefined()) {
@@ -994,6 +1001,11 @@ pub const Fetch = struct {
 
                     if (options.get(globalThis, "verbose")) |verb| {
                         verbose = verb.toBoolean();
+                    }
+                    if (options.get(globalThis, "signal")) |signal_arg| {
+                        if (signal_arg.isObject()) {
+                            signal = JSC.Strong.create(signal_arg, globalThis);
+                        }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (!proxy_arg.isUndefined()) {
@@ -1108,7 +1120,7 @@ pub const Fetch = struct {
             globalThis,
             .{ .method = method, .url = url, .headers = headers orelse Headers{
                 .allocator = bun.default_allocator,
-            }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer },
+            }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer, .signal = signal, .globalThis = globalThis },
             JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;
         return deferred_promise;

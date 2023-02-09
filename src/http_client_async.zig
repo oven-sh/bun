@@ -1,5 +1,6 @@
 const picohttp = @import("bun").picohttp;
 const bun = @import("bun");
+const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -38,6 +39,7 @@ const Batch = NetworkThread.Batch;
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @intToPtr(*DeadSocket, 1);
+
 
 const print_every = 0;
 var print_every_i: usize = 0;
@@ -989,21 +991,30 @@ http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
-
+signal: ?JSC.Strong = null,
+globalThis: ?*JSC.JSGlobalObject = null,
 pub fn init(
     allocator: std.mem.Allocator,
     method: Method,
     url: URL,
     header_entries: Headers.Entries,
     header_buf: string,
+    signal: ?JSC.Strong,
+    globalThis: ?*JSC.JSGlobalObject,
 ) HTTPClient {
-    return HTTPClient{
-        .allocator = allocator,
-        .method = method,
-        .url = url,
-        .header_entries = header_entries,
-        .header_buf = header_buf,
-    };
+    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis };
+}
+
+pub fn hasSignalAborted(this: *HTTPClient) bool {
+    if (this.globalThis) |globalThis| {
+        if (this.signal != null) {
+            var signal = this.signal.?;
+            var obj = signal.swap().asObject();
+            var aborted = obj.getDirect(globalThis, JSC.ZigString.static("aborted"));
+            return aborted.asBoolean();
+        }
+    }
+    return false;
 }
 
 pub fn deinit(this: *HTTPClient) void {
@@ -1018,6 +1029,11 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.proxy_tunnel) |tunnel| {
         tunnel.deinit();
         this.proxy_tunnel = null;
+    }
+    if (this.signal != null) {
+        var signal = this.signal.?;
+        signal.deinit();
+        this.signal = null;
     }
     this.state.compressed_body.deinit();
     this.state.response_message_buffer.deinit();
@@ -1178,20 +1194,9 @@ pub const AsyncHTTP = struct {
     };
     const AtomicState = std.atomic.Atomic(State);
 
-    pub fn init(
-        allocator: std.mem.Allocator,
-        method: Method,
-        url: URL,
-        headers: Headers.Entries,
-        headers_buf: string,
-        response_buffer: *MutableString,
-        request_body: []const u8,
-        timeout: usize,
-        callback: HTTPClientResult.Callback,
-        http_proxy: ?URL,
-    ) AsyncHTTP {
+    pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, callback: HTTPClientResult.Callback, http_proxy: ?URL, signal: ?JSC.Strong, globalThis: ?*JSC.JSGlobalObject) AsyncHTTP {
         var this = AsyncHTTP{ .allocator = allocator, .url = url, .method = method, .request_headers = headers, .request_header_buf = headers_buf, .request_body = request_body, .response_buffer = response_buffer, .completion_callback = callback, .http_proxy = http_proxy };
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, globalThis);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
         if (http_proxy) |proxy| {
@@ -1222,7 +1227,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy);
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, null);
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -1522,6 +1527,11 @@ fn printResponse(response: picohttp.Response) void {
 }
 
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (this.hasSignalAborted()) {
+        this.closeAndFail(error.Canceled, is_ssl, socket);
+        return;
+    }
+
     switch (this.state.request_stage) {
         .pending, .headers => {
             var stack_fallback = std.heap.stackFallback(16384, default_allocator);
@@ -1821,6 +1831,10 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
 }
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (this.hasSignalAborted()) {
+        this.closeAndFail(error.Canceled, is_ssl, socket);
+        return;
+    }
     switch (this.state.response_stage) {
         .pending, .headers, .proxy_decoded_headers => {
             var to_read = incoming_data;

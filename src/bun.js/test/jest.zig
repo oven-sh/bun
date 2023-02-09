@@ -68,6 +68,7 @@ pub const DiffFormatter = struct {
     edits_: std.ArrayList(Edit),
     v1_: MutableString,
     v2_: MutableString,
+    label: []const u8,
 
     pub fn format(self: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var v1 = self.v1_;
@@ -84,6 +85,9 @@ pub const DiffFormatter = struct {
         const v2_str = v2.toOwnedSliceLeaky();
         const delete_fmt = "<red>{s}<r>";
         const insert_fmt = "<green>{s}<r>";
+
+        try writer.writeAll(self.label);
+        try writer.writeAll("\n\n");
 
         for (edits.items) |edit| {
             switch(edit.type) {
@@ -110,17 +114,25 @@ pub const DiffFormatter = struct {
 };
 
 
-fn formatDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) DiffFormatter {
+fn formatDiff(v1: JSValue, v2: JSValue, comptime label_fmt: []const u8, globalObject: *JSC.JSGlobalObject) DiffFormatter {
     var diff_buf = std.ArrayList(Edit).init(default_allocator);
     var v1_str = MutableString.init(default_allocator, 0) catch unreachable;
     var v2_str = MutableString.init(default_allocator, 0) catch unreachable;
     
     v1.getDiff(&v1_str, v2, &v2_str, &diff_buf, globalObject);
 
+    var label: []const u8 = undefined;
+    if (comptime Output.enable_ansi_colors) {
+        label = Output.prettyFmt(label_fmt, true);
+    } else {
+        label = Output.prettyFmt(label_fmt, false);
+    }
+
     return .{
         .edits_ = diff_buf,
         .v1_ = v1_str,
         .v2_ = v2_str,
+        .label = label,
     };
 }
 
@@ -788,8 +800,9 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be equal", .{});
         } else {
-            // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
-            globalObject.throw("Expected values to be equal\n\ndiff:\n{any}", .{formatDiff(value, expected, globalObject)});
+            globalObject.throw("Expected values to be equal\n\n{any}", .{
+                formatDiff(value, expected, "<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>", globalObject),
+            });
         }
 
         return .zero;
@@ -831,8 +844,9 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be strictly equal", .{});
         } else {
-            // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
-            globalObject.throw("Expected values to be strictly equal", .{});
+            globalObject.throw("Expected values to be strictly equal\n\n{any}", .{
+                formatDiff(value, expected, "<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>", globalObject),
+            });
         }
 
         return .zero;
@@ -899,8 +913,14 @@ pub const Expect = struct {
         } else {
             if (!expected_property.isEmpty() and expected_value != null) {
                 if (expected_property.isObject() and expected_value.?.isObject()) {
-                    // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>\n\n", .{});
-                    globalObject.throw("Expected values to be equal", .{});
+                    globalObject.throw("Expected values to be equal\n\n{any}", .{
+                        formatDiff(
+                            expected_property,
+                            expected_value.?,
+                            "<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>",
+                            globalObject,
+                        ),
+                    });
                 } else {
                     globalObject.throw("Expected property \"{any}\" to be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
                 }

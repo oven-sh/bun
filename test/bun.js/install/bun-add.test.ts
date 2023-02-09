@@ -371,7 +371,7 @@ it("should add dependency alongside workspaces", async () => {
     version: "0.0.1",
     workspaces: ["packages/bar"],
     dependencies: {
-      baz: "^0.0.3",
+      baz: "",
     },
   });
   await access(join(package_dir, "bun.lockb"));
@@ -542,8 +542,13 @@ it("should let you add the same package twice", async () => {
   expect(err1).toContain("Saved lockfile");
   expect(stdout1).toBeDefined();
   const out1 = await new Response(stdout1).text();
-  expect(out1).toContain("installed baz@0.0.3");
-  expect(out1).toContain("1 packages installed");
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed baz@0.0.3",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
   expect(await exited1).toBe(0);
   expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
@@ -582,8 +587,7 @@ it("should let you add the same package twice", async () => {
   expect(err2).toContain("Saved lockfile");
   expect(stdout2).toBeDefined();
   const out2 = await new Response(stdout2).text();
-  expect(out2).toContain("installed baz@0.0.3");
-  expect(out2).not.toContain("1 packages installed");
+  expect(out2.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual(["", " installed baz@0.0.3", "", "[] done", ""]);
   expect(await exited2).toBe(0);
   expect(urls).toEqual([`${root_url}/baz`]);
   expect(requested).toBe(3);
@@ -599,7 +603,115 @@ it("should let you add the same package twice", async () => {
     name: "Foo",
     version: "0.0.1",
     dependencies: {
-      baz: "^0.0.3",
+      baz: "",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should install version tagged with `latest` by default", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": {},
+      "0.0.5": {},
+      latest: "0.0.3",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  // add `latest` version
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "add", "baz", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  const out1 = await new Response(stdout1).text();
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed baz@0.0.3",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: "",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+  // reset cache
+  await rm(join(package_dir, "bun.lockb"));
+  await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+  // re-install with updated `package.json`
+  urls.length = 0;
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.3",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(4);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      baz: "",
     },
   });
   await access(join(package_dir, "bun.lockb"));

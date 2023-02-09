@@ -8,6 +8,10 @@ const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
+const diff = @import("../../deps/zig-diff/main.zig").diff;
+const Edit = @import("../../deps/zig-diff/main.zig").Edit;
+const fmtDiff = @import("../../deps/zig-diff/main.zig").fmtDiff;
+
 const JSC = @import("bun").JSC;
 const js = JSC.C;
 
@@ -722,13 +726,83 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected values to not be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected values to not be equal", .{});
         } else {
-            globalObject.throw("Expected values to be equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+            printDiff(value, expected, globalObject);
+            globalObject.throw("Expected values to be equal", .{});
         }
+
         return .zero;
+    }
+
+    fn printDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) void {
+
+        var diff_buf = std.ArrayList(Edit).init(default_allocator);
+        defer diff_buf.deinit();
+
+        var v1_array = MutableString.init(default_allocator, 0) catch unreachable;
+        defer v1_array.deinit();
+        var v2_array = MutableString.init(default_allocator, 0) catch unreachable;
+        defer v2_array.deinit();
+
+        getDiff(v1, &v1_array, v2, &v2_array, &diff_buf, globalObject);
+
+        const v1_str = v1_array.toOwnedSliceLeaky();
+        const v2_str = v2_array.toOwnedSliceLeaky();
+
+        Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
+        for (diff_buf.items) |edit| {
+            switch (edit.type) {
+                .Equal => Output.pretty("{s}", .{v1_str[edit.range[0]..edit.range[1]]}),
+                .Delete => Output.pretty("<red>{s}<r>", .{v1_str[edit.range[0]..edit.range[1]]}),
+                .Insert => Output.pretty("<green>{s}<r>", .{v2_str[edit.range[0]..edit.range[1]]}),
+            }
+        }
+        Output.print("\n", .{});
+        Output.flush();
+    }
+
+    fn getDiff(v1: JSValue, v1_buf: *MutableString, v2: JSValue, v2_buf: *MutableString, diff_buf: *std.ArrayList(Edit), globalObject: *JSC.JSGlobalObject) void {
+        var buffered_writer_ = MutableString.BufferedWriter{ .context = v1_buf };
+        var buffered_writer = &buffered_writer_;
+
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &v1),
+            1,
+            Writer,
+            Writer,
+            writer,
+            false,
+            true,
+            false,
+        );
+        buffered_writer.flush() catch unreachable;
+        const value_str = v1_buf.toOwnedSliceLeaky();
+
+        buffered_writer_.context = v2_buf;
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &v2),
+            1,
+            Writer,
+            Writer,
+            writer,
+            false,
+            true,
+            false,
+        );
+        buffered_writer.flush() catch unreachable;
+        const expected_str = v2_buf.toOwnedSliceLeaky();
+
+        diff(value_str, expected_str, diff_buf) catch unreachable;
     }
 
     pub fn toStrictEqual(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -764,12 +838,13 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
-            globalObject.throw("Expected values to not be strictly equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+            globalObject.throw("Expected values to not be strictly equal", .{});
         } else {
-            globalObject.throw("Expected values to be strictly equal:\n\tExpected: {any}\n\tReceived: {any}", .{ expected.toFmt(globalObject, &fmt), value.toFmt(globalObject, &fmt) });
+            printDiff(value, expected, globalObject);
+            globalObject.throw("Expected values to be strictly equal", .{});
         }
+
         return .zero;
     }
 

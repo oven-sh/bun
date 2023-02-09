@@ -318,8 +318,8 @@ pub const Version = struct {
         }
 
         pub fn infer(dependency: string) Tag {
-            // empty string means >= 0.0.0
-            if (dependency.len == 0) return .npm;
+            // empty string means `latest`
+            if (dependency.len == 0) return .dist_tag;
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -670,10 +670,6 @@ pub fn parseWithTag(
                     }
 
                     tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
-                    if (tag_to_use.isEmpty()) {
-                        tag_to_use = String.from("latest");
-                    }
-
                     break :brk dependency["npm:".len..i];
                 }).value()
             else
@@ -682,15 +678,12 @@ pub fn parseWithTag(
             // name should never be empty
             if (Environment.allow_assert) std.debug.assert(!actual.isEmpty());
 
-            // tag should never be empty
-            if (Environment.allow_assert) std.debug.assert(!tag_to_use.isEmpty());
-
             return .{
                 .literal = sliced.value(),
                 .value = .{
                     .dist_tag = .{
                         .name = actual,
-                        .tag = tag_to_use,
+                        .tag = if (tag_to_use.isEmpty()) String.from("latest") else tag_to_use,
                     },
                 },
                 .tag = .dist_tag,

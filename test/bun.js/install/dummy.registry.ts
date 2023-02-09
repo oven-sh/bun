@@ -7,7 +7,7 @@ import { basename, join } from "path";
 let handler, server;
 export let package_dir, requested, root_url;
 
-export function dummyRegistry(urls, info: object = { "0.0.2": {} }) {
+export function dummyRegistry(urls, info: any = { "0.0.2": {} }) {
   return async request => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
@@ -23,6 +23,7 @@ export function dummyRegistry(urls, info: object = { "0.0.2": {} }) {
     const versions = {};
     let version;
     for (version in info) {
+      if (!/^[0-9]/.test(version)) continue;
       versions[version] = {
         name,
         version,
@@ -37,7 +38,7 @@ export function dummyRegistry(urls, info: object = { "0.0.2": {} }) {
         name,
         versions,
         "dist-tags": {
-          latest: version,
+          latest: info.latest ?? version,
         },
       }),
     );

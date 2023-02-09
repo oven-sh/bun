@@ -4414,7 +4414,7 @@ pub const PackageManager = struct {
             for (updates) |*update| {
                 if (update.e_string) |e_string| {
                     e_string.data = switch (update.resolution.tag) {
-                        .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
+                        .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
                             std.fmt.allocPrint(allocator, "^{}", .{
                                 update.resolution.value.npm.version.fmt(update.version_buf),
                             }) catch unreachable
@@ -6530,12 +6530,8 @@ pub const PackageManager = struct {
             )
         else
             Lockfile.LoadFromDiskResult{ .not_found = {} };
-
         var root = Lockfile.Package{};
-        var maybe_root: Lockfile.Package = undefined;
-
         var needs_new_lockfile = load_lockfile_result != .ok or (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
-
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
         var had_any_diffs = false;
@@ -6596,7 +6592,7 @@ pub const PackageManager = struct {
 
                     var lockfile: Lockfile = undefined;
                     try lockfile.initEmpty(ctx.allocator);
-                    maybe_root = Lockfile.Package{};
+                    var maybe_root = Lockfile.Package{};
 
                     try Lockfile.Package.parseMain(
                         &lockfile,
@@ -6706,7 +6702,7 @@ pub const PackageManager = struct {
         }
 
         if (needs_new_lockfile) {
-            root = Lockfile.Package{};
+            root = .{};
             try manager.lockfile.initEmpty(ctx.allocator);
 
             if (manager.options.enable.frozen_lockfile) {

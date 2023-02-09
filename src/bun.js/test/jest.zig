@@ -78,7 +78,6 @@ fn printDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) void {
     const v1_str = v1_array.toOwnedSliceLeaky();
     const v2_str = v2_array.toOwnedSliceLeaky();
 
-    Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
     for (diff_buf.items) |edit| {
         switch (edit.type) {
             .Equal => Output.pretty("{s}", .{v1_str[edit.range[0]..edit.range[1]]}),
@@ -87,7 +86,6 @@ fn printDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) void {
         }
     }
     Output.print("\n", .{});
-    Output.flush();
 }
 
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
@@ -754,7 +752,9 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be equal", .{});
         } else {
+            Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
             printDiff(value, expected, globalObject);
+            Output.flush();
             globalObject.throw("Expected values to be equal", .{});
         }
 
@@ -797,7 +797,9 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be strictly equal", .{});
         } else {
+            Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
             printDiff(value, expected, globalObject);
+            Output.flush();
             globalObject.throw("Expected values to be strictly equal", .{});
         }
 
@@ -864,7 +866,14 @@ pub const Expect = struct {
             }
         } else {
             if (!expected_property.isEmpty() and expected_value != null) {
-                globalObject.throw("Expected property \"{any}\" to be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
+                if (expected_property.isObject() and expected_value.?.isObject()) {
+                    Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>\n\n", .{});
+                    printDiff(expected_property, expected_value.?, globalObject);
+                    Output.flush();
+                    globalObject.throw("Expected values to be equal", .{});
+                } else {
+                    globalObject.throw("Expected property \"{any}\" to be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
+                }
             } else {
                 globalObject.throw("Expected \"{any}\" to have property: {any}", .{ value.toFmt(globalObject, &fmt), expected_property_path.toFmt(globalObject, &fmt) });
             }

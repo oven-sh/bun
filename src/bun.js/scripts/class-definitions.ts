@@ -1,19 +1,25 @@
+interface PropertyAttribute {
+  enumerable?: boolean;
+  configurable?: boolean;
+}
+
 export type Field =
-  | { getter: string; cache?: true | string; this?: boolean }
-  | { setter: string; this?: boolean }
-  | {
+  | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | ({ setter: string; this?: boolean } & PropertyAttribute)
+  | ({
       accessor: { getter: string; setter: string };
       cache?: true | string;
       this?: boolean;
-    }
-  | {
+    } & PropertyAttribute)
+  | ({
       fn: string;
       length?: number;
       DOMJIT?: {
         returns: string;
-        args?: [string, string] | [string, string, string] | [string];
+        args?: [string, string] | [string, string, string] | [string] | [];
+        pure?: boolean;
       };
-    }
+    } & PropertyAttribute)
   | { internal: true };
 
 export interface ClassDefinition {
@@ -31,6 +37,9 @@ export interface ClassDefinition {
   isEventEmitter?: boolean;
 
   custom?: Record<string, CustomField>;
+
+  configurable?: boolean;
+  enumerable?: boolean;
 }
 
 export interface CustomField {
@@ -57,11 +66,7 @@ export function define(
     construct,
     estimatedSize,
     values,
-    klass: Object.fromEntries(
-      Object.entries(klass).sort(([a], [b]) => a.localeCompare(b)),
-    ),
-    proto: Object.fromEntries(
-      Object.entries(proto).sort(([a], [b]) => a.localeCompare(b)),
-    ),
+    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
+    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
   };
 }

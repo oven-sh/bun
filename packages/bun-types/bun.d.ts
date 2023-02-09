@@ -2154,16 +2154,16 @@ declare module "bun" {
   /**
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
-   * 
+   *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
    * {@link Date} is reached.
-   * 
-   * @example 
+   *
+   * @example
    * ## Sleep for 1 second
    * ```ts
    * import { sleep } from "bun";
-   * 
+   *
    * await sleep(1000);
    * ```
    * ## Sleep for 10 milliseconds
@@ -2171,7 +2171,7 @@ declare module "bun" {
    * await Bun.sleep(10);
    * ```
    * ## Sleep until `Date`
-   * 
+   *
    * ```ts
    * const target = new Date();
    * target.setSeconds(target.getSeconds() + 1);
@@ -2657,7 +2657,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+    }): ReturnType<typeof options["setup"]>;
 
     /**
      * Deactivate all plugins

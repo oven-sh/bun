@@ -39,7 +39,6 @@ const gid_t = std.os.gid_t;
 const ReadPosition = u63;
 
 const Stats = JSC.Node.Stats;
-const BigIntStats = JSC.Node.BigIntStats;
 const Dirent = JSC.Node.Dirent;
 
 pub const FlavoredIO = struct {
@@ -2744,7 +2743,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 return switch (Syscall.fstat(args.fd)) {
-                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result) },
+                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
                     .err => |err| Maybe(Return.Fstat){ .err = err },
                 };
             },
@@ -2848,7 +2847,7 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result) },
+                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result, false) },
                     .err => |err| Maybe(Return.Lstat){ .err = err },
                 };
             },
@@ -3741,7 +3740,7 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result) },
+                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result, false) },
                     .err => |err| Maybe(Return.Stat){ .err = err },
                 });
             },

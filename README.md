@@ -23,7 +23,9 @@ Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 ## Install
 
-Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
+Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon). If you want to use Bun on Windows, you will need to use Windows Subsystem for Linux. Bun will [soon](https://github.com/oven-sh/bun/issues/43) support Windows, natively.
+
+curl:
 
 ```sh
 curl -fsSL https://bun.sh/install | bash
@@ -35,18 +37,18 @@ npm:
 npm install -g bun
 ```
 
-Homebrew: (MacOS and Linux)
+Homebrew:
 
 ```sh
 brew tap oven-sh/bun
 brew install bun
 ```
 
-Docker: (Linux x64)
+Docker:
 
 ```sh
-docker pull jarredsumner/bun:edge
-docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
+docker pull oven/bun
+docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
@@ -435,7 +437,7 @@ bun run ./my-wasm-app.wasm
 bun ./my-wasm-app.wasm
 ```
 
-WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not optimized for performance, but if this feature gets popular, we'll definitely invest time in making it faster.
+WASI support is based on [wasi-js](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js). Currently, it only supports WASI binaries that use the `wasi_snapshot_preview1` or `wasi_unstable` APIs. Bun's implementation is not optimized for performance, but if this feature gets popular, we'll definitely invest time in making it faster.
 
 ## Creating a Discord bot with Bun
 
@@ -5007,7 +5009,7 @@ bun also statically links these libraries:
 - [`c-ares`](https://github.com/c-ares/c-ares), which is MIT licensed
 - `libicu` 72, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
-- WASI implementation from [`wasi-js`](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js), which is BSD 3 clause licensed. Note that wasi-js is originally based on [wasmer-js](https://github.com/wasmerio/wasmer-js), which is MIT licensed. wasmer-js was based on [node-wasi](https://github.com/devsnek/node-wasi) by Gus Caplan (also MIT licensed). You can [read more about the history here](https://github.com/sagemathinc/cowasm/tree/main/packages/wasi-js#history).
+- WASI implementation from [`wasi-js`](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js), which is BSD 3 clause licensed. Note that wasi-js is originally based on [wasmer-js](https://github.com/wasmerio/wasmer-js), which is MIT licensed. wasmer-js was based on [node-wasi](https://github.com/devsnek/node-wasi) by Gus Caplan (also MIT licensed). You can [read more about the history here](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js#history).
 
 For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 

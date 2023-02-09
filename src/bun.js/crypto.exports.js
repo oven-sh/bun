@@ -5,6 +5,8 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf,
   __hasOwnProp = Object.prototype.hasOwnProperty;
 
+const MAX_STRING_LENGTH = 536870888;
+
 var __require = id => import.meta.require(id);
 const crypto = globalThis.crypto;
 const globalCrypto = crypto;
@@ -17405,7 +17407,7 @@ var require_safer = __commonJS({
       });
     if (!safer.kStringMaxLength)
       try {
-        safer.kStringMaxLength = process.binding("buffer").kStringMaxLength;
+        safer.kStringMaxLength = MAX_STRING_LENGTH;
       } catch {}
     safer.constants ||
       ((safer.constants = {

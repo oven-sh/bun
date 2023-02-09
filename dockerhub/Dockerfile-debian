@@ -72,9 +72,8 @@ RUN groupadd bun \
       --shell /bin/sh \
       --create-home
 
-USER 1000:1000
-COPY --from=base --chown=1000:1000 /usr/local/bin/bun /usr/local/bin
-COPY --from=base --chown=1000:1000 /usr/local/bin/bunx /usr/local/bin
+COPY --from=base /usr/local/bin/bun /usr/local/bin
+COPY --from=base /usr/local/bin/bunx /usr/local/bin
 
 RUN which bun \
     && which bunx \

@@ -331,10 +331,7 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "ANY",
-    callback: (
-      err: ErrnoException | null,
-      addresses: AnyRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: AnyRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -344,18 +341,12 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "MX",
-    callback: (
-      err: ErrnoException | null,
-      addresses: MxRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: MxRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "NAPTR",
-    callback: (
-      err: ErrnoException | null,
-      addresses: NaptrRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: NaptrRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
@@ -375,18 +366,12 @@ declare module "dns" {
   export function resolve(
     hostname: string,
     rrtype: "SRV",
-    callback: (
-      err: ErrnoException | null,
-      addresses: SrvRecord[],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: SrvRecord[]) => void,
   ): void;
   export function resolve(
     hostname: string,
     rrtype: "TXT",
-    callback: (
-      err: ErrnoException | null,
-      addresses: string[][],
-    ) => void,
+    callback: (err: ErrnoException | null, addresses: string[][]) => void,
   ): void;
   export function resolve(
     hostname: string,

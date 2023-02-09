@@ -6,6 +6,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
+    configurable: false,
     klass: {},
     proto: {
       encoding: {

@@ -146,6 +146,8 @@ export var access = function access(...args) {
   lutimesSync = fs.lutimesSync.bind(fs),
   rmSync = fs.rmSync.bind(fs),
   rmdirSync = fs.rmdirSync.bind(fs),
+  Dirent = fs.Dirent,
+  Stats = fs.Stats,
   promises = import.meta.require("node:fs/promises");
 
 function callbackify(fsFunction, args) {
@@ -871,6 +873,7 @@ export default {
   copyFileSync,
   createReadStream,
   createWriteStream,
+  Dirent,
   exists,
   existsSync,
   fchmod,
@@ -920,6 +923,7 @@ export default {
   rmdirSync,
   stat,
   statSync,
+  Stats,
   symlink,
   symlinkSync,
   truncate,

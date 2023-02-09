@@ -1227,12 +1227,37 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
+pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    var list = list_;
+
+    var remaining_input = utf16;
+    var start: usize = 0;
+
+    const replacement_char = [_]u8{ 239, 191, 189 };
+    var result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remaining_input, list.items.ptr[start..list.capacity]);
+    list.items.len = result.count;
+    while (result.status == .surrogate) {
+        try list.ensureUnusedCapacity(3);
+        list.items.len += 3;
+        start += result.count;
+
+        list.items[start..][0..replacement_char.len].* = replacement_char;
+        remaining_input = remaining_input[result.count + 1 ..];
+        start += replacement_char.len;
+
+        result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remaining_input, list.items.ptr[start..list.capacity]);
+        list.items.len += result.count;
+    }
+
+    return list;
+}
+
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        var list = try allocator.alloc(u8, length);
-        _ = bun.simdutf.convert.utf16.to.utf8.le(utf16, list);
-        return list;
+        var list = try std.ArrayList(u8).initCapacity(allocator, length);
+        list = try convertUTF16ToUTF8(list, Type, utf16);
+        return list.items;
     }
 
     var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
@@ -1245,8 +1270,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length);
-        list.items.len += bun.simdutf.convert.utf16.to.utf8.le(utf16, list.items.ptr[0..length]);
-        return list;
+        return convertUTF16ToUTF8(list, Type, utf16);
     }
 
     return toUTF8ListWithTypeBun(list_, Type, utf16);
@@ -3457,16 +3481,22 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     }
 
     if (comptime check_min) {
+        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127 or char < 0x20) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
+
+            i += 1;
         }
     } else {
+        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
+
+            i += 1;
         }
     }
 

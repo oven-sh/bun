@@ -64,28 +64,64 @@ fn notImplementedProp(
     return null;
 }
 
-fn printDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) void {
-    var diff_buf = std.ArrayList(Edit).init(default_allocator);
-    defer diff_buf.deinit();
+pub const DiffFormatter = struct {
+    edits_: std.ArrayList(Edit),
+    v1_: MutableString,
+    v2_: MutableString,
 
-    var v1_array = MutableString.init(default_allocator, 0) catch unreachable;
-    defer v1_array.deinit();
-    var v2_array = MutableString.init(default_allocator, 0) catch unreachable;
-    defer v2_array.deinit();
-    
-    v1.getDiff(&v1_array, v2, &v2_array, &diff_buf, globalObject);
+    pub fn format(self: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var v1 = self.v1_;
+        var v2 = self.v2_;
+        var edits = self.edits_;
 
-    const v1_str = v1_array.toOwnedSliceLeaky();
-    const v2_str = v2_array.toOwnedSliceLeaky();
+        defer {
+            edits.deinit();
+            v1.deinit();
+            v2.deinit();
+        }
 
-    for (diff_buf.items) |edit| {
-        switch (edit.type) {
-            .Equal => Output.pretty("{s}", .{v1_str[edit.range[0]..edit.range[1]]}),
-            .Delete => Output.pretty("<red>{s}<r>", .{v1_str[edit.range[0]..edit.range[1]]}),
-            .Insert => Output.pretty("<green>{s}<r>", .{v2_str[edit.range[0]..edit.range[1]]}),
+        const v1_str = v1.toOwnedSliceLeaky();
+        const v2_str = v2.toOwnedSliceLeaky();
+        const delete_fmt = "<red>{s}<r>";
+        const insert_fmt = "<green>{s}<r>";
+
+        for (edits.items) |edit| {
+            switch(edit.type) {
+                .Equal => try writer.writeAll(v1_str[edit.range[0]..edit.range[1]]),
+                .Delete => {
+                    const s = v1_str[edit.range[0]..edit.range[1]];
+                    if (comptime Output.enable_ansi_colors) {
+                        try writer.print(Output.prettyFmt(delete_fmt, true), .{s});
+                    } else {
+                        try writer.print(Output.prettyFmt(delete_fmt, false), .{s});
+                    }
+                },
+                .Insert => {
+                    const s = v2_str[edit.range[0]..edit.range[1]];
+                    if (comptime Output.enable_ansi_colors) {
+                        try writer.print(Output.prettyFmt(insert_fmt, true), .{s});
+                    } else {
+                        try writer.print(Output.prettyFmt(insert_fmt, false), .{s});
+                    }
+                },
+            }
         }
     }
-    Output.print("\n", .{});
+};
+
+
+fn formatDiff(v1: JSValue, v2: JSValue, globalObject: *JSC.JSGlobalObject) DiffFormatter {
+    var diff_buf = std.ArrayList(Edit).init(default_allocator);
+    var v1_str = MutableString.init(default_allocator, 0) catch unreachable;
+    var v2_str = MutableString.init(default_allocator, 0) catch unreachable;
+    
+    v1.getDiff(&v1_str, v2, &v2_str, &diff_buf, globalObject);
+
+    return .{
+        .edits_ = diff_buf,
+        .v1_ = v1_str,
+        .v2_ = v2_str,
+    };
 }
 
 const ArrayIdentityContext = @import("../../identity_context.zig").ArrayIdentityContext;
@@ -752,10 +788,8 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be equal", .{});
         } else {
-            Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
-            printDiff(value, expected, globalObject);
-            Output.flush();
-            globalObject.throw("Expected values to be equal", .{});
+            // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
+            globalObject.throw("Expected values to be equal\n\ndiff:\n{any}", .{formatDiff(value, expected, globalObject)});
         }
 
         return .zero;
@@ -797,9 +831,7 @@ pub const Expect = struct {
         if (not) {
             globalObject.throw("Expected values to not be strictly equal", .{});
         } else {
-            Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
-            printDiff(value, expected, globalObject);
-            Output.flush();
+            // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>\n\n", .{});
             globalObject.throw("Expected values to be strictly equal", .{});
         }
 
@@ -867,9 +899,7 @@ pub const Expect = struct {
         } else {
             if (!expected_property.isEmpty() and expected_value != null) {
                 if (expected_property.isObject() and expected_value.?.isObject()) {
-                    Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>\n\n", .{});
-                    printDiff(expected_property, expected_value.?, globalObject);
-                    Output.flush();
+                    // Output.pretty("\n<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>\n\n", .{});
                     globalObject.throw("Expected values to be equal", .{});
                 } else {
                     globalObject.throw("Expected property \"{any}\" to be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });

@@ -4748,8 +4748,7 @@ pub const DeclaredSymbol = struct {
     pub const List = bun.MultiArrayList(DeclaredSymbol);
 
     pub fn forEachTopLevelSymbol(decls_: *List, ctx: anytype, comptime Fn: anytype) void {
-        const FnType = @TypeOf(Fn);
-        const ReturnType = bun.meta.ReturnOfType(FnType);
+        const ReturnType = bun.meta.ReturnOfType(Fn);
         var decls = decls_.slice();
         var is_top_levels_bool = decls.items(.is_top_level);
         var refs = decls.items(.ref);

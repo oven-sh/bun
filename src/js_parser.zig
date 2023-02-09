@@ -18920,7 +18920,7 @@ fn NewParser_(
                         }
                     };
 
-                    DeclaredSymbol.forEachTopLevelSymbol(&decls, ctx_, Iterator.next);
+                    DeclaredSymbol.forEachTopLevelSymbol(decls, ctx_, Iterator.next);
                 }
 
                 // Pulling in the exports of this module always pulls in the export part

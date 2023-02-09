@@ -3269,6 +3269,46 @@ const LinkerContext = struct {
                     }
                 }
             }
+
+            // Make sure we also track dynamic cross-chunk imports. These need to be
+            // tracked so we count them as dependencies of this chunk for the purpose
+            // of hash calculation.
+            if (chunk_meta.dynamic_imports.count() > 0) {
+                var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
+                std.sort.sort(Index.Int, dynamic_chunk_indices, std.sort.asc(Index.Int));
+
+                var list = chunk.cross_chunk_imports.listManaged(c.allocator);
+                defer chunk.cross_chunk_imports.update(list);
+                try list.ensureTotalCapacity(dynamic_chunk_indices.len);
+                for (dynamic_chunk_indices) |dynamic_chunk_index| {
+                    list.appendAssumeCapacity(
+                        .{
+                            .import_kind = .dynamic,
+                            .chunk_index = dynamic_chunk_index,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Generate cross-chunk exports. These must be computed before cross-chunk
+        // imports because of export alias renaming, which must consider all export
+        // aliases simultaneously to avoid collisions.
+        {
+            var chunk_metas_ptr = chunk_metas.ptr;
+            std.debug.assert(chunk_metas.len == chunks.len);
+            for (chunks) |*chunk| {
+                var chunk_meta = chunk_metas_ptr[0];
+                chunk_metas_ptr += 1;
+
+                if (chunk.content != .javascript) continue;
+
+                var repr = &chunk.content.javascript;
+
+                // TODO:
+                _ = repr;
+                _ = chunk_meta;
+            }
         }
     }
 
@@ -4335,7 +4375,7 @@ pub const Chunk = struct {
     template: PathTemplate = .{},
 
     /// For code splitting
-    cross_chunk_imports: []CrossChunkImport = &.{},
+    cross_chunk_imports: BabyList(CrossChunkImport) = .{},
 
     content: Content,
 

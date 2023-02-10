@@ -344,6 +344,10 @@ pub fn getSystemLoadavg() [3]f64 {
     }
 }
 
+pub fn setTtyOrigTermios() i32 {
+    return set_tty_orig_termios();
+}
+
 pub fn getProcessPriority(pid_: i32) i32 {
     const pid = @intCast(c_uint, pid_);
     return get_process_priority(pid);
@@ -439,6 +443,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
 }
 
 // set in c-bindings.cpp
+pub extern fn set_tty_orig_termios() i32;
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 

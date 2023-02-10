@@ -3956,9 +3956,9 @@ pub const File = struct {
         };
 
         if ((file.is_atty orelse false) or (fd < 3 and std.os.isatty(fd))) {
-            var termios = std.mem.zeroes(std.os.termios);
-            _ = std.c.tcgetattr(fd, &termios);
-            bun.C.cfmakeraw(&termios);
+            // var termios = std.mem.zeroes(std.os.termios);
+            // _ = std.c.tcgetattr(fd, &termios);
+            // bun.C.cfmakeraw(&termios);
             file.is_atty = true;
         }
 

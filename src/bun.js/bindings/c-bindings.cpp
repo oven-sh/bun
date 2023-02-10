@@ -4,6 +4,21 @@
 #include <unistd.h>
 #include <sys/fcntl.h>
 #include <sys/stat.h>
+#include "TTYHelper.h"
+
+extern "C" int32_t set_tty_orig_termios()
+{
+    return tty__get_termios(STDIN_FILENO, NULL);
+}
+
+extern "C" typedef tty_mode_t tty_mode_t;
+extern "C" int32_t set_tty_mode(tty_mode_t mode)
+{
+    // ASSERT(mode == TTY_MODE_NORMAL || mode == TTY_MODE_RAW);
+    if (mode < TTY_MODE_NORMAL || mode > TTY_MODE_RAW)
+        return -1;
+    return tty__set_mode(STDIN_FILENO, mode);
+}
 
 extern "C" int32_t get_process_priority(uint32_t pid)
 {

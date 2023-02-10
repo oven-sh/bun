@@ -68,6 +68,10 @@ test("process.stdin - resume", async () => {
   expect(text).toBe("RESUMED" + lines.join("\n") + "ENDED");
 });
 
+test("process.stdin - isRaw", () => {
+  expect(process.stdin.isRaw).toBe(true);
+});
+
 test("process.stdout", () => {
   expect(process.stdout).toBeDefined();
   expect(process.stdout.isTTY).toBe(isatty(1));

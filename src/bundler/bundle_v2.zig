@@ -1688,7 +1688,7 @@ const LinkerContext = struct {
         }
 
         // Determine the order of JS files (and parts) within the chunk ahead of time
-        try this.findImportedAllPartsInJSOrder(temp_allocator, chunks);
+        try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
         const unique_key_item_len = std.fmt.count("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
         var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len);
@@ -1722,13 +1722,12 @@ const LinkerContext = struct {
     }
 
     pub fn findAllImportedPartsInJSOrder(this: *LinkerContext, temp_allocator: std.mem.Allocator, chunks: []Chunk) !void {
-        var part_ranges_shared = std.ArrayList(PartRange).init(this.allocator);
-        var parts_prefix_shared = std.ArrayList(PartRange).init(this.allocator);
+        var part_ranges_shared = std.ArrayList(PartRange).init(temp_allocator);
+        var parts_prefix_shared = std.ArrayList(PartRange).init(temp_allocator);
         defer part_ranges_shared.deinit();
         defer parts_prefix_shared.deinit();
         for (chunks) |*chunk| {
             try this.findImportedPartsInJSOrder(
-                temp_allocator,
                 chunk,
                 &part_ranges_shared,
                 &parts_prefix_shared,
@@ -1760,9 +1759,9 @@ const LinkerContext = struct {
 
         const Visitor = struct {
             entry_bits: *const AutoBitSet,
-            wraps: []const WrapKind,
-            parts: [][]js_ast.Part,
-            import_records: [][]ImportRecord,
+            flags: []const JSMeta.Flags,
+            parts: []BabyList(js_ast.Part),
+            import_records: []BabyList(ImportRecord),
             files: std.ArrayList(Index.Int) = undefined,
             part_ranges: std.ArrayList(PartRange) = undefined,
             visited: std.AutoHashMap(Index.Int, void) = undefined,
@@ -1776,22 +1775,22 @@ const LinkerContext = struct {
             ) void {
                 if (ranges.items.len > 0) {
                     var last_range = &ranges.items[ranges.items.len - 1];
-                    if (last_range.source_index == source_index and last_range.part_index_end == part_index) {
+                    if (last_range.source_index.get() == source_index and last_range.part_index_end == part_index) {
                         last_range.part_index_end += 1;
                         return;
                     }
                 }
 
                 ranges.append(.{
-                    .source_index = source_index,
-                    .part_index_start = part_index,
+                    .source_index = Index.init(source_index),
+                    .part_index_begin = part_index,
                     .part_index_end = part_index + 1,
                 }) catch unreachable;
             }
 
             pub fn visit(v: *@This(), source_index: Index.Int) void {
-                if (source_index.isInvalid()) return;
-                const visited_entry = v.visited.getOrPut(source_index.get()) catch unreachable;
+                if (source_index == Index.invalid.value) return;
+                const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
                 var is_file_in_chunk = v.entry_bits.isSet(
@@ -1799,14 +1798,14 @@ const LinkerContext = struct {
                 );
 
                 // Wrapped files can't be split because they are all inside the wrapper
-                const can_be_split = v.wraps[source_index] == .none;
+                const can_be_split = v.flags[source_index].wrap == .none;
 
-                const parts = v.parts[source_index];
+                const parts = v.parts[source_index].slice();
                 if (can_be_split and is_file_in_chunk and parts[js_ast.namespace_export_part_index].is_live) {
                     appendOrExtendRange(&v.part_ranges, source_index, js_ast.namespace_export_part_index);
                 }
 
-                const records = v.import_records[source_index];
+                const records = v.import_records[source_index].slice();
 
                 for (parts) |*part, part_index_| {
                     const part_index = @truncate(u32, part_index_);
@@ -1846,7 +1845,7 @@ const LinkerContext = struct {
                     if (!can_be_split) {
                         v.parts_prefix.append(
                             .{
-                                .source_index = source_index,
+                                .source_index = Index.init(source_index),
                                 .part_index_begin = 0,
                                 .part_index_end = @truncate(u32, parts.len),
                             },
@@ -1864,17 +1863,16 @@ const LinkerContext = struct {
             .part_ranges = part_ranges_shared.*,
             .parts_prefix = parts_prefix_shared.*,
             .visited = std.AutoHashMap(Index.Int, void).init(this.allocator),
-            .wraps = this.graph.meta.items(.flags),
+            .flags = this.graph.meta.items(.flags),
             .parts = this.graph.ast.items(.parts),
             .import_records = this.graph.ast.items(.import_records),
             .entry_bits = chunk.entryBits(),
             .c = this,
         };
         defer {
-            part_ranges_shared.* = visitor.part_ranges_shared;
-            parts_prefix_shared.* = visitor.parts_prefix_shared;
+            part_ranges_shared.* = visitor.part_ranges;
+            parts_prefix_shared.* = visitor.parts_prefix;
             visitor.visited.deinit();
-            visitor.parts_prefix.deinit();
         }
 
         visitor.visit(Index.runtime.value);
@@ -1886,7 +1884,7 @@ const LinkerContext = struct {
         var parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
         std.mem.copy(PartRange, parts_in_chunk_order, visitor.parts_prefix.items);
         std.mem.copy(PartRange, parts_in_chunk_order[visitor.parts_prefix.items.len..], visitor.part_ranges.items);
-        chunk.content.javascript.parts_in_chunk_order = parts_in_chunk_order;
+        chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
@@ -3042,7 +3040,7 @@ const LinkerContext = struct {
     pub noinline fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
         var js_chunks_count: usize = 0;
         for (chunks) |*chunk| {
-            js_chunks_count += chunk.content == .javascript;
+            js_chunks_count += @boolToInt(chunk.content == .javascript);
         }
 
         // TODO: remove this branch before release. We are keeping it to assert this code is correct
@@ -3055,53 +3053,55 @@ const LinkerContext = struct {
         const ChunkMeta = struct {
             imports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
             exports: std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false),
-            dynamic_imports: std.ArrayHashMap(Index.Int, void, Ref.ArrayHashCtx, false),
+            dynamic_imports: std.AutoArrayHashMap(Index.Int, void),
         };
         var chunk_metas = try c.allocator.alloc(ChunkMeta, chunks.len);
-        for (chunks) |*meta| {
+        for (chunk_metas) |*meta| {
             // these must be global allocator
-            meta.* = .{
-                .imports = try std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
-                .exports = try std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
-                .dynamic_imports = try std.ArrayHashMap(Index.Int, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+            meta.* = comptime ChunkMeta{
+                .imports = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+                .exports = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false).init(bun.default_allocator),
+                .dynamic_imports = std.AutoArrayHashMap(Index.Int, void).init(bun.default_allocator),
             };
         }
         defer {
-            for (chunk_metas) |meta| {
+            for (chunk_metas) |*meta| {
                 meta.imports.deinit();
                 meta.exports.deinit();
                 meta.dynamic_imports.deinit();
             }
-            c.allocators.free(chunk_metas);
+            c.allocator.free(chunk_metas);
         }
 
         const CrossChunkDependencies = struct {
             chunk_meta: []ChunkMeta,
-            parts: [][]js_ast.Part,
-            import_records: [][]bun.ImportRecord,
+            chunks: []Chunk,
+            parts: []BabyList(js_ast.Part),
+            import_records: []BabyList(bun.ImportRecord),
             flags: []const JSMeta.Flags,
-            entry_point_chunk_indices: [][]Index.Int,
+            entry_point_chunk_indices: []Index.Int,
             imports_to_bind: []RefImportData,
-            wrapper_refs: []const Ref,
-            sorted_and_filtered_export_aliases: []const string,
+            wrapper_refs: []const ?Ref,
+            sorted_and_filtered_export_aliases: []const []const string,
             resolved_exports: []const RefExportData,
             ctx: *LinkerContext,
             symbols: *Symbol.Map,
 
             pub fn walk(deps: *@This(), chunk: *Chunk, chunk_index: usize) void {
                 var chunk_meta = &deps.chunk_meta[chunk_index];
-                const entry_point_chunk_indices = deps.entry_point_chunk_indices[chunk_index];
+                const entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
                 // Go over each file in this chunk
                 for (chunk.files_with_parts_in_chunk.keys()) |source_index| {
                     if (chunk.content != .javascript) continue;
 
                     // Go over each part in this file that's marked for inclusion in this chunk
-                    var parts = deps.parts[source_index];
-                    var import_records = deps.import_records[source_index];
+                    var parts = deps.parts[source_index].slice();
+                    var import_records = deps.import_records[source_index].slice();
                     const imports_to_bind = deps.imports_to_bind[source_index];
                     const wrap = deps.flags[source_index].wrap;
-                    const wrapper_ref = deps.wrapper_refs[source_index];
+                    const wrapper_ref = deps.wrapper_refs[source_index].?;
+                    var _chunks = deps.chunks;
 
                     for (parts) |*part| {
                         if (!part.is_live)
@@ -3112,14 +3112,14 @@ const LinkerContext = struct {
                             var import_record = &import_records[import_record_id];
                             if (import_record.source_index.isValid() and deps.ctx.isExternalDynamicImport(import_record, source_index)) {
                                 const other_chunk_index = entry_point_chunk_indices[import_record.source_index.get()];
-                                import_record.path.text = chunks[other_chunk_index].unique_key;
+                                import_record.path.text = _chunks[other_chunk_index].unique_key;
                                 import_record.source_index = Index.invalid;
 
                                 // Track this cross-chunk dynamic import so we make sure to
                                 // include its hash when we're calculating the hashes of all
                                 // dependencies of this chunk.
                                 if (other_chunk_index != chunk_index)
-                                    chunk_meta.dynamic_imports.put(other_chunk_index) catch unreachable;
+                                    chunk_meta.dynamic_imports.put(other_chunk_index, void{}) catch unreachable;
                             }
                         }
 
@@ -3128,7 +3128,7 @@ const LinkerContext = struct {
                         // the same name should already be marked as all being in a single
                         // chunk. In that case this will overwrite the same value below which
                         // is fine.
-                        deps.symbols.assignChunkIndex(part.declared_symbols, chunk_index);
+                        deps.symbols.assignChunkIndex(part.declared_symbols, @truncate(u32, chunk_index));
 
                         for (part.symbol_uses.keys()) |ref_| {
                             var ref = ref_;
@@ -3146,7 +3146,7 @@ const LinkerContext = struct {
                             // If this is imported from another file, follow the import
                             // reference and reference the symbol in that file instead
                             if (imports_to_bind.get(ref)) |import_data| {
-                                ref = import_data.ref;
+                                ref = import_data.data.import_ref;
                                 symbol = deps.symbols.get(ref).?;
                             } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
                                 // The only internal symbol that wrapped CommonJS files export
@@ -3159,7 +3159,7 @@ const LinkerContext = struct {
                             // identifier. In that case we want to pull in the namespace symbol
                             // instead. The namespace symbol stores the result of "require()".
                             if (symbol.namespace_alias) |*namespace_alias| {
-                                ref = namespace_alias.ref;
+                                ref = namespace_alias.namespace_ref;
                             }
 
                             // We must record this relationship even for symbols that are not
@@ -3175,7 +3175,7 @@ const LinkerContext = struct {
                 // Include the exports if this is an entry point chunk
                 if (chunk.content == .javascript) {
                     if (chunk.entry_point.is_entry_point) {
-                        const flags = deps.flags[chunk.entry_point.source_index.get()];
+                        const flags = deps.flags[chunk.entry_point.source_index];
                         if (flags.wrap != .cjs) {
                             for (deps.sorted_and_filtered_export_aliases[chunk.entry_point.source_index]) |alias| {
                                 const export_ = deps.resolved_exports[chunk.entry_point.source_index].get(alias).?;
@@ -3191,7 +3191,7 @@ const LinkerContext = struct {
                                 // identifier. In that case we want to pull in the namespace symbol
                                 // instead. The namespace symbol stores the result of "require()".
                                 if (deps.symbols.get(target_ref).?.namespace_alias) |namespace_alias| {
-                                    target_ref = namespace_alias.ref;
+                                    target_ref = namespace_alias.namespace_ref;
                                 }
 
                                 chunk_meta.imports.put(target_ref, void{}) catch unreachable;
@@ -3200,12 +3200,12 @@ const LinkerContext = struct {
 
                         // Ensure "exports" is included if the current output format needs it
                         if (flags.force_include_exports_for_entry_point) {
-                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index.get()], void{}) catch unreachable;
+                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, void{}) catch unreachable;
                         }
 
                         // Include the wrapper if present
                         if (flags.wrap != .none) {
-                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index], void{}) catch unreachable;
+                            chunk_meta.imports.put(deps.wrapper_refs[chunk.entry_point.source_index].?, void{}) catch unreachable;
                         }
                     }
                 }
@@ -3228,10 +3228,11 @@ const LinkerContext = struct {
             .symbols = &c.graph.symbols,
         };
 
-        c.parse_graph.pool.pool.doPtr(
+        try c.parse_graph.pool.pool.doPtr(
             c.allocator,
             &c.wait_group,
-            cross_chunk_dependencies,
+            &cross_chunk_dependencies,
+            CrossChunkDependencies.walk,
             chunks,
         );
 
@@ -3252,7 +3253,7 @@ const LinkerContext = struct {
                 if (symbol.chunk_index) |other_chunk_index| {
                     if (@as(usize, other_chunk_index) != chunk_index) {
                         {
-                            var entry = try js.imports_from_other_chunks.getOrPutValue(c.allocator, .{});
+                            var entry = try js.imports_from_other_chunks.getOrPutValue(c.allocator, other_chunk_index, .{});
                             try entry.value_ptr.push(c.allocator, .{
                                 .ref = import_ref,
                             });
@@ -3271,8 +3272,11 @@ const LinkerContext = struct {
                     if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
 
                     if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
-                        var imports = js.imports_from_other_chunks.get(c.allocator, @truncate(u32, other_chunk_index)) orelse .{};
-                        try js.imports_from_other_chunks.put(c.allocator, other_chunk_index, imports);
+                        _ = js.imports_from_other_chunks.getOrPutValue(
+                            c.allocator,
+                            @truncate(u32, other_chunk_index),
+                            CrossChunkImport.Item.List{},
+                        ) catch unreachable;
                     }
                 }
             }
@@ -3282,7 +3286,7 @@ const LinkerContext = struct {
             // of hash calculation.
             if (chunk_meta.dynamic_imports.count() > 0) {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
-                std.sort.sort(Index.Int, dynamic_chunk_indices, std.sort.asc(Index.Int));
+                std.sort.sort(Index.Int, dynamic_chunk_indices, void{}, std.sort.asc(Index.Int));
 
                 var list = chunk.cross_chunk_imports.listManaged(c.allocator);
                 defer chunk.cross_chunk_imports.update(list);
@@ -4377,7 +4381,7 @@ pub const Chunk = struct {
     template: PathTemplate = .{},
 
     /// For code splitting
-    cross_chunk_imports: BabyList(CrossChunkImport) = .{},
+    cross_chunk_imports: BabyList(ChunkImport) = .{},
 
     content: Content,
 
@@ -4468,11 +4472,16 @@ pub const Chunk = struct {
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
     };
 
-    pub const ImportsFromOtherChunks = std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List, Ref.ArrayHashCtx, false);
+    pub const ImportsFromOtherChunks = std.AutoArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List);
 
     pub const Content = union(enum) {
         javascript: JavaScriptChunk,
     };
+};
+
+pub const ChunkImport = struct {
+    chunk_index: u32,
+    import_kind: ImportKind,
 };
 
 pub const CrossChunkImport = struct {

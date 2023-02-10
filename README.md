@@ -5133,7 +5133,7 @@ which clang-15
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH="$(brew --prefix llvm@15)/bin"
+export PATH="$PATH:$(brew --prefix llvm@15)/bin"
 export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@15)/lib"
 export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 ```

@@ -205,6 +205,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
         JSC::Options::showPrivateScriptsInStackTraces() = true;
+        JSC::Options::useSetMethods() = true;
         JSC::Options::assertOptionsAreCoherent();
     }
 }

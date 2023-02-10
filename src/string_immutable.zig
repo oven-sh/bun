@@ -3885,7 +3885,7 @@ pub fn sortDesc(in: []string) void {
 
 pub const StringArrayByIndexSorter = struct {
     keys: []const []const u8,
-    pub fn lessThan(sorter: *@This(), a: usize, b: usize) bool {
+    pub fn lessThan(sorter: *const @This(), a: usize, b: usize) bool {
         return strings.order(sorter.keys[a], sorter.keys[b]) == .lt;
     }
 

@@ -2214,7 +2214,7 @@ pub const ScanPassResult = struct {
 
     pub fn reset(scan_pass: *ScanPassResult) void {
         scan_pass.named_imports.clearRetainingCapacity();
-        scan_pass.import_records.shrinkRetainingCapacity(0);
+        scan_pass.import_records.clearRetainingCapacity();
         scan_pass.used_symbols.clearRetainingCapacity();
         scan_pass.approximate_newline_count = 0;
     }
@@ -2596,7 +2596,8 @@ pub const Parser = struct {
             var import_record: *ImportRecord = &p.import_records.items[import_record_id];
             import_record.tag = .bun_test;
 
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, items_count);
+            var declared_symbols = js_ast.DeclaredSymbol.List{};
+            try declared_symbols.ensureTotalCapacity(p.allocator, items_count);
             var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
             var clause_i: usize = 0;
             inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
@@ -2607,7 +2608,7 @@ pub const Parser = struct {
                         .alias_loc = logger.Loc.Empty,
                         .original_name = "",
                     };
-                    declared_symbols[clause_i] = .{ .ref = @field(jest, symbol_name), .is_top_level = true };
+                    declared_symbols.appendAssumeCapacity(.{ .ref = @field(jest, symbol_name), .is_top_level = true });
                     clause_i += 1;
                 }
             }
@@ -2628,7 +2629,7 @@ pub const Parser = struct {
             before.append(js_ast.Part{
                 .stmts = part_stmts,
                 .declared_symbols = declared_symbols,
-                .import_record_indices = import_record_indices,
+                .import_record_indices = bun.BabyList(u32).init(import_record_indices),
                 .tag = .bun_test,
             }) catch unreachable;
         }
@@ -4218,7 +4219,7 @@ fn NewParser_(
             for (symbol_use_refs) |ref, i| {
                 symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
             }
-            const declared_refs = part.declared_symbols.items(.ref);
+            const declared_refs = part.declared_symbols.refs.items;
             for (declared_refs) |declared| {
                 symbols[declared.innerIndex()].use_count_estimate = 0;
                 // }
@@ -9396,7 +9397,7 @@ fn NewParser_(
                         .text = comment.text,
                     }, p.lexer.loc()));
                 }
-                p.lexer.comments_to_preserve_before.shrinkRetainingCapacity(0);
+                p.lexer.comments_to_preserve_before.clearRetainingCapacity();
 
                 if (p.lexer.token == eend) {
                     break;
@@ -12856,16 +12857,15 @@ fn NewParser_(
                         for (previous_parts) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
-                            const declared_symbols = previous_part.declared_symbols.slice();
-                            var refs = declared_symbols.items(.ref);
+                            var refs = previous_part.declared_symbols.refs.items;
 
                             for (refs) |ref| {
                                 if (p.symbol_uses.contains(ref)) {
                                     // we move this part to our other file
                                     for (previous_parts[0..j]) |*this_part| {
                                         if (this_part.stmts.len == 0) continue;
-                                        const this_declared_symbols = this_part.declared_symbols;
-                                        var other_refs = this_declared_symbols.items(.ref);
+                                        const other_refs = this_part.declared_symbols.refs.items;
+
                                         for (other_refs) |other_ref| {
                                             if (previous_part.symbol_uses.contains(other_ref)) {
                                                 try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
@@ -12884,9 +12884,9 @@ fn NewParser_(
 
                         // Single-statement part which uses Bun.plugin()
                         // It's effectively an unrelated file
-                        if (p.declared_symbols.len > 0 or p.symbol_uses.count() > 0) {
+                        if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
                             p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
-                            p.declared_symbols.len = 0;
+                            p.declared_symbols.clearRetainingCapacity();
                             p.import_records_for_current_part.items.len = 0;
                         }
                         return;
@@ -12907,12 +12907,12 @@ fn NewParser_(
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
                 p.symbol_uses = .{};
-                p.declared_symbols.len = 0;
-            } else if (p.declared_symbols.len > 0 or p.symbol_uses.count() > 0) {
+                p.declared_symbols.clearRetainingCapacity();
+            } else if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
 
                 // if the part is dead, invalidate all the usage counts
                 p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols, .symbol_uses = p.symbol_uses });
-                p.declared_symbols.len = 0;
+                p.declared_symbols.clearRetainingCapacity();
                 p.import_records_for_current_part.clearRetainingCapacity();
             }
         }
@@ -18338,8 +18338,8 @@ fn NewParser_(
                 // with no statements
                 while (i < parts.len) : (i += 1) {
                     var part = parts[i];
-                    p.import_records_for_current_part.shrinkRetainingCapacity(0);
-                    p.declared_symbols.shrinkRetainingCapacity(0);
+                    p.import_records_for_current_part.clearRetainingCapacity();
+                    p.declared_symbols.clearRetainingCapacity();
 
                     var result = try ImportScanner.scan(P, p, part.stmts, commonjs_wrapper_expr != null);
                     kept_import_equals = kept_import_equals or result.kept_import_equals;
@@ -18347,13 +18347,13 @@ fn NewParser_(
 
                     part.stmts = result.stmts;
                     if (part.stmts.len > 0 or (i == js_ast.namespace_export_part_index and p.options.bundle)) {
-                        if (p.module_scope.contains_direct_eval and part.declared_symbols.len > 0) {
+                        if (p.module_scope.contains_direct_eval and part.declared_symbols.len() > 0) {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
                             // reference those symbols.
                             part.can_be_removed_if_unused = false;
                         }
-                        if (part.declared_symbols.len == 0) {
+                        if (part.declared_symbols.len() == 0) {
                             part.declared_symbols = p.declared_symbols.clone(p.allocator) catch unreachable;
                         } else {
                             part.declared_symbols.appendList(p.allocator, p.declared_symbols) catch unreachable;
@@ -18368,7 +18368,7 @@ fn NewParser_(
                         parts[parts_end] = part;
                         parts_end += 1;
                     }
-                    p.declared_symbols.len = 0;
+                    p.declared_symbols.clearRetainingCapacity();
                 }
 
                 // We need to iterate multiple times if an import-equals statement was

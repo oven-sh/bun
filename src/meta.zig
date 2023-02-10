@@ -7,7 +7,7 @@ pub fn ReturnOf(comptime function: anytype) type {
 }
 
 pub fn ReturnOfType(comptime Type: type) type {
-    const typeinfo: std.builtin.Type.Fn = @typeInfo(Type);
+    const typeinfo: std.builtin.Type.Fn = @typeInfo(Type).Fn;
     return typeinfo.return_type orelse void;
 }
 

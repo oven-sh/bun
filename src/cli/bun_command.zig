@@ -178,7 +178,7 @@ pub const BunCommand = struct {
 
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
-            _ = try BundleV2.generate(
+            try BundleV2.generate(
                 &this_bundler,
                 allocator,
                 loaded_framework,

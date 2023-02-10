@@ -331,7 +331,7 @@ pub const BundleV2 = struct {
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
         unique_key: u64,
-    ) !?Schema.JavascriptBundleContainer {
+    ) !void {
         _ = try bundler.fs.fs.openTmpDir();
         var tmpname_buf: [64]u8 = undefined;
         bundler.resetStore();
@@ -521,10 +521,10 @@ pub const BundleV2 = struct {
             this,
             this.graph.entry_points.items,
             try this.findReachableFiles(),
-            std.mem.asBytes(&unique_key),
+            unique_key,
         );
 
-        return null;
+        // return null;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -1343,26 +1343,33 @@ const LinkerGraph = struct {
 
         const Iterator = struct {
             pub fn next(self: *Ctx, ref: Ref) void {
-                if (self.top_level_symbol_to_parts_overlay.* == null) {
-                    self.top_level_symbol_to_parts_overlay.* = &graph.meta.items(.top_level_symbol_to_parts_overlay)[self.id];
-                }
+                var overlay = brk: {
+                    if (self.top_level_symbol_to_parts_overlay.*) |out| {
+                        break :brk out;
+                    }
 
-                var entry = try self.top_level_symbol_to_parts_overlay.getOrPut(self.graph.allocator, ref);
+                    var out = &self.graph.meta.items(.top_level_symbol_to_parts_overlay)[self.id];
+
+                    self.top_level_symbol_to_parts_overlay.* = out;
+                    break :brk out;
+                };
+
+                var entry = overlay.getOrPut(self.graph.allocator, ref) catch unreachable;
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = try bun.from(
+                    entry.value_ptr.* = bun.from(
                         BabyList(u32),
                         self.graph.allocator,
                         &[_]u32{
                             self.part_id,
                         },
-                    );
+                    ) catch unreachable;
                 } else {
-                    try entry.value_ptr.push(self.graph.allocator, self.part_id);
+                    entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
                 }
             }
         };
 
-        js_ast.DeclaredSymbol.forEachTopLevelSymbol(part.declared_symbols, &ctx, Iterator.next);
+        js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr[part_id].declared_symbols, &ctx, Iterator.next);
 
         return part_id;
     }
@@ -1620,7 +1627,7 @@ const LinkerContext = struct {
         for (entry_source_indices) |source_index, entry_id_| {
             const entry_bit = @truncate(Chunk.EntryPoint.ID, entry_id_);
 
-            var entry_bits = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(this.allocator, this.graph.entry_points.len);
+            var entry_bits = try bun.bit_set.AutoBitSet.initEmpty(this.allocator, this.graph.entry_points.len);
             entry_bits.set(entry_bit);
 
             // Create a chunk for the entry point here to ensure that the chunk is
@@ -1629,12 +1636,11 @@ const LinkerContext = struct {
 
             js_chunk_entry.value_ptr.* = .{
                 .entry_point = .{
-                    .id = entry_bit,
+                    .entry_point_id = entry_bit,
                     .source_index = source_index,
                     .is_entry_point = true,
                 },
                 .entry_bits = entry_bits,
-                .source_index = source_index.get(),
                 .content = .{
                     .javascript = .{},
                 },
@@ -1653,14 +1659,17 @@ const LinkerContext = struct {
                 if (!js_chunk_entry.found_existing) {
                     js_chunk_entry.value_ptr.* = .{
                         .entry_bits = try entry_bits.clone(this.allocator),
-                        .source_index = source_index.get(),
+                        .entry_point = .{
+                            .source_index = source_index.get(),
+                        },
                         .content = .{
                             .javascript = .{},
                         },
                     };
                 }
 
-                try js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, source_index.get());
+                var files = try js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, source_index.get());
+                _ = files;
             }
         }
 
@@ -2143,7 +2152,7 @@ const LinkerContext = struct {
                         const module_ref = symbols.follow(module_refs[id].?);
                         symbols.get(exports_ref).?.kind = .unbound;
                         symbols.get(module_ref).?.kind = .unbound;
-                    } else if (flags[id].force_include_exports_for_entry_points or export_kind != .cjs) {
+                    } else if (flags[id].force_include_exports_for_entry_point or export_kind != .cjs) {
                         flags[id].needs_exports_variable = true;
                     }
 
@@ -2814,7 +2823,7 @@ const LinkerContext = struct {
 
             // Pull in the "__export" symbol if it was used
             if (export_ref.isValid()) {
-                c.graph.meta.items(.needs_export_symbol_from_runtime)[id] = true;
+                c.graph.meta.items(.flags)[id].needs_export_symbol_from_runtime = true;
             }
         }
     }
@@ -3331,10 +3340,10 @@ const LinkerContext = struct {
         const out_dist = distance + 1;
 
         // Don't mark this file more than once
-        if (file_entry_bits[source_index].isSet(source_index, entry_points_count) and !traverse_again)
+        if (file_entry_bits[source_index].isSet(entry_points_count) and !traverse_again)
             return;
 
-        file_entry_bits[source_index].set(source_index, entry_points_count);
+        file_entry_bits[source_index].set(entry_points_count);
 
         if (comptime bun.Environment.allow_assert)
             debug(
@@ -3791,10 +3800,9 @@ const LinkerContext = struct {
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,
-                        .declared_symbols = bun.from(
-                            js_ast.DeclaredSymbol.List,
+                        .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
                             c.allocator,
-                            [_]js_ast.DeclaredSymbol{
+                            &[_]js_ast.DeclaredSymbol{
                                 .{ .ref = c.graph.ast.items(.exports_ref)[id], .is_top_level = true },
                                 .{ .ref = c.graph.ast.items(.module_ref)[id].?, .is_top_level = true },
                                 .{ .ref = c.graph.ast.items(.wrapper_ref)[id].?, .is_top_level = true },
@@ -3845,13 +3853,9 @@ const LinkerContext = struct {
                                 .{ wrapper_ref, .{ .count_estimate = 1 } },
                             },
                         ) catch unreachable,
-                        .declared_symbols = bun.from(
-                            js_ast.DeclaredSymbol.List,
-                            c.allocator,
-                            [_]js_ast.DeclaredSymbol{
-                                .{ .ref = wrapper_ref, .is_top_level = true },
-                            },
-                        ) catch unreachable,
+                        .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator, &[_]js_ast.DeclaredSymbol{
+                            .{ .ref = wrapper_ref, .is_top_level = true },
+                        }) catch unreachable,
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
@@ -4335,7 +4339,7 @@ pub const ImportTracker = struct {
 
 pub const PathTemplate = struct {
     data: string = "",
-    placeholder: Placeholder,
+    placeholder: Placeholder = .{},
 
     pub const Placeholder = struct {
         dir: []const u8 = "",
@@ -4367,7 +4371,7 @@ pub const Chunk = struct {
     files_with_parts_in_chunk: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
 
     /// We must not keep pointers to this type until all chunks have been allocated.
-    entry_bits: AutoBitSet = .{},
+    entry_bits: AutoBitSet = undefined,
 
     final_rel_path: string = "",
     template: PathTemplate = .{},
@@ -4464,7 +4468,7 @@ pub const Chunk = struct {
         cross_chunk_suffix_stmts: BabyList(Stmt) = .{},
     };
 
-    pub const ImportsFromOtherChunks = std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List, Index.ArrayHashCtx, false);
+    pub const ImportsFromOtherChunks = std.ArrayHashMapUnmanaged(Index.Int, CrossChunkImport.Item.List, Ref.ArrayHashCtx, false);
 
     pub const Content = union(enum) {
         javascript: JavaScriptChunk,
@@ -4473,7 +4477,7 @@ pub const Chunk = struct {
 
 pub const CrossChunkImport = struct {
     chunk_index: Index.Int = 0,
-    sorted_import_Items: List = &.{},
+    sorted_import_Items: List = undefined,
 
     pub const Item = struct {
         export_alias: string = "",
@@ -4519,7 +4523,7 @@ pub const CrossChunkImport = struct {
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
-                .sorted_import_items = import_items.slice(),
+                .sorted_import_items = List.fromOwnedSlice(result.allocator, import_items.slice()),
             }) catch unreachable;
         }
 

@@ -879,6 +879,13 @@ pub const DynamicBitSetUnmanaged = struct {
         }
     }
 
+    pub fn setAll(self: *Self, value: bool) void {
+        const num_masks = numMasks(self.bit_length);
+        for (self.masks[0..num_masks]) |*mask| {
+            mask.* = std.math.boolMask(MaskInt, value);
+        }
+    }
+
     /// Flips every bit in the bit set.
     pub fn toggleAll(self: *Self) void {
         const bit_length = self.bit_length;
@@ -1075,18 +1082,18 @@ pub const AutoBitSet = union(enum) {
     pub fn isSet(this: *const AutoBitSet, index: usize) bool {
         return switch (std.meta.activeTag(this.*)) {
             .static => this.static.isSet(index),
-            .dynamic => this.dynamic.*.isSet(index),
+            .dynamic => this.dynamic.isSet(index),
         };
     }
 
-    pub fn clone(this: *const AutoBitSet, allocator: std.mem.Allocator) AutoBitSet {
+    pub fn clone(this: *const AutoBitSet, allocator: std.mem.Allocator) !AutoBitSet {
         return switch (std.meta.activeTag(this.*)) {
             .static => AutoBitSet{ .static = this.static },
-            .dynamic => AutoBitSet{ .dynamic = this.dynamic.*.clone(allocator) },
+            .dynamic => AutoBitSet{ .dynamic = try this.dynamic.clone(allocator) },
         };
     }
 
-    pub fn set(this: *const AutoBitSet, index: usize) void {
+    pub fn set(this: *AutoBitSet, index: usize) void {
         switch (std.meta.activeTag(this.*)) {
             .static => this.static.set(index),
             .dynamic => this.dynamic.set(index),
@@ -1096,7 +1103,7 @@ pub const AutoBitSet = union(enum) {
     pub fn bytes(this: *const AutoBitSet) []const u8 {
         return switch (std.meta.activeTag(this.*)) {
             .static => std.mem.asBytes(&this.static.masks),
-            .dynamic => this.dynamic.*.bytes(),
+            .dynamic => this.dynamic.bytes(),
         };
     }
 

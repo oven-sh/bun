@@ -4745,71 +4745,103 @@ pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
 
-    pub const List = bun.MultiArrayList(DeclaredSymbol);
+    pub const List = struct {
+        refs: std.ArrayListUnmanaged(Ref) = .{},
+        is_top_level: bun.bit_set.DynamicBitSetUnmanaged = .{},
 
-    pub fn forEachTopLevelSymbol(decls_: *List, ctx: anytype, comptime Fn: anytype) void {
-        const ReturnType = bun.meta.ReturnOfType(Fn);
-        var decls = decls_.slice();
-        var is_top_levels_bool = decls.items(.is_top_level);
-        var refs = decls.items(.ref);
+        pub fn clone(this: *const List, allocator: std.mem.Allocator) !List {
+            var refs = try this.refs.clone(allocator);
+            errdefer refs.deinit(allocator);
 
-        if (comptime Environment.enableSIMD) {
-            const vector_size = 16;
-            if (refs.len >= vector_size) {
-                const refs_end = refs.ptr + (refs.len - refs.len % vector_size);
-                while (refs.ptr != refs_end) {
-                    const vec = @as(@Vector(vector_size, bool), @bitCast([vector_size]bool, is_top_levels_bool.ptr[0..vector_size]));
+            return List{
+                .refs = refs,
+                .is_top_level = try this.is_top_level.clone(allocator),
+            };
+        }
 
-                    if (@reduce(.Max, vec) > 0) {
-                        var j = 0;
-                        while (j < vector_size) : (j += 1) {
-                            if (vec[j]) {
-                                if (comptime ReturnType == void) {
-                                    Fn(ctx, refs[j]);
-                                } else if (Fn(ctx, refs[j])) |result| {
-                                    refs[j] = result;
-                                }
-                            }
-                        }
-                    }
+        pub inline fn len(this: List) usize {
+            return this.refs.items.len;
+        }
 
-                    is_top_levels_bool = is_top_levels_bool[vector_size..];
-                    refs = refs[vector_size..];
-                }
+        pub fn append(this: *List, allocator: std.mem.Allocator, entry: DeclaredSymbol) !void {
+            try this.ensureUnusedCapacity(allocator, 1);
+            this.appendAssumeCapacity(entry);
+        }
+
+        pub fn appendList(this: *List, allocator: std.mem.Allocator, other: List) !void {
+            try this.ensureUnusedCapacity(allocator, other.len());
+            this.appendListAssumeCapacity(other);
+        }
+
+        pub fn appendListAssumeCapacity(this: *List, other: List) void {
+            var j = other.refs.items.len;
+            this.refs.appendSliceAssumeCapacity(other.refs.items);
+            var is_top_level = &this.is_top_level;
+            var iter = other.is_top_level.iterator(.{});
+
+            // TODO: optimize this
+            while (iter.next()) |i| {
+                is_top_level.set(j + i);
             }
         }
 
-        const scalar = 8;
-        while (refs.len >= scalar) : (refs = refs[scalar..]) {
-            const eight: u64 = @as(u64, is_top_levels_bool[0..scalar].*);
-            if (eight == 0) {
-                is_top_levels_bool = is_top_levels_bool[scalar..];
-                continue;
-            }
-
-            comptime var j: usize = 0;
-
-            inline while (j < scalar) : (j += 1) {
-                if (is_top_levels_bool[j]) {
-                    if (comptime ReturnType == void) {
-                        Fn(ctx, refs[j]);
-                    } else if (Fn(ctx, refs[j])) |result| {
-                        refs[j] = result;
-                    }
-                }
-            }
-
-            is_top_levels_bool = is_top_levels_bool[scalar..];
+        pub fn appendAssumeCapacity(this: *List, entry: DeclaredSymbol) void {
+            this.refs.appendAssumeCapacity(entry.ref);
+            this.is_top_level.setValue(this.refs.items.len - 1, entry.is_top_level);
         }
 
-        while (refs.len > 0) : (refs = refs[1..]) {
-            if (comptime ReturnType == void) {
-                Fn(ctx, refs[0]);
-            } else if (Fn(ctx, refs[0])) |result| {
-                refs[0] = result;
+        pub fn ensureTotalCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
+            try this.ensureUnusedCapacity(allocator, this.refs.capacity -| this.refs.items.len +| count);
+        }
+
+        pub fn ensureUnusedCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
+            try this.refs.ensureUnusedCapacity(allocator, count);
+            if (this.is_top_level.capacity() < this.refs.capacity) {
+                var prev = this.is_top_level;
+                this.is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, this.refs.capacity);
+                prev.copyInto(this.is_top_level);
+                prev.deinit(allocator);
+            }
+        }
+
+        pub fn clearRetainingCapacity(this: *List) void {
+            this.refs.clearRetainingCapacity();
+            this.is_top_level.setAll(false);
+        }
+
+        pub fn deinit(this: *List, allocator: std.mem.Allocator) void {
+            this.refs.deinit(allocator);
+            this.is_top_level.deinit(allocator);
+        }
+
+        pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !List {
+            var refs = try std.ArrayListUnmanaged(Ref).initCapacity(allocator, capacity);
+            errdefer refs.deinit(allocator);
+            var is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, refs.capacity);
+            return List{
+                .refs = refs,
+                .is_top_level = is_top_level,
+            };
+        }
+
+        pub fn fromSlice(allocator: std.mem.Allocator, entries: []const DeclaredSymbol) !List {
+            var this = try List.initCapacity(allocator, entries.len);
+            errdefer this.deinit(allocator);
+            for (entries) |entry| {
+                this.appendAssumeCapacity(entry);
             }
 
-            is_top_levels_bool = is_top_levels_bool[1..];
+            return this;
+        }
+    };
+
+    pub fn forEachTopLevelSymbol(decls: *List, ctx: anytype, comptime Fn: anytype) void {
+        var refs = decls.refs.items;
+        std.debug.assert(refs.len <= decls.is_top_level.capacity());
+        var iter = decls.is_top_level.iterator(.{ .direction = .forward });
+        while (iter.next()) |index| {
+            const ref = refs[index];
+            Fn(ctx, ref);
         }
     }
 };

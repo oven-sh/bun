@@ -429,6 +429,15 @@ pub const Features = struct {
         return @intToEnum(Behavior, out);
     }
 
+    pub const main = Features{
+        .check_for_duplicate_dependencies = true,
+        .dev_dependencies = true,
+        .is_main = true,
+        .optional_dependencies = true,
+        .scripts = true,
+        .workspaces = true,
+    };
+
     pub const folder = Features{
         .dev_dependencies = true,
         .optional_dependencies = true,
@@ -438,7 +447,6 @@ pub const Features = struct {
         .dev_dependencies = true,
         .optional_dependencies = true,
         .scripts = true,
-        .workspaces = true,
     };
 
     pub const link = Features{
@@ -2180,7 +2188,7 @@ pub const PackageManager = struct {
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
         comptime successFn: SuccessFn,
-    ) !ResolvedPackageResult {
+    ) !?ResolvedPackageResult {
 
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
@@ -2197,10 +2205,12 @@ pub const PackageManager = struct {
             },
         )) |id| {
             successFn(this, dependency_id, id);
-            return ResolvedPackageResult{
+            return .{
                 .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
             };
+        } else if (behavior.isPeer()) {
+            return null;
         }
 
         // appendPackage sets the PackageID on the package
@@ -2215,19 +2225,10 @@ pub const PackageManager = struct {
             Features.npm,
         ));
 
-        if (!behavior.isEnabled(if (this.isRootDependency(dependency_id))
-            this.options.local_package_features
-        else
-            this.options.remote_package_features))
-        {
-            this.setPreinstallState(package.meta.id, this.lockfile, .done);
-        }
-
-        const preinstall = this.determinePreinstallState(package, this.lockfile);
-
         if (comptime Environment.allow_assert) std.debug.assert(package.meta.id != invalid_package_id);
         defer successFn(this, dependency_id, package.meta.id);
-        return switch (preinstall) {
+
+        return switch (this.determinePreinstallState(package, this.lockfile)) {
             // Is this package already in the cache?
             // We don't need to download the tarball, but we should enqueue dependencies
             .done => .{ .package = package, .is_first_time = true },
@@ -2352,7 +2353,7 @@ pub const PackageManager = struct {
         name.assertDefined();
 
         if (resolution < this.lockfile.packages.len) {
-            return ResolvedPackageResult{ .package = this.lockfile.packages.get(resolution) };
+            return .{ .package = this.lockfile.packages.get(resolution) };
         }
 
         switch (version.tag) {
@@ -2363,7 +2364,7 @@ pub const PackageManager = struct {
                     .dist_tag => manifest.findByDistTag(this.lockfile.str(&version.value.dist_tag.tag)),
                     .npm => manifest.findBestVersion(version.value.npm.version),
                     else => unreachable,
-                } orelse return switch (version.tag) {
+                } orelse return if (behavior.isPeer()) null else switch (version.tag) {
                     .npm => error.NoMatchingVersion,
                     .dist_tag => error.DistTagNotFound,
                     else => unreachable,
@@ -2389,12 +2390,12 @@ pub const PackageManager = struct {
                     .err => |err| return err,
                     .package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                        return .{ .package = this.lockfile.packages.get(package_id) };
                     },
 
                     .new_package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
+                        return .{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
             },
@@ -2406,12 +2407,12 @@ pub const PackageManager = struct {
                     .err => |err| return err,
                     .package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                        return .{ .package = this.lockfile.packages.get(package_id) };
                     },
 
                     .new_package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
+                        return .{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
             },
@@ -2422,12 +2423,12 @@ pub const PackageManager = struct {
                     .err => |err| return err,
                     .package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                        return .{ .package = this.lockfile.packages.get(package_id) };
                     },
 
                     .new_package_id => |package_id| {
                         successFn(this, dependency_id, package_id);
-                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
+                        return .{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
                     },
                 }
             },
@@ -2594,7 +2595,7 @@ pub const PackageManager = struct {
             if (!this.isRootDependency(id))
                 if (!dependency.behavior.isEnabled(switch (dependency.version.tag) {
                     .dist_tag, .folder, .npm => this.options.remote_package_features,
-                    else => Features{},
+                    else => .{},
                 }))
                     return;
         }
@@ -2705,70 +2706,73 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             }
-                        } else if (!dependency.behavior.isPeer() and dependency.version.tag.isNPM()) {
+                        } else if (dependency.version.tag.isNPM()) {
                             const name_str = this.lockfile.str(&name);
                             const task_id = Task.Id.forManifest(Task.Tag.package_manifest, name_str);
-                            var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
-                            if (!network_entry.found_existing) {
-                                if (this.options.enable.manifest_cache) {
-                                    if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name_str) catch null) |manifest_| {
-                                        const manifest: Npm.PackageManifest = manifest_;
-                                        loaded_manifest = manifest;
-
-                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
-                                            try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
-                                        }
-
-                                        // If it's an exact package version already living in the cache
-                                        // We can skip the network request, even if it's beyond the caching period
-                                        if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
-                                            if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                if (this.getOrPutResolvedPackageWithFindResult(
-                                                    name_hash,
-                                                    name,
-                                                    version,
-                                                    id,
-                                                    dependency.behavior,
-                                                    &loaded_manifest.?,
-                                                    find_result,
-                                                    successFn,
-                                                ) catch null) |new_resolve_result| {
-                                                    resolve_result_ = new_resolve_result;
-                                                    _ = this.network_dedupe_map.remove(task_id);
-                                                    continue :retry_with_new_resolve_result;
-                                                }
-                                            }
-                                        }
-
-                                        // Was it recent enough to just load it without the network call?
-                                        if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
-                                            _ = this.network_dedupe_map.remove(task_id);
-                                            continue :retry_from_manifests_ptr;
-                                        }
-                                    }
-                                }
-
-                                if (PackageManager.verbose_install) {
-                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
-                                }
-
-                                var network_task = this.getNetworkTask();
-                                network_task.* = NetworkTask{
-                                    .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
-                                    .callback = undefined,
-                                    .task_id = task_id,
-                                    .allocator = this.allocator,
-                                };
-                                try network_task.forManifest(
-                                    name_str,
-                                    this.allocator,
-                                    this.scopeForPackageName(name_str),
-                                    loaded_manifest,
-                                );
-                                this.enqueueNetworkTask(network_task);
-                            }
 
                             if (comptime Environment.allow_assert) std.debug.assert(task_id != 0);
+
+                            if (!dependency.behavior.isPeer()) {
+                                var network_entry = try this.network_dedupe_map.getOrPutContext(this.allocator, task_id, .{});
+                                if (!network_entry.found_existing) {
+                                    if (this.options.enable.manifest_cache) {
+                                        if (Npm.PackageManifest.Serializer.load(this.allocator, this.getCacheDirectory(), name_str) catch null) |manifest_| {
+                                            const manifest: Npm.PackageManifest = manifest_;
+                                            loaded_manifest = manifest;
+
+                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
+                                                try this.manifests.put(this.allocator, @truncate(PackageNameHash, manifest.pkg.name.hash), manifest);
+                                            }
+
+                                            // If it's an exact package version already living in the cache
+                                            // We can skip the network request, even if it's beyond the caching period
+                                            if (dependency.version.tag == .npm and dependency.version.value.npm.version.isExact()) {
+                                                if (loaded_manifest.?.findByVersion(dependency.version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                                    if (this.getOrPutResolvedPackageWithFindResult(
+                                                        name_hash,
+                                                        name,
+                                                        version,
+                                                        id,
+                                                        dependency.behavior,
+                                                        &loaded_manifest.?,
+                                                        find_result,
+                                                        successFn,
+                                                    ) catch null) |new_resolve_result| {
+                                                        resolve_result_ = new_resolve_result;
+                                                        _ = this.network_dedupe_map.remove(task_id);
+                                                        continue :retry_with_new_resolve_result;
+                                                    }
+                                                }
+                                            }
+
+                                            // Was it recent enough to just load it without the network call?
+                                            if (this.options.enable.manifest_cache_control and manifest.pkg.public_max_age > this.timestamp_for_manifest_cache_control) {
+                                                _ = this.network_dedupe_map.remove(task_id);
+                                                continue :retry_from_manifests_ptr;
+                                            }
+                                        }
+                                    }
+
+                                    if (PackageManager.verbose_install) {
+                                        Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
+                                    }
+
+                                    var network_task = this.getNetworkTask();
+                                    network_task.* = .{
+                                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                                        .callback = undefined,
+                                        .task_id = task_id,
+                                        .allocator = this.allocator,
+                                    };
+                                    try network_task.forManifest(
+                                        name_str,
+                                        this.allocator,
+                                        this.scopeForPackageName(name_str),
+                                        loaded_manifest,
+                                    );
+                                    this.enqueueNetworkTask(network_task);
+                                }
+                            }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
                             if (!manifest_entry_parse.found_existing) {
@@ -2784,8 +2788,6 @@ pub const PackageManager = struct {
                 return;
             },
             .github => {
-                if (dependency.behavior.isPeer()) return;
-
                 const dep = &dependency.version.value.github;
                 const res = Resolution{
                     .tag = .github,
@@ -2816,6 +2818,7 @@ pub const PackageManager = struct {
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
+                if (dependency.behavior.isPeer()) return;
                 if (try this.generateNetworkTaskForTarball(task_id, url, id, package)) |network_task| {
                     this.enqueueNetworkTask(network_task);
                 }
@@ -3620,6 +3623,15 @@ pub const PackageManager = struct {
                                 },
                             }
                         }
+                    } else if (manager.task_queue.getEntry(Task.Id.forManifest(
+                        Task.Tag.package_manifest,
+                        manager.lockfile.str(&manager.lockfile.packages.items(.name)[package_id]),
+                    ))) |dependency_list_entry| {
+                        // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
+                        var dependency_list = dependency_list_entry.value_ptr.*;
+                        dependency_list_entry.value_ptr.* = .{};
+
+                        try manager.processDependencyList(dependency_list, void, {}, {});
                     }
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -3690,11 +3702,9 @@ pub const PackageManager = struct {
         dry_run: bool = false,
         remote_package_features: Features = .{
             .optional_dependencies = true,
-            .peer_dependencies = false,
         },
         local_package_features: Features = .{
             .dev_dependencies = true,
-            .peer_dependencies = false,
         },
         // The idea here is:
         // 1. package has a platform-specific binary to install
@@ -4404,7 +4414,7 @@ pub const PackageManager = struct {
             for (updates) |*update| {
                 if (update.e_string) |e_string| {
                     e_string.data = switch (update.resolution.tag) {
-                        .npm => if (update.version.tag == .npm and update.version.value.npm.version.input.len == 0)
+                        .npm => if (update.version.tag == .dist_tag and update.version.literal.isEmpty())
                             std.fmt.allocPrint(allocator, "^{}", .{
                                 update.resolution.value.npm.version.fmt(update.version_buf),
                             }) catch unreachable
@@ -5123,7 +5133,7 @@ pub const PackageManager = struct {
             peer: bool = false,
 
             pub inline fn toFeatures(this: Omit) Features {
-                return Features{
+                return .{
                     .dev_dependencies = this.dev,
                     .optional_dependencies = this.optional,
                     .peer_dependencies = this.peer,
@@ -5809,6 +5819,7 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
         progress: *std.Progress,
+        node_modules_path: stringZ,
         node_modules_folder: std.fs.IterableDir,
         skip_verify_installed_version_number: bool,
         skip_delete: bool,
@@ -6029,6 +6040,7 @@ pub const PackageManager = struct {
 
                                     var bin_linker = Bin.Linker{
                                         .bin = bin,
+                                        .package_installed_path = this.node_modules_path["node_modules".len..],
                                         .package_installed_node_modules = this.node_modules_folder.dir.fd,
                                         .global_bin_path = this.options.bin_path,
                                         .global_bin_dir = this.options.global_bin_dir.dir,
@@ -6273,7 +6285,6 @@ pub const PackageManager = struct {
             var parts = lockfile.packages.slice();
             var metas = parts.items(.meta);
             var names = parts.items(.name);
-            var dependency_lists: []const Lockfile.DependencySlice = parts.items(.dependencies);
             var dependencies = lockfile.buffers.dependencies.items;
             const resolutions_buffer: []const PackageID = lockfile.buffers.resolutions.items;
             const resolution_lists: []const Lockfile.PackageIDSlice = parts.items(.resolutions);
@@ -6291,6 +6302,7 @@ pub const PackageManager = struct {
                 .resolutions = resolutions,
                 .lockfile = lockfile,
                 .node = &install_node,
+                .node_modules_path = "node_modules",
                 .node_modules_folder = node_modules_folder,
                 .progress = progress,
                 .skip_verify_installed_version_number = skip_verify_installed_version_number,
@@ -6312,9 +6324,8 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                var folder = try cwd.openIterableDir(node_modules.relative_path, .{});
-
-                installer.node_modules_folder = folder;
+                installer.node_modules_path = node_modules.relative_path;
+                installer.node_modules_folder = try cwd.openIterableDir(node_modules.relative_path, .{});
 
                 var remaining = node_modules.dependencies;
 
@@ -6388,12 +6399,10 @@ pub const PackageManager = struct {
                 const package_id = resolutions_buffer[dependency_id];
                 const folder = deferred.node_modules_folder;
 
-                const package_dependencies: []const Dependency = dependency_lists[package_id].get(dependencies);
                 const package_resolutions: []const PackageID = resolution_lists[package_id].get(resolutions_buffer);
                 const original_bin: Bin = installer.bins[package_id];
 
-                for (package_dependencies) |_, i| {
-                    const resolved_id = package_resolutions[i];
+                for (package_resolutions) |resolved_id| {
                     if (resolved_id >= names.len) continue;
                     const meta: Lockfile.Package.Meta = metas[resolved_id];
 
@@ -6521,12 +6530,8 @@ pub const PackageManager = struct {
             )
         else
             Lockfile.LoadFromDiskResult{ .not_found = {} };
-
         var root = Lockfile.Package{};
-        var maybe_root: Lockfile.Package = undefined;
-
         var needs_new_lockfile = load_lockfile_result != .ok or (load_lockfile_result.ok.buffers.dependencies.items.len == 0 and manager.package_json_updates.len > 0);
-
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
         var had_any_diffs = false;
@@ -6587,7 +6592,7 @@ pub const PackageManager = struct {
 
                     var lockfile: Lockfile = undefined;
                     try lockfile.initEmpty(ctx.allocator);
-                    maybe_root = Lockfile.Package{};
+                    var maybe_root = Lockfile.Package{};
 
                     try Lockfile.Package.parseMain(
                         &lockfile,
@@ -6595,15 +6600,7 @@ pub const PackageManager = struct {
                         ctx.allocator,
                         ctx.log,
                         package_json_source,
-                        Features{
-                            .check_for_duplicate_dependencies = true,
-                            .dev_dependencies = true,
-                            .is_main = true,
-                            .optional_dependencies = true,
-                            .peer_dependencies = false,
-                            .scripts = true,
-                            .workspaces = true,
-                        },
+                        Features.main,
                     );
                     manager.lockfile.scripts = lockfile.scripts;
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
@@ -6705,7 +6702,7 @@ pub const PackageManager = struct {
         }
 
         if (needs_new_lockfile) {
-            root = Lockfile.Package{};
+            root = .{};
             try manager.lockfile.initEmpty(ctx.allocator);
 
             if (manager.options.enable.frozen_lockfile) {
@@ -6722,15 +6719,7 @@ pub const PackageManager = struct {
                 ctx.allocator,
                 ctx.log,
                 package_json_source,
-                Features{
-                    .check_for_duplicate_dependencies = true,
-                    .dev_dependencies = true,
-                    .is_main = true,
-                    .optional_dependencies = true,
-                    .peer_dependencies = false,
-                    .scripts = true,
-                    .workspaces = true,
-                },
+                Features.main,
             );
 
             root = try manager.lockfile.appendPackage(root);

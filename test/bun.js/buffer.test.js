@@ -761,7 +761,7 @@ it("Buffer.alloc", () => {
     // Test unmatched surrogates not producing invalid utf8 output
     // ef bf bd = utf-8 representation of unicode replacement character
     // see https://codereview.chromium.org/121173009/
-    const buf = Buffer.from("ab\ud800cd", "utf8");
+    let buf = Buffer.from("ab\ud800cd", "utf8");
     assert.strictEqual(buf[0], 0x61);
     assert.strictEqual(buf[1], 0x62);
     assert.strictEqual(buf[2], 0xef);
@@ -769,6 +769,24 @@ it("Buffer.alloc", () => {
     assert.strictEqual(buf[4], 0xbd);
     assert.strictEqual(buf[5], 0x63);
     assert.strictEqual(buf[6], 0x64);
+
+    buf = Buffer.from("abcd\ud800", "utf8");
+    expect(buf[0]).toBe(0x61);
+    expect(buf[1]).toBe(0x62);
+    expect(buf[2]).toBe(0x63);
+    expect(buf[3]).toBe(0x64);
+    expect(buf[4]).toBe(0xef);
+    expect(buf[5]).toBe(0xbf);
+    expect(buf[6]).toBe(0xbd);
+
+    buf = Buffer.from("\ud800abcd", "utf8");
+    expect(buf[0]).toBe(0xef);
+    expect(buf[1]).toBe(0xbf);
+    expect(buf[2]).toBe(0xbd);
+    expect(buf[3]).toBe(0x61);
+    expect(buf[4]).toBe(0x62);
+    expect(buf[5]).toBe(0x63);
+    expect(buf[6]).toBe(0x64);
   }
 
   {
@@ -2500,9 +2518,25 @@ test("Buffer.byteLength", () => {
 });
 
 it("should not crash on invalid UTF-8 byte sequence", () => {
-  const buf = Buffer.from([0xc0, 0xfd]).toString();
+  const buf = Buffer.from([0xc0, 0xfd]);
   expect(buf.length).toBe(2);
   const str = buf.toString();
   expect(str.length).toBe(2);
   expect(str).toBe("\uFFFD\uFFFD");
+});
+
+it("should not crash on invalid UTF-8 byte sequence with ASCII head", () => {
+  const buf = Buffer.from([0x42, 0xc0, 0xfd]);
+  expect(buf.length).toBe(3);
+  const str = buf.toString();
+  expect(str.length).toBe(3);
+  expect(str).toBe("B\uFFFD\uFFFD");
+});
+
+it("should not perform out-of-bound access on invalid UTF-8 byte sequence", () => {
+  const buf = Buffer.from([0x01, 0x9a, 0x84, 0x13, 0x12, 0x11, 0x10, 0x09]).subarray(2);
+  expect(buf.length).toBe(6);
+  const str = buf.toString();
+  expect(str.length).toBe(6);
+  expect(str).toBe("\uFFFD\x13\x12\x11\x10\x09");
 });

@@ -3,11 +3,16 @@ var __commonJS = (cb, mod) =>
   function __require() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
+
+function isBufferInterface({ copy, fill, readUint8 }) {
+  return typeof copy === "function" && typeof fill === "function" && typeof readUint8 === "function";
+}
+
 export function isBuffer(value) {
   return (
     Buffer.isBuffer(value) ||
     // incase it ends up as a browserify buffer
-    (typeof arg?.copy === "function" && typeof arg?.fill === "function" && typeof arg?.readUInt8 === "function")
+    (typeof value === "object" && isBufferInterface(value || {}))
   );
 }
 

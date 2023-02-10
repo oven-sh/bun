@@ -292,6 +292,8 @@ pub const Runtime = struct {
         allow_runtime: bool = true,
         inlining: bool = false,
 
+        inject_jest_globals: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

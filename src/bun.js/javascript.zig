@@ -350,6 +350,7 @@ pub const VirtualMachine = struct {
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
     main: string = "",
+    main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),

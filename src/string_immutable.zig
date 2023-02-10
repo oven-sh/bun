@@ -6,7 +6,6 @@ const stringZ = bun.stringZ;
 const CodePoint = bun.CodePoint;
 const bun = @import("bun");
 pub const joiner = @import("./string_joiner.zig");
-const assert = std.debug.assert;
 const log = bun.Output.scoped(.STR, true);
 
 pub const Encoding = enum {
@@ -548,7 +547,7 @@ pub fn withoutTrailingSlash(this: string) []const u8 {
 }
 
 pub fn withTrailingSlash(dir: string, in: string) []const u8 {
-    std.debug.assert(bun.isSliceInBuffer(dir, in));
+    if (comptime Environment.allow_assert) std.debug.assert(bun.isSliceInBuffer(dir, in));
     return in[0..@min(strings.withoutTrailingSlash(in[0..@min(dir.len + 1, in.len)]).len + 1, in.len)];
 }
 
@@ -775,7 +774,7 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
             return false;
         }
     } else {
-        std.debug.assert(b_str.len == a_str.len);
+        if (comptime Environment.allow_assert) std.debug.assert(b_str.len == a_str.len);
     }
 
     const end = b_str.ptr + len;
@@ -886,9 +885,7 @@ pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) /
 pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     var output = output_;
     var input = input_;
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(input.len <= output.len);
-    }
+    if (comptime Environment.allow_assert) std.debug.assert(input.len <= output.len);
 
     // https://zig.godbolt.org/z/9rTn1orcY
 
@@ -908,9 +905,7 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
     var output = output_;
     var input = input_;
     const word = @sizeOf(usize) / 2;
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(input.len <= output.len);
-    }
+    if (comptime Environment.allow_assert) std.debug.assert(input.len <= output.len);
 
     // un-aligned data access is slow
     // so we attempt to align the data
@@ -933,9 +928,7 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
 // pub inline fn copy(output_: []u8, input_: []const u8) void {
 //     var output = output_;
 //     var input = input_;
-//     if (comptime Environment.allow_assert) {
-//         std.debug.assert(input.len <= output.len);
-//     }
+//     if (comptime Environment.allow_assert) std.debug.assert(input.len <= output.len);
 
 //     if (input.len > @sizeOf(usize) * 4) {
 //         comptime var i: usize = 0;
@@ -958,15 +951,10 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
 // }
 
 pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: InputType) void {
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(input_.len <= output_.len);
-    }
-
+    if (comptime Environment.allow_assert) std.debug.assert(input_.len <= output_.len);
     var output = output_;
     var input = input_;
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(input.len <= output.len);
-    }
+    if (comptime Environment.allow_assert) std.debug.assert(input.len <= output.len);
 
     // https://zig.godbolt.org/z/9rTn1orcY
 
@@ -1063,61 +1051,48 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
-    var first_non_ascii: ?u32 = null;
-    var output_: ?std.ArrayList(u16) = null;
-
-    if (bun.FeatureFlags.use_simdutf) {
-        if (bytes.len == 0)
-            return &[_]u16{};
-        use_simdutf: {
-            if (bun.simdutf.validate.ascii(bytes))
-                return null;
-
+    if (strings.firstNonASCII(bytes)) |i| {
+        const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
             const trimmed = bun.simdutf.trim.utf8(bytes);
 
             if (trimmed.len == 0)
-                break :use_simdutf;
+                break :simd null;
 
             const out_length = bun.simdutf.length.utf16.from.utf8.le(trimmed);
 
             if (out_length == 0)
-                break :use_simdutf;
+                break :simd null;
 
             var out = try allocator.alloc(u16, out_length);
             log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
 
-            const result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(trimmed, out);
-            switch (result.status) {
-                .success => {
-                    return out;
-                },
-                else => {
-                    if (fail_if_invalid) {
+            // avoid `.with_errors.le()` due to https://github.com/simdutf/simdutf/issues/213
+            switch (bun.simdutf.convert.utf8.to.utf16.le(trimmed, out)) {
+                0 => {
+                    if (comptime fail_if_invalid) {
                         allocator.free(out);
                         return error.InvalidByteSequence;
                     }
 
-                    first_non_ascii = @truncate(u32, result.count);
-                    output_ = std.ArrayList(u16){
-                        .items = out[0..first_non_ascii.?],
+                    break :simd .{
+                        .items = out[0..i],
                         .capacity = out.len,
                         .allocator = allocator,
                     };
                 },
+                else => return out,
             }
-        }
-    }
+        } else null;
 
-    if (first_non_ascii orelse strings.firstNonASCII(bytes)) |i| {
-        const ascii = bytes[0..i];
-        const chunk = bytes[i..];
-        var output = output_ orelse try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
+        var output = output_ orelse fallback: {
+            var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
+            list.items.len = i;
+            strings.copyU8IntoU16(list.items, bytes[0..i]);
+            break :fallback list;
+        };
         errdefer output.deinit();
-        output.items.len = ascii.len;
-        if (first_non_ascii == null)
-            strings.copyU8IntoU16(output.items, ascii);
 
-        var remaining = chunk;
+        var remaining = bytes[i..];
 
         {
             const sequence: [4]u8 = switch (remaining.len) {
@@ -1131,28 +1106,28 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
-                    std.debug.assert(replacement.code_point == unicode_replacement);
+                    if (comptime Environment.allow_assert) std.debug.assert(replacement.code_point == unicode_replacement);
                     return error.InvalidByteSequence;
                 }
             }
-
             remaining = remaining[@max(replacement.len, 1)..];
-            const new_len = strings.u16Len(replacement.code_point);
-            try output.ensureUnusedCapacity(new_len);
-            output.items.len += @as(usize, new_len);
 
+            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
             switch (replacement.code_point) {
-                0...0xffff => {
-                    output.items[output.items.len - 1] = @intCast(u16, replacement.code_point);
+                0...0xffff => |c| {
+                    try output.append(@intCast(u16, c));
                 },
                 else => |c| {
-                    output.items[output.items.len - 2 .. output.items.len][0..2].* = [2]u16{ strings.u16Lead(c), strings.u16Trail(c) };
+                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
                 },
             }
         }
 
         while (strings.firstNonASCII(remaining)) |j| {
-            const last = remaining[0..j];
+            const end = output.items.len;
+            try output.ensureUnusedCapacity(j);
+            output.items.len += j;
+            strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
             remaining = remaining[j..];
 
             const sequence: [4]u8 = switch (remaining.len) {
@@ -1166,23 +1141,19 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
-                    std.debug.assert(replacement.code_point == unicode_replacement);
+                    if (comptime Environment.allow_assert) std.debug.assert(replacement.code_point == unicode_replacement);
                     return error.InvalidByteSequence;
                 }
             }
-
             remaining = remaining[@max(replacement.len, 1)..];
-            const new_len = j + @as(usize, strings.u16Len(replacement.code_point));
-            try output.ensureUnusedCapacity(new_len);
-            output.items.len += new_len;
-            strings.copyU8IntoU16(output.items[output.items.len - new_len ..][0..j], last);
 
+            //#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
             switch (replacement.code_point) {
-                0...0xffff => {
-                    output.items[output.items.len - 1] = @intCast(u16, replacement.code_point);
+                0...0xffff => |c| {
+                    try output.append(@intCast(u16, c));
                 },
                 else => |c| {
-                    output.items[output.items.len - 2 .. output.items.len][0..2].* = [2]u16{ strings.u16Lead(c), strings.u16Trail(c) };
+                    try output.appendSlice(&[_]u16{ strings.u16Lead(c), strings.u16Trail(c) });
                 },
             }
         }
@@ -1227,12 +1198,37 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
+pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    var list = list_;
+
+    var remaining_input = utf16;
+    var start: usize = 0;
+
+    const replacement_char = [_]u8{ 239, 191, 189 };
+    var result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remaining_input, list.items.ptr[start..list.capacity]);
+    list.items.len = result.count;
+    while (result.status == .surrogate) {
+        try list.ensureUnusedCapacity(3);
+        list.items.len += 3;
+        start += result.count;
+
+        list.items[start..][0..replacement_char.len].* = replacement_char;
+        remaining_input = remaining_input[result.count + 1 ..];
+        start += replacement_char.len;
+
+        result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remaining_input, list.items.ptr[start..list.capacity]);
+        list.items.len += result.count;
+    }
+
+    return list;
+}
+
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
     if (bun.FeatureFlags.use_simdutf and comptime Type == []const u16) {
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
-        var list = try allocator.alloc(u8, length);
-        _ = bun.simdutf.convert.utf16.to.utf8.le(utf16, list);
-        return list;
+        var list = try std.ArrayList(u8).initCapacity(allocator, length);
+        list = try convertUTF16ToUTF8(list, Type, utf16);
+        return list.items;
     }
 
     var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
@@ -1245,8 +1241,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         var list = list_;
         const length = bun.simdutf.length.utf8.from.utf16.le(utf16);
         try list.ensureTotalCapacityPrecise(length);
-        list.items.len += bun.simdutf.convert.utf16.to.utf8.le(utf16, list.items.ptr[0..length]);
-        return list;
+        return convertUTF16ToUTF8(list, Type, utf16);
     }
 
     return toUTF8ListWithTypeBun(list_, Type, utf16);
@@ -1317,7 +1312,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
     try list.ensureUnusedCapacity(latin1.len);
 
     while (latin1.len > 0) {
-        assert(i < list.capacity);
+        if (comptime Environment.allow_assert) std.debug.assert(i < list.capacity);
         var buf = list.items.ptr[i..list.capacity];
 
         inner: {
@@ -1338,9 +1333,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
 
                             if (mask > 0) {
                                 const first_set_byte = @ctz(mask) / 8;
-                                if (comptime Environment.allow_assert) {
-                                    assert(latin1[first_set_byte] >= 127);
-                                }
+                                if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                                 buf[0..size].* = @bitCast([size]u8, bytes);
                                 buf = buf[first_set_byte..];
@@ -1360,9 +1353,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
 
                             if (mask > 0) {
                                 const first_set_byte = @ctz(mask) / 8;
-                                if (comptime Environment.allow_assert) {
-                                    assert(latin1[first_set_byte] >= 127);
-                                }
+                                if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                                 buf[0..size].* = @bitCast([size]u8, bytes);
                                 buf = buf[first_set_byte..];
@@ -1389,9 +1380,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
 
                 if (mask > 0) {
                     const first_set_byte = @ctz(mask) / 8;
-                    if (comptime Environment.allow_assert) {
-                        assert(latin1[first_set_byte] >= 127);
-                    }
+                    if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                     buf[0..size].* = @bitCast([size]u8, bytes);
                     latin1 = latin1[first_set_byte..];
@@ -1405,7 +1394,7 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
             }
 
             {
-                assert(latin1.len < 8);
+                if (comptime Environment.allow_assert) std.debug.assert(latin1.len < 8);
                 const end = latin1.ptr + latin1.len;
                 while (latin1.ptr != end and latin1[0] < 128) {
                     buf[0] = latin1[0];
@@ -1455,25 +1444,24 @@ pub const UTF16Replacement = struct {
 
 // This variation matches WebKit behavior.
 pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
-    if (Environment.allow_assert)
-        assert(sequence[0] > 127);
+    if (comptime Environment.allow_assert) std.debug.assert(sequence[0] > 127);
     const len = wtf8ByteSequenceLengthWithInvalid(sequence[0]);
     switch (len) {
         2 => {
-            if (Environment.allow_assert)
-                assert(sequence[0] >= 0xC0);
-            if (Environment.allow_assert)
-                assert(sequence[0] <= 0xDF);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(sequence[0] >= 0xC0);
+                std.debug.assert(sequence[0] <= 0xDF);
+            }
             if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
                 return .{ .len = 1, .fail = true };
             }
             return .{ .len = len, .code_point = ((@as(u32, sequence[0]) << 6) + @as(u32, sequence[1])) - 0x00003080 };
         },
         3 => {
-            if (Environment.allow_assert)
-                assert(sequence[0] >= 0xE0);
-            if (Environment.allow_assert)
-                assert(sequence[0] <= 0xEF);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(sequence[0] >= 0xE0);
+                std.debug.assert(sequence[0] <= 0xEF);
+            }
             switch (sequence[0]) {
                 0xE0 => {
                     if (sequence[1] < 0xA0 or sequence[1] > 0xBF) {
@@ -1583,9 +1571,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
                             if (mask > 0) {
                                 const first_set_byte = @ctz(mask) / 8;
-                                if (comptime Environment.allow_assert) {
-                                    assert(latin1[first_set_byte] >= 127);
-                                }
+                                if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                                 buf = buf[first_set_byte..];
                                 latin1 = latin1[first_set_byte..];
@@ -1603,11 +1589,9 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
                             buf[0..size].* = @bitCast([size]u8, bytes);
 
-                            assert(mask > 0);
+                            if (comptime Environment.allow_assert) std.debug.assert(mask > 0);
                             const first_set_byte = @ctz(mask) / 8;
-                            if (comptime Environment.allow_assert) {
-                                assert(latin1[first_set_byte] >= 127);
-                            }
+                            if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                             buf = buf[first_set_byte..];
                             latin1 = latin1[first_set_byte..];
@@ -1636,10 +1620,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
                     if (mask > 0) {
                         const first_set_byte = @ctz(mask) / 8;
                         if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
-
-                        if (comptime Environment.allow_assert) {
-                            assert(latin1[first_set_byte] >= 127);
-                        }
+                        if (comptime Environment.allow_assert) std.debug.assert(latin1[first_set_byte] >= 127);
 
                         buf = buf[first_set_byte..];
                         latin1 = latin1[first_set_byte..];
@@ -1654,7 +1635,7 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
             {
                 const end = latin1.ptr + @min(buf.len, latin1.len);
-                assert(@ptrToInt(latin1.ptr + 8) > @ptrToInt(end));
+                if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(latin1.ptr + 8) > @ptrToInt(end));
                 const start_ptr = @ptrToInt(buf.ptr);
                 const start_ptr_latin1 = @ptrToInt(latin1.ptr);
 
@@ -1723,35 +1704,35 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
         }
 
         if (@ptrToInt(ptr + 8) < @ptrToInt(latin1_last)) {
-            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
             const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
             total_non_ascii_count += @popCount(bytes);
             ptr += 8;
         }
 
         if (@ptrToInt(ptr + 4) < @ptrToInt(latin1_last)) {
-            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
             const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
             total_non_ascii_count += @popCount(bytes);
             ptr += 4;
         }
 
         if (@ptrToInt(ptr + 2) < @ptrToInt(latin1_last)) {
-            assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
             const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
             total_non_ascii_count += @popCount(bytes);
             ptr += 2;
         }
 
         while (ptr != latin1_last) {
-            assert(@ptrToInt(ptr) < @ptrToInt(latin1_last));
+            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) < @ptrToInt(latin1_last));
 
             total_non_ascii_count += @as(usize, @boolToInt(ptr[0] > 127));
             ptr += 1;
         }
 
         // assert we never go out of bounds
-        assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
     }
 
     // each non-ascii latin1 character becomes 2 UTF8 characters
@@ -1975,9 +1956,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 // pass #1: scan for any characters that need escaping
                 // assume most strings won't need any escaping, so don't actually allocate the buffer
                 scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(!any_needs_escape);
-                    }
+                    if (comptime Environment.allow_assert) std.debug.assert(!any_needs_escape);
                     const vec: AsciiVector = remaining[0..ascii_vector_size].*;
                     if (@reduce(.Max, @bitCast(AsciiVectorU1, (vec == vecs[0])) |
                         @bitCast(AsciiVectorU1, (vec == vecs[1])) |
@@ -1985,7 +1964,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @bitCast(AsciiVectorU1, (vec == vecs[3])) |
                         @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
                     {
-                        std.debug.assert(buf.capacity == 0);
+                        if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
@@ -2098,7 +2077,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 scan_and_allocate_lazily: while (ptr != end) : (ptr += 1) {
                     switch (ptr[0]) {
                         '"', '&', '\'', '<', '>' => |c| {
-                            std.debug.assert(buf.capacity == 0);
+                            if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
 
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @ptrToInt(ptr) - @ptrToInt(latin1.ptr);
@@ -2136,7 +2115,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             }
 
             if (!any_needs_escape) {
-                std.debug.assert(buf.capacity == 0);
+                if (comptime Environment.allow_assert) std.debug.assert(buf.capacity == 0);
                 return Escaped(u8){ .original = void{} };
             }
 
@@ -2230,9 +2209,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                 // pass #1: scan for any characters that need escaping
                 // assume most strings won't need any escaping, so don't actually allocate the buffer
                 scan_and_allocate_lazily: while (remaining.len >= ascii_u16_vector_size) {
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(!any_needs_escape);
-                    }
+                    if (comptime Environment.allow_assert) std.debug.assert(!any_needs_escape);
                     const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
                     if (@reduce(.Max, @bitCast(AsciiVectorU16U1, vec > @splat(ascii_u16_vector_size, @as(u16, 127))) |
                         @bitCast(AsciiVectorU16U1, (vec == vecs[0])) |
@@ -2266,7 +2243,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         }
 
                         buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
-                        std.debug.assert(@ptrToInt(remaining.ptr + i) >= @ptrToInt(utf16.ptr));
+                        if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(remaining.ptr + i) >= @ptrToInt(utf16.ptr));
                         const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(remaining.ptr + i) - @ptrToInt(utf16.ptr)];
                         @memcpy(@ptrCast([*]align(2) u8, buf.items.ptr), to_copy.ptr, to_copy.len);
                         buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
@@ -2377,7 +2354,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                     switch (ptr[0]) {
                         '"', '&', '\'', '<', '>' => |c| {
                             buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + @as(usize, Scalar.lengths[c]));
-                            std.debug.assert(@ptrToInt(ptr) >= @ptrToInt(utf16.ptr));
+                            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) >= @ptrToInt(utf16.ptr));
 
                             const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(ptr) - @ptrToInt(utf16.ptr)];
 
@@ -2815,7 +2792,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
 pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
-    std.debug.assert(len > 1);
+    if (comptime Environment.allow_assert) std.debug.assert(len > 1);
 
     const s1 = p[1];
     if ((s1 & 0xC0) != 0x80) return zero;
@@ -2921,14 +2898,6 @@ pub inline fn u16Trail(supplementary: anytype) u16 {
     return @intCast(u16, (supplementary & 0x3ff) | 0xdc00);
 }
 
-//#define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-pub inline fn u16Len(supplementary: anytype) u2 {
-    return switch (@intCast(u32, supplementary)) {
-        0...0xffff => 1,
-        else => 2,
-    };
-}
-
 pub fn firstNonASCII(slice: []const u8) ?u32 {
     return firstNonASCIIWithType([]const u8, slice);
 }
@@ -2966,10 +2935,10 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                         if (mask > 0) {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
-                                assert(remaining[first_set_byte] > 127);
+                                std.debug.assert(remaining[first_set_byte] > 127);
                                 var j: usize = 0;
                                 while (j < first_set_byte) : (j += 1) {
-                                    assert(remaining[j] <= 127);
+                                    std.debug.assert(remaining[j] <= 127);
                                 }
                             }
 
@@ -2984,10 +2953,10 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                         if (mask > 0) {
                             const first_set_byte = @ctz(mask) / 8;
                             if (comptime Environment.allow_assert) {
-                                assert(remaining[first_set_byte] > 127);
+                                std.debug.assert(remaining[first_set_byte] > 127);
                                 var j: usize = 0;
                                 while (j < first_set_byte) : (j += 1) {
-                                    assert(remaining[j] <= 127);
+                                    std.debug.assert(remaining[j] <= 127);
                                 }
                             }
 
@@ -3015,8 +2984,8 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
 
         if (comptime Environment.enableSIMD) {
             // these assertions exist more so for LLVM
-            assert(remaining.len < ascii_vector_size);
-            assert(@ptrToInt(remaining.ptr + ascii_vector_size) > @ptrToInt(remaining_end));
+            std.debug.assert(remaining.len < ascii_vector_size);
+            std.debug.assert(@ptrToInt(remaining.ptr + ascii_vector_size) > @ptrToInt(remaining_end));
         }
 
         if (remaining.len >= size) {
@@ -3029,10 +2998,10 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.allow_assert) {
-                        assert(remaining[first_set_byte] > 127);
+                        std.debug.assert(remaining[first_set_byte] > 127);
                         var j: usize = 0;
                         while (j < first_set_byte) : (j += 1) {
-                            assert(remaining[j] <= 127);
+                            std.debug.assert(remaining[j] <= 127);
                         }
                     }
 
@@ -3045,7 +3014,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
         }
     }
 
-    assert(remaining.len < 8);
+    if (comptime Environment.allow_assert) std.debug.assert(remaining.len < 8);
 
     for (remaining) |*char| {
         if (char.* > 127) {
@@ -3092,7 +3061,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
             remaining = remaining[ascii_vector_size..];
         }
 
-        assert(remaining.len < ascii_vector_size);
+        if (comptime Environment.allow_assert) std.debug.assert(remaining.len < ascii_vector_size);
     }
 
     for (remaining) |*char_| {
@@ -3295,8 +3264,10 @@ pub fn decodeHexToBytes(destination: []u8, comptime Char: type, source: []const 
 }
 
 pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
-    std.debug.assert(destination.len > 0);
-    std.debug.assert(source.len > 0);
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(destination.len > 0);
+        std.debug.assert(source.len > 0);
+    }
     const to_write = if (destination.len < source.len * 2)
         destination.len - destination.len % 2
     else
@@ -3457,16 +3428,22 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     }
 
     if (comptime check_min) {
+        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127 or char < 0x20) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
+
+            i += 1;
         }
     } else {
+        var i: usize = 0;
         for (remaining) |char| {
             if (char > 127) {
-                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
+                return @truncate(u32, i);
             }
+
+            i += 1;
         }
     }
 
@@ -3521,7 +3498,7 @@ test "indexOfNotChar" {
         while (i < yes.len) {
             @memset(&yes, 'a', yes.len);
             yes[i] = 'b';
-            assert(indexOfNotChar(&yes, 'a').? == i);
+            if (comptime Environment.allow_assert) std.debug.assert(indexOfNotChar(&yes, 'a').? == i);
             i += 1;
         }
     }
@@ -3776,7 +3753,7 @@ pub fn isASCIIHexDigit(c: u8) bool {
 }
 
 pub fn toASCIIHexValue(character: u8) u8 {
-    std.debug.assert(isASCIIHexDigit(character));
+    if (comptime Environment.allow_assert) std.debug.assert(isASCIIHexDigit(character));
     return switch (character) {
         0...('A' - 1) => character - '0',
         else => (character - 'A' + 10) & 0xF,
@@ -4013,25 +3990,21 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
 }
 
 pub fn moveSlice(slice: string, from: string, to: string) string {
-    std.debug.assert(from.len <= to.len and from.len >= slice.len);
-
     if (comptime Environment.allow_assert) {
+        std.debug.assert(from.len <= to.len and from.len >= slice.len);
         // assert we are in bounds
         std.debug.assert(
             (@ptrToInt(from.ptr) + from.len) >=
                 @ptrToInt(slice.ptr) + slice.len and
                 (@ptrToInt(from.ptr) <= @ptrToInt(slice.ptr)),
         );
-
         std.debug.assert(eqlLong(from, to[0..from.len], false)); // data should be identical
     }
 
     const ptr_offset = @ptrToInt(slice.ptr) - @ptrToInt(from.ptr);
     const result = to[ptr_offset..][0..slice.len];
 
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(eqlLong(slice, result, false)); // data should be identical
-    }
+    if (comptime Environment.allow_assert) std.debug.assert(eqlLong(slice, result, false)); // data should be identical
 
     return result;
 }
@@ -4136,7 +4109,7 @@ pub fn cloneNormalizingSeparators(
     var base = withoutTrailingSlash(input);
     var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
     var buf = try allocator.alloc(u8, base.len + 2);
-    std.debug.assert(base.len > 0);
+    if (comptime Environment.allow_assert) std.debug.assert(base.len > 0);
     if (base[0] == std.fs.path.sep) {
         buf[0] = std.fs.path.sep;
     }

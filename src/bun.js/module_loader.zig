@@ -964,6 +964,10 @@ pub const ModuleLoader = struct {
                     .jsx = jsc_vm.bundler.options.jsx,
                     .virtual_source = virtual_source,
                     .hoist_bun_plugin = true,
+                    .inject_jest_globals = jsc_vm.bundler.options.rewrite_jest_for_tests and
+                        jsc_vm.main.len == path.text.len and
+                        jsc_vm.main_hash == hash and
+                        strings.eqlLong(jsc_vm.main, path.text, false),
                 };
 
                 if (is_node_override) {

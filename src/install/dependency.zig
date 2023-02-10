@@ -318,8 +318,8 @@ pub const Version = struct {
         }
 
         pub fn infer(dependency: string) Tag {
-            // empty string means >= 0.0.0
-            if (dependency.len == 0) return .npm;
+            // empty string means `latest`
+            if (dependency.len == 0) return .dist_tag;
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -473,12 +473,24 @@ pub const Version = struct {
                     }
                 },
                 // v1.2.3
+                // verilog
                 // verilog.tar.gz
                 // verilog/repo
                 'v' => {
                     if (isTarball(dependency)) return .tarball;
                     if (isGitHubRepoPath(dependency)) return .github;
-                    return .npm;
+                    if (dependency.len == 1) return .dist_tag;
+                    return switch (dependency[1]) {
+                        '0'...'9' => .npm,
+                        else => .dist_tag,
+                    };
+                },
+                // workspace:*
+                // w00t
+                // w00t.tar.gz
+                // w00t/repo
+                'w' => {
+                    if (strings.hasPrefixComptime(dependency, "workspace:")) return .workspace;
                 },
                 // x
                 // xyz.tar.gz
@@ -626,7 +638,7 @@ pub fn parseWithTag(
                 return null;
             };
 
-            return Version{
+            return .{
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
@@ -638,12 +650,12 @@ pub fn parseWithTag(
             };
         },
         .dist_tag => {
-            var tag_to_use: String = sliced.value();
+            var tag_to_use = sliced.value();
 
             const actual = if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len)
                 // npm:@foo/bar@latest
                 sliced.sub(brk: {
-                    var i: usize = "npm:".len;
+                    var i = "npm:".len;
 
                     // npm:@foo/bar@latest
                     //     ^
@@ -658,10 +670,6 @@ pub fn parseWithTag(
                     }
 
                     tag_to_use = sliced.sub(dependency[i + 1 ..]).value();
-                    if (tag_to_use.isEmpty()) {
-                        tag_to_use = String.from("latest");
-                    }
-
                     break :brk dependency["npm:".len..i];
                 }).value()
             else
@@ -670,15 +678,12 @@ pub fn parseWithTag(
             // name should never be empty
             if (Environment.allow_assert) std.debug.assert(!actual.isEmpty());
 
-            // tag should never be empty
-            if (Environment.allow_assert) std.debug.assert(!tag_to_use.isEmpty());
-
-            return Version{
+            return .{
                 .literal = sliced.value(),
                 .value = .{
                     .dist_tag = .{
                         .name = actual,
-                        .tag = tag_to_use,
+                        .tag = if (tag_to_use.isEmpty()) String.from("latest") else tag_to_use,
                     },
                 },
                 .tag = .dist_tag,
@@ -739,7 +744,7 @@ pub fn parseWithTag(
                 repo = repo[0 .. repo.len - ".git".len];
             }
 
-            return Version{
+            return .{
                 .literal = sliced.value(),
                 .value = .{
                     .github = .{
@@ -753,26 +758,26 @@ pub fn parseWithTag(
         },
         .tarball => {
             if (strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://")) {
-                return Version{
+                return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
-                    .value = .{ .tarball = URI{ .remote = sliced.sub(dependency).value() } },
+                    .value = .{ .tarball = .{ .remote = sliced.sub(dependency).value() } },
                 };
             } else if (strings.hasPrefixComptime(dependency, "file://")) {
-                return Version{
+                return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
-                    .value = .{ .tarball = URI{ .local = sliced.sub(dependency[7..]).value() } },
+                    .value = .{ .tarball = .{ .local = sliced.sub(dependency[7..]).value() } },
                 };
             } else if (strings.contains(dependency, "://")) {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
                 return null;
             }
 
-            return Version{
+            return .{
                 .literal = sliced.value(),
                 .value = .{
-                    .tarball = URI{
+                    .tarball = .{
                         .local = sliced.value(),
                     },
                 },
@@ -787,14 +792,14 @@ pub fn parseWithTag(
                         return null;
                     }
 
-                    return Version{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
+                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
                 return null;
             }
 
-            return Version{
+            return .{
                 .value = .{ .folder = sliced.value() },
                 .tag = .folder,
                 .literal = sliced.value(),
@@ -803,22 +808,26 @@ pub fn parseWithTag(
         .uninitialized => return null,
         .symlink => {
             if (strings.indexOfChar(dependency, ':')) |colon| {
-                return Version{
+                return .{
                     .value = .{ .symlink = sliced.sub(dependency[colon + 1 ..]).value() },
                     .tag = .symlink,
                     .literal = sliced.value(),
                 };
             }
 
-            return Version{
+            return .{
                 .value = .{ .symlink = sliced.value() },
                 .tag = .symlink,
                 .literal = sliced.value(),
             };
         },
         .workspace => {
-            return Version{
-                .value = .{ .workspace = sliced.value() },
+            var input = dependency;
+            if (strings.hasPrefixComptime(input, "workspace:")) {
+                input = input["workspace:".len..];
+            }
+            return .{
+                .value = .{ .workspace = sliced.sub(input).value() },
                 .tag = .workspace,
                 .literal = sliced.value(),
             };

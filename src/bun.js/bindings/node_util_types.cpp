@@ -84,7 +84,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSymbolObject, (JSC::JSGlobalObject * global
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     GET_FIRST_VALUE
-    return JSValue::encode(jsBoolean(value.isCell() && jsDynamicCast<ErrorInstance*>(value) != nullptr));
+    return JSValue::encode(jsBoolean(value.isCell() && (value.inherits<JSC::ErrorInstance>() || value.asCell()->type() == ErrorInstanceType)));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsRegExp, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

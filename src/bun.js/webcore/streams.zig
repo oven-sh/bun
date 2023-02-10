@@ -3919,20 +3919,18 @@ pub const File = struct {
     }
 
     fn calculateChunkSize(this: *File, available_to_read: usize) usize {
-        const chunk_size: usize = if (this.user_chunk_size > 0)
-            @as(usize, this.user_chunk_size)
-        else if (this.isSeekable())
-            @as(usize, default_file_chunk_size)
-        else
-            @as(usize, default_fifo_chunk_size);
-
-        return if (this.remaining_bytes > 0 and this.isSeekable())
-            if (available_to_read != std.math.maxInt(usize))
-                @min(chunk_size, available_to_read)
+        const chunk_size: usize = switch (this.user_chunk_size) {
+            0 => if (this.isSeekable())
+                default_file_chunk_size
             else
-                @min(this.remaining_bytes -| this.total_read, chunk_size)
+                default_fifo_chunk_size,
+            else => |size| size,
+        };
+
+        return if (available_to_read == std.math.maxInt(usize) and this.remaining_bytes > 0 and this.isSeekable())
+            @min(chunk_size, this.remaining_bytes -| this.total_read)
         else
-            @min(available_to_read, chunk_size);
+            @min(chunk_size, available_to_read);
     }
 
     pub fn start(
@@ -4192,23 +4190,21 @@ pub const File = struct {
 
     pub fn readFromJS(this: *File, buf: []u8, view: JSValue, globalThis: *JSC.JSGlobalObject) StreamResult {
         const read_result = this.read(buf);
-        if (read_result == .read and read_result.read.len == 0) {
-            this.close();
-            return .{ .done = {} };
-        }
 
-        if (read_result == .read) {
-            this.remaining_bytes -|= @intCast(Blob.SizeType, read_result.read.len);
-        }
-
-        if (read_result == .pending) {
-            if (this.scheduled_count == 0) {
-                this.buf = buf;
-                this.view.set(globalThis, view);
-                this.scheduleAsync(@truncate(Blob.SizeType, buf.len), globalThis);
-            }
-
-            return .{ .pending = &this.pending };
+        switch (read_result) {
+            .read => |slice| if (slice.len == 0) {
+                this.close();
+                return .{ .done = {} };
+            },
+            .pending => {
+                if (this.scheduled_count == 0) {
+                    this.buf = buf;
+                    this.view.set(globalThis, view);
+                    this.scheduleAsync(@truncate(Blob.SizeType, buf.len), globalThis);
+                }
+                return .{ .pending = &this.pending };
+            },
+            else => {},
         }
 
         return read_result.toStream(&this.pending, buf, view, false);
@@ -4421,7 +4417,7 @@ pub const FileReader = struct {
             switch (this.lazy_readable) {
                 .blob => |blob| {
                     defer blob.deref();
-                    var readable_file: File = .{ .loop = this.globalThis().bunVM().eventLoop() };
+                    var readable_file = File{ .loop = this.globalThis().bunVM().eventLoop() };
 
                     const result = readable_file.start(&blob.data.file);
                     if (result != .ready) {
@@ -4432,7 +4428,7 @@ pub const FileReader = struct {
                     if (std.os.S.ISFIFO(readable_file.mode) or std.os.S.ISCHR(readable_file.mode)) {
                         this.lazy_readable = .{
                             .readable = .{
-                                .FIFO = FIFO{
+                                .FIFO = .{
                                     .fd = readable_file.fd,
                                     .auto_close = readable_file.auto_close,
                                     .drained = this.buffered_data.len == 0,

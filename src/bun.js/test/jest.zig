@@ -96,14 +96,22 @@ pub const DiffFormatter = struct {
             return;
         }
 
+        const equal_fmt = "<d>{s}<r>";
         const delete_fmt = "<red>{s}<r>";
         const insert_fmt = "<green>{s}<r>";
         for (diff_buf.items) |edit| {
-            switch(edit.type) {
-                .Equal => try writer.writeAll(received_value_slice[edit.range[0]..edit.range[1]]),
+            switch (edit.type) {
+                .Equal => {
+                    const s = received_value_slice[edit.range[0]..edit.range[1]];
+                    if (Output.enable_ansi_colors) {
+                        try writer.print(Output.prettyFmt(equal_fmt, true), .{s});
+                    } else {
+                        try writer.print(Output.prettyFmt(equal_fmt, false), .{s});
+                    }
+                },
                 .Delete => {
                     const s = received_value_slice[edit.range[0]..edit.range[1]];
-                    if (comptime Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors) {
                         try writer.print(Output.prettyFmt(delete_fmt, true), .{s});
                     } else {
                         try writer.print(Output.prettyFmt(delete_fmt, false), .{s});
@@ -111,7 +119,7 @@ pub const DiffFormatter = struct {
                 },
                 .Insert => {
                     const s = expected_value_slice[edit.range[0]..edit.range[1]];
-                    if (comptime Output.enable_ansi_colors) {
+                    if (Output.enable_ansi_colors) {
                         try writer.print(Output.prettyFmt(insert_fmt, true), .{s});
                     } else {
                         try writer.print(Output.prettyFmt(insert_fmt, false), .{s});

@@ -1066,9 +1066,10 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
     var first_non_ascii: ?u32 = null;
     var output_: ?std.ArrayList(u16) = null;
 
-    if (bun.FeatureFlags.use_simdutf) {
-        if (bytes.len == 0)
-            return &[_]u16{};
+    if (bun.FeatureFlags.use_simdutf and
+        // workaround https://github.com/simdutf/simdutf/issues/213
+        bytes.len > 4)
+    {
         use_simdutf: {
             if (bun.simdutf.validate.ascii(bytes))
                 return null;

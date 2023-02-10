@@ -90,6 +90,55 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
 
 const indentation_buf = [_]u8{' '} ** 128;
 
+pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_backtick: bool) u8 {
+    var single_cost: usize = 0;
+    var double_cost: usize = 0;
+    var backtick_cost: usize = 0;
+    var char: u8 = 0;
+    var i: usize = 0;
+    while (i < str.len) {
+        switch (str[i]) {
+            '\'' => {
+                single_cost += 1;
+            },
+            '"' => {
+                double_cost += 1;
+            },
+            '`' => {
+                backtick_cost += 1;
+            },
+            '\r', '\n' => {
+                if (allow_backtick) {
+                    return '`';
+                }
+            },
+            '\\' => {
+                i += 1;
+            },
+            '$' => {
+                if (i + 1 < str.len and str[i + 1] == '{') {
+                    backtick_cost += 1;
+                }
+            },
+            else => {},
+        }
+        i += 1;
+    }
+
+    char = '"';
+    if (double_cost > single_cost) {
+        char = '\'';
+
+        if (single_cost > backtick_cost and allow_backtick) {
+            char = '`';
+        }
+    } else if (double_cost > backtick_cost and allow_backtick) {
+        char = '`';
+    }
+
+    return char;
+}
+
 const Whitespacer = struct {
     normal: []const u8,
     minify: []const u8,
@@ -896,11 +945,24 @@ pub fn NewPrinter(
             p.print(keyword);
             p.printSpace();
 
-            for (decls) |*decl, i| {
-                if (i != 0) {
-                    p.print(",");
-                    p.printSpace();
+            if (decls.len == 0) {
+                // "var ;" is invalid syntax
+                // assert we never reach it
+                unreachable;
+            }
+
+            {
+                p.printBinding(decls[0].binding);
+
+                if (decls[0].value) |value| {
+                    p.printWhitespacer(ws(" = "));
+                    p.printExpr(value, .comma, flags);
                 }
+            }
+
+            for (decls[1..]) |*decl| {
+                p.print(",");
+                p.printSpace();
 
                 p.printBinding(decl.binding);
 
@@ -1022,11 +1084,14 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn bestQuoteCharForEString(p: *Printer, str: *const E.String, allow_backtick: bool) u8 {
+        pub fn bestQuoteCharForEString(str: *const E.String, allow_backtick: bool) u8 {
+            if (comptime is_json)
+                return '"';
+
             if (str.isUTF8()) {
-                return p.bestQuoteCharForString(str.data, allow_backtick);
+                return bestQuoteCharForString(u8, str.data, allow_backtick);
             } else {
-                return p.bestQuoteCharForString(str.slice16(), allow_backtick);
+                return bestQuoteCharForString(u16, str.slice16(), allow_backtick);
             }
         }
 
@@ -1036,57 +1101,6 @@ pub fn NewPrinter(
             } else {
                 this.print(spacer.normal);
             }
-        }
-
-        pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick: bool) u8 {
-            if (comptime is_json) return '"';
-
-            var single_cost: usize = 0;
-            var double_cost: usize = 0;
-            var backtick_cost: usize = 0;
-            var char: u8 = 0;
-            var i: usize = 0;
-            while (i < str.len) {
-                switch (str[i]) {
-                    '\'' => {
-                        single_cost += 1;
-                    },
-                    '"' => {
-                        double_cost += 1;
-                    },
-                    '`' => {
-                        backtick_cost += 1;
-                    },
-                    '\r', '\n' => {
-                        if (allow_backtick) {
-                            return '`';
-                        }
-                    },
-                    '\\' => {
-                        i += 1;
-                    },
-                    '$' => {
-                        if (i + 1 < str.len and str[i + 1] == '{') {
-                            backtick_cost += 1;
-                        }
-                    },
-                    else => {},
-                }
-                i += 1;
-            }
-
-            char = '"';
-            if (double_cost > single_cost) {
-                char = '\'';
-
-                if (single_cost > backtick_cost and allow_backtick) {
-                    char = '`';
-                }
-            } else if (double_cost > backtick_cost and allow_backtick) {
-                char = '`';
-            }
-
-            return char;
         }
 
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
@@ -1535,7 +1549,11 @@ pub fn NewPrinter(
         pub inline fn printPure(_: *Printer) void {}
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
-            const quote = p.bestQuoteCharForString(str, allow_backtick);
+            const quote = if (comptime !is_json)
+                bestQuoteCharForString(u8, str, allow_backtick)
+            else
+                '"';
+
             p.print(quote);
             p.print(str);
             p.print(quote);
@@ -2128,7 +2146,7 @@ pub fn NewPrinter(
                         return;
                     }
 
-                    const c = p.bestQuoteCharForEString(e, true);
+                    const c = bestQuoteCharForEString(e, true);
 
                     p.print(c);
                     p.printStringContent(e, c);
@@ -2724,7 +2742,10 @@ pub fn NewPrinter(
                             p.print(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote = p.bestQuoteCharForString(key.data, true);
+                            const quote = if (comptime !is_json)
+                                bestQuoteCharForString(u8, key.data, true)
+                            else
+                                '"';
                             if (quote == '`') {
                                 p.print('[');
                             }
@@ -2801,7 +2822,7 @@ pub fn NewPrinter(
                             }
                         }
                     } else {
-                        const c = p.bestQuoteCharForString(key.slice16(), false);
+                        const c = bestQuoteCharForString(u16, key.slice16(), false);
                         p.print(c);
                         p.printQuotedUTF16(key.slice16(), c);
                         p.print(c);
@@ -4123,7 +4144,10 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_directive => |s| {
-                    const c = p.bestQuoteCharForString(s.value, false);
+                    if (comptime is_json)
+                        unreachable;
+
+                    const c = bestQuoteCharForString(u16, s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print(c);
@@ -4196,7 +4220,10 @@ pub fn NewPrinter(
         }
 
         pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
-            const quote = p.bestQuoteCharForString(import_record.path.text, false);
+            if (comptime is_json)
+                unreachable;
+
+            const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
                 p.print(quote);
                 p.print(import_record.path.namespace);

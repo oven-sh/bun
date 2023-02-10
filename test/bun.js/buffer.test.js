@@ -2518,9 +2518,25 @@ test("Buffer.byteLength", () => {
 });
 
 it("should not crash on invalid UTF-8 byte sequence", () => {
-  const buf = Buffer.from([0xc0, 0xfd]).toString();
+  const buf = Buffer.from([0xc0, 0xfd]);
   expect(buf.length).toBe(2);
   const str = buf.toString();
   expect(str.length).toBe(2);
   expect(str).toBe("\uFFFD\uFFFD");
+});
+
+it("should not crash on invalid UTF-8 byte sequence with ASCII head", () => {
+  const buf = Buffer.from([0x42, 0xc0, 0xfd]);
+  expect(buf.length).toBe(3);
+  const str = buf.toString();
+  expect(str.length).toBe(3);
+  expect(str).toBe("B\uFFFD\uFFFD");
+});
+
+it("should not perform out-of-bound access on invalid UTF-8 byte sequence", () => {
+  const buf = Buffer.from([0x01, 0x9a, 0x84, 0x13, 0x12, 0x11, 0x10, 0x09]).subarray(2);
+  expect(buf.length).toBe(6);
+  const str = buf.toString();
+  expect(str.length).toBe(6);
+  expect(str).toBe("\uFFFD\x13\x12\x11\x10\x09");
 });

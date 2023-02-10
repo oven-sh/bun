@@ -561,6 +561,7 @@ pub const TestCommand = struct {
         Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
         Output.flush();
 
+        vm.main_hash = @truncate(u32, bun.hash(resolution.path_pair.primary.text));
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
 
         switch (promise.status(vm.global.vm())) {

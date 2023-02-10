@@ -4716,6 +4716,7 @@ pub const Part = struct {
         react_fast_refresh,
         dirname_filename,
         bun_plugin,
+        bun_test,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);

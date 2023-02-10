@@ -71,6 +71,7 @@ const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const AutoBitSet = bun.bit_set.AutoBitSet;
+const renamer = @import("../renamer.zig");
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -3308,6 +3309,12 @@ const LinkerContext = struct {
         {
             var chunk_metas_ptr = chunk_metas.ptr;
             std.debug.assert(chunk_metas.len == chunks.len);
+            var r = renamer.ExportRenamer.init(c.allocator);
+            defer r.deinit();
+
+            var stable_ref_list = std.ArrayList(StableRef).init(c.allocator);
+            defer stable_ref_list.deinit();
+
             for (chunks) |*chunk| {
                 var chunk_meta = chunk_metas_ptr[0];
                 chunk_metas_ptr += 1;
@@ -3316,11 +3323,129 @@ const LinkerContext = struct {
 
                 var repr = &chunk.content.javascript;
 
-                // TODO:
-                _ = repr;
-                _ = chunk_meta;
+                switch (c.options.output_format) {
+                    .esm => {
+                        stable_ref_list = c.sortedCrossChunkExportItems(chunk_meta.exports, stable_ref_list);
+                        var clause_items = BabyList(js_ast.ClauseItem).initCapacity(c.allocator, stable_ref_list.items.len) catch unreachable;
+                        for (stable_ref_list.items) |stable_ref| {
+                            r.clearRetainingCapacity();
+                            const alias = r.nextRenamedName(c.graph.symbols.get(stable_ref.ref).?.original_name);
+
+                            clause_items.appendAssumeCapacity(
+                                .{
+                                    .name = .{
+                                        .ref = stable_ref.ref,
+                                        .loc = Logger.Loc.Empty{},
+                                    },
+                                    .alias = alias,
+                                },
+                            );
+                            repr.exports_to_other_chunks.put(
+                                c.allocator,
+                                stable_ref.ref,
+                                alias,
+                            ) catch unreachable;
+                        }
+
+                        if (clause_items.items.len > 0) {
+                            var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
+                            var export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
+                            export_clause.* = .{
+                                .items = clause_items.items,
+                                .is_single_line = false,
+                            };
+                            stmts.appendAssumeCapacity(.{
+                                .data = .{
+                                    .s_export_clause = export_clause,
+                                },
+                                .loc = Logger.Loc.Empty,
+                            });
+                            repr.cross_chunk_suffix_stmts = stmts;
+                        }
+                    },
+                    else => bun.unreachablePanic("Unexpected output format", .{}),
+                }
             }
         }
+
+        // Generate cross-chunk imports. These must be computed after cross-chunk
+        // exports because the export aliases must already be finalized so they can
+        // be embedded in the generated import statements.
+        {
+            var list = CrossChunkImport.List.init(c.allocator);
+            defer list.deinit();
+
+            var cross_chunk_prefix_stmts = BabyList(js_ast.Stmt){};
+
+            for (chunks) |*chunk| {
+                if (chunk.content != .javascript) continue;
+                var repr = &chunk.content.javascript;
+
+                list.clearRetainingCapacity();
+                CrossChunkImport.sortedCrossChunkImports(&list, chunks, &repr.imports_from_other_chunks) catch unreachable;
+                var cross_chunk_imports: []CrossChunkImport = list.items;
+                for (cross_chunk_imports) |cross_chunk_import| {
+                    switch (c.options.output_format) {
+                        .esm => {
+                            const import_record_index = @truncate(u32, chunk.cross_chunk_imports.len);
+
+                            var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_Items.items.len) catch unreachable;
+                            for (cross_chunk_import.sorted_import_Items.items) |item| {
+                                clauses.appendAssumeCapacity(.{
+                                    .name = .{
+                                        .ref = item.ref,
+                                        .loc = Logger.Loc.Empty{},
+                                    },
+                                    .alias = item.export_alias,
+                                });
+                            }
+
+                            chunk.cross_chunk_imports.append(c.allocator, .{
+                                .import_kind = .stmt,
+                                .chunk_index = cross_chunk_import.chunk_index,
+                            }) catch unreachable;
+
+                            var import = c.allocator.create(js_ast.S.Import) catch unreachable;
+                            import.* = .{
+                                .items = clauses.items,
+                                .import_record_index = import_record_index,
+                            };
+                            cross_chunk_prefix_stmts.append(
+                                c.allocator,
+                                .{
+                                    .data = .{
+                                        .s_import = import,
+                                    },
+                                    .loc = Logger.Loc.Empty,
+                                },
+                            );
+                        },
+                        else => bun.unreachablePanic("Unexpected output format", .{}),
+                    }
+                }
+
+                repr.cross_chunk_prefix_stmts = cross_chunk_prefix_stmts;
+            }
+        }
+    }
+
+    // Sort cross-chunk exports by chunk name for determinism
+    fn sortedCrossChunkExportItems(
+        c: *LinkerContext,
+        export_refs: RefVoidMap,
+        list: std.ArrayList(StableRef),
+    ) std.ArrayList(StableRef) {
+        var result = list;
+        result.clearRetainingCapacity();
+        result.ensureTotalCapacity(export_refs.count()) catch unreachable;
+        for (export_refs.keys()) |export_ref| {
+            result.appendAssumeCapacity(.{
+                .source_index = c.graph.stable_source_indices[export_ref.sourceIndex()],
+                .ref = export_ref,
+            });
+        }
+        std.sort.sort(StableRef, result.items, void{}, StableRef.isLessThan);
+        return result;
     }
 
     pub fn markFileReachableForCodeSplitting(
@@ -4299,6 +4424,16 @@ pub const PartRange = struct {
     source_index: Index = Index.invalid,
     part_index_begin: u32 = 0,
     part_index_end: u32 = 0,
+};
+
+const StableRef = packed struct {
+    stable_source_index: Index.Int,
+    ref: Ref,
+
+    pub fn isLessThan(a: StableRef, b: StableRef) bool {
+        return a.stable_source_index < b.stable_source_index or
+            (a.stable_source_index == b.stable_source_index and a.ref.innerIndex() < b.ref.innerIndex());
+    }
 };
 
 pub const ImportTracker = struct {

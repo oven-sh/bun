@@ -68,3 +68,48 @@ pub const DisabledRenamer = struct {
         @compileError("DisabledRunner called");
     }
 };
+
+pub const ExportRenamer = struct {
+    string_buffer: bun.MutableString = undefined,
+    used: bun.StringHashMap(u32) = undefined,
+
+    pub fn init(allocator: *std.mem.Allocator) ExportRenamer {
+        return ExportRenamer{
+            .string_buffer = MutableString.initEmpty(allocator),
+            .used = bun.StringHashMap(u32).init(allocator),
+        };
+    }
+
+    pub fn clearRetainingCapacity(this: *ExportRenamer) void {
+        this.used.clearRetainingCapacity();
+        this.string_buffer.reset();
+    }
+
+    pub fn nextRenamedName(this: *ExportRenamer, input: []const u8) string {
+        var entry = this.used.getOrPut(input) catch unreachable;
+        var tries: u32 = 1;
+        if (entry.found_existing) {
+            while (true) {
+                this.string_buffer.reset();
+                var writer = this.string_buffer.writer();
+                writer.print("{s}{d}", .{ input, tries });
+                tries += 1;
+                var attempt = this.string_buffer.toOwnedSliceLeaky();
+                entry = this.used.getOrPut() catch unreachable;
+                if (!entry.found_existing) {
+                    const to_use = this.string_buffer.allocator.dupe(u8, attempt) catch unreachable;
+                    entry.key_ptr.* = to_use;
+                    entry.value_ptr.* = tries;
+
+                    entry = this.used.getOrPut(input) catch unreachable;
+                    entry.value_ptr.* = tries;
+                    return to_use;
+                }
+            }
+        } else {
+            entry.value_ptr.* = tries;
+        }
+
+        return entry.key_ptr.*;
+    }
+};

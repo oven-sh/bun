@@ -1685,7 +1685,6 @@ it("should consider peerDependencies during hoisting", async () => {
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + bar@workspace:bar",
     " + moo@workspace:moo",
-    " + baz@0.0.5",
     "",
     " 4 packages installed",
   ]);
@@ -1719,5 +1718,51 @@ it("should consider peerDependencies during hoisting", async () => {
   });
   expect(await readlink(join(package_dir, "node_modules", "moo"))).toBe(join("..", "moo"));
   expect(await readdirSorted(join(package_dir, "moo"))).toEqual(["package.json"]);
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should not regard peerDependencies declarations as duplicates", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "*",
+      },
+      peerDependencies: {
+        bar: "^0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + bar@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
   await access(join(package_dir, "bun.lockb"));
 });

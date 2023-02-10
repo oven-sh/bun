@@ -983,11 +983,10 @@ pub const Printer = struct {
                 var dep_id = resolutions_list[0].off;
                 const dep_end = dep_id + resolutions_list[0].len;
                 outer: while (dep_id < dep_end) : (dep_id += 1) {
+                    const dependency = dependencies_buffer[dep_id];
+                    if (dependency.behavior.isPeer()) continue;
                     const package_id = resolutions_buffer[dep_id];
                     if (package_id >= end) continue;
-                    const is_new = installed.isSet(package_id);
-
-                    const dependency = dependencies_buffer[dep_id];
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
@@ -1004,7 +1003,7 @@ pub const Printer = struct {
                         }
                     }
 
-                    if (!is_new) continue;
+                    if (!installed.isSet(package_id)) continue;
 
                     const fmt = comptime brk: {
                         if (enable_ansi_colors) {
@@ -1024,9 +1023,9 @@ pub const Printer = struct {
                 }
             } else {
                 outer: for (dependencies_buffer) |dependency, dep_id| {
+                    if (dependency.behavior.isPeer()) continue;
                     const package_id = resolutions_buffer[dep_id];
                     if (package_id >= end) continue;
-
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
@@ -1058,8 +1057,7 @@ pub const Printer = struct {
                 try writer.writeAll("\n");
             }
 
-            for (this.updates) |_, update_id| {
-                const dependency_id = id_map[update_id];
+            for (id_map) |dependency_id| {
                 if (dependency_id == invalid_package_id) continue;
                 const name = dependencies_buffer[dependency_id].name;
                 const package_id = resolutions_buffer[dependency_id];
@@ -2413,7 +2411,8 @@ pub const Package = extern struct {
             .version = dependency_version,
         };
 
-        if (comptime features.check_for_duplicate_dependencies) {
+        // peerDependencies may be specified on on existing dependencies
+        if (comptime features.check_for_duplicate_dependencies and !group.behavior.isPeer()) {
             var entry = lockfile.scratch.duplicate_checker_map.getOrPutAssumeCapacity(external_name.hash);
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies

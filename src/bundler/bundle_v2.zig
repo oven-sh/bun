@@ -1028,6 +1028,7 @@ const ParseTask = struct {
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
+const RefVoidMapManaged = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
 const RefExportData = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
@@ -3335,9 +3336,11 @@ const LinkerContext = struct {
                                 .{
                                     .name = .{
                                         .ref = stable_ref.ref,
-                                        .loc = Logger.Loc.Empty{},
+                                        .loc = Logger.Loc.Empty,
                                     },
                                     .alias = alias,
+                                    .alias_loc = Logger.Loc.Empty,
+                                    .original_name = "",
                                 },
                             );
                             repr.exports_to_other_chunks.put(
@@ -3347,11 +3350,11 @@ const LinkerContext = struct {
                             ) catch unreachable;
                         }
 
-                        if (clause_items.items.len > 0) {
+                        if (clause_items.len > 0) {
                             var stmts = BabyList(js_ast.Stmt).initCapacity(c.allocator, 1) catch unreachable;
                             var export_clause = c.allocator.create(js_ast.S.ExportClause) catch unreachable;
                             export_clause.* = .{
-                                .items = clause_items.items,
+                                .items = clause_items.slice(),
                                 .is_single_line = false,
                             };
                             stmts.appendAssumeCapacity(.{
@@ -3389,18 +3392,19 @@ const LinkerContext = struct {
                         .esm => {
                             const import_record_index = @truncate(u32, chunk.cross_chunk_imports.len);
 
-                            var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_Items.items.len) catch unreachable;
-                            for (cross_chunk_import.sorted_import_Items.items) |item| {
+                            var clauses = std.ArrayList(js_ast.ClauseItem).initCapacity(c.allocator, cross_chunk_import.sorted_import_items.len) catch unreachable;
+                            for (cross_chunk_import.sorted_import_items.slice()) |item| {
                                 clauses.appendAssumeCapacity(.{
                                     .name = .{
                                         .ref = item.ref,
-                                        .loc = Logger.Loc.Empty{},
+                                        .loc = Logger.Loc.Empty,
                                     },
                                     .alias = item.export_alias,
+                                    .alias_loc = Logger.Loc.Empty,
                                 });
                             }
 
-                            chunk.cross_chunk_imports.append(c.allocator, .{
+                            chunk.cross_chunk_imports.push(c.allocator, .{
                                 .import_kind = .stmt,
                                 .chunk_index = cross_chunk_import.chunk_index,
                             }) catch unreachable;
@@ -3409,8 +3413,9 @@ const LinkerContext = struct {
                             import.* = .{
                                 .items = clauses.items,
                                 .import_record_index = import_record_index,
+                                .namespace_ref = Ref.None,
                             };
-                            cross_chunk_prefix_stmts.append(
+                            cross_chunk_prefix_stmts.push(
                                 c.allocator,
                                 .{
                                     .data = .{
@@ -3418,7 +3423,7 @@ const LinkerContext = struct {
                                     },
                                     .loc = Logger.Loc.Empty,
                                 },
-                            );
+                            ) catch unreachable;
                         },
                         else => bun.unreachablePanic("Unexpected output format", .{}),
                     }
@@ -3432,7 +3437,7 @@ const LinkerContext = struct {
     // Sort cross-chunk exports by chunk name for determinism
     fn sortedCrossChunkExportItems(
         c: *LinkerContext,
-        export_refs: RefVoidMap,
+        export_refs: RefVoidMapManaged,
         list: std.ArrayList(StableRef),
     ) std.ArrayList(StableRef) {
         var result = list;
@@ -3440,7 +3445,7 @@ const LinkerContext = struct {
         result.ensureTotalCapacity(export_refs.count()) catch unreachable;
         for (export_refs.keys()) |export_ref| {
             result.appendAssumeCapacity(.{
-                .source_index = c.graph.stable_source_indices[export_ref.sourceIndex()],
+                .stable_source_index = c.graph.stable_source_indices[export_ref.sourceIndex()],
                 .ref = export_ref,
             });
         }
@@ -4430,7 +4435,7 @@ const StableRef = packed struct {
     stable_source_index: Index.Int,
     ref: Ref,
 
-    pub fn isLessThan(a: StableRef, b: StableRef) bool {
+    pub fn isLessThan(_: void, a: StableRef, b: StableRef) bool {
         return a.stable_source_index < b.stable_source_index or
             (a.stable_source_index == b.stable_source_index and a.ref.innerIndex() < b.ref.innerIndex());
     }
@@ -4621,7 +4626,7 @@ pub const ChunkImport = struct {
 
 pub const CrossChunkImport = struct {
     chunk_index: Index.Int = 0,
-    sorted_import_Items: List = undefined,
+    sorted_import_items: CrossChunkImport.Item.List = undefined,
 
     pub const Item = struct {
         export_alias: string = "",
@@ -4635,12 +4640,16 @@ pub const CrossChunkImport = struct {
     };
 
     pub fn lessThan(_: void, a: CrossChunkImport, b: CrossChunkImport) bool {
-        return std.mem.order(a.chunk_index, b.chunk_index) == .lt;
+        return std.math.order(a.chunk_index, b.chunk_index) == .lt;
     }
 
     pub const List = std.ArrayList(CrossChunkImport);
 
-    pub fn sortedCrossChunkImports(list: *List, chunks: []Chunk, imports_from_other_chunks: *Chunk.ImportsFromOtherChunks) !void {
+    pub fn sortedCrossChunkImports(
+        list: *List,
+        chunks: []Chunk,
+        imports_from_other_chunks: *Chunk.ImportsFromOtherChunks,
+    ) !void {
         var result = list.*;
         defer {
             list.* = result;
@@ -4663,14 +4672,14 @@ pub const CrossChunkImport = struct {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);
             }
-            std.sort.sort(void, import_items.slice(), void{}, CrossChunkImport.Item.lessThan);
+            std.sort.sort(CrossChunkImport.Item, import_items.slice(), void{}, CrossChunkImport.Item.lessThan);
 
             result.append(CrossChunkImport{
                 .chunk_index = chunk_index,
-                .sorted_import_items = List.fromOwnedSlice(result.allocator, import_items.slice()),
+                .sorted_import_items = import_items,
             }) catch unreachable;
         }
 
-        std.sort.sort(void, result.items, void{}, CrossChunkImport.lessThan);
+        std.sort.sort(CrossChunkImport, result.items, void{}, CrossChunkImport.lessThan);
     }
 };

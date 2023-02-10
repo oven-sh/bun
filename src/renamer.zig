@@ -70,10 +70,10 @@ pub const DisabledRenamer = struct {
 };
 
 pub const ExportRenamer = struct {
-    string_buffer: bun.MutableString = undefined,
-    used: bun.StringHashMap(u32) = undefined,
+    string_buffer: bun.MutableString,
+    used: bun.StringHashMap(u32),
 
-    pub fn init(allocator: *std.mem.Allocator) ExportRenamer {
+    pub fn init(allocator: std.mem.Allocator) ExportRenamer {
         return ExportRenamer{
             .string_buffer = MutableString.initEmpty(allocator),
             .used = bun.StringHashMap(u32).init(allocator),
@@ -85,6 +85,11 @@ pub const ExportRenamer = struct {
         this.string_buffer.reset();
     }
 
+    pub fn deinit(this: *ExportRenamer) void {
+        this.used.deinit();
+        this.string_buffer.deinit();
+    }
+
     pub fn nextRenamedName(this: *ExportRenamer, input: []const u8) string {
         var entry = this.used.getOrPut(input) catch unreachable;
         var tries: u32 = 1;
@@ -92,10 +97,10 @@ pub const ExportRenamer = struct {
             while (true) {
                 this.string_buffer.reset();
                 var writer = this.string_buffer.writer();
-                writer.print("{s}{d}", .{ input, tries });
+                writer.print("{s}{d}", .{ input, tries }) catch unreachable;
                 tries += 1;
                 var attempt = this.string_buffer.toOwnedSliceLeaky();
-                entry = this.used.getOrPut() catch unreachable;
+                entry = this.used.getOrPut(attempt) catch unreachable;
                 if (!entry.found_existing) {
                     const to_use = this.string_buffer.allocator.dupe(u8, attempt) catch unreachable;
                     entry.key_ptr.* = to_use;

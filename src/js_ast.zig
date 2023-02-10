@@ -521,7 +521,7 @@ pub const ClauseItem = struct {
     /// In this case both "foo" and "bar" are aliases because it's a re-export.
     /// We need to preserve both aliases in case the symbol is renamed. In this
     /// example, "foo" is "OriginalName" and "bar" is "Alias".
-    original_name: string,
+    original_name: string = "",
 
     pub const default_alias: string = "default";
 };

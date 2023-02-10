@@ -1,8 +1,9 @@
 import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText } from "bun";
 import { expect, it, beforeEach, afterEach, describe } from "bun:test";
 import { mkfifo } from "mkfifo";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "os";
 import { gc } from "./gc";
 
 beforeEach(() => gc());
@@ -609,4 +610,21 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   var stream = blob.stream();
   const text = await new Response(stream).text();
   expect(text).toBe("abdefgh");
+});
+
+it("Bun.file().stream() read text from large file", async () => {
+  const hugely = "HELLO!".repeat(1024 * 1024 * 10);
+  const tmpfile = join(realpathSync(tmpdir()), "bun-streams-test.txt");
+  writeFileSync(tmpfile, hugely);
+  try {
+    const chunks = [];
+    for await (const chunk of Bun.file(tmpfile).stream()) {
+      chunks.push(chunk);
+    }
+    const output = Buffer.concat(chunks).toString();
+    expect(output).toHaveLength(hugely.length);
+    expect(output).toBe(hugely);
+  } finally {
+    unlinkSync(tmpfile);
+  }
 });

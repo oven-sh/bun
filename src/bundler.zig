@@ -1324,6 +1324,7 @@ pub const Bundler = struct {
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         hoist_bun_plugin: bool = false,
+        inject_jest_globals: bool = false,
     };
 
     pub fn parse(
@@ -1453,6 +1454,7 @@ pub const Bundler = struct {
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
+                opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }

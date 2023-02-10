@@ -2563,6 +2563,70 @@ pub const Parser = struct {
             exports_kind = .esm;
         }
 
+        // Auto inject jest globals into the test file
+        if (p.options.features.inject_jest_globals) outer: {
+            var jest: *Jest = &p.jest;
+
+            for (p.import_records.items) |*item| {
+                // skip if they did import it
+                if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
+                    break :outer;
+                }
+            }
+
+            // if they didn't use any of the jest globals, don't inject it, I guess.
+            const items_count = brk: {
+                var count: usize = 0;
+                inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                    count += @boolToInt(p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0);
+                }
+
+                break :brk count;
+            };
+            if (items_count == 0)
+                break :outer;
+
+            const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
+            var import_record: *ImportRecord = &p.import_records.items[import_record_id];
+            import_record.tag = .bun_test;
+
+            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, items_count);
+            var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
+            var clause_i: usize = 0;
+            inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
+                    clauses[clause_i] = js_ast.ClauseItem{
+                        .name = .{ .ref = @field(jest, symbol_name), .loc = logger.Loc.Empty },
+                        .alias = symbol_name,
+                        .alias_loc = logger.Loc.Empty,
+                        .original_name = "",
+                    };
+                    declared_symbols[clause_i] = .{ .ref = @field(jest, symbol_name), .is_top_level = true };
+                    clause_i += 1;
+                }
+            }
+
+            const import_stmt = p.s(
+                S.Import{
+                    .namespace_ref = p.declareSymbol(.unbound, logger.Loc.Empty, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
+                    .items = clauses,
+                    .import_record_index = import_record_id,
+                },
+                logger.Loc.Empty,
+            );
+
+            var part_stmts = try p.allocator.alloc(Stmt, 1);
+            part_stmts[0] = import_stmt;
+            var import_record_indices = try p.allocator.alloc(u32, 1);
+            import_record_indices[0] = import_record_id;
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .import_record_indices = import_record_indices,
+                .tag = .bun_test,
+            }) catch unreachable;
+        }
+
         // Auto-import & post-process JSX
         switch (comptime ParserType.jsx_transform_type) {
             .react => {
@@ -3515,6 +3579,17 @@ pub const MacroState = struct {
     }
 };
 
+const Jest = struct {
+    expect: Ref = Ref.None,
+    describe: Ref = Ref.None,
+    @"test": Ref = Ref.None,
+    it: Ref = Ref.None,
+    beforeEach: Ref = Ref.None,
+    afterEach: Ref = Ref.None,
+    beforeAll: Ref = Ref.None,
+    afterAll: Ref = Ref.None,
+};
+
 // workaround for https://github.com/ziglang/zig/issues/10903
 fn NewParser(
     comptime parser_features: ParserFeatures,
@@ -3655,6 +3730,8 @@ fn NewParser_(
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         bun_jsx_ref: Ref = Ref.None,
+
+        jest: Jest = .{},
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
@@ -5106,6 +5183,17 @@ fn NewParser_(
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
             p.dirname_ref = try p.declareCommonJSSymbol(.unbound, "__dirname");
             p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
+
+            if (p.options.features.inject_jest_globals) {
+                p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");
+                p.jest.@"test" = try p.declareCommonJSSymbol(.unbound, "test");
+                p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
+                p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
+                p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
+                p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
+                p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
+                p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+            }
 
             if (p.options.enable_bundling) {
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");

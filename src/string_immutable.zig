@@ -1063,7 +1063,6 @@ pub fn copyLatin1IntoASCII(dest: []u8, src: []const u8) void {
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
-    var first_non_ascii: ?u32 = null;
     var output_: ?std.ArrayList(u16) = null;
 
     if (comptime bun.FeatureFlags.use_simdutf) {
@@ -1092,7 +1091,6 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                         return error.InvalidByteSequence;
                     }
 
-                    first_non_ascii = 0;
                     output_ = .{
                         .items = out[0..0],
                         .capacity = out.len,
@@ -1104,14 +1102,13 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         }
     }
 
-    if (first_non_ascii orelse strings.firstNonASCII(bytes)) |i| {
+    if (strings.firstNonASCII(bytes)) |i| {
         const ascii = bytes[0..i];
         const chunk = bytes[i..];
         var output = output_ orelse try std.ArrayList(u16).initCapacity(allocator, ascii.len + 2);
         errdefer output.deinit();
         output.items.len = ascii.len;
-        if (first_non_ascii == null)
-            strings.copyU8IntoU16(output.items, ascii);
+        strings.copyU8IntoU16(output.items, ascii);
 
         var remaining = chunk;
 

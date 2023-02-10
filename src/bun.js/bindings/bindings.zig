@@ -1511,6 +1511,52 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
     }.callback;
 }
 
+pub const AbortSignal = extern struct {
+    pub const shim = Shimmer("WebCore", "AbortSignal", @This());
+    bytes: shim.Bytes,
+    const cppFn = shim.cppFn;
+    pub const include = "WebCore/AbortSignal.h";
+    pub const name = "WebCore::AbortSignal";
+    pub const namespace = "WebCore";
+
+    // pub fn addListener(
+    //     this: *AbortSignal,
+    //     ctx: ?*anyopaque,
+    //     callback: *const fn(?*anyopaque, JSValue) void,
+    // ) AbortSignal {
+    //     return cppFn("addListener", .{ this, ctx, callback });
+    // }
+
+    // pub fn signal(
+    //     this: *AbortSignal,
+    //     reason: JSValue,
+    // ) AbortSignal {
+    //     return cppFn("signal", .{ this, reason });
+    // }
+
+    pub fn ref(
+        this: *AbortSignal,
+    ) AbortSignal {
+        return cppFn("ref", .{this});
+    }
+
+    pub fn unref(
+        this: *AbortSignal,
+    ) AbortSignal {
+        return cppFn("unref", .{this});
+    }
+
+    // pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSValue) ?*AbortSignal { return cppFn("fromJS", .{globalThis, value}); }
+
+    pub const Extern = [_][]const u8{
+        "ref",
+        "unref",
+        // "signal",
+        // "addListener",
+        // "fromJS",
+    };
+};
+
 pub const JSPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSPromise", @This());
     bytes: shim.Bytes,

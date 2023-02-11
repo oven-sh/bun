@@ -190,6 +190,7 @@ describe("fetch", () => {
     // GET cannot have body
     try {
       await fetch(url, { body: "buntastic" });
+      expect(false).toBe(true);
     } catch (exception) {
       expect(exception instanceof TypeError);
     }

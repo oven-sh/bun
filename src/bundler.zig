@@ -1157,8 +1157,6 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
 
@@ -1178,8 +1176,6 @@ pub const Bundler = struct {
                     .rewrite_require_resolve = bundler.options.platform != .node,
                     .minify_whitespace = bundler.options.minify_whitespace,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
             .esm_ascii => try js_printer.printAst(
@@ -1196,8 +1192,6 @@ pub const Bundler = struct {
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
             .cjs_ascii => try js_printer.printCommonJS(
@@ -1214,8 +1208,6 @@ pub const Bundler = struct {
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
                 },
-                Linker,
-                &bundler.linker,
                 enable_source_map,
             ),
         };

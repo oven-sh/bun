@@ -131,6 +131,16 @@ pub const ThreadPool = struct {
 
         has_notify_started: bool = false,
 
+        pub fn get() *Worker {
+            return @ptrCast(
+                *ThreadPool.Worker,
+                @alignCast(
+                    @alignOf(*ThreadPool.Worker),
+                    ThreadPoolLib.Thread.current.?.ctx.?,
+                ),
+            );
+        }
+
         pub const WorkerData = struct {
             log: *Logger.Log,
             estimated_input_lines_of_code: usize = 0,
@@ -3431,6 +3441,42 @@ const LinkerContext = struct {
 
                 repr.cross_chunk_prefix_stmts = cross_chunk_prefix_stmts;
             }
+        }
+    }
+
+    const GenerateChunkCtx = struct {
+        wg: *sync.WaitGroup,
+        c: *LinkerContext,
+        chunks: []Chunk,
+    };
+    fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
+        generateChunkJS_(ctx, chunk, chunk_index) catch |err| std.debug.panic("TODO: handle error: {s}", .{@errorName(err)});
+    }
+    fn generateChunkJS_(_: GenerateChunkCtx, _: *Chunk, _: usize) !void {
+        // defer ctx.wg.done();
+        // var worker = ThreadPool.Worker.get();
+        // const allocator = worker.allocator;
+        // const c = ctx.c;
+        // std.debug.assert(chunk.content == .javascript);
+        // var repr = &chunk.content.javascript;
+
+        // var module_scopes = try allocator.alloc(
+        //     *js_ast.Scope,
+
+        // );
+    }
+
+    pub fn generateChunksInParallel(c: *LinkerContext, chunks_: []Chunk) ![]options.OutputFile {
+        {
+            var wait_group = try c.allocator.create(sync.WaitGroup);
+            wait_group.* = sync.WaitGroup.init();
+            defer {
+                wait_group.deinit();
+                c.allocator.destroy(wait_group);
+            }
+            wait_group.addN(chunks_.len);
+            var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks_ };
+            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks_);
         }
     }
 

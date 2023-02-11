@@ -771,11 +771,15 @@ pub const WaitGroup = struct {
         self.* = undefined;
     }
 
-    pub fn add(self: *WaitGroup) void {
+    pub fn addN(self: *WaitGroup, n: usize) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        self.active += 1;
+        self.active += n;
+    }
+
+    pub fn add(self: *WaitGroup) void {
+        return self.addN(1);
     }
 
     pub fn done(self: *WaitGroup) void {

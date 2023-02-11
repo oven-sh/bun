@@ -515,9 +515,12 @@ pub const Options = struct {
     }
 };
 
-pub const PrintResult = struct {
-    js: string,
-    source_map: ?SourceMap.Chunk = null,
+pub const PrintResult = union(enum) {
+    result: struct {
+        code: []u8,
+        source_map: ?SourceMap.Chunk = null,
+    },
+    err: anyerror,
 };
 
 // do not make this a packed struct
@@ -615,10 +618,9 @@ const ImportVariant = enum {
     }
 };
 
-pub fn NewPrinter(
+fn NewPrinter(
     comptime ascii_only: bool,
     comptime Writer: type,
-    comptime Linker: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
     comptime is_inside_bundle: bool,
@@ -628,7 +630,6 @@ pub fn NewPrinter(
     return struct {
         symbols: Symbol.Map,
         import_records: []importRecord.ImportRecord,
-        linker: ?*Linker,
 
         needs_semicolon: bool = false,
         stmt_start: i32 = -1,
@@ -4778,7 +4779,6 @@ pub fn NewPrinter(
             source: *const logger.Source,
             symbols: Symbol.Map,
             opts: Options,
-            linker: ?*Linker,
             allocator: std.mem.Allocator,
         ) !Printer {
             if (imported_module_ids_list_unset) {
@@ -4804,7 +4804,6 @@ pub fn NewPrinter(
                 .options = opts,
                 .symbols = symbols,
                 .writer = writer,
-                .linker = linker,
                 .imported_module_ids = imported_module_ids_list,
                 .renamer = rename.Renamer.init(symbols, source),
                 .source_map_builder = source_map_builder,
@@ -4812,6 +4811,12 @@ pub fn NewPrinter(
         }
     };
 }
+
+pub const WriteResult = struct {
+    off: u32,
+    len: usize,
+    end_off: u32,
+};
 
 pub fn NewWriter(
     comptime ContextType: type,
@@ -5213,14 +5218,11 @@ pub fn printAst(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     comptime generate_source_map: bool,
 ) !usize {
     const PrinterType = NewPrinter(
         ascii_only,
         Writer,
-        LinkerType,
         false,
         // if it's ascii_only, it is also bun
         ascii_only,
@@ -5236,7 +5238,6 @@ pub fn printAst(
         source,
         symbols,
         opts,
-        linker,
         opts.allocator,
     );
     defer {
@@ -5279,7 +5280,7 @@ pub fn printJSON(
     expr: Expr,
     source: *const logger.Source,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, void, false, false, false, true, false);
+    const PrinterType = NewPrinter(false, Writer, false, false, false, true, false);
     var writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     var stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -5297,7 +5298,6 @@ pub fn printJSON(
         source,
         .{},
         .{},
-        null,
         allocator,
     );
 
@@ -5318,11 +5318,9 @@ pub fn printCommonJS(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     comptime generate_source_map: bool,
 ) !usize {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, false, false, false, generate_source_map);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, false, generate_source_map);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -5330,7 +5328,6 @@ pub fn printCommonJS(
         source,
         symbols,
         opts,
-        linker,
         opts.allocator,
     );
     defer {
@@ -5370,11 +5367,23 @@ pub fn printCommonJS(
     return @intCast(usize, @max(printer.writer.written, 0));
 }
 
-pub const WriteResult = struct {
-    off: u32,
-    len: usize,
-    end_off: u32,
-};
+// pub fn printChunk(
+//     comptime Writer: type,
+//     _writer: Writer,
+//     tree: Ast,
+//     symbols: js_ast.Symbol.Map,
+//     opts: Options,
+// ) PrintResult {
+//     var writer = _writer;
+//     var printer = try PrinterType.init(
+//         writer,
+//         &tree,
+//         source,
+//         symbols,
+//         opts,
+//         undefined,
+//     );
+// }
 
 pub fn printCommonJSThreaded(
     comptime Writer: type,
@@ -5384,15 +5393,13 @@ pub fn printCommonJSThreaded(
     source: *const logger.Source,
     comptime ascii_only: bool,
     opts: Options,
-    comptime LinkerType: type,
-    linker: ?*LinkerType,
     lock: *Lock,
     comptime GetPosType: type,
     getter: GetPosType,
     comptime getPos: fn (ctx: GetPosType) anyerror!u64,
     end_off_ptr: *u32,
 ) !WriteResult {
-    const PrinterType = NewPrinter(ascii_only, Writer, LinkerType, true, ascii_only, true, false, false);
+    const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, true, false, false);
     var writer = _writer;
     var printer = try PrinterType.init(
         writer,
@@ -5400,7 +5407,6 @@ pub fn printCommonJSThreaded(
         source,
         symbols,
         opts,
-        linker,
         undefined,
     );
 

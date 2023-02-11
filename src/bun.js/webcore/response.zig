@@ -495,6 +495,7 @@ pub const Fetch = struct {
 
     pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
     pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
+    pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
     pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
@@ -1101,6 +1102,11 @@ pub const Fetch = struct {
         }
 
         var deferred_promise = JSC.C.JSObjectMakeDeferredPromise(globalThis, null, null, null);
+
+        if (!method.hasRequestBody() and body.size() > 0) {
+            const fetch_error = fetch_error_unexpected_body;
+            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+        }
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         _ = FetchTasklet.queue(

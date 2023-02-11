@@ -75,6 +75,40 @@ pub const Request = struct {
     pub const getJSON = RequestMixin.getJSON;
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
+    pub const getFormData = RequestMixin.getFormData;
+
+    pub fn getFormDataBoundary(this: *Request) ?*bun.FormData.AsyncFormData {
+        var content_type_slice: ZigString.Slice = .{};
+        defer content_type_slice.deinit();
+        var content_type = brk: {
+            if (this.uws_request) |req| {
+                if (req.header("content-type")) |value| {
+                    break :brk value;
+                }
+            }
+
+            if (this.headers) |headers| {
+                if (headers.fastGet(.ContentType)) |value| {
+                    content_type_slice = value.toSlice(bun.default_allocator);
+                    break :brk content_type_slice.slice();
+                }
+            }
+
+            return null;
+        };
+
+        if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
+
+        const boundary = bun.FormData.getBoundary(content_type) orelse return null;
+        if (boundary.len == 0)
+            return null;
+
+        var data = bun.FormData.AsyncFormData.init(bun.default_allocator, boundary) catch return null;
+
+        var out = bun.default_allocator.create(bun.FormData.AsyncFormData) catch return null;
+        out.* = data;
+        return out;
+    }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {

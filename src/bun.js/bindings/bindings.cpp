@@ -84,6 +84,9 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
+#include "DOMFormData.h"
+#include "JSDOMFormData.h"
+#include "ZigGeneratedClasses.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -3726,4 +3729,34 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue2),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+#pragma mark - WebCore::DOMFormData
+
+CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString* arg1, ZigString* arg2)
+{
+    arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+}
+
+CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore__DOMFormData* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, JSC__JSValue JSValue3)
+{
+    // JSC::JSValue blobValue = JSC::JSValue::decode(JSValue2);
+    // JSC::Strong<Unknown> blobValueStrong(globalObject->vm(), blobValue);
+    // arg0->append()
+}
+CPP_DECL size_t WebCore__DOMFormData__count(WebCore__DOMFormData* arg0)
+{
+    return arg0->count();
+}
+CPP_DECL JSC__JSValue WebCore__DOMFormData__create(JSC__JSGlobalObject* arg0)
+{
+    JSC::VM& vm = arg0->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext());
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
+}
+
+CPP_DECL WebCore__DOMFormData* WebCore__DOMFormData__fromJS(JSC__JSValue JSValue1)
+{
+    return WebCoreCast<WebCore::JSDOMFormData, WebCore__DOMFormData>(JSValue1);
 }

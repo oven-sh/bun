@@ -167,6 +167,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 
+#include "JSDOMFormData.h"
+
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -610,6 +612,9 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSTextEncoder);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSURLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSURLSearchParams);
+
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMFormData);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMFormData);
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
@@ -3229,6 +3234,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("FormData"_s, JSDOMFormData);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageEvent"_s, JSMessageEvent);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
@@ -3547,6 +3553,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSFetchHeadersSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
+    visitor.append(thisObject->m_JSDOMFormDataSetterValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

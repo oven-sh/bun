@@ -794,6 +794,114 @@ pub const DOMURL = opaque {
 
 const Api = @import("../../api/schema.zig").Api;
 
+pub const DOMFormData = opaque {
+    pub const shim = Shimmer("WebCore", "DOMFormData", @This());
+
+    pub const name = "WebCore::DOMFormData";
+    pub const include = "DOMFormData.h";
+    pub const namespace = "WebCore";
+
+    const cppFn = shim.cppFn;
+
+    pub fn create(
+        global: *JSGlobalObject,
+    ) JSValue {
+        return shim.cppFn("create", .{
+            global,
+        });
+    }
+
+    pub fn fromJS(
+        value: JSValue,
+    ) ?*DOMFormData {
+        return shim.cppFn("fromJS", .{
+            value,
+        });
+    }
+
+    pub fn append(
+        this: *DOMFormData,
+        name_: *ZigString,
+        value_: *ZigString,
+    ) void {
+        return shim.cppFn("append", .{
+            this,
+            name_,
+            value_,
+        });
+    }
+
+    pub fn appendBlob(
+        this: *DOMFormData,
+        global: *JSC.JSGlobalObject,
+        name_: *ZigString,
+        value_: JSValue,
+    ) void {
+        return shim.cppFn("appendBlob", .{
+            this,
+            global,
+            name_,
+            value_,
+        });
+    }
+
+    pub fn count(
+        this: *DOMFormData,
+    ) usize {
+        return shim.cppFn("count", .{
+            this,
+        });
+    }
+
+    const ForEachFunction = *const fn (
+        ctx_ptr: ?*anyopaque,
+        globalObject_: *JSGlobalObject,
+        name: *ZigString,
+        value_ptr: *anyopaque,
+        is_blob: u8,
+    ) callconv(.C) void;
+
+    extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ?*const ForEachFunction) void;
+    const StringOrBlob = union(enum) {
+        string: ZigString,
+        blob: *JSC.WebCore.Blob,
+    };
+    pub fn forEach(
+        this: *DOMFormData,
+        comptime Context: type,
+        ctx: *Context,
+        comptime callback_wrapper: fn (ctx: *Context, globalThis: *JSC.JSGlobalObject, name: ZigString, value: StringOrBlob) void,
+    ) void {
+        const Wrap = struct {
+            const wrapper = callback_wrapper;
+            pub fn forEachWrapper(
+                ctx_ptr: ?*anyopaque,
+                globalObject_: *JSGlobalObject,
+                name_: *ZigString,
+                value_ptr: *anyopaque,
+                is_blob: u8,
+            ) callconv(.C) void {
+                var ctx_ = @ptrCast(*Context, ctx_ptr);
+                const value = if (is_blob == 0)
+                    StringOrBlob{ .string = @ptrCast(*ZigString, value_ptr).* }
+                else
+                    StringOrBlob{ .blob = @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(value_ptr))).as(JSC.WebCore.Blob).? };
+
+                wrapper(ctx_, globalObject_, name_.*, value);
+            }
+        };
+        JSC.markBinding(@src());
+        DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
+    }
+
+    pub const Extern = [_][]const u8{
+        "create",
+        "fromJS",
+        "append",
+        "appendBlob",
+        "count",
+    };
+};
 pub const FetchHeaders = opaque {
     pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
 

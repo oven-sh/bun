@@ -201,11 +201,10 @@ pub const Body = struct {
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
         onStartBuffering: ?*const fn (ctx: *anyopaque) void = null,
-
         onStartStreaming: ?*const fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
-        action: Action = Action.none,
+        action: Action = Action{ .none = void{} },
 
         pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
             if (this.promise != null)
@@ -253,6 +252,9 @@ pub const Body = struct {
 
                         return value.promise.?;
                     },
+                    // TODO:
+                    .getFormData => {},
+
                     .none => {},
                 }
             }
@@ -270,12 +272,13 @@ pub const Body = struct {
             }
         }
 
-        pub const Action = enum {
-            none,
-            getText,
-            getJSON,
-            getArrayBuffer,
-            getBlob,
+        pub const Action = union(enum) {
+            none: void,
+            getText: void,
+            getJSON: void,
+            getArrayBuffer: void,
+            getBlob: void,
+            getFormData: ?*bun.FormData.AsyncFormData,
         };
     };
 
@@ -653,6 +656,16 @@ pub const Body = struct {
                             var blob = new.useAsAnyBlob();
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
                         },
+                        .getFormData => inner: {
+                            var blob = new.useAsAnyBlob();
+                            defer blob.detach();
+                            var async_form_data = locked.action.getFormData orelse {
+                                promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
+                                break :inner;
+                            };
+                            defer async_form_data.deinit();
+                            async_form_data.toJS(global, blob.slice(), promise);
+                        },
                         else => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
                             ptr.* = new.use();
@@ -931,7 +944,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalThis, .getText);
+                return value.Locked.setPromise(globalThis, .{ .getText = void{} });
             }
 
             var blob = value.useAsAnyBlob();
@@ -970,7 +983,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getJSON);
+                return value.Locked.setPromise(globalObject, .{ .getJSON = void{} });
             }
 
             var blob = value.useAsAnyBlob();
@@ -996,11 +1009,68 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getArrayBuffer);
+                return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = void{} });
             }
 
             var blob: AnyBlob = value.useAsAnyBlob();
             return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
+        }
+
+        pub fn getFormData(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Used) {
+                return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Locked) {
+                if (comptime @hasDecl(Type, "getFormDataBoundary")) {
+                    if (this.getFormDataBoundary()) |boundary| {
+                        return value.Locked.setPromise(globalObject, .{ .getFormData = boundary });
+                    }
+                }
+
+                globalObject.throw("Invalid MIME type", .{});
+                return .zero;
+            }
+
+            var blob: AnyBlob = value.useAsAnyBlob();
+            defer blob.detach();
+
+            if (comptime @hasDecl(Type, "getFormDataBoundary")) {
+                const boundary = this.getFormDataBoundary() orelse {
+                    globalObject.throw("Invalid MIME type", .{});
+                    return .zero;
+                };
+
+                const js_value = bun.FormData.toJS(
+                    globalObject,
+                    blob.slice(),
+                    .{ .Multipart = boundary.boundary },
+                ) catch |err| {
+                    return JSC.JSPromise.rejectedPromiseValue(
+                        globalObject,
+                        globalObject.createErrorInstance(
+                            "Error parsing FormData: {s}",
+                            .{
+                                @errorName(err),
+                            },
+                        ),
+                    );
+                };
+
+                return JSC.JSPromise.wrap(
+                    globalObject,
+                    js_value,
+                );
+            }
+
+            globalObject.throw("Unsupported action", .{});
+            return .zero;
         }
 
         pub fn getBlob(
@@ -1015,7 +1085,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getBlob);
+                return value.Locked.setPromise(globalObject, .{ .getBlob = void{} });
             }
 
             var blob = value.use();

@@ -14,6 +14,7 @@ export default [
       json: { fn: "getJSON" },
       body: { getter: "getBody", cache: true },
       arrayBuffer: { fn: "getArrayBuffer" },
+      formData: { fn: "getFormData" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
       cache: {
@@ -86,6 +87,7 @@ export default [
       arrayBuffer: { fn: "getArrayBuffer" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
+      formData: { fn: "getFormData" },
 
       type: {
         getter: "getResponseType",

@@ -262,9 +262,9 @@ JSC::GCClient::IsoSubspace* JSWritableStream::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSWritableStream, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForWritableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStream = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStream = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForWritableStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStream = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStream = std::forward<decltype(space)>(space); });
 }
 
 void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

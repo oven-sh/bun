@@ -595,9 +595,9 @@ JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForSubtleCrypto.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = std::forward<decltype(space)>(space); });
 }
 
 void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

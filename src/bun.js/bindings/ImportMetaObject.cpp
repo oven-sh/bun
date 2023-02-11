@@ -191,9 +191,9 @@ public:
         return WebCore::subspaceForImpl<JSRequireResolveFunction, UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForRequireResolveFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequireResolveFunction = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequireResolveFunction = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForRequireResolveFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequireResolveFunction = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequireResolveFunction = std::forward<decltype(space)>(space); });
     }
 
 private:

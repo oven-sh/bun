@@ -402,9 +402,13 @@ function generateConstructorHeader(typeName) {
             return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
                 vm,
                 [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)}Constructor = WTFMove(space); },
+                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(
+                  typeName,
+                )}Constructor = std::forward<decltype(space)>(space); },
                 [](auto& spaces) { return spaces.${subspaceFor(typeName)}Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)}Constructor = WTFMove(space); });
+                [](auto& spaces, auto&& space) { spaces.${subspaceFor(
+                  typeName,
+                )}Constructor = std::forward<decltype(space)>(space); });
         }
     
 
@@ -849,9 +853,13 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
             return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
                 vm,
                 [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = WTFMove(space); },
+                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(
+                  typeName,
+                )} = std::forward<decltype(space)>(space); },
                 [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = WTFMove(space); });
+                [](auto& spaces, auto&& space) { spaces.${subspaceFor(
+                  typeName,
+                )} = std::forward<decltype(space)>(space); });
         }
     
         static void destroy(JSC::JSCell*);

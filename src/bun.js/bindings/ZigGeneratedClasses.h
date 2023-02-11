@@ -29,9 +29,9 @@ public:
         return WebCore::subspaceForImpl<JSBlob, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForBlob.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBlob = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBlob = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForBlob.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBlob = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBlob = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -79,9 +79,9 @@ public:
         return WebCore::subspaceForImpl<JSCryptoHasher, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForCryptoHasher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasher = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasher = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForCryptoHasher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasher = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasher = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -136,9 +136,9 @@ public:
         return WebCore::subspaceForImpl<JSDirent, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForDirent.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirent = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirent = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForDirent.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDirent = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForDirent = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -192,9 +192,9 @@ public:
         return WebCore::subspaceForImpl<JSExpect, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForExpect.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForExpect = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForExpect = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForExpect.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForExpect = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForExpect = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -249,9 +249,9 @@ public:
         return WebCore::subspaceForImpl<JSFileSystemRouter, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForFileSystemRouter.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouter = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouter = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForFileSystemRouter.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouter = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouter = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -307,9 +307,9 @@ public:
         return WebCore::subspaceForImpl<JSListener, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForListener.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForListener = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForListener = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForListener.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForListener = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForListener = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -364,9 +364,9 @@ public:
         return WebCore::subspaceForImpl<JSMD4, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForMD4.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD4 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD4 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForMD4.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD4 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD4 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -414,9 +414,9 @@ public:
         return WebCore::subspaceForImpl<JSMD5, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForMD5.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForMD5.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -464,9 +464,9 @@ public:
         return WebCore::subspaceForImpl<JSMatchedRoute, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForMatchedRoute.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMatchedRoute = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMatchedRoute = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForMatchedRoute.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForMatchedRoute = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMatchedRoute = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -526,9 +526,9 @@ public:
         return WebCore::subspaceForImpl<JSNodeJSFS, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNodeJSFS.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeJSFS = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeJSFS = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNodeJSFS.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeJSFS = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeJSFS = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -576,9 +576,9 @@ public:
         return WebCore::subspaceForImpl<JSRequest, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequest = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequest = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequest = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequest = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -634,9 +634,9 @@ public:
         return WebCore::subspaceForImpl<JSResponse, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForResponse.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponse = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponse = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForResponse.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponse = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponse = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -693,9 +693,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA1, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA1.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA1 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA1 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA1.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA1 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA1 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -743,9 +743,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA224, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA224.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA224 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA224 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA224.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA224 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA224 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -793,9 +793,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA256, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA256.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA256 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA256 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA256.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA256 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA256 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -843,9 +843,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA384, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA384.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA384 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA384 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA384.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA384 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA384 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -893,9 +893,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA512, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA512.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA512.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -943,9 +943,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA512_256, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA512_256.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512_256 = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512_256 = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA512_256.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512_256 = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512_256 = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -993,9 +993,9 @@ public:
         return WebCore::subspaceForImpl<JSServerWebSocket, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocket = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocket = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForServerWebSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocket = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocket = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1050,9 +1050,9 @@ public:
         return WebCore::subspaceForImpl<JSStats, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForStats.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStats = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStats = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForStats.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForStats = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForStats = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1108,9 +1108,9 @@ public:
         return WebCore::subspaceForImpl<JSSubprocess, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSubprocess.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubprocess = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubprocess = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSubprocess.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSubprocess = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSubprocess = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1193,9 +1193,9 @@ public:
         return WebCore::subspaceForImpl<JSTCPSocket, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTCPSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTCPSocket = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTCPSocket = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTCPSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTCPSocket = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTCPSocket = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1277,9 +1277,9 @@ public:
         return WebCore::subspaceForImpl<JSTLSSocket, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTLSSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTLSSocket = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTLSSocket = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTLSSocket.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTLSSocket = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTLSSocket = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1361,9 +1361,9 @@ public:
         return WebCore::subspaceForImpl<JSTextDecoder, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoder.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoder = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoder = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTextDecoder.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoder = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoder = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -1417,9 +1417,9 @@ public:
         return WebCore::subspaceForImpl<JSTranspiler, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTranspiler.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspiler = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspiler = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTranspiler.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspiler = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspiler = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);

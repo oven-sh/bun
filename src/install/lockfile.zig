@@ -2701,7 +2701,7 @@ pub const Package = extern struct {
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
 
         const total_len = lockfile.buffers.dependencies.items.len + total_dependencies_count;
-        std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+        if (Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
         const off = lockfile.buffers.dependencies.items.len;
 
         var package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];

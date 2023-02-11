@@ -212,7 +212,7 @@ pub const ModuleLoader = struct {
 
             const DeferredDependencyError = struct {
                 dependency: Dependency,
-                root_dependency_id: Install.PackageID,
+                root_dependency_id: Install.DependencyID,
                 err: anyerror,
             };
 
@@ -228,7 +228,7 @@ pub const ModuleLoader = struct {
                 _ = this.vm().packageManager().scheduleNetworkTasks();
             }
 
-            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.PackageID, err: anyerror) void {
+            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
                 debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
 
@@ -236,7 +236,7 @@ pub const ModuleLoader = struct {
                 var i: usize = 0;
                 outer: for (modules) |module_| {
                     var module = module_;
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
                     for (root_dependency_ids) |dep, dep_i| {
                         if (dep != root_dependency_id) continue;
                         module.resolveError(
@@ -289,7 +289,7 @@ pub const ModuleLoader = struct {
                         *Queue,
                         this,
                         .{
-                            .onExtract = onExtract,
+                            .onExtract = {},
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
@@ -302,7 +302,7 @@ pub const ModuleLoader = struct {
                         *Queue,
                         this,
                         .{
-                            .onExtract = onExtract,
+                            .onExtract = {},
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
@@ -369,16 +369,18 @@ pub const ModuleLoader = struct {
             ) void {
                 debug("onPackageDownloadError: {s}", .{name});
 
+                const resolution_ids = this.vm().packageManager().lockfile.buffers.resolutions.items;
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
                 outer: for (modules) |module_| {
                     var module = module_;
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
-                    for (root_dependency_ids) |dep, dep_i| {
-                        if (this.vm().packageManager().dynamicRootDependencies().items[dep].resolution_id != package_id) continue;
+                    const record_ids = module.parse_result.pending_imports.items(.import_record_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    for (root_dependency_ids) |dependency_id, import_id| {
+                        if (resolution_ids[dependency_id] != package_id) continue;
                         module.downloadError(
                             this.vm(),
-                            module.parse_result.pending_imports.items(.import_record_id)[dep_i],
+                            record_ids[import_id],
                             .{
                                 .name = name,
                                 .resolution = resolution,
@@ -395,27 +397,6 @@ pub const ModuleLoader = struct {
                 this.map.items.len = i;
             }
 
-            pub fn onExtract(this: *Queue, package_id: Install.PackageID, _: Install.ExtractData, comptime _: PackageManager.Options.LogLevel) void {
-                if (comptime Environment.allow_assert) {
-                    const lockfile = this.vm().packageManager().lockfile;
-                    debug("onExtract: {s} ({d})", .{
-                        lockfile.str(&lockfile.packages.get(package_id).name),
-                        package_id,
-                    });
-                }
-                this.onPackageID(package_id);
-            }
-
-            pub fn onPackageID(this: *Queue, package_id: Install.PackageID) void {
-                var values = this.map.items;
-                for (values) |value| {
-                    var package_ids = value.parse_result.pending_imports.items(.resolution_id);
-
-                    _ = package_id;
-                    _ = package_ids;
-                }
-            }
-
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
                 if (pm.pending_tasks > 0) return;
@@ -426,16 +407,15 @@ pub const ModuleLoader = struct {
                 for (modules) |mod| {
                     var module = mod;
                     var tags = module.parse_result.pending_imports.items(.tag);
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
                     // var esms = module.parse_result.pending_imports.items(.esm);
                     // var versions = module.parse_result.pending_imports.items(.dependency);
                     var done_count: usize = 0;
                     for (tags) |tag, tag_i| {
                         const root_id = root_dependency_ids[tag_i];
-                        if (root_id == Install.invalid_package_id) continue;
-                        const root_items = pm.dynamicRootDependencies().items;
-                        if (root_items.len <= root_id) continue;
-                        const package_id = root_items[root_id].resolution_id;
+                        const resolution_ids = pm.lockfile.buffers.resolutions.items;
+                        if (root_id >= resolution_ids.len) continue;
+                        const package_id = resolution_ids[root_id];
 
                         switch (tag) {
                             .resolve => {

@@ -15,12 +15,6 @@ const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Dependency = @This();
 
-pub const Pair = struct {
-    resolution_id: Install.PackageID = Install.invalid_package_id,
-    dependency: Dependency = .{},
-    failed: ?anyerror = null,
-};
-
 pub const URI = union(Tag) {
     local: String,
     remote: String,
@@ -44,8 +38,8 @@ pub const URI = union(Tag) {
 };
 
 name_hash: PackageNameHash = 0,
-name: String = String{},
-version: Dependency.Version = Dependency.Version{},
+name: String = .{},
+version: Dependency.Version = .{},
 
 /// This is how the dependency is specified in the package.json file.
 /// This allows us to track whether a package originated in any permutation of:
@@ -55,7 +49,7 @@ version: Dependency.Version = Dependency.Version{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = Behavior.uninitialized,
+behavior: Behavior = .uninitialized,
 
 /// Sorting order for dependencies is:
 /// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]

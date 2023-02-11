@@ -1277,7 +1277,7 @@ pub const ESModule = struct {
                 return .{
                     .name = this.name,
                     .subpath = this.subpath,
-                    .version = ">=0.0.0",
+                    .version = "latest",
                 };
             }
 

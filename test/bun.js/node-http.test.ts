@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "bun:test";
-import { createServer, request, get, Agent, globalAgent } from "node:http";
+import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
 import { createDoneDotAll } from "node-test-helpers";
 
 describe("node:http", () => {
@@ -68,6 +68,13 @@ describe("node:http", () => {
       const out = await res.text();
       expect(out).toBe(input);
       server.close();
+    });
+
+    it("listen should return server", async () => {
+      const server = createServer();
+      const listenResponse = server.listen(8129);
+      expect(listenResponse instanceof Server).toBe(true);
+      expect(listenResponse).toBe(server);
     });
   });
 

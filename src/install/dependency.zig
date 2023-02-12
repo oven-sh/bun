@@ -187,7 +187,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -375,7 +375,13 @@ pub const Version = struct {
                         if (url.len > 2) {
                             switch (url[0]) {
                                 ':' => {
-                                    if (strings.hasPrefixComptime(url, "://")) return .git;
+                                    if (strings.hasPrefixComptime(url, "://")) {
+                                        url = url["://".len..];
+                                        if (strings.hasPrefixComptime(url, "github.com/")) {
+                                            if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                        }
+                                        return .git;
+                                    }
                                 },
                                 '+' => {
                                     if (strings.hasPrefixComptime(url, "+ssh:") or
@@ -670,7 +676,7 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            if (Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+            if (comptime Environment.allow_assert) std.debug.assert(!actual.isEmpty());
 
             return .{
                 .literal = sliced.value(),
@@ -688,6 +694,9 @@ pub fn parseWithTag(
             var input = dependency;
             if (strings.hasPrefixComptime(input, "github:")) {
                 input = input["github:".len..];
+            } else if (strings.hasPrefixComptime(input, "git://github.com/")) {
+                input = input["git://github.com/".len..];
+                from_url = true;
             } else {
                 if (strings.hasPrefixComptime(input, "git+")) {
                     input = input["git+".len..];
@@ -716,7 +725,7 @@ pub fn parseWithTag(
                 }
             }
 
-            if (Environment.allow_assert) std.debug.assert(Version.Tag.isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) std.debug.assert(Version.Tag.isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;

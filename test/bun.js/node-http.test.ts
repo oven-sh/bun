@@ -75,6 +75,7 @@ describe("node:http", () => {
       const listenResponse = server.listen(8129);
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
+      listenResponse.close();
     });
   });
 
@@ -120,7 +121,7 @@ describe("node:http", () => {
 
         // Check for body
         if (req.method === "POST") {
-          req.on("data", (chunk) => {
+          req.on("data", chunk => {
             res.write(chunk);
           });
 
@@ -143,57 +144,51 @@ describe("node:http", () => {
       if (timer) clearTimeout(timer);
     });
 
-    it("should make a standard GET request when passed string as first arg", (done) => {
-      const req = request("http://localhost:8126", (res) => {
+    it("should make a standard GET request when passed string as first arg", done => {
+      const req = request("http://localhost:8126", res => {
         let data = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
+        res.on("data", chunk => {
           data += chunk;
         });
         res.on("end", () => {
           expect(data).toBe("Maybe GET maybe not\nHello World");
           done();
         });
-        res.on("error", (err) => done(err));
+        res.on("error", err => done(err));
       });
       req.end();
     });
 
-    it("should make a POST request when provided POST method, even without a body", (done) => {
-      const req = request(
-        { host: "localhost", port: 8126, method: "POST" },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("POST\nHello World");
-            done();
-          });
-          res.on("error", (err) => done(err));
-        },
-      );
+    it("should make a POST request when provided POST method, even without a body", done => {
+      const req = request({ host: "localhost", port: 8126, method: "POST" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("POST\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
       req.end();
     });
 
-    it("should correctly handle a POST request with a body", (done) => {
-      const req = request(
-        { host: "localhost", port: 8126, method: "POST" },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("Posting\nPOST\nHello World");
-            done();
-          });
-          res.on("error", (err) => done(err));
-        },
-      );
+    it("should correctly handle a POST request with a body", done => {
+      const req = request({ host: "localhost", port: 8126, method: "POST" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("Posting\nPOST\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
       req.write("Posting\n");
       req.end();
     });
@@ -205,7 +200,7 @@ describe("node:http", () => {
       expect(true).toBe(true);
     });
 
-    it("should allow us to set timeout with request.setTimeout or `timeout` in options", (done) => {
+    it("should allow us to set timeout with request.setTimeout or `timeout` in options", done => {
       const createDone = createDoneDotAll(done);
       const req1Done = createDone();
       const req2Done = createDone();
@@ -218,7 +213,7 @@ describe("node:http", () => {
           path: "/timeout",
           timeout: 500,
         },
-        (res) => {
+        res => {
           req1Done(new Error("Should not have received response"));
         },
       );
@@ -230,7 +225,7 @@ describe("node:http", () => {
           port: 8126,
           path: "/timeout",
         },
-        (res) => {
+        res => {
           req2Done(new Error("Should not have received response"));
         },
       );
@@ -242,40 +237,36 @@ describe("node:http", () => {
       req2.end();
     });
 
-    it("should correctly set path when path provided", (done) => {
+    it("should correctly set path when path provided", done => {
       const createDone = createDoneDotAll(done);
       const req1Done = createDone();
       const req2Done = createDone();
 
-      const req1 = request("http://localhost:8126/pathTest", (res) => {
+      const req1 = request("http://localhost:8126/pathTest", res => {
         let data = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
+        res.on("data", chunk => {
           data += chunk;
         });
         res.on("end", () => {
           expect(data).toBe("Path correct!\n");
           req1Done();
         });
-        res.on("error", (err) => req1Done(err));
+        res.on("error", err => req1Done(err));
       });
 
-      const req2 = request(
-        "http://localhost:8126",
-        { path: "/pathTest" },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("Path correct!\n");
-            req2Done();
-          });
-          res.on("error", (err) => req2Done(err));
-        },
-      );
+      const req2 = request("http://localhost:8126", { path: "/pathTest" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("Path correct!\n");
+          req2Done();
+        });
+        res.on("error", err => req2Done(err));
+      });
 
       req1.end();
       req2.end();
@@ -284,10 +275,10 @@ describe("node:http", () => {
       expect(req2.path).toBe("/pathTest");
     });
 
-    it("should emit response when response received", (done) => {
+    it("should emit response when response received", done => {
       const req = request("http://localhost:8126");
 
-      req.on("response", (res) => {
+      req.on("response", res => {
         expect(res.statusCode).toBe(200);
         done();
       });
@@ -295,77 +286,68 @@ describe("node:http", () => {
     });
 
     // NOTE: Node http.request doesn't follow redirects by default
-    it("should handle redirects properly", (done) => {
-      const req = request("http://localhost:8126/redirect", (res) => {
+    it("should handle redirects properly", done => {
+      const req = request("http://localhost:8126/redirect", res => {
         let data = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
+        res.on("data", chunk => {
           data += chunk;
         });
         res.on("end", () => {
           expect(data).toBe("Got redirect!\n");
           done();
         });
-        res.on("error", (err) => done(err));
+        res.on("error", err => done(err));
       });
       req.end();
     });
 
-    it("should correctly attach headers to request", (done) => {
-      const req = request(
-        { host: "localhost", port: 8126, headers: { "X-Test": "test" } },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("x-test: test\nMaybe GET maybe not\nHello World");
-            done();
-          });
-          res.on("error", (err) => done(err));
-        },
-      );
+    it("should correctly attach headers to request", done => {
+      const req = request({ host: "localhost", port: 8126, headers: { "X-Test": "test" } }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("x-test: test\nMaybe GET maybe not\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
       req.end();
       expect(req.getHeader("X-Test")).toBe("test");
     });
 
-    it("should correct casing of method param", (done) => {
-      const req = request(
-        { host: "localhost", port: 8126, method: "get" },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("Maybe GET maybe not\nHello World");
-            done();
-          });
-          res.on("error", (err) => done(err));
-        },
-      );
+    it("should correct casing of method param", done => {
+      const req = request({ host: "localhost", port: 8126, method: "get" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("Maybe GET maybe not\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
       req.end();
     });
 
-    it("should allow for port as a string", (done) => {
-      const req = request(
-        { host: "localhost", port: "8126", method: "GET" },
-        (res) => {
-          let data = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            data += chunk;
-          });
-          res.on("end", () => {
-            expect(data).toBe("Maybe GET maybe not\nHello World");
-            done();
-          });
-          res.on("error", (err) => done(err));
-        },
-      );
+    it("should allow for port as a string", done => {
+      const req = request({ host: "localhost", port: "8126", method: "GET" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("Maybe GET maybe not\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
       req.end();
     });
   });
@@ -382,18 +364,18 @@ describe("node:http", () => {
     afterAll(() => {
       server.close();
     });
-    it("should make a standard GET request, like request", (done) => {
-      get("http://127.0.0.1:8127", (res) => {
+    it("should make a standard GET request, like request", done => {
+      get("http://127.0.0.1:8127", res => {
         let data = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk) => {
+        res.on("data", chunk => {
           data += chunk;
         });
         res.on("end", () => {
           expect(data).toBe("Hello World");
           done();
         });
-        res.on("error", (err) => done(err));
+        res.on("error", err => done(err));
       });
     });
   });
@@ -416,7 +398,7 @@ describe("node:http", () => {
             port: 8128,
             agent: dummyAgent,
           },
-          (res) => {},
+          res => {},
         );
         dummyReq.on("error", () => {});
       });

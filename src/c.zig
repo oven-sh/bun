@@ -344,8 +344,12 @@ pub fn getSystemLoadavg() [3]f64 {
     }
 }
 
-pub fn setTtyOrigTermios() i32 {
+pub fn setTtyOrigTermiosIfNeeded() i32 {
     return set_tty_orig_termios();
+}
+
+pub fn setTtyRawMode(mode: bool) i32 {
+    return set_tty_mode(if (mode) 1 else 0);
 }
 
 pub fn getProcessPriority(pid_: i32) i32 {
@@ -444,6 +448,7 @@ pub fn dlsym(comptime Type: type, comptime name: [:0]const u8) ?Type {
 
 // set in c-bindings.cpp
 pub extern fn set_tty_orig_termios() i32;
+pub extern fn set_tty_mode(mode: i32) i32;
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 

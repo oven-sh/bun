@@ -39,7 +39,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInternalIsRaw,
   int fd = callFrame->argument(0).toInt32(globalObject);
   RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-  return JSValue::encode(jsBoolean(tty__is_raw(fd)));
+  auto isRaw = tty__is_raw(fd);
+  if (isRaw == -3) {
+    return JSValue::encode(jsUndefined());
+  }
+  return JSValue::encode(jsBoolean(isRaw));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionInternalSetRawMode,

@@ -528,7 +528,12 @@ function getStdinStream(fd_, rawRequire, Bun) {
     }
 
     setRawMode(mode) {
-      // TODO: Validate mode
+      if (!this.isTTY) {
+        throw new Error("Cannot set raw mode on non-TTY stream");
+      }
+      if (typeof mode !== "boolean") {
+        throw new Error("Invalid `mode` for function `setRawMode`");
+      }
       (this.#setRawMode ??= this.#createSetRawMode())(mode);
       return this;
     }

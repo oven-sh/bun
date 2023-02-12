@@ -1128,7 +1128,7 @@ pub const ModuleLoader = struct {
                     return resolved_source;
                 }
 
-                return ResolvedSource{
+                return .{
                     .allocator = null,
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                     .specifier = ZigString.init(display_specifier),

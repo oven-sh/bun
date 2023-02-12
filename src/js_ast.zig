@@ -757,6 +757,31 @@ pub const Symbol = struct {
     //
     private_symbol_must_be_lowered: bool = false,
 
+    pub const SlotNamespace = enum {
+        default,
+        label,
+        private_name,
+        mangled_prop,
+        must_not_be_renamed,
+    };
+
+    pub fn slotNamespace(this: *const Symbol) SlotNamespace {
+        if (this.must_not_be_renamed) {
+            return .must_not_be_renamed;
+        }
+
+        const kind = this.kind;
+        if (kind.isPrivate()) {
+            return .private_name;
+        }
+
+        return switch (kind) {
+            .mangled_prop => .mangled_prop,
+            .label => .label,
+            else => .default,
+        };
+    }
+
     pub inline fn hasLink(this: *const Symbol) bool {
         return !this.link.isNull();
     }
@@ -846,7 +871,37 @@ pub const Symbol = struct {
         pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
             return try std.json.stringify(@tagName(self), opts, o);
         }
+
+        pub inline fn isPrivate(kind: Symbol.Kind) bool {
+            return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
+        }
+
+        pub inline fn isHoisted(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted, .hoisted_function => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isHoistedOrFunction(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted, .hoisted_function, .generator_or_async_function => true,
+                else => false,
+            };
+        }
+
+        pub inline fn isFunction(kind: Symbol.Kind) bool {
+            return switch (kind) {
+                .hoisted_function, .generator_or_async_function => true,
+                else => false,
+            };
+        }
     };
+
+    pub const isKindPrivate = Symbol.Kind.isPrivate;
+    pub const isKindHoisted = Symbol.Kind.isHoisted;
+    pub const isKindHoistedOrFunction = Symbol.Kind.isHoistedOrFunction;
+    pub const isKindFunction = Symbol.Kind.isFunction;
 
     pub const Use = struct {
         count_estimate: u32 = 0,
@@ -981,33 +1036,8 @@ pub const Symbol = struct {
         }
     };
 
-    pub inline fn isKindPrivate(kind: Symbol.Kind) bool {
-        return @enumToInt(kind) >= @enumToInt(Symbol.Kind.private_field) and @enumToInt(kind) <= @enumToInt(Symbol.Kind.private_static_get_set_pair);
-    }
-
-    pub inline fn isKindHoisted(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted, .hoisted_function => true,
-            else => false,
-        };
-    }
-
     pub inline fn isHoisted(self: *const Symbol) bool {
         return Symbol.isKindHoisted(self.kind);
-    }
-
-    pub inline fn isKindHoistedOrFunction(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted, .hoisted_function, .generator_or_async_function => true,
-            else => false,
-        };
-    }
-
-    pub inline fn isKindFunction(kind: Symbol.Kind) bool {
-        return switch (kind) {
-            .hoisted_function, .generator_or_async_function => true,
-            else => false,
-        };
     }
 
     pub fn isReactComponentishName(symbol: *const Symbol) bool {
@@ -4992,6 +5022,8 @@ pub const Scope = struct {
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
 
     is_after_const_local_prefix: bool = false,
+
+    pub const NestedScopeMap = std.AutoArrayHashMap(u32, bun.BabyList(*Scope));
 
     pub fn getMemberHash(name: []const u8) u64 {
         return bun.StringHashMapContext.hash(.{}, name);

@@ -173,7 +173,15 @@ pub const MutableString = struct {
     pub inline fn reset(
         self: *MutableString,
     ) void {
-        self.list.shrinkRetainingCapacity(0);
+        self.list.clearRetainingCapacity();
+    }
+
+    pub inline fn resetTo(
+        self: *MutableString,
+        index: usize,
+    ) void {
+        std.debug.assert(index <= self.list.capacity);
+        self.list.items.len = index;
     }
 
     pub fn inflate(self: *MutableString, amount: usize) !void {
@@ -189,6 +197,14 @@ pub const MutableString = struct {
     pub inline fn append(self: *MutableString, char: []const u8) !void {
         try self.list.appendSlice(self.allocator, char);
     }
+    pub inline fn appendInt(self: *MutableString, int: u64) !void {
+        const count = bun.fmt.fastDigitCount(int);
+        try self.list.ensureUnusedCapacity(self.allocator, count);
+        const old = self.list.items.len;
+        self.list.items.len += count;
+        std.debug.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+    }
+
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
         self.list.appendSliceAssumeCapacity(
             char,

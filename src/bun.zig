@@ -612,6 +612,13 @@ pub const StringArrayHashMapContext = struct {
         return strings.eqlLong(a, b, true);
     }
 
+    pub fn pre(input: []const u8) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
     pub const Prehashed = struct {
         value: u32,
         input: []const u8,
@@ -635,13 +642,20 @@ pub const StringHashMapContext = struct {
         return strings.eqlLong(a, b, true);
     }
 
+    pub fn pre(input: []const u8) Prehashed {
+        return Prehashed{
+            .value = @This().hash(.{}, input),
+            .input = input,
+        };
+    }
+
     pub const Prehashed = struct {
         value: u64,
         input: []const u8,
         pub fn hash(this: @This(), s: []const u8) u64 {
             if (s.ptr == this.input.ptr and s.len == this.input.len)
                 return this.value;
-            return std.hash.Wyhash.hash(0, s);
+            return StringHashMapContext.hash(.{}, s);
         }
 
         pub fn eql(_: @This(), a: []const u8, b: []const u8) bool {
@@ -976,3 +990,4 @@ pub const fast_debug_build_mode = false and
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 
 pub const Joiner = @import("./string_joiner.zig");
+pub const renamer = @import("./renamer.zig");

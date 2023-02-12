@@ -71,7 +71,8 @@ const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const AutoBitSet = bun.bit_set.AutoBitSet;
-const renamer = @import("../renamer.zig");
+const renamer = bun.renamer;
+const Scope = js_ast.Scope;
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -3452,18 +3453,198 @@ const LinkerContext = struct {
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         generateChunkJS_(ctx, chunk, chunk_index) catch |err| std.debug.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
-    fn generateChunkJS_(_: GenerateChunkCtx, _: *Chunk, _: usize) !void {
-        // defer ctx.wg.done();
-        // var worker = ThreadPool.Worker.get();
-        // const allocator = worker.allocator;
-        // const c = ctx.c;
-        // std.debug.assert(chunk.content == .javascript);
-        // var repr = &chunk.content.javascript;
 
-        // var module_scopes = try allocator.alloc(
-        //     *js_ast.Scope,
+    fn renameSymbolsInChunk(
+        c: *LinkerContext,
+        allocator: std.mem.Allocator,
+        chunk: *Chunk,
+        files_in_order: []u32,
+    ) !renamer.Renamer {
 
-        // );
+        // TODO: minify identifiers
+        const all_module_scopes = c.graph.ast.items(.module_scope);
+        const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
+        const all_parts: []const js_ast.Part.List = c.graph.ast.items(.parts);
+        const all_wrapper_refs: []const ?Ref = c.graph.ast.items(.wrapper_ref);
+        const all_import_records: []const ImportRecord.List = c.graph.ast.items(.import_records);
+
+        var r = try renamer.NumberRenamer.init(
+            allocator,
+            allocator,
+            c.graph.symbols,
+            brk: {
+                var reserved_names = try renamer.computeInitialReservedNames(allocator);
+
+                for (files_in_order) |source_index| {
+                    renamer.computeReservedNamesForScope(all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
+                }
+
+                break :brk reserved_names;
+            },
+        );
+
+        {
+            var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
+                var list = std.ArrayList(StableRef).init(allocator);
+                var count: u32 = 0;
+                var imports_from_other_chunks = chunk.content.javascript.imports_from_other_chunks.values();
+                for (imports_from_other_chunks) |item| {
+                    count += item.len;
+                }
+
+                list.ensureTotalCapacityPrecise(count) catch unreachable;
+                list.items.len = count;
+                var remain = list.items;
+                const stable_source_indices = c.graph.stable_source_indices;
+                for (imports_from_other_chunks) |item| {
+                    for (item.slice()) |ref| {
+                        remain[0] = StableRef{
+                            .stable_source_index = stable_source_indices[ref.ref.sourceIndex()],
+                            .ref = ref.ref,
+                        };
+                        remain = remain[1..];
+                    }
+                }
+
+                std.sort.sort(StableRef, list.items, void{}, StableRef.isLessThan);
+                break :brk list;
+            };
+            defer sorted_imports_from_other_chunks.deinit();
+
+            for (sorted_imports_from_other_chunks.items) |stable_ref| {
+                r.addTopLevelSymbol(stable_ref.ref);
+            }
+        }
+
+        var child_number_scope_ = renamer.NumberRenamer.NumberScope{
+            .parent = &r.root,
+        };
+        var child_number_scope = &child_number_scope_;
+        defer child_number_scope.deinit(r.temp_allocator);
+        var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
+        var sorted = &sorted_;
+        defer sorted.deinit();
+
+        for (files_in_order) |source_index| {
+            const wrap = all_flags[source_index].wrap;
+            const parts: []const js_ast.Part = all_parts[source_index].slice();
+
+            switch (wrap) {
+                // Modules wrapped in a CommonJS closure look like this:
+                //
+                //   // foo.js
+                //   var require_foo = __commonJS((exports, module) => {
+                //     exports.foo = 123;
+                //   });
+                //
+                // The symbol "require_foo" is stored in "file.ast.WrapperRef". We want
+                // to be able to minify everything inside the closure without worrying
+                // about collisions with other CommonJS modules. Set up the scopes such
+                // that it appears as if the file was structured this way all along. It's
+                // not completely accurate (e.g. we don't set the parent of the module
+                // scope to this new top-level scope) but it's good enough for the
+                // renaming code.
+                .cjs => {
+                    r.addTopLevelSymbol(all_wrapper_refs[source_index].?);
+
+                    // External import statements will be hoisted outside of the CommonJS
+                    // wrapper if the output format supports import statements. We need to
+                    // add those symbols to the top-level scope to avoid causing name
+                    // collisions. This code special-cases only those symbols.
+                    if (c.options.output_format.keepES6ImportExportSyntax()) {
+                        const import_records = all_import_records[source_index].slice();
+                        for (parts) |*part| {
+                            for (part.stmts) |stmt| {
+                                switch (stmt.data) {
+                                    .s_import => |import| {
+                                        if (!import_records[import.import_record_index].source_index.isValid()) {
+                                            r.addTopLevelSymbol(import.namespace_ref);
+                                            if (import.default_name) |default_name| {
+                                                if (default_name.ref) |ref| {
+                                                    r.addTopLevelSymbol(ref);
+                                                }
+                                            }
+
+                                            for (import.items) |*item| {
+                                                if (item.name.ref) |ref| {
+                                                    r.addTopLevelSymbol(ref);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    .s_export_star => |export_| {
+                                        if (!import_records[export_.import_record_index].source_index.isValid()) {
+                                            r.addTopLevelSymbol(export_.namespace_ref);
+                                        }
+                                    },
+                                    .s_export_from => |export_| {
+                                        if (!import_records[export_.import_record_index].source_index.isValid()) {
+                                            r.addTopLevelSymbol(export_.namespace_ref);
+
+                                            for (export_.items) |*item| {
+                                                if (item.name.ref) |ref| {
+                                                    r.addTopLevelSymbol(ref);
+                                                }
+                                            }
+                                        }
+                                    },
+                                    else => {},
+                                }
+                            }
+                        }
+                    }
+                    r.assignNamesRecursiveWithNumberScope(child_number_scope, all_module_scopes[source_index], source_index, sorted);
+                    continue;
+                },
+
+                // Modules wrapped in an ESM closure look like this:
+                //
+                //   // foo.js
+                //   var foo, foo_exports = {};
+                //   __export(foo_exports, {
+                //     foo: () => foo
+                //   });
+                //   let init_foo = __esm(() => {
+                //     foo = 123;
+                //   });
+                //
+                // The symbol "init_foo" is stored in "file.ast.WrapperRef". We need to
+                // minify everything inside the closure without introducing a new scope
+                // since all top-level variables will be hoisted outside of the closure.
+                .esm => {
+                    r.addTopLevelSymbol(all_wrapper_refs[source_index].?);
+                },
+
+                else => {},
+            }
+
+            for (parts) |*part| {
+                if (!part.is_live) continue;
+
+                r.addTopLevelDeclaredSymbols(part.declared_symbols);
+                for (part.scopes) |scope| {
+                    r.assignNamesRecursiveWithNumberScope(child_number_scope, scope, source_index, sorted);
+                }
+            }
+        }
+
+        return r.toRenamer();
+    }
+
+    fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
+        defer ctx.wg.done();
+        var worker = ThreadPool.Worker.get();
+        const allocator = worker.allocator;
+        const c = ctx.c;
+        std.debug.assert(chunk.content == .javascript);
+
+        var repr = &chunk.content.javascript;
+
+        var runtime_scope: *Scope = c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Ref.RuntimeRef.sourceIndex()]];
+        var runtime_members = &runtime_scope.members;
+        const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("toCommonJS").?.ref);
+        const toESMRef = c.graph.symbols.follow(runtime_members.get("toESM").?.ref);
+        const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
     }
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks_: []Chunk) ![]options.OutputFile {

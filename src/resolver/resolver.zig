@@ -1979,7 +1979,6 @@ pub const Resolver = struct {
                         .pending = .{
                             .esm = cloned,
                             .dependency = version,
-                            .resolution_id = Install.invalid_package_id,
                             .root_dependency_id = id,
                             .string_buf = builder.allocatedSlice(),
                             .tag = .resolve,

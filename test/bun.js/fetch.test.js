@@ -192,7 +192,7 @@ describe("fetch", () => {
       await fetch(url, { body: "buntastic" });
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof TypeError);
+      expect(exception instanceof TypeError).toBe(true);
     }
 
     server.stop();
@@ -655,7 +655,7 @@ describe("Response", () => {
       await body.json();
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof SyntaxError);
+      expect(exception instanceof SyntaxError).toBe(true);
     }
   });
 

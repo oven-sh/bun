@@ -54,6 +54,7 @@ _napi_delete_reference
 _napi_detach_arraybuffer
 _napi_escape_handle
 _napi_fatal_error
+_napi_fatal_exception
 _napi_get_all_property_names
 _napi_get_and_clear_last_exception
 _napi_get_array_length

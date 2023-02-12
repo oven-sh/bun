@@ -967,6 +967,21 @@ extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
     return napi_ok;
 }
 
+extern "C" napi_status napi_fatal_exception(napi_env env,
+    napi_value err)
+{
+    auto globalObject = toJS(env);
+    JSC::JSValue value = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(err));
+    JSC::JSObject* obj = value.getObject();
+    if (UNLIKELY(obj == nullptr || !obj->isErrorInstance())) {
+        return napi_invalid_arg;
+    }
+
+    Bun__reportUnhandledError(globalObject, JSValue::encode(value));
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
     auto globalObject = toJS(env);

@@ -1505,6 +1505,7 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_get_value_bigint_int64);
     std.mem.doNotOptimizeAway(&napi_get_value_bigint_uint64);
     std.mem.doNotOptimizeAway(&napi_fatal_error);
+    std.mem.doNotOptimizeAway(&napi_fatal_exception);
     std.mem.doNotOptimizeAway(&napi_create_buffer);
     std.mem.doNotOptimizeAway(&napi_create_external_buffer);
     std.mem.doNotOptimizeAway(&napi_create_buffer_copy);

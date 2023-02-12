@@ -56,7 +56,7 @@ const assert = std.debug.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
 threadlocal var imported_module_ids_list_unset: bool = true;
-const ImportRecord = importRecord.ImportRecord;
+const ImportRecord = bun.ImportRecord;
 const SourceMap = @import("./sourcemap/sourcemap.zig");
 
 /// For support JavaScriptCore
@@ -591,7 +591,7 @@ const ImportVariant = enum {
         };
     }
 
-    pub fn determine(record: *const importRecord.ImportRecord, s_import: *const S.Import) ImportVariant {
+    pub fn determine(record: *const ImportRecord, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
         if (record.contains_import_star) {
@@ -628,8 +628,7 @@ fn NewPrinter(
     comptime generate_source_map: bool,
 ) type {
     return struct {
-        symbols: Symbol.Map,
-        import_records: []importRecord.ImportRecord,
+        import_records: []const ImportRecord,
 
         needs_semicolon: bool = false,
         stmt_start: i32 = -1,
@@ -1443,7 +1442,7 @@ fn NewPrinter(
                 .e_identifier => |ident| {
                     if (ident.ref.isSourceContentsSlice()) return false;
 
-                    const symbol = p.symbols.get(p.symbols.follow(ident.ref)) orelse return false;
+                    const symbol = p.symbols().get(p.symbols().follow(ident.ref)) orelse return false;
                     return symbol.kind == .unbound and strings.eqlComptime(symbol.original_name, "eval");
                 },
                 else => {
@@ -1452,10 +1451,21 @@ fn NewPrinter(
             }
         }
 
+        inline fn symbols(p: *const Printer) js_ast.Symbol.Map {
+            return p.renamer.symbols();
+        }
+
         pub fn printRequireError(p: *Printer, text: string) void {
             p.print("(() => { throw (new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
             p.print("`)); } )()");
+        }
+
+        pub inline fn importRecord(
+            p: *const Printer,
+            import_record_index: usize,
+        ) *const ImportRecord {
+            return &p.import_records[import_record_index];
         }
 
         pub fn printRequireOrImportExpr(
@@ -1470,7 +1480,7 @@ fn NewPrinter(
             defer if (wrap) p.print(")");
 
             assert(p.import_records.len > import_record_index);
-            const record = &p.import_records[import_record_index];
+            const record = p.importRecord(import_record_index);
 
             if (comptime is_bun_platform) {
                 // "bun" is not a real module. It's just globalThis.Bun.
@@ -1780,14 +1790,14 @@ fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].is_bundled) {
+                    if (rewrite_esm_to_cjs and p.importRecord(e.import_record_index).is_bundled) {
                         p.printIndent();
                         p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
                         return;
                     }
 
-                    if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].is_bundled) {
+                    if (!rewrite_esm_to_cjs or !p.importRecord(e.import_record_index).is_bundled) {
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -1795,7 +1805,7 @@ fn NewPrinter(
                     if (p.options.rewrite_require_resolve) {
                         // require.resolve("../src.js") => "../src.js"
                         p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
                     } else {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
                         if (wrap) {
@@ -1804,7 +1814,7 @@ fn NewPrinter(
 
                         p.printSpaceBeforeIdentifier();
                         p.print("require.resolve(");
-                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                        p.printQuotedUTF8(p.importRecord(e.import_record_index).path.text, true);
                         p.print(")");
 
                         if (wrap) {
@@ -2286,13 +2296,13 @@ fn NewPrinter(
                     // Potentially use a property access instead of an identifier
                     var didPrint = false;
 
-                    if (p.symbols.getWithLink(e.ref)) |symbol| {
+                    if (p.symbols().getWithLink(e.ref)) |symbol| {
                         if (symbol.import_item_status == .missing) {
                             p.addSourceMapping(expr.loc);
                             p.printUndefined(level);
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
-                            const import_record = p.import_records[namespace.import_record_index];
+                            const import_record = p.importRecord(namespace.import_record_index);
                             if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
                                 var wrap = false;
                                 didPrint = true;
@@ -2794,8 +2804,8 @@ fn NewPrinter(
                                     }
                                 },
                                 .e_import_identifier => |e| {
-                                    const ref = p.symbols.follow(e.ref);
-                                    if (p.symbols.get(ref)) |symbol| {
+                                    const ref = p.symbols().follow(e.ref);
+                                    if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
@@ -2831,8 +2841,8 @@ fn NewPrinter(
                                     // if (strings) {}
                                 },
                                 .e_import_identifier => |e| {
-                                    const ref = p.symbols.follow(e.ref);
-                                    if (p.symbols.get(ref)) |symbol| {
+                                    const ref = p.symbols().follow(e.ref);
+                                    if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
@@ -3317,7 +3327,7 @@ fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("from "));
-                    p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                    p.printImportRecordPath(p.importRecord(s.import_record_index));
                     p.printSemicolonAfterStatement();
                 },
                 .s_export_clause => |s| {
@@ -3347,12 +3357,12 @@ fn NewPrinter(
                                 p.printSpace();
                                 const last = s.items.len - 1;
                                 for (s.items) |item, i| {
-                                    const symbol = p.symbols.getWithLink(item.name.ref.?).?;
+                                    const symbol = p.symbols().getWithLink(item.name.ref.?).?;
                                     const name = symbol.original_name;
                                     var did_print = false;
 
                                     if (symbol.namespace_alias) |namespace| {
-                                        const import_record = p.import_records[namespace.import_record_index];
+                                        const import_record = p.importRecord(namespace.import_record_index);
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
@@ -3421,9 +3431,9 @@ fn NewPrinter(
                             const item: js_ast.ClauseItem = array.items[i];
 
                             if (item.original_name.len > 0) {
-                                if (p.symbols.get(item.name.ref.?)) |symbol| {
+                                if (p.symbols().get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
-                                        const import_record = p.import_records[namespace.import_record_index];
+                                        const import_record = p.importRecord(namespace.import_record_index);
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
@@ -3537,7 +3547,7 @@ fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    const import_record = p.import_records[s.import_record_index];
+                    const import_record = p.importRecord(s.import_record_index);
 
                     if (comptime is_bun_platform) {
                         if (import_record.do_commonjs_transform_in_printer) {
@@ -3849,7 +3859,7 @@ fn NewPrinter(
                 .s_import => |s| {
                     std.debug.assert(s.import_record_index < p.import_records.len);
 
-                    const record: *const ImportRecord = &p.import_records[s.import_record_index];
+                    const record: *const ImportRecord = p.importRecord(s.import_record_index);
 
                     switch (record.print_mode) {
                         .css => {
@@ -4260,12 +4270,12 @@ fn NewPrinter(
             }
         }
 
-        pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import) void {
+        pub fn printBundledImport(p: *Printer, record: ImportRecord, s: *S.Import) void {
             if (record.is_internal) {
                 return;
             }
 
-            const import_record = p.import_records[s.import_record_index];
+            const import_record = p.importRecord(s.import_record_index);
             const is_disabled = import_record.path.is_disabled;
             const module_id = import_record.module_id;
 
@@ -4273,7 +4283,7 @@ fn NewPrinter(
             // we can skip it
 
             if (record.path.is_disabled) {
-                if (p.symbols.get(s.namespace_ref) == null)
+                if (p.symbols().get(s.namespace_ref) == null)
                     return;
             }
 
@@ -4371,13 +4381,13 @@ fn NewPrinter(
         }
 
         pub fn printLoadFromBundleWithoutCall(p: *Printer, import_record_index: u32) void {
-            const record = p.import_records[import_record_index];
+            const record = p.importRecord(import_record_index);
             if (record.path.is_disabled) {
                 p.printDisabledImport();
                 return;
             }
 
-            @call(.always_inline, printModuleId, .{ p, p.import_records[import_record_index].module_id });
+            @call(.always_inline, printModuleId, .{ p, p.importRecord(import_record_index).module_id });
         }
 
         pub fn printCallModuleID(p: *Printer, module_id: u32) void {
@@ -4396,7 +4406,7 @@ fn NewPrinter(
         }
 
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
-            if (p.import_records[require.import_record_index].is_internal) {
+            if (p.importRecord(require.import_record_index).is_internal) {
                 return;
             }
 
@@ -4775,12 +4785,11 @@ fn NewPrinter(
 
         pub fn init(
             writer: Writer,
-            tree: *const Ast,
-            source: *const logger.Source,
-            symbols: Symbol.Map,
+            import_records: []const ImportRecord,
             opts: Options,
-            allocator: std.mem.Allocator,
-        ) !Printer {
+            renamer: bun.renamer.Renamer,
+            source_map_builder: SourceMap.Chunk.Builder,
+        ) Printer {
             if (imported_module_ids_list_unset) {
                 imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
                 imported_module_ids_list_unset = false;
@@ -4788,24 +4797,12 @@ fn NewPrinter(
 
             imported_module_ids_list.clearRetainingCapacity();
 
-            var source_map_builder: SourceMap.Chunk.Builder = undefined;
-
-            if (comptime generate_source_map) {
-                source_map_builder = SourceMap.Chunk.Builder{
-                    .source_map = SourceMap.Chunk.Builder.SourceMapper.init(allocator, is_bun_platform),
-                    .cover_lines_without_mappings = true,
-                    .prepend_count = is_bun_platform,
-                };
-                source_map_builder.line_offset_tables = SourceMap.LineOffsetTable.generate(allocator, source.contents, @intCast(i32, tree.approximate_newline_count));
-            }
-
             return Printer{
-                .import_records = tree.import_records.slice(),
+                .import_records = import_records,
                 .options = opts,
-                .symbols = symbols,
                 .writer = writer,
                 .imported_module_ids = imported_module_ids_list,
-                .renamer = rename.Renamer.init(symbols, source),
+                .renamer = renamer,
                 .source_map_builder = source_map_builder,
             };
         }
@@ -5210,6 +5207,34 @@ pub const Format = enum {
     cjs_ascii,
 };
 
+fn getSourceMapBuilder(
+    comptime generate_source_map: bool,
+    comptime is_bun_platform: bool,
+    opts: Options,
+    source: *const logger.Source,
+    tree: *const Ast,
+) SourceMap.Chunk.Builder {
+    if (comptime !generate_source_map)
+        return undefined;
+
+    return .{
+        .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
+            opts.allocator,
+            is_bun_platform,
+        ),
+        .cover_lines_without_mappings = true,
+        .prepend_count = is_bun_platform,
+        .line_offset_tables = SourceMap.LineOffsetTable.generate(
+            opts.allocator,
+            source.contents,
+            @intCast(
+                i32,
+                tree.approximate_newline_count,
+            ),
+        ),
+    };
+}
+
 pub fn printAst(
     comptime Writer: type,
     _writer: Writer,
@@ -5220,6 +5245,8 @@ pub fn printAst(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+
     const PrinterType = NewPrinter(
         ascii_only,
         Writer,
@@ -5232,13 +5259,12 @@ pub fn printAst(
     );
     var writer = _writer;
 
-    var printer = try PrinterType.init(
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
-        opts.allocator,
+        renamer.toRenamer(),
+        getSourceMapBuilder(generate_source_map, ascii_only, opts, source, tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -5289,16 +5315,15 @@ pub fn printJSON(
     var stmts = &[_]js_ast.Stmt{stmt};
     var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
     const ast = Ast.initTest(parts);
-    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-    defer arena.deinit();
-    var allocator = arena.allocator();
-    var printer = try PrinterType.init(
+
+    var renamer = rename.NoOpRenamer.init(ast.symbols, source);
+
+    var printer = PrinterType.init(
         writer,
-        &ast,
-        source,
+        ast.import_records.slice(),
         .{},
-        .{},
-        allocator,
+        renamer.toRenamer(),
+        undefined,
     );
 
     printer.printExpr(expr, Level.lowest, ExprFlag.Set{});
@@ -5308,6 +5333,50 @@ pub fn printJSON(
     try printer.writer.done();
 
     return @intCast(usize, @max(printer.writer.written, 0));
+}
+
+pub fn print(
+    comptime Writer: type,
+    _writer: Writer,
+    comptime is_bun_platform: bool,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    const PrinterType = NewPrinter(
+        false,
+        Writer,
+        false,
+        is_bun_platform,
+        false,
+        false,
+        false,
+    );
+    var writer = _writer;
+    var printer = PrinterType.init(
+        writer,
+        import_records,
+        opts,
+        renamer,
+        undefined,
+    );
+
+    defer {
+        imported_module_ids_list = printer.imported_module_ids;
+    }
+
+    for (parts) |part| {
+        for (part.stmts) |stmt| {
+            printer.printSemicolonIfNeeded();
+            printer.printStmt(stmt) catch |err| {
+                return .{ .err = err };
+            };
+            if (printer.writer.getError()) {} else |err| {
+                return .{ .err = err };
+            }
+        }
+    }
 }
 
 pub fn printCommonJS(
@@ -5322,13 +5391,13 @@ pub fn printCommonJS(
 ) !usize {
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, false, generate_source_map);
     var writer = _writer;
-    var printer = try PrinterType.init(
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
-        opts.allocator,
+        renamer.toRenamer(),
+        getSourceMapBuilder(generate_source_map, false, opts, source, tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;
@@ -5375,7 +5444,7 @@ pub fn printCommonJS(
 //     opts: Options,
 // ) PrintResult {
 //     var writer = _writer;
-//     var printer = try PrinterType.init(
+//     var printer =  PrinterType.init(
 //         writer,
 //         &tree,
 //         source,
@@ -5401,12 +5470,12 @@ pub fn printCommonJSThreaded(
 ) !WriteResult {
     const PrinterType = NewPrinter(ascii_only, Writer, true, ascii_only, true, false, false);
     var writer = _writer;
-    var printer = try PrinterType.init(
+    var renamer = rename.NoOpRenamer.init(symbols, source);
+    var printer = PrinterType.init(
         writer,
-        &tree,
-        source,
-        symbols,
+        tree.import_records.slice(),
         opts,
+        renamer.toRenamer(),
         undefined,
     );
 

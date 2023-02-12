@@ -35,11 +35,23 @@ pub const NoOpRenamer = struct {
             Global.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
         }
     }
+
+    pub fn toRenamer(this: *NoOpRenamer) Renamer {
+        return .{
+            .NoOpRenamer = this,
+        };
+    }
 };
 
 pub const Renamer = union(enum) {
     NumberRenamer: *NumberRenamer,
     NoOpRenamer: *NoOpRenamer,
+
+    pub fn symbols(this: Renamer) js_ast.Symbol.Map {
+        return switch (this) {
+            inline else => |r| r.symbols,
+        };
+    }
 
     pub fn nameForSymbol(renamer: Renamer, ref: Ref) string {
         return switch (renamer) {

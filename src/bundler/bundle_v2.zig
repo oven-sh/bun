@@ -3454,6 +3454,8 @@ const LinkerContext = struct {
         generateChunkJS_(ctx, chunk, chunk_index) catch |err| std.debug.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
+    // TODO: investigate if we need to parallelize this function
+    // esbuild does parallelize it.
     fn renameSymbolsInChunk(
         c: *LinkerContext,
         allocator: std.mem.Allocator,
@@ -3645,6 +3647,21 @@ const LinkerContext = struct {
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
+
+        var r = try c.renameSymbolsInChunk(allocator, chunk, chunk.content.javascript.files_in_chunk_order);
+        defer r.deinit();
+        const part_ranges = chunk.content.javascript.parts_in_chunk_in_order;
+        for (part_ranges) |part_range| {
+            c.generateCodeForFileInChunkJS(
+                allocator,
+                chunk,
+                part_range,
+                toCommonJSRef,
+                toESMRef,
+                runtimeRequireRef,
+                &chunk.entry_bits,
+            );
+        }
     }
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks_: []Chunk) ![]options.OutputFile {

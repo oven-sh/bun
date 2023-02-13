@@ -150,7 +150,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "FormData");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "FormData"_s);
     auto object = DOMFormData::create(context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -504,7 +504,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_toJSONBody(JSC:
         obj = constructEmptyObject(lexicalGlobalObject);
     }
 
-    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, "FormData"), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, "FormData"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     auto iter = impl.items();
     WTF::HashSet<String> seenKeys;

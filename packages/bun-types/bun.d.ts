@@ -2789,20 +2789,18 @@ declare module "bun" {
     readonly localPort: number;
   }
 
-  interface SocketListener<Options extends SocketOptions = SocketOptions> {
+  interface SocketListener<Data = undefined> {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
-    reload(options: Pick<Partial<Options>, "socket">): void;
-    data: Options["data"];
+    reload(options: Pick<Partial<SocketOptions>, "socket">): void;
+    data: Data;
   }
-  interface TCPSocketListener<Options extends TCPSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface TCPSocketListener<Data> extends SocketListener<Data> {
     readonly port: number;
     readonly hostname: string;
   }
-  interface UnixSocketListener<Options extends UnixSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface UnixSocketListener<Data> extends SocketListener<Data> {
     readonly unix: string;
   }
 
@@ -2822,7 +2820,7 @@ declare module "bun" {
     Data = unknown,
     DataBinaryType extends BinaryType = "buffer",
   > {
-    open(socket: Socket<Data>): void | Promise<void>;
+    open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(
@@ -2853,6 +2851,10 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
+     * Called when a message times out.
+     */
+    timeout?(socket: Socket<Data>): void | Promise<void>;
+    /**
      * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
      *
      * @default "buffer"
@@ -2872,12 +2874,25 @@ declare module "bun" {
 
   interface SocketOptions<Data = unknown> {
     socket: SocketHandler<Data>;
-    tls?: boolean | TLSOptions;
     data?: Data;
   }
-  interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
+  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
+  //   hostname: string;
+  //   port: number;
+  // }
+
+  interface TCPSocketListenOptions<Data = undefined>
+    extends SocketOptions<Data> {
     hostname: string;
     port: number;
+    tls?: TLSOptions;
+  }
+
+  interface TCPSocketConnectOptions<Data = undefined>
+    extends SocketOptions<Data> {
+    hostname: string;
+    port: number;
+    tls?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -2898,7 +2913,7 @@ declare module "bun" {
    *
    */
   export function connect<Data = undefined>(
-    options: TCPSocketOptions<Data>,
+    options: TCPSocketConnectOptions<Data>,
   ): Promise<TCPSocketListener<typeof options>>;
   export function connect<Data = undefined>(
     options: UnixSocketOptions<Data>,
@@ -2918,11 +2933,11 @@ declare module "bun" {
    *
    */
   export function listen<Data = undefined>(
-    options: TCPSocketOptions<Data>,
-  ): TCPSocketListener<typeof options>;
+    options: TCPSocketListenOptions<Data>,
+  ): TCPSocketListener<Data>;
   export function listen<Data = undefined>(
     options: UnixSocketOptions<Data>,
-  ): UnixSocketListener<typeof options>;
+  ): UnixSocketListener<Data>;
 
   namespace SpawnOptions {
     type Readable =
@@ -2965,7 +2980,7 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string>;
+      env?: Record<string, string | number>;
 
       /**
        * The standard file descriptors of the process

@@ -504,7 +504,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_toJSONBody(JSC:
         obj = constructEmptyObject(lexicalGlobalObject);
     }
 
-    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, "FormData"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+    obj->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("FormData"_s)), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     auto iter = impl.items();
     WTF::HashSet<String> seenKeys;

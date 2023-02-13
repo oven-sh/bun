@@ -866,7 +866,7 @@ declare module "bun" {
      * @param code The code to transpile
      *
      */
-    transformSync(code: StringOrBuffer, loader: JavaScriptLoader): string;
+    transformSync(code: StringOrBuffer, loader?: JavaScriptLoader): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

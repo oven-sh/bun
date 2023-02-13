@@ -1568,6 +1568,46 @@ extern "C" napi_status napi_typeof(napi_env env, napi_value val,
     return napi_generic_failure;
 }
 
+extern "C" napi_status napi_get_value_bigint_words(napi_env env,
+    napi_value value,
+    int* sign_bit,
+    size_t* word_count,
+    uint64_t* words)
+{
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSC::JSValue jsValue = toJS(value);
+    if (UNLIKELY(!jsValue.isBigInt()))
+        return napi_invalid_arg;
+
+    JSC::JSBigInt* bigInt = jsValue.asHeapBigInt();
+    if (UNLIKELY(!bigInt))
+        return napi_invalid_arg;
+
+    if (UNLIKELY(word_count == nullptr))
+        return napi_invalid_arg;
+
+    *word_count = bigInt->length();
+
+    // If both sign_bit and words are nullptr, we're just querying the word count
+    // Return ok in this case
+    if (sign_bit == nullptr) {
+        // However, if one of them is nullptr, we have an invalid argument
+        if (UNLIKELY(words != nullptr))
+            return napi_invalid_arg;
+
+        return napi_ok;
+    } else if (UNLIKELY(words == nullptr))
+        return napi_invalid_arg; // If sign_bit is not nullptr, words must not be nullptr
+
+    *sign_bit = (int)bigInt->sign();
+
+    for (size_t i = 0; i < bigInt->length(); i++)
+        words[i] = bigInt->digit(i);
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_get_value_external(napi_env env, napi_value value,
     void** result)
 {

@@ -422,6 +422,14 @@ pub const Request = struct {
             },
         }
 
+        if (request.body == .Blob and
+            request.headers != null and
+            request.body.Blob.content_type.len > 0 and
+            !request.headers.?.fastHas(.ContentType))
+        {
+            request.headers.?.put("content-type", request.body.Blob.content_type);
+        }
+
         return request;
     }
 
@@ -462,6 +470,13 @@ pub const Request = struct {
                 this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
+
+                if (this.body == .Blob) {
+                    const content_type = this.body.Blob.content_type;
+                    if (content_type.len > 0) {
+                        this.headers.?.put("content-type", content_type);
+                    }
+                }
             }
         }
 

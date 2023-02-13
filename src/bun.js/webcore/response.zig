@@ -203,7 +203,15 @@ pub const Response = struct {
     fn getOrCreateHeaders(this: *Response) *FetchHeaders {
         if (this.body.init.headers == null) {
             this.body.init.headers = FetchHeaders.createEmpty();
+
+            if (this.body.value == .Blob) {
+                const content_type = this.body.value.Blob.content_type;
+                if (content_type.len > 0) {
+                    this.body.init.headers.?.put("content-type", content_type);
+                }
+            }
         }
+
         return this.body.init.headers.?;
     }
 
@@ -501,11 +509,21 @@ pub const Response = struct {
         }) orelse return null;
 
         var response = getAllocator(globalThis).create(Response) catch unreachable;
+
         response.* = Response{
             .body = body,
             .allocator = getAllocator(globalThis),
             .url = "",
         };
+
+        if (response.body.value == .Blob and
+            response.body.init.headers != null and
+            response.body.value.Blob.content_type.len > 0 and
+            !response.body.init.headers.?.fastHas(.ContentType))
+        {
+            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type);
+        }
+
         return response;
     }
 };

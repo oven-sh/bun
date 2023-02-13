@@ -558,6 +558,12 @@ pub const Body = struct {
                 };
             }
 
+            if (value.as(JSC.URLSearchParams)) |search_params| {
+                return Body.Value{
+                    .Blob = Blob.fromURLSearchParams(globalThis, globalThis.allocator(), search_params),
+                };
+            }
+
             if (js_type == .DOMWrapper) {
                 if (value.as(Blob)) |blob| {
                     return Body.Value{

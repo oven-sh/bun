@@ -307,6 +307,8 @@ describe("FormData", () => {
           const formData = new FormData();
           formData.append("foo", Bun.file(path));
           const response = C === Response ? new Response(formData) : new Request({ body: formData });
+          expect(response.headers.get("content-type")?.startsWith("multipart/form-data;")).toBe(true);
+
           const formData2 = await response.formData();
           expect(formData2 instanceof FormData).toBe(true);
           expect(formData2.get("foo") instanceof Blob).toBe(true);
@@ -329,6 +331,20 @@ describe("FormData", () => {
           "Content-Type": "application/x-www-form-urlencoded",
         },
       });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.get("foo")).toBe("bar");
+      expect(formData.get("baz")).toBe("qux");
+    });
+
+    test("should parse URLSearchParams", async () => {
+      const searchParams = new URLSearchParams("foo=bar&baz=qux");
+      const response = new Response(searchParams);
+      expect(response.headers.get("Content-Type")).toBe("application/x-www-form-urlencoded;charset=UTF-8");
+
+      expect(searchParams instanceof URLSearchParams).toBe(true);
+      expect(searchParams.get("foo")).toBe("bar");
+
       const formData = await response.formData();
       expect(formData instanceof FormData).toBe(true);
       expect(formData.get("foo")).toBe("bar");

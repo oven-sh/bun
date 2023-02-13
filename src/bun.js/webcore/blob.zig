@@ -196,6 +196,34 @@ pub const Blob = struct {
         return null;
     }
 
+    const URLSearchParamsConverter = struct {
+        allocator: std.mem.Allocator,
+        buf: []u8 = "",
+        globalThis: *JSC.JSGlobalObject,
+        pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
+            var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
+            this.buf = bun.constStrToU8(out.slice());
+        }
+    };
+
+    pub fn fromURLSearchParams(
+        globalThis: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        search_params: *JSC.URLSearchParams,
+    ) Blob {
+        var converter = URLSearchParamsConverter{
+            .allocator = allocator,
+            .globalThis = globalThis,
+        };
+        search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
+        var store = Blob.Store.init(converter.buf, allocator) catch unreachable;
+        store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+
+        var blob = Blob.initWithStore(store, globalThis);
+        blob.content_type = store.mime_type.value;
+        return blob;
+    }
+
     pub fn fromDOMFormData(
         globalThis: *JSC.JSGlobalObject,
         allocator: std.mem.Allocator,

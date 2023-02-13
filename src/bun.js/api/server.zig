@@ -408,10 +408,6 @@ pub const ServerConfig = struct {
             }
         }
 
-        if (args.port == 0) {
-            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global, exception);
-        }
-
         if (args.base_uri.len > 0) {
             args.base_url = URL.parse(args.base_uri);
             if (args.base_url.hostname.len == 0) {
@@ -4308,7 +4304,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getPort(this: *ThisServer) JSC.JSValue {
-            return JSC.JSValue.jsNumber(this.config.port);
+            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.port);
+            return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
         pub fn getPendingRequests(this: *ThisServer) JSC.JSValue {

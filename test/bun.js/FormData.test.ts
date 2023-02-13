@@ -201,4 +201,28 @@ describe("FormData", () => {
       expect(typeof e.message).toBe("string");
     }
   });
+
+  it("file upload on HTTP server (receive)", async () => {
+    const server = Bun.serve({
+      port: 4021,
+      development: false,
+      async fetch(req) {
+        const formData = await req.formData();
+        return new Response(formData.get("foo"));
+      },
+    });
+
+    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+      body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=foo",
+      },
+      method: "POST",
+    });
+
+    const res = await fetch(reqBody);
+    const body = await res.text();
+    expect(body).toBe("baz");
+    server.stop(true);
+  });
 });

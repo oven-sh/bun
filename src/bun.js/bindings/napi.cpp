@@ -1587,6 +1587,7 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
     if (UNLIKELY(word_count == nullptr))
         return napi_invalid_arg;
 
+    size_t available_words = *word_count;
     *word_count = bigInt->length();
 
     // If both sign_bit and words are nullptr, we're just querying the word count
@@ -1602,7 +1603,8 @@ extern "C" napi_status napi_get_value_bigint_words(napi_env env,
 
     *sign_bit = (int)bigInt->sign();
 
-    for (size_t i = 0; i < bigInt->length(); i++)
+    size_t len = *word_count;
+    for (size_t i = 0; i < available_words && i < len; i++)
         words[i] = bigInt->digit(i);
 
     return napi_ok;

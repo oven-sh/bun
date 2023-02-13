@@ -3146,11 +3146,11 @@ declare module "bun" {
 
       /** The base path to use when routing */
       assetPrefix?: string;
-
       origin?: string;
     });
 
-    match(input: string | Request | Response | URL): MatchedRoute | null;
+    // todo: URL
+    match(input: string | Request | Response): MatchedRoute | null;
 
     readonly assetPrefix: string;
     readonly origin: string;

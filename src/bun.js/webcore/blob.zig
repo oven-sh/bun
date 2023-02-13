@@ -2412,21 +2412,20 @@ pub const Blob = struct {
                 };
 
                 if (args.len > 1) {
-                    var options = args[0];
-                    if (options.isCell()) {
+                    const options = args[1];
+                    if (options.isObject()) {
                         // type, the ASCII-encoded string in lower case
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
                         if (options.get(globalThis, "type")) |content_type| {
                             if (content_type.isString()) {
-                                var content_type_str = content_type.getZigString(globalThis);
-                                if (!content_type_str.is16Bit()) {
-                                    var slice = content_type_str.trimmedSlice();
-                                    var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
-                                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                                    blob.content_type_allocated = true;
-                                }
+                                var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                                defer content_type_str.deinit();
+                                var slice = content_type_str.slice();
+                                var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                                blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                                blob.content_type_allocated = true;
                             }
                         }
                     }

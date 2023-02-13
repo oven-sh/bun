@@ -867,6 +867,7 @@ pub const GetAddrInfoRequest = struct {
             pub fn onMachportChange(this: *GetAddrInfoRequest) void {
                 if (comptime !Environment.isMac)
                     unreachable;
+                bun.JSC.markBinding(@src());
 
                 if (!getaddrinfo_send_reply(this.backend.libinfo.machport.?, JSC.DNS.LibInfo.getaddrinfo_async_handle_reply().?)) {
                     log("onMachportChange: getaddrinfo_send_reply failed", .{});

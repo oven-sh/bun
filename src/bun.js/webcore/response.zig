@@ -73,31 +73,11 @@ pub const Response = struct {
     pub const getBlob = ResponseMixin.getBlob;
     pub const getFormData = ResponseMixin.getFormData;
 
-    pub fn getFormDataBoundary(this: *Response) ?*bun.FormData.AsyncFormData {
-        var content_type_slice: ZigString.Slice = .{};
+    pub fn getFormDataEncoding(this: *Response) ?*bun.FormData.AsyncFormData {
+        var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
         defer content_type_slice.deinit();
-        var content_type = brk: {
-            if (this.body.init.headers) |headers| {
-                if (headers.fastGet(.ContentType)) |value| {
-                    content_type_slice = value.toSlice(bun.default_allocator);
-                    break :brk content_type_slice.slice();
-                }
-            }
-
-            return null;
-        };
-
-        if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
-
-        const boundary = bun.FormData.getBoundary(content_type) orelse return null;
-        if (boundary.len == 0)
-            return null;
-
-        var data = bun.FormData.AsyncFormData.init(bun.default_allocator, boundary) catch return null;
-
-        var out = bun.default_allocator.create(bun.FormData.AsyncFormData) catch return null;
-        out.* = data;
-        return out;
+        const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
+        return bun.FormData.AsyncFormData.init(this.allocator, encoding) catch unreachable;
     }
 
     pub fn estimatedSize(this: *Response) callconv(.C) usize {
@@ -345,6 +325,23 @@ pub const Response = struct {
             },
             .Used, .Locked, .Empty, .Error => return default.value,
         }
+    }
+
+    pub fn getContentType(
+        this: *Response,
+    ) ?ZigString.Slice {
+        if (this.body.init.headers) |headers| {
+            if (headers.fastGet(.ContentType)) |value| {
+                return value.toSlice(bun.default_allocator);
+            }
+        }
+
+        if (this.body.value == .Blob) {
+            if (this.body.value.Blob.content_type.len > 0)
+                return ZigString.Slice.fromUTF8NeverFree(this.body.value.Blob.content_type);
+        }
+
+        return null;
     }
 
     pub fn constructJSON(

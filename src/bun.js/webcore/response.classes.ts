@@ -127,6 +127,7 @@ export default [
       arrayBuffer: { fn: "getArrayBuffer" },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
+      formData: { fn: "getFormData" },
 
       type: {
         getter: "getType",

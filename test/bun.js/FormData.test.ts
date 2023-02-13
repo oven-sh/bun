@@ -157,6 +157,54 @@ describe("FormData", () => {
 
         expect(entry).toEqual(expected);
       });
+
+      it(`should roundtrip multipart/form-data (${name}) with ${C.name}`, async () => {
+        const response = C === Response ? new Response(body, { headers }) : new Request({ headers, body });
+        const formData = await response.formData();
+        expect(formData instanceof FormData).toBe(true);
+
+        const request = await new Response(formData).formData();
+        expect(request instanceof FormData).toBe(true);
+
+        const aKeys = Array.from(formData.keys());
+        const bKeys = Array.from(request.keys());
+        expect(aKeys).toEqual(bKeys);
+
+        for (const key of aKeys) {
+          const aValues = formData.getAll(key);
+          const bValues = request.getAll(key);
+          for (let i = 0; i < aValues.length; i++) {
+            const a = aValues[i];
+            const b = bValues[i];
+            if (a instanceof Blob) {
+              expect(b instanceof Blob).toBe(true);
+              expect(await a.text()).toBe(await b.text());
+            } else {
+              expect(a).toBe(b);
+            }
+          }
+        }
+
+        // Test that it also works with Blob.
+        const c = await new Blob([body], { type: headers["Content-Type"] }).formData();
+        expect(c instanceof FormData).toBe(true);
+        const cKeys = Array.from(c.keys());
+        expect(cKeys).toEqual(bKeys);
+        for (const key of cKeys) {
+          const cValues = c.getAll(key);
+          const bValues = request.getAll(key);
+          for (let i = 0; i < cValues.length; i++) {
+            const c = cValues[i];
+            const b = bValues[i];
+            if (c instanceof Blob) {
+              expect(b instanceof Blob).toBe(true);
+              expect(await c.text()).toBe(await b.text());
+            } else {
+              expect(c).toBe(b);
+            }
+          }
+        }
+      });
     }
   }
 
@@ -224,5 +272,114 @@ describe("FormData", () => {
     const body = await res.text();
     expect(body).toBe("baz");
     server.stop(true);
+  });
+
+  it("file send on HTTP server (receive)", async () => {
+    const server = Bun.serve({
+      port: 4022,
+      development: false,
+      async fetch(req) {
+        const formData = await req.formData();
+        return new Response(formData);
+      },
+    });
+
+    const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+      body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n\r\n',
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=foo",
+      },
+      method: "POST",
+    });
+
+    const res = await fetch(reqBody);
+    const body = await res.formData();
+    expect(await (body.get("foo") as Blob).text()).toBe("baz");
+    server.stop(true);
+  });
+
+  describe("Bun.file support", () => {
+    describe("roundtrip", () => {
+      const path = import.meta.dir + "/form-data-fixture.txt";
+      for (const C of [Request, Response]) {
+        it(`with ${C.name}`, async () => {
+          await Bun.write(path, "foo!");
+          const formData = new FormData();
+          formData.append("foo", Bun.file(path));
+          const response = C === Response ? new Response(formData) : new Request({ body: formData });
+          const formData2 = await response.formData();
+          expect(formData2 instanceof FormData).toBe(true);
+          expect(formData2.get("foo") instanceof Blob).toBe(true);
+          expect(await (formData2.get("foo") as Blob).text()).toBe("foo!");
+        });
+      }
+    });
+
+    it("doesnt crash when file is missing", async () => {
+      const formData = new FormData();
+      formData.append("foo", Bun.file("missing"));
+      expect(() => new Response(formData)).toThrow();
+    });
+  });
+
+  describe("URLEncoded", () => {
+    test("should parse URL encoded", async () => {
+      const response = new Response("foo=bar&baz=qux", {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.get("foo")).toBe("bar");
+      expect(formData.get("baz")).toBe("qux");
+    });
+
+    test("should parse URL encoded with charset", async () => {
+      const response = new Response("foo=bar&baz=qux", {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+      });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.get("foo")).toBe("bar");
+      expect(formData.get("baz")).toBe("qux");
+    });
+
+    test("should parse URL encoded with charset and space", async () => {
+      const response = new Response("foo=bar&baz=qux+quux", {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+      });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.get("foo")).toBe("bar");
+      expect(formData.get("baz")).toBe("qux quux");
+    });
+
+    test("should parse URL encoded with charset and plus", async () => {
+      const response = new Response("foo=bar&baz=qux+quux", {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        },
+      });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.get("foo")).toBe("bar");
+      expect(formData.get("baz")).toBe("qux quux");
+    });
+
+    it("should handle multiple values", async () => {
+      const response = new Response("foo=bar&foo=baz", {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+      });
+      const formData = await response.formData();
+      expect(formData instanceof FormData).toBe(true);
+      expect(formData.getAll("foo")).toEqual(["bar", "baz"]);
+    });
   });
 });

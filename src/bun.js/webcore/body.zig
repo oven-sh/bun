@@ -433,7 +433,10 @@ pub const Body = struct {
             }
         }
 
-        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
+        pub fn fromJS(
+            globalThis: *JSGlobalObject,
+            value: JSValue,
+        ) ?Value {
             value.ensureStillAlive();
 
             if (value.isEmptyOrUndefinedOrNull()) {
@@ -547,6 +550,12 @@ pub const Body = struct {
                         },
                     };
                 }
+            }
+
+            if (value.as(JSC.DOMFormData)) |form_data| {
+                return Body.Value{
+                    .Blob = Blob.fromDOMFormData(globalThis, globalThis.allocator(), form_data),
+                };
             }
 
             if (js_type == .DOMWrapper) {
@@ -1027,50 +1036,39 @@ pub fn BodyMixin(comptime Type: type) type {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
-            if (value.* == .Locked) {
-                if (comptime @hasDecl(Type, "getFormDataBoundary")) {
-                    if (this.getFormDataBoundary()) |boundary| {
-                        return value.Locked.setPromise(globalObject, .{ .getFormData = boundary });
-                    }
-                }
-
+            var encoder = this.getFormDataEncoding() orelse {
                 globalObject.throw("Invalid MIME type", .{});
                 return .zero;
+            };
+
+            if (value.* == .Locked) {
+                return value.Locked.setPromise(globalObject, .{ .getFormData = encoder });
             }
 
             var blob: AnyBlob = value.useAsAnyBlob();
             defer blob.detach();
+            defer encoder.deinit();
 
-            if (comptime @hasDecl(Type, "getFormDataBoundary")) {
-                const boundary = this.getFormDataBoundary() orelse {
-                    globalObject.throw("Invalid MIME type", .{});
-                    return .zero;
-                };
-
-                const js_value = bun.FormData.toJS(
+            const js_value = bun.FormData.toJS(
+                globalObject,
+                blob.slice(),
+                encoder.encoding,
+            ) catch |err| {
+                return JSC.JSPromise.rejectedPromiseValue(
                     globalObject,
-                    blob.slice(),
-                    .{ .Multipart = boundary.boundary },
-                ) catch |err| {
-                    return JSC.JSPromise.rejectedPromiseValue(
-                        globalObject,
-                        globalObject.createErrorInstance(
-                            "Error parsing FormData: {s}",
-                            .{
-                                @errorName(err),
-                            },
-                        ),
-                    );
-                };
-
-                return JSC.JSPromise.wrap(
-                    globalObject,
-                    js_value,
+                    globalObject.createErrorInstance(
+                        "FormData parse error {s}",
+                        .{
+                            @errorName(err),
+                        },
+                    ),
                 );
-            }
+            };
 
-            globalObject.throw("Unsupported action", .{});
-            return .zero;
+            return JSC.JSPromise.wrap(
+                globalObject,
+                js_value,
+            );
         }
 
         pub fn getBlob(

@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "wtf/URLParser.h"
 
 namespace WebCore {
 
@@ -41,6 +42,42 @@ DOMFormData::DOMFormData(ScriptExecutionContext* context)
 Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
 {
     return adoptRef(*new DOMFormData(context));
+}
+
+Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
+{
+    auto newFormData = adoptRef(*new DOMFormData(context));
+    for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {
+        newFormData->append(entry.key, entry.value);
+    }
+
+    return newFormData;
+}
+
+String DOMFormData::toURLEncodedString()
+{
+    WTF::URLParser::URLEncodedForm form;
+    form.reserveInitialCapacity(m_items.size());
+    for (auto& item : m_items) {
+        if (auto value = std::get_if<String>(&item.data))
+            form.append({ item.name, *value });
+    }
+
+    return WTF::URLParser::serialize(form);
+}
+
+extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, ZigString*, void*, ZigString*, uint8_t))
+{
+    for (auto& item : form->items()) {
+        auto name = toZigString(item.name);
+        if (auto value = std::get_if<String>(&item.data)) {
+            auto value_ = toZigString(*value);
+            callback(context, &name, &value_, nullptr, 0);
+        } else if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
+            auto filename = toZigString(value->get()->fileName());
+            callback(context, &name, value->get()->impl(), &filename, 1);
+        }
+    }
 }
 
 Ref<DOMFormData> DOMFormData::clone() const

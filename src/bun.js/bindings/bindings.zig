@@ -811,6 +811,38 @@ pub const DOMFormData = opaque {
         });
     }
 
+    pub fn createFromURLQuery(
+        global: *JSGlobalObject,
+        query: *ZigString,
+    ) JSValue {
+        return shim.cppFn("createFromURLQuery", .{
+            global,
+            query,
+        });
+    }
+
+    extern fn DOMFormData__toQueryString(
+        *DOMFormData,
+        ctx: *anyopaque,
+        callback: *const fn (ctx: *anyopaque, *ZigString) callconv(.C) void,
+    ) void;
+
+    pub fn toQueryString(
+        this: *DOMFormData,
+        comptime Ctx: type,
+        ctx: Ctx,
+        comptime callback: fn (ctx: Ctx, ZigString) callconv(.C) void,
+    ) void {
+        const Wrapper = struct {
+            const cb = callback;
+            pub fn run(c: *anyopaque, str: *ZigString) callconv(.C) void {
+                cb(@ptrCast(Ctx, c), str.*);
+            }
+        };
+
+        DOMFormData__toQueryString(this, ctx, &Wrapper.run);
+    }
+
     pub fn fromJS(
         value: JSValue,
     ) ?*DOMFormData {
@@ -857,14 +889,13 @@ pub const DOMFormData = opaque {
 
     const ForEachFunction = *const fn (
         ctx_ptr: ?*anyopaque,
-        globalObject_: *JSGlobalObject,
         name: *ZigString,
         value_ptr: *anyopaque,
         filename: ?*ZigString,
         is_blob: u8,
     ) callconv(.C) void;
 
-    extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ?*const ForEachFunction) void;
+    extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ForEachFunction) void;
     pub const FormDataEntry = union(enum) {
         string: ZigString,
         file: struct {
@@ -876,30 +907,29 @@ pub const DOMFormData = opaque {
         this: *DOMFormData,
         comptime Context: type,
         ctx: *Context,
-        comptime callback_wrapper: fn (ctx: *Context, globalThis: *JSC.JSGlobalObject, name: ZigString, value: FormDataEntry) void,
+        comptime callback_wrapper: *const fn (ctx: *Context, name: ZigString, value: FormDataEntry) void,
     ) void {
         const Wrap = struct {
             const wrapper = callback_wrapper;
             pub fn forEachWrapper(
                 ctx_ptr: ?*anyopaque,
-                globalObject_: *JSGlobalObject,
                 name_: *ZigString,
                 value_ptr: *anyopaque,
                 filename: ?*ZigString,
                 is_blob: u8,
             ) callconv(.C) void {
-                var ctx_ = @ptrCast(*Context, ctx_ptr);
+                var ctx_ = bun.cast(*Context, ctx_ptr.?);
                 const value = if (is_blob == 0)
-                    FormDataEntry{ .string = @ptrCast(*ZigString, value_ptr).* }
+                    FormDataEntry{ .string = bun.cast(*ZigString, value_ptr).* }
                 else
                     FormDataEntry{
                         .file = .{
-                            .blob = @ptrCast(*JSC.WebCore.Blob, value_ptr),
-                            .filename = filename orelse ZigString.Empty,
+                            .blob = bun.cast(*JSC.WebCore.Blob, value_ptr),
+                            .filename = (filename orelse &ZigString.Empty).*,
                         },
                     };
 
-                wrapper(ctx_, globalObject_, name_.*, value);
+                wrapper(ctx_, name_.*, value);
             }
         };
         JSC.markBinding(@src());
@@ -912,6 +942,7 @@ pub const DOMFormData = opaque {
         "append",
         "appendBlob",
         "count",
+        "createFromURLQuery",
     };
 };
 pub const FetchHeaders = opaque {

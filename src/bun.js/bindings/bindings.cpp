@@ -3748,6 +3748,26 @@ CPP_DECL size_t WebCore__DOMFormData__count(WebCore__DOMFormData* arg0)
 {
     return arg0->count();
 }
+
+extern "C" void DOMFormData__toQueryString(
+    DOMFormData* formData,
+    void* ctx,
+    void (*callback)(void* ctx, ZigString* encoded))
+{
+    auto str = formData->toURLEncodedString();
+    ZigString encoded = toZigString(str);
+    callback(ctx, &encoded);
+}
+
+CPP_DECL JSC__JSValue WebCore__DOMFormData__createFromURLQuery(JSC__JSGlobalObject* arg0, ZigString* arg1)
+{
+    JSC::VM& vm = arg0->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    // don't need to copy the string because it internally does.
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), toString(*arg1));
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTFMove(formData)));
+}
+
 CPP_DECL JSC__JSValue WebCore__DOMFormData__create(JSC__JSGlobalObject* arg0)
 {
     JSC::VM& vm = arg0->vm();

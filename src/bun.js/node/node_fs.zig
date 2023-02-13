@@ -1453,6 +1453,9 @@ const Arguments = struct {
         path: PathOrFileDescriptor,
         encoding: Encoding = Encoding.utf8,
 
+        offset: JSC.WebCore.Blob.SizeType = 0,
+        max_size: ?JSC.WebCore.Blob.SizeType = null,
+
         flag: FileSystemFlags = FileSystemFlags.r,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
@@ -3308,8 +3311,28 @@ pub const NodeFS = struct {
                     .result => |stat_| stat_,
                 };
 
+                // Only used in DOMFormData
+                if (args.offset > 0) {
+                    std.os.lseek_SET(fd, args.offset) catch {};
+                }
+
                 // For certain files, the size might be 0 but the file might still have contents.
-                const size = @intCast(u64, @max(stat_.size, 0));
+                const size = @intCast(
+                    u64,
+                    @max(
+                        @min(
+                            stat_.size,
+                            @intCast(
+                                @TypeOf(stat_.size),
+                                // Only used in DOMFormData
+                                args.max_size orelse std.math.maxInt(
+                                    JSC.WebCore.Blob.SizeType,
+                                ),
+                            ),
+                        ),
+                        0,
+                    ),
+                );
 
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;

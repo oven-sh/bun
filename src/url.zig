@@ -835,26 +835,46 @@ pub const FormData = struct {
     pub const Encoding = union(enum) {
         URLEncoded: void,
         Multipart: []const u8, // boundary
+
+        pub fn get(content_type: []const u8) ?Encoding {
+            if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
+                return Encoding{ .URLEncoded = void{} };
+
+            if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
+
+            const boundary = getBoundary(content_type) orelse return null;
+            return .{
+                .Multipart = boundary,
+            };
+        }
     };
 
     pub const AsyncFormData = struct {
-        boundary: []const u8,
+        encoding: Encoding,
         allocator: std.mem.Allocator,
 
-        pub fn init(allocator: std.mem.Allocator, boundary: []const u8) !AsyncFormData {
-            return AsyncFormData{
-                .boundary = try allocator.dupe(u8, boundary),
+        pub fn init(allocator: std.mem.Allocator, encoding: Encoding) !*AsyncFormData {
+            var this = try allocator.create(AsyncFormData);
+            this.* = AsyncFormData{
+                .encoding = switch (encoding) {
+                    .Multipart => .{
+                        .Multipart = try allocator.dupe(u8, encoding.Multipart),
+                    },
+                    else => encoding,
+                },
                 .allocator = allocator,
             };
+            return this;
         }
 
         pub fn deinit(this: *AsyncFormData) void {
-            this.allocator.free(this.boundary);
+            if (this.encoding == .Multipart)
+                this.allocator.free(this.encoding.Multipart);
             this.allocator.destroy(this);
         }
 
         pub fn toJS(this: *AsyncFormData, global: *bun.JSC.JSGlobalObject, data: []const u8, promise: bun.JSC.AnyPromise) void {
-            if (this.boundary.len == 0) {
+            if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
                 promise.reject(global, bun.JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
                 return;
             }
@@ -862,7 +882,7 @@ pub const FormData = struct {
             const js_value = bun.FormData.toJS(
                 global,
                 data,
-                .{ .Multipart = this.boundary },
+                this.encoding,
             ) catch |err| {
                 promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
                 return;
@@ -908,10 +928,13 @@ pub const FormData = struct {
     };
 
     pub fn toJS(globalThis: *bun.JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !bun.JSC.JSValue {
-        return switch (encoding) {
-            .URLEncoded => error.NotImplementedYet,
-            .Multipart => |boundary| toJSFromMultipartData(globalThis, input, boundary),
-        };
+        switch (encoding) {
+            .URLEncoded => {
+                var str = bun.JSC.ZigString.fromUTF8(input);
+                return bun.JSC.DOMFormData.createFromURLQuery(globalThis, &str);
+            },
+            .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
+        }
     }
 
     pub fn toJSFromMultipartData(
@@ -990,12 +1013,18 @@ pub const FormData = struct {
         var slice = input;
         var subslicer = bun.Semver.SlicedString.init(input, input);
 
-        var buf: [74]u8 = undefined;
+        var buf: [76]u8 = undefined;
         {
-            const final_boundary = try std.fmt.bufPrint(&buf, "--{s}--", .{boundary});
+            const final_boundary = std.fmt.bufPrint(&buf, "--{s}--", .{boundary}) catch |err| {
+                if (err == error.NoSpaceLeft) {
+                    return error.@"boundary is too long";
+                }
+
+                return err;
+            };
             const final_boundary_index = strings.lastIndexOf(input, final_boundary);
             if (final_boundary_index == null) {
-                return error.@"is missing final boundary";
+                return error.@"missing final boundary";
             }
             slice = slice[0..final_boundary_index.?];
         }

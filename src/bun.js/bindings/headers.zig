@@ -101,6 +101,7 @@ pub extern fn WebCore__DOMFormData__append(arg0: ?*bindings.DOMFormData, arg1: [
 pub extern fn WebCore__DOMFormData__appendBlob(arg0: ?*bindings.DOMFormData, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString, arg3: ?*anyopaque, arg4: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__count(arg0: ?*bindings.DOMFormData) usize;
 pub extern fn WebCore__DOMFormData__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
+pub extern fn WebCore__DOMFormData__createFromURLQuery(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn WebCore__DOMFormData__fromJS(JSValue0: JSC__JSValue) ?*bindings.DOMFormData;
 pub extern fn WebCore__FetchHeaders__append(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
 pub extern fn WebCore__FetchHeaders__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.FetchHeaders;

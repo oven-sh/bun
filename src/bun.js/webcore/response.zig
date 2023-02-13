@@ -894,6 +894,7 @@ pub const Fetch = struct {
                             var body_value = body_const;
                             // TODO: buffer ReadableStream?
                             // we have to explicitly check for InternalBlob
+
                             body = body_value.useAsAnyBlob();
                         } else {
                             // an error was thrown

@@ -324,6 +324,15 @@ describe("FormData", () => {
     });
   });
 
+  it("Bun.inspect", () => {
+    const formData = new FormData();
+    formData.append("foo", "bar");
+    formData.append("foo", new Blob(["bar"]));
+    formData.append("bar", "baz");
+    formData.append("boop", Bun.file("missing"));
+    expect(Bun.inspect(formData).length > 0).toBe(true);
+  });
+
   describe("URLEncoded", () => {
     test("should parse URL encoded", async () => {
       const response = new Response("foo=bar&baz=qux", {

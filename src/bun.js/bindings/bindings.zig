@@ -794,6 +794,157 @@ pub const DOMURL = opaque {
 
 const Api = @import("../../api/schema.zig").Api;
 
+pub const DOMFormData = opaque {
+    pub const shim = Shimmer("WebCore", "DOMFormData", @This());
+
+    pub const name = "WebCore::DOMFormData";
+    pub const include = "DOMFormData.h";
+    pub const namespace = "WebCore";
+
+    const cppFn = shim.cppFn;
+
+    pub fn create(
+        global: *JSGlobalObject,
+    ) JSValue {
+        return shim.cppFn("create", .{
+            global,
+        });
+    }
+
+    pub fn createFromURLQuery(
+        global: *JSGlobalObject,
+        query: *ZigString,
+    ) JSValue {
+        return shim.cppFn("createFromURLQuery", .{
+            global,
+            query,
+        });
+    }
+
+    extern fn DOMFormData__toQueryString(
+        *DOMFormData,
+        ctx: *anyopaque,
+        callback: *const fn (ctx: *anyopaque, *ZigString) callconv(.C) void,
+    ) void;
+
+    pub fn toQueryString(
+        this: *DOMFormData,
+        comptime Ctx: type,
+        ctx: Ctx,
+        comptime callback: fn (ctx: Ctx, ZigString) callconv(.C) void,
+    ) void {
+        const Wrapper = struct {
+            const cb = callback;
+            pub fn run(c: *anyopaque, str: *ZigString) callconv(.C) void {
+                cb(@ptrCast(Ctx, c), str.*);
+            }
+        };
+
+        DOMFormData__toQueryString(this, ctx, &Wrapper.run);
+    }
+
+    pub fn fromJS(
+        value: JSValue,
+    ) ?*DOMFormData {
+        return shim.cppFn("fromJS", .{
+            value,
+        });
+    }
+
+    pub fn append(
+        this: *DOMFormData,
+        name_: *ZigString,
+        value_: *ZigString,
+    ) void {
+        return shim.cppFn("append", .{
+            this,
+            name_,
+            value_,
+        });
+    }
+
+    pub fn appendBlob(
+        this: *DOMFormData,
+        global: *JSC.JSGlobalObject,
+        name_: *ZigString,
+        blob: *anyopaque,
+        filename_: *ZigString,
+    ) void {
+        return shim.cppFn("appendBlob", .{
+            this,
+            global,
+            name_,
+            blob,
+            filename_,
+        });
+    }
+
+    pub fn count(
+        this: *DOMFormData,
+    ) usize {
+        return shim.cppFn("count", .{
+            this,
+        });
+    }
+
+    const ForEachFunction = *const fn (
+        ctx_ptr: ?*anyopaque,
+        name: *ZigString,
+        value_ptr: *anyopaque,
+        filename: ?*ZigString,
+        is_blob: u8,
+    ) callconv(.C) void;
+
+    extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ForEachFunction) void;
+    pub const FormDataEntry = union(enum) {
+        string: ZigString,
+        file: struct {
+            blob: *JSC.WebCore.Blob,
+            filename: ZigString,
+        },
+    };
+    pub fn forEach(
+        this: *DOMFormData,
+        comptime Context: type,
+        ctx: *Context,
+        comptime callback_wrapper: *const fn (ctx: *Context, name: ZigString, value: FormDataEntry) void,
+    ) void {
+        const Wrap = struct {
+            const wrapper = callback_wrapper;
+            pub fn forEachWrapper(
+                ctx_ptr: ?*anyopaque,
+                name_: *ZigString,
+                value_ptr: *anyopaque,
+                filename: ?*ZigString,
+                is_blob: u8,
+            ) callconv(.C) void {
+                var ctx_ = bun.cast(*Context, ctx_ptr.?);
+                const value = if (is_blob == 0)
+                    FormDataEntry{ .string = bun.cast(*ZigString, value_ptr).* }
+                else
+                    FormDataEntry{
+                        .file = .{
+                            .blob = bun.cast(*JSC.WebCore.Blob, value_ptr),
+                            .filename = (filename orelse &ZigString.Empty).*,
+                        },
+                    };
+
+                wrapper(ctx_, name_.*, value);
+            }
+        };
+        JSC.markBinding(@src());
+        DOMFormData__forEach(this, ctx, Wrap.forEachWrapper);
+    }
+
+    pub const Extern = [_][]const u8{
+        "create",
+        "fromJS",
+        "append",
+        "appendBlob",
+        "count",
+        "createFromURLQuery",
+    };
+};
 pub const FetchHeaders = opaque {
     pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
 

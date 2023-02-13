@@ -86,6 +86,8 @@ pub const JSBlob = struct {
 
         if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
             @compileLog("Expected Blob.getArrayBuffer to be a callback but received " ++ @typeName(@TypeOf(Blob.getArrayBuffer)));
+        if (@TypeOf(Blob.getFormData) != CallbackType)
+            @compileLog("Expected Blob.getFormData to be a callback but received " ++ @typeName(@TypeOf(Blob.getFormData)));
         if (@TypeOf(Blob.getJSON) != CallbackType)
             @compileLog("Expected Blob.getJSON to be a callback but received " ++ @typeName(@TypeOf(Blob.getJSON)));
         if (@TypeOf(Blob.getSize) != GetterType)
@@ -108,6 +110,7 @@ pub const JSBlob = struct {
             @export(Blob.constructor, .{ .name = "BlobClass__construct" });
             @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
             @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getFormData, .{ .name = "BlobPrototype__getFormData" });
             @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
             @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
             @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
@@ -1771,6 +1774,8 @@ pub const JSRequest = struct {
         if (@TypeOf(Request.getDestination) != GetterType)
             @compileLog("Expected Request.getDestination to be a getter");
 
+        if (@TypeOf(Request.getFormData) != CallbackType)
+            @compileLog("Expected Request.getFormData to be a callback but received " ++ @typeName(@TypeOf(Request.getFormData)));
         if (@TypeOf(Request.getHeaders) != GetterType)
             @compileLog("Expected Request.getHeaders to be a getter");
 
@@ -1811,6 +1816,7 @@ pub const JSRequest = struct {
             @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
             @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });
             @export(Request.getDestination, .{ .name = "RequestPrototype__getDestination" });
+            @export(Request.getFormData, .{ .name = "RequestPrototype__getFormData" });
             @export(Request.getHeaders, .{ .name = "RequestPrototype__getHeaders" });
             @export(Request.getIntegrity, .{ .name = "RequestPrototype__getIntegrity" });
             @export(Request.getJSON, .{ .name = "RequestPrototype__getJSON" });
@@ -1990,6 +1996,8 @@ pub const JSResponse = struct {
 
         if (@TypeOf(Response.doClone) != CallbackType)
             @compileLog("Expected Response.doClone to be a callback but received " ++ @typeName(@TypeOf(Response.doClone)));
+        if (@TypeOf(Response.getFormData) != CallbackType)
+            @compileLog("Expected Response.getFormData to be a callback but received " ++ @typeName(@TypeOf(Response.getFormData)));
         if (@TypeOf(Response.getHeaders) != GetterType)
             @compileLog("Expected Response.getHeaders to be a getter");
 
@@ -2033,6 +2041,7 @@ pub const JSResponse = struct {
             @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });
             @export(Response.getBody, .{ .name = "ResponsePrototype__getBody" });
             @export(Response.getBodyUsed, .{ .name = "ResponsePrototype__getBodyUsed" });
+            @export(Response.getFormData, .{ .name = "ResponsePrototype__getFormData" });
             @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
             @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });
             @export(Response.getOK, .{ .name = "ResponsePrototype__getOK" });

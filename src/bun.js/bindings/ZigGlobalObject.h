@@ -89,9 +89,9 @@ public:
         return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
     }
 
@@ -344,6 +344,7 @@ public:
     mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
     mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
 
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 

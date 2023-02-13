@@ -414,6 +414,7 @@ interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
   json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  formData(): Promise<FormData>;
 }
 
 type BlobPart = string | Blob | BufferSource | ArrayBuffer;
@@ -501,6 +502,51 @@ type ResponseType =
   | "opaque"
   | "opaqueredirect";
 
+type FormDataEntryValue = Blob | string;
+
+/** Provides a way to easily construct a set of key/value pairs representing
+ * form fields and their values, which can then be easily sent using the
+ * XMLHttpRequest.send() method. It uses the same format a form would use if the
+ * encoding type were set to "multipart/form-data".
+ */
+interface FormData {
+  /**
+   * Appends a new value onto an existing key inside a FormData object, or adds
+   * the key if it does not already exist.
+   *
+   * @param name The name of the field whose data is contained in value.
+   * @param value The field's value.
+   * @param fileName The filename reported to the server.
+   *
+   * ## Upload a file
+   * ```ts
+   * const formData = new FormData();
+   * formData.append("username", "abc123");
+   * formData.append("avatar", Bun.file("avatar.png"), "avatar.png");
+   * await fetch("https://example.com", { method: "POST", body: formData });
+   * ```
+   */
+  append(name: string, value: string | Blob, fileName?: string): void;
+  delete(name: string): void;
+  get(name: string): FormDataEntryValue | null;
+  getAll(name: string): FormDataEntryValue[];
+  has(name: string): boolean;
+  set(name: string, value: string | Blob, fileName?: string): void;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  entries(): IterableIterator<[string, FormDataEntryValue]>;
+  [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
+  forEach(
+    callback: (value: FormDataEntryValue, key: string, parent: this) => void,
+    thisArg?: any,
+  ): void;
+}
+
+declare var FormData: {
+  prototype: FormData;
+  new (): FormData;
+};
+
 declare class Blob implements BlobInterface {
   /**
    * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
@@ -545,6 +591,20 @@ declare class Blob implements BlobInterface {
    */
   json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
+  /**
+   * Read the data from the blob as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * The `type` property of the blob is used to determine the format of the
+   * body.
+   *
+   * This is a non-standard addition to the `Blob` API, to make it conform more
+   * closely to the `BodyMixin` API.
+   */
+  formData(): Promise<FormData>;
+
   type: string;
   size: number;
 }
@@ -576,7 +636,7 @@ interface ResponseInit {
  */
 declare class Response implements BlobInterface {
   constructor(
-    body?: ReadableStream | BlobPart | BlobPart[] | null,
+    body?: ReadableStream | BlobPart | BlobPart[] | null | FormData,
     options?: ResponseInit,
   );
 
@@ -691,6 +751,18 @@ declare class Response implements BlobInterface {
    */
   blob(): Promise<Blob>;
 
+  /**
+   * Read the data from the Response as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * If no `Content-Type` header is present, the promise will be rejected.
+   *
+   * @returns Promise<FormData> - The body of the response as a {@link FormData}.
+   */
+  formData(): Promise<FormData>;
+
   readonly ok: boolean;
   readonly redirected: boolean;
   /**
@@ -752,10 +824,10 @@ type ReferrerPolicy =
   | "strict-origin"
   | "strict-origin-when-cross-origin"
   | "unsafe-url";
-type RequestInfo = Request | string;
+type RequestInfo = Request | string | RequestInit;
 
 type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
-type XMLHttpRequestBodyInit = Blob | BufferSource | string;
+type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
 type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
 type ReadableStreamDefaultReadResult<T> =
   | ReadableStreamDefaultReadValueResult<T>
@@ -991,6 +1063,16 @@ declare class Request implements BlobInterface {
 
   /** Copy the Request object into a new Request, including the body */
   clone(): Request;
+
+  /**
+   * Read the body from the Request as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * @returns Promise<FormData> - The body of the request as a {@link FormData}.
+   */
+  formData(): Promise<FormData>;
 }
 
 declare interface Crypto {

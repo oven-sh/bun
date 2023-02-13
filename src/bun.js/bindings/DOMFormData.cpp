@@ -65,11 +65,11 @@ void DOMFormData::append(const String& name, const String& value)
     m_items.append(createStringEntry(name, value));
 }
 
-// void DOMFormData::append(const String& name, Blob& blob, const String& filename)
-// {
-//     m_items.append(createFileEntry(name, blob, filename));
-// }
-
+void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
+{
+    blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
+}
 void DOMFormData::remove(const String& name)
 {
     m_items.removeAllMatching([&name](const auto& item) {
@@ -114,10 +114,11 @@ void DOMFormData::set(const String& name, const String& value)
     set(name, { name, value });
 }
 
-// void DOMFormData::set(const String& name, Blob& blob, const String& filename)
-// {
-//     set(name, createFileEntry(name, blob, filename));
-// }
+void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filename)
+{
+    blob->setFileName(filename);
+    set(name, { name, blob });
+}
 
 void DOMFormData::set(const String& name, Item&& item)
 {

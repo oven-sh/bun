@@ -8,6 +8,28 @@ describe("FormData", () => {
     const formData = new FormData();
     formData.append("foo", "bar");
     expect(formData.get("foo")).toBe("bar");
+    expect(formData.getAll("foo")[0]).toBe("bar");
+  });
+
+  it("should be able to append a Blob", async () => {
+    const formData = new FormData();
+    formData.append("foo", new Blob(["bar"]));
+    expect(await formData.get("foo").text()).toBe("bar");
+    expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
+  });
+
+  it("should be able to set a Blob", async () => {
+    const formData = new FormData();
+    formData.set("foo", new Blob(["bar"]));
+    expect(await formData.get("foo").text()).toBe("bar");
+    expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
+  });
+
+  it("should be able to set a string", async () => {
+    const formData = new FormData();
+    formData.set("foo", "bar");
+    expect(formData.get("foo")).toBe("bar");
+    expect(formData.getAll("foo")[0]).toBe("bar");
   });
 
   const multipartFormDataFixturesRawBody = [
@@ -90,7 +112,7 @@ describe("FormData", () => {
         "Content-Type": "multipart/form-data; boundary=foo",
       },
       expected: {
-        foo: "baz",
+        foo: new Blob(["baz"]),
       },
     },
     {
@@ -100,12 +122,12 @@ describe("FormData", () => {
         "Content-Type": "multipart/form-data; boundary=foo",
       },
       expected: {
-        foo: "baz",
+        foo: new Blob(["baz"]),
       },
     },
   ];
 
-  for (const { name, body, headers, expected } of multipartFormDataFixturesRawBody) {
+  for (const { name, body, headers, expected: expected_ } of multipartFormDataFixturesRawBody) {
     const Class = [Response, Request] as const;
     for (const C of Class) {
       it(`should parse multipart/form-data (${name}) with ${C.name}`, async () => {
@@ -113,12 +135,23 @@ describe("FormData", () => {
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
         const entry = {};
+        const expected = Object.assign({}, expected_);
+
         for (const key of formData.keys()) {
           const values = formData.getAll(key);
           if (values.length > 1) {
             entry[key] = values;
           } else {
             entry[key] = values[0];
+            if (entry[key] instanceof Blob) {
+              expect(expected[key] instanceof Blob).toBe(true);
+
+              entry[key] = await entry[key].text();
+              expected[key] = await expected[key].text();
+            } else {
+              expect(typeof entry[key]).toBe(typeof expected[key]);
+              expect(expected[key] instanceof Blob).toBe(false);
+            }
           }
         }
 

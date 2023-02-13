@@ -54,9 +54,38 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ZigGeneratedClasses.h"
 
 namespace WebCore {
 using namespace JSC;
+
+struct JSBlobWrapperConverter {
+    static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        auto* globalObject = JSC::jsDynamicCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
+        if (!globalObject)
+            return nullptr;
+
+        auto* readableStream = JSC::jsDynamicCast<JSBlob*>(value);
+        if (!readableStream)
+            return nullptr;
+
+        return Blob::create(value);
+    }
+};
+
+template<> struct JSDOMWrapperConverterTraits<Blob> {
+    using WrapperClass = JSBlobWrapperConverter;
+    using ToWrappedReturnType = RefPtr<Blob>;
+    static constexpr bool needsState = true;
+};
+
+template<> struct Converter<IDLInterface<Blob>> : DefaultConverter<IDLInterface<Blob>> {
+    static RefPtr<Blob> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
+    {
+        return JSBlobWrapperConverter::toWrapped(lexicalGlobalObject, value);
+    }
+};
 
 // Functions
 
@@ -236,24 +265,34 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append1Body(JSC
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
 }
 
-// static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     UNUSED_PARAM(throwScope);
-//     UNUSED_PARAM(callFrame);
-//     auto& impl = castedThis->wrapped();
-//     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-//     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-//     auto blobValue = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "blobValue", "FormData", "append", "Blob"); });
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     EnsureStillAliveScope argument2 = callFrame->argument(2);
-//     auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), *blobValue, WTFMove(filename)); })));
-// }
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_append2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    RefPtr<Blob> blobValue = nullptr;
+    if (argument1.value().inherits<JSBlob>()) {
+        blobValue = Blob::create(argument1.value());
+    }
+
+    if (!blobValue) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
+    }
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
+}
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
@@ -264,13 +303,13 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_appendOverloadD
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        // if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
-        //     RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+            RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
-    // if (argsCount == 3) {
-    //     RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
-    // }
+    if (argsCount == 3) {
+        RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_append2Body(lexicalGlobalObject, callFrame, castedThis)));
+    }
     return argsCount < 2 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }
 
@@ -311,7 +350,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getBody(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUnion<IDLUSVString>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.get(WTFMove(name)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.get(WTFMove(name)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_get, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -331,7 +370,18 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLUnion<IDLUSVString>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getAll(WTFMove(name)))));
+    auto entries = impl.getAll(WTFMove(name));
+    JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    for (auto entry : entries) {
+        if (auto string = std::get_if<String>(&entry)) {
+            result->push(lexicalGlobalObject, jsString(vm, *string));
+        } else {
+            auto blob = std::get<RefPtr<Blob>>(entry);
+            result->push(lexicalGlobalObject, toJS(lexicalGlobalObject, castedThis->globalObject(), blob.get()));
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_getAll, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -375,24 +425,34 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set1Body(JSC::J
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(value)); })));
 }
 
-// static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     auto throwScope = DECLARE_THROW_SCOPE(vm);
-//     UNUSED_PARAM(throwScope);
-//     UNUSED_PARAM(callFrame);
-//     auto& impl = castedThis->wrapped();
-//     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-//     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-//     auto blobValue = convert<IDLInterface<Blob>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "blobValue", "FormData", "set", "Blob"); });
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     EnsureStillAliveScope argument2 = callFrame->argument(2);
-//     auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-//     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-//     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), *blobValue, WTFMove(filename)); })));
-// }
+static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
+    auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    RefPtr<Blob> blobValue = nullptr;
+    if (argument1.value().inherits<JSBlob>()) {
+        blobValue = Blob::create(argument1.value());
+    }
+
+    if (!blobValue) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
+}
 
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMFormData>::ClassParameter castedThis)
 {
@@ -403,13 +463,13 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_setOverloadDisp
     size_t argsCount = std::min<size_t>(3, callFrame->argumentCount());
     if (argsCount == 2) {
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
-        // if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
-        //     RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
+            RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
         RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set1Body(lexicalGlobalObject, callFrame, castedThis)));
     }
-    // if (argsCount == 3) {
-    //     RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
-    // }
+    if (argsCount == 3) {
+        RELEASE_AND_RETURN(throwScope, (jsDOMFormDataPrototypeFunction_set2Body(lexicalGlobalObject, callFrame, castedThis)));
+    }
     return argsCount < 2 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
 }
 
@@ -421,7 +481,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_set, (JSGlobalObject * l
 struct DOMFormDataIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
-    using ValueType = IDLUnion<IDLUSVString>;
+    using ValueType = IDLUnion<IDLUSVString, IDLInterface<Blob>>;
 };
 
 using DOMFormDataIteratorBase = JSDOMIteratorBase<JSDOMFormData, DOMFormDataIteratorTraits>;
@@ -591,5 +651,4 @@ DOMFormData* JSDOMFormData::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-
 }

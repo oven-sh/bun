@@ -835,13 +835,15 @@ pub const DOMFormData = opaque {
         this: *DOMFormData,
         global: *JSC.JSGlobalObject,
         name_: *ZigString,
-        value_: JSValue,
+        blob: *anyopaque,
+        filename_: *ZigString,
     ) void {
         return shim.cppFn("appendBlob", .{
             this,
             global,
             name_,
-            value_,
+            blob,
+            filename_,
         });
     }
 
@@ -858,19 +860,23 @@ pub const DOMFormData = opaque {
         globalObject_: *JSGlobalObject,
         name: *ZigString,
         value_ptr: *anyopaque,
+        filename: ?*ZigString,
         is_blob: u8,
     ) callconv(.C) void;
 
     extern fn DOMFormData__forEach(*DOMFormData, ?*anyopaque, ?*const ForEachFunction) void;
-    const StringOrBlob = union(enum) {
+    pub const FormDataEntry = union(enum) {
         string: ZigString,
-        blob: *JSC.WebCore.Blob,
+        file: struct {
+            blob: *JSC.WebCore.Blob,
+            filename: ZigString,
+        },
     };
     pub fn forEach(
         this: *DOMFormData,
         comptime Context: type,
         ctx: *Context,
-        comptime callback_wrapper: fn (ctx: *Context, globalThis: *JSC.JSGlobalObject, name: ZigString, value: StringOrBlob) void,
+        comptime callback_wrapper: fn (ctx: *Context, globalThis: *JSC.JSGlobalObject, name: ZigString, value: FormDataEntry) void,
     ) void {
         const Wrap = struct {
             const wrapper = callback_wrapper;
@@ -879,13 +885,19 @@ pub const DOMFormData = opaque {
                 globalObject_: *JSGlobalObject,
                 name_: *ZigString,
                 value_ptr: *anyopaque,
+                filename: ?*ZigString,
                 is_blob: u8,
             ) callconv(.C) void {
                 var ctx_ = @ptrCast(*Context, ctx_ptr);
                 const value = if (is_blob == 0)
-                    StringOrBlob{ .string = @ptrCast(*ZigString, value_ptr).* }
+                    FormDataEntry{ .string = @ptrCast(*ZigString, value_ptr).* }
                 else
-                    StringOrBlob{ .blob = @intToEnum(JSC.JSValue, @bitCast(i64, @ptrToInt(value_ptr))).as(JSC.WebCore.Blob).? };
+                    FormDataEntry{
+                        .file = .{
+                            .blob = @ptrCast(*JSC.WebCore.Blob, value_ptr),
+                            .filename = filename orelse ZigString.Empty,
+                        },
+                    };
 
                 wrapper(ctx_, globalObject_, name_.*, value);
             }

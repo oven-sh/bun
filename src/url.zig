@@ -892,6 +892,7 @@ pub const FormData = struct {
         value: bun.Semver.String = .{},
         filename: bun.Semver.String = .{},
         content_type: bun.Semver.String = .{},
+        is_file: bool = false,
         zero_count: u8 = 0,
 
         pub const Entry = union(enum) {
@@ -928,8 +929,37 @@ pub const FormData = struct {
             pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
                 var value_str = field.value.slice(buf);
                 var key = bun.JSC.ZigString.initUTF8(name.slice(buf));
-                var value = bun.JSC.ZigString.initUTF8(value_str);
-                wrap.form.append(&key, &value);
+
+                if (field.is_file) {
+                    var filename_str = field.filename.slice(buf);
+
+                    var blob = bun.JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    defer blob.detach();
+                    var filename = bun.JSC.ZigString.initUTF8(filename_str);
+                    const content_type: []const u8 = brk: {
+                        if (filename_str.len > 0) {
+                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
+                                break :brk mime.value;
+                            }
+                        }
+
+                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                            break :brk mime.value;
+                        }
+
+                        break :brk "";
+                    };
+
+                    if (content_type.len > 0) {
+                        blob.content_type = content_type;
+                        blob.content_type_allocated = false;
+                    }
+
+                    wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
+                } else {
+                    var value = bun.JSC.ZigString.initUTF8(value_str);
+                    wrap.form.append(&key, &value);
+                }
             }
         };
 
@@ -984,6 +1014,7 @@ pub const FormData = struct {
             var name: bun.Semver.String = .{};
             var filename: ?bun.Semver.String = null;
             var header_chunk = header;
+            var is_file = false;
             while (header_chunk.len > 0 and (filename == null or name.len() == 0)) {
                 const line_end = strings.indexOf(header_chunk, "\r\n") orelse return error.@"is missing header line end";
                 const line = header_chunk[0..line_end];
@@ -1029,6 +1060,7 @@ pub const FormData = struct {
                             name = subslicer.sub(field_value).value();
                         } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename", true)) {
                             filename = subslicer.sub(field_value).value();
+                            is_file = true;
                         }
 
                         if (!name.isEmpty() and filename != null) {
@@ -1056,6 +1088,7 @@ pub const FormData = struct {
             }
             field.value = subslicer.sub(body).value();
             field.filename = filename orelse .{};
+            field.is_file = is_file;
 
             iterator(ctx, name, field, input);
         }

@@ -84,6 +84,7 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
+
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
 #include "ZigGeneratedClasses.h"
@@ -3738,11 +3739,10 @@ CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString
     arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
 }
 
-CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore__DOMFormData* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, JSC__JSValue JSValue3)
+CPP_DECL void WebCore__DOMFormData__appendBlob(WebCore__DOMFormData* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, void* blobValueInner, ZigString* fileName)
 {
-    // JSC::JSValue blobValue = JSC::JSValue::decode(JSValue2);
-    // JSC::Strong<Unknown> blobValueStrong(globalObject->vm(), blobValue);
-    // arg0->append()
+    RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
+    arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
 }
 CPP_DECL size_t WebCore__DOMFormData__count(WebCore__DOMFormData* arg0)
 {

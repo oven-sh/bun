@@ -105,6 +105,29 @@ pub const Blob = struct {
         return this.store == null;
     }
 
+    export fn Blob__dupeFromJS(value: JSC.JSValue) ?*Blob {
+        var this = Blob.fromJS(value) orelse return null;
+        return Blob__dupe(this);
+    }
+
+    export fn Blob__dupe(ptr: *anyopaque) *Blob {
+        var this = bun.cast(*Blob, ptr);
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupe();
+        new.allocator = bun.default_allocator;
+        return new;
+    }
+
+    export fn Blob__destroy(this: *Blob) void {
+        this.finalize();
+    }
+
+    comptime {
+        _ = Blob__dupeFromJS;
+        _ = Blob__destroy;
+        _ = Blob__dupe;
+    }
+
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
         try writer.print(

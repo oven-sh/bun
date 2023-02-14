@@ -1053,7 +1053,7 @@ pub fn deinit(this: *HTTPClient) void {
     if (this.signal != null) {
         var signal = this.signal.?;
         var obj = signal.swap();
-        if (JSC.AbortSignal.fromJS(obj)) |signal_| {
+        if (obj.as(JSC.AbortSignal)) |signal_| {
             _ = signal_.unref();
         }
         signal.deinit();

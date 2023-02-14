@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { gc, gcTick } from "./gc";
-import {
+import fs, {
   closeSync,
   existsSync,
   mkdirSync,
@@ -26,7 +26,17 @@ import {
   Dirent,
   Stats,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import {
+  ReadStream as ReadStream_,
+  WriteStream as WriteStream_,
+} from "../fixtures/export-lazy-fs-streams/export-from";
+import {
+  ReadStream as ReadStreamStar_,
+  WriteStream as WriteStreamStar_,
+} from "../fixtures/export-lazy-fs-streams/export-*-from";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
@@ -600,6 +610,178 @@ describe("createReadStream", () => {
       stream.on("end", () => {
         resolve(true);
       });
+    });
+  });
+});
+
+describe("fs.WriteStream", () => {
+  it("should be exported", () => {
+    expect(fs.WriteStream).toBeDefined();
+  });
+
+  it("should be constructable", () => {
+    const stream = new fs.WriteStream("test.txt");
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should be able to write to a file", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}/fs-writestream-test.txt`;
+
+    const stream = new fs.WriteStream(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
+
+  it("should work if re-exported by name", () => {
+    const stream = new WriteStream_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported by name, called without new", () => {
+    const stream = WriteStream_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported, as export * from ...", () => {
+    const stream = new WriteStreamStar_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported, as export * from..., called without new", () => {
+    const stream = WriteStreamStar_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should be able to write to a file with re-exported WriteStream", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}/fs-writestream-re-exported-test.txt`;
+
+    const stream = new WriteStream_(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
+});
+
+describe("fs.ReadStream", () => {
+  it("should be exported", () => {
+    expect(fs.ReadStream).toBeDefined();
+  });
+
+  it("should be constructable", () => {
+    const stream = new fs.ReadStream("test.txt");
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}fs-readstream-test.txt`;
+
+    writeFileSync(path, "Test file written successfully", {
+      encoding: "utf8",
+      flag: "w+",
+    });
+
+    const stream = new fs.ReadStream(path);
+    stream.setEncoding("utf8");
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
+    });
+  });
+
+  it("should work if re-exported by name", () => {
+    const stream = new ReadStream_("test.txt");
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported by name, called without new", () => {
+    const stream = ReadStream_("test.txt");
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported as export * from ...", () => {
+    const stream = new ReadStreamStar_("test.txt");
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported as export * from ..., called without new", () => {
+    const stream = ReadStreamStar_("test.txt");
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file, with re-exported ReadStream", (done) => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirSync(pathToDir);
+    const path = `${pathToDir}fs-readstream-re-exported-test.txt`;
+
+    writeFileSync(path, "Test file written successfully", {
+      encoding: "utf8",
+      flag: "w+",
+    });
+
+    const stream = new ReadStream_(path);
+    stream.setEncoding("utf8");
+    stream.on("error", (e) => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", (chunk) => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
     });
   });
 });

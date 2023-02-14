@@ -1,5 +1,9 @@
 var { direct, isPromise, isCallable } = import.meta.primordials;
 var promises = import.meta.require("node:fs/promises");
+
+var { Readable, NativeWritable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
+var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
+
 var fs = Bun.fs();
 var debug = process.env.DEBUG ? console.log : () => {};
 export var access = function access(...args) {
@@ -172,52 +176,65 @@ function callbackify(fsFunction, args) {
 // _events
 // _eventsCount
 // _maxListener
-var _lazyReadStream;
 var readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath");
 const readStreamSymbol = Symbol.for("Bun.NodeReadStream");
 const readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd");
+const writeStreamSymbol = Symbol.for("Bun.NodeWriteStream");
 var writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
 var writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall");
 var kIoDone = Symbol.for("kIoDone");
 
-function getLazyReadStream() {
-  if (_lazyReadStream) {
-    return _lazyReadStream;
-  }
+var defaultReadStreamOptions = {
+  file: undefined,
+  fd: undefined,
+  flags: "r",
+  encoding: undefined,
+  mode: 0o666,
+  autoClose: true,
+  emitClose: true,
+  start: 0,
+  end: Infinity,
+  highWaterMark: 64 * 1024,
+  fs: {
+    read,
+    open: (path, flags, mode, cb) => {
+      var fd;
+      try {
+        fd = openSync(path, flags, mode);
+      } catch (e) {
+        cb(e);
+        return;
+      }
 
-  var { Readable, _getNativeReadableStreamPrototype, eos: eos_ } = import.meta.require("node:stream");
-  var defaultReadStreamOptions = {
-    file: undefined,
-    fd: undefined,
-    flags: "r",
-    encoding: undefined,
-    mode: 0o666,
-    autoClose: true,
-    emitClose: true,
-    start: 0,
-    end: Infinity,
-    highWaterMark: 64 * 1024,
-    fs: {
-      read,
-      open: (path, flags, mode, cb) => {
-        var fd;
-        try {
-          fd = openSync(path, flags, mode);
-        } catch (e) {
-          cb(e);
-          return;
-        }
-
-        cb(null, fd);
-      },
-      openSync,
-      close,
+      cb(null, fd);
     },
-    autoDestroy: true,
-  };
+    openSync,
+    close,
+  },
+  autoDestroy: true,
+};
 
-  var NativeReadable = _getNativeReadableStreamPrototype(2, Readable); // 2 means native type is a file here
-  var ReadStream = class ReadStream extends NativeReadable {
+var ReadStreamClass;
+export var ReadStream = (function (InternalReadStream) {
+  ReadStreamClass = InternalReadStream;
+  Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
+    value: "ReadStream",
+    enumerable: false,
+  });
+
+  return Object.defineProperty(
+    function ReadStream(options) {
+      return new InternalReadStream(options);
+    },
+    Symbol.hasInstance,
+    {
+      value(instance) {
+        return instance instanceof InternalReadStream;
+      },
+    },
+  );
+})(
+  class ReadStream extends NativeReadable {
     constructor(pathOrFd, options = defaultReadStreamOptions) {
       if (typeof options !== "object" || !options) {
         throw new TypeError("Expected options to be an object");
@@ -522,39 +539,49 @@ function getLazyReadStream() {
       this[readStreamPathFastPathSymbol] = false;
       return super.pipe(dest, pipeOpts);
     }
-  };
-  return (_lazyReadStream = ReadStream);
+  },
+);
+
+export function createReadStream(path, options) {
+  return new ReadStream(path, options);
 }
 
-var internalCreateReadStream = function createReadStream(path, options) {
-  const ReadStream = getLazyReadStream();
-  return new ReadStream(path, options);
+var defaultWriteStreamOptions = {
+  fd: null,
+  start: undefined,
+  pos: undefined,
+  encoding: undefined,
+  flags: "w",
+  mode: 0o666,
+  fs: {
+    write,
+    close,
+    open,
+    openSync,
+  },
 };
 
-var _lazyWriteStream;
-export var createReadStream = internalCreateReadStream;
+var WriteStreamClass;
+export var WriteStream = (function (InternalWriteStream) {
+  WriteStreamClass = InternalWriteStream;
+  Object.defineProperty(WriteStreamClass.prototype, Symbol.toStringTag, {
+    value: "WritesStream",
+    enumerable: false,
+  });
 
-function getLazyWriteStream() {
-  if (_lazyWriteStream) return _lazyWriteStream;
-
-  const { NativeWritable } = import.meta.require("node:stream");
-
-  var defaultWriteStreamOptions = {
-    fd: null,
-    start: undefined,
-    pos: undefined,
-    encoding: undefined,
-    flags: "w",
-    mode: 0o666,
-    fs: {
-      write,
-      close,
-      open,
-      openSync,
+  return Object.defineProperty(
+    function WriteStream(options) {
+      return new InternalWriteStream(options);
     },
-  };
-
-  var WriteStream = class WriteStream extends NativeWritable {
+    Symbol.hasInstance,
+    {
+      value(instance) {
+        return instance instanceof InternalWriteStream;
+      },
+    },
+  );
+})(
+  class WriteStream extends NativeWritable {
     constructor(path, options = defaultWriteStreamOptions) {
       if (!options) {
         throw new TypeError("Expected options to be an object");
@@ -668,6 +695,7 @@ function getLazyWriteStream() {
     bytesWritten = 0;
     pos;
     [writeStreamPathFastPathSymbol];
+    [writeStreamSymbol] = true;
     start;
 
     [writeStreamPathFastPathCallSymbol](readStream, pipeOpts) {
@@ -833,23 +861,52 @@ function getLazyWriteStream() {
         this.emit("error", err);
       }
     }
-  };
-  return (_lazyWriteStream = WriteStream);
+  },
+);
+
+export function createWriteStream(path, options) {
+  // const WriteStream = getLazyWriteStream();
+  return new WriteStream(path, options);
 }
 
-var internalCreateWriteStream = function createWriteStream(path, options) {
-  const WriteStream = getLazyWriteStream();
-  return new WriteStream(path, options);
-};
+// NOTE: This was too smart and doesn't actually work
+// export var WriteStream = Object.defineProperty(
+//   function WriteStream(path, options) {
+//     var _InternalWriteStream = getLazyWriteStream();
+//     return new _InternalWriteStream(path, options);
+//   },
+//   Symbol.hasInstance,
+//   { value: (instance) => instance[writeStreamSymbol] === true },
+// );
 
-export var createWriteStream = internalCreateWriteStream;
+// export var ReadStream = Object.defineProperty(
+//   function ReadStream(path, options) {
+//     var _InternalReadStream = getLazyReadStream();
+//     return new _InternalReadStream(path, options);
+//   },
+//   Symbol.hasInstance,
+//   { value: (instance) => instance[readStreamSymbol] === true },
+// );
+
 Object.defineProperties(fs, {
   createReadStream: {
-    value: internalCreateReadStream,
+    value: createReadStream,
   },
   createWriteStream: {
     value: createWriteStream,
   },
+  ReadStream: {
+    value: ReadStream,
+  },
+  WriteStream: {
+    value: WriteStream,
+  },
+  // ReadStream: {
+  //   get: () => getLazyReadStream(),
+  // },
+  // WriteStream: {
+  //   get: () => getLazyWriteStream(),
+  // },
 });
 
 // lol
@@ -936,4 +993,17 @@ export default {
   writeFile,
   writeFileSync,
   writeSync,
+  WriteStream,
+  ReadStream,
+
+  [Symbol.for("::bunternal::")]: {
+    ReadStreamClass,
+    WriteStreamClass,
+  },
+  // get WriteStream() {
+  //   return getLazyWriteStream();
+  // },
+  // get ReadStream() {
+  //   return getLazyReadStream();
+  // },
 };

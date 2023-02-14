@@ -40,7 +40,6 @@ const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @intToPtr(*DeadSocket, 1);
 
-
 const print_every = 0;
 var print_every_i: usize = 0;
 
@@ -437,7 +436,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
         }
 
         pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
-            
             const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
                 "127.0.0.1"
             else
@@ -1006,14 +1004,12 @@ pub fn init(
     return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis };
 }
 
-
 // pub fn addAbortSignalEventListenner(this: *HTTPClient) void {
 //     if (this.globalThis) |globalThis| {
 //         if (this.signal != null) {
 //             var signal = this.signal.?;
 //             var obj = signal.swap().asObject();
 //             var addEventListener = obj.getDirect(globalThis, JSC.ZigString.static("addEventListener"));
-
 
 //             const args = [_]JSC.JSValue{
 //                 JSC.ZigString.static("abort"),
@@ -1027,17 +1023,13 @@ pub fn init(
 // }
 pub fn hasSignalAborted(this: *HTTPClient) bool {
     log("hasSignalAborted", .{});
-    if (this.globalThis) |globalThis| {
-        if (this.signal != null) {
-            var signal = this.signal.?;
-            var obj = signal.swap();
-            var aborted = obj.get(globalThis, "aborted");
-            if(aborted) |prop| {
-                return prop.toBoolean();
-            }
-            
-            return false;
+    if (this.signal != null) {
+        var signal = this.signal.?;
+        var obj = signal.swap();
+        if (JSC.AbortSignal.fromJS(obj)) |signal_| {
+            return signal_.aborted();
         }
+        return false;
     }
     return false;
 }
@@ -1057,6 +1049,10 @@ pub fn deinit(this: *HTTPClient) void {
     }
     if (this.signal != null) {
         var signal = this.signal.?;
+        var obj = signal.swap();
+        if (JSC.AbortSignal.fromJS(obj)) |signal_| {
+            _ = signal_.unref();
+        }
         signal.deinit();
         this.signal = null;
     }

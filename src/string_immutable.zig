@@ -1082,7 +1082,8 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 },
                 else => return out,
             }
-        };
+        } else null;
+        
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
             list.items.len = i;

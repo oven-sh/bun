@@ -129,6 +129,12 @@ pub extern fn JSC__JSString__toObject(arg0: [*c]bindings.JSString, arg1: *bindin
 pub extern fn JSC__JSString__toZigString(arg0: [*c]bindings.JSString, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSModuleLoader__evaluate(arg0: *bindings.JSGlobalObject, arg1: [*c]const u8, arg2: usize, arg3: [*c]const u8, arg4: usize, arg5: [*c]const u8, arg6: usize, JSValue7: JSC__JSValue, arg8: [*c]bindings.JSValue) JSC__JSValue;
 pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: *bindings.JSGlobalObject, arg1: [*c]const ZigString) [*c]bindings.JSInternalPromise;
+pub extern fn JSC__AbortSignal__aborted(arg0: ?*bindings.AbortSignal) bool;
+pub extern fn JSC__AbortSignal__abortReason(arg0: ?*bindings.AbortSignal) JSC__JSValue;
+pub extern fn JSC__AbortSignal__fromJS(JSValue0: JSC__JSValue) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__ref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__signal(arg0: ?*bindings.AbortSignal, JSValue1: JSC__JSValue) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__unref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn JSC__JSPromise__asValue(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSPromise__create(arg0: *bindings.JSGlobalObject) ?*bindings.JSPromise;
 pub extern fn JSC__JSPromise__isHandled(arg0: [*c]const JSC__JSPromise, arg1: *bindings.VM) bool;

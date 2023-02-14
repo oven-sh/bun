@@ -1511,49 +1511,63 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
     }.callback;
 }
 
-pub const AbortSignal = extern struct {
-    pub const shim = Shimmer("WebCore", "AbortSignal", @This());
-    bytes: shim.Bytes,
+
+pub const AbortSignal = extern opaque {
+    pub const shim = Shimmer("JSC", "AbortSignal", @This());
     const cppFn = shim.cppFn;
     pub const include = "WebCore/AbortSignal.h";
-    pub const name = "WebCore::AbortSignal";
-    pub const namespace = "WebCore";
+    pub const name = "JSC::AbortSignal";
+    pub const namespace = "JSC";
 
     // pub fn addListener(
     //     this: *AbortSignal,
     //     ctx: ?*anyopaque,
     //     callback: *const fn(?*anyopaque, JSValue) void,
-    // ) AbortSignal {
+    // ) *AbortSignal {
     //     return cppFn("addListener", .{ this, ctx, callback });
     // }
 
-    // pub fn signal(
-    //     this: *AbortSignal,
-    //     reason: JSValue,
-    // ) AbortSignal {
-    //     return cppFn("signal", .{ this, reason });
-    // }
+    pub fn signal(
+        this: *AbortSignal,
+        reason: JSValue,
+    ) *AbortSignal {
+        return cppFn("signal", .{ this, reason });
+    }
+
+    pub fn aborted(
+        this: *AbortSignal
+    ) bool {
+        return cppFn("aborted", .{ this });
+    }
+
+    pub fn abortReason(
+        this: *AbortSignal
+    ) *JSValue {
+        return cppFn("abortReason", .{ this });
+    }
 
     pub fn ref(
         this: *AbortSignal,
-    ) AbortSignal {
+    ) *AbortSignal {
         return cppFn("ref", .{this});
     }
 
     pub fn unref(
         this: *AbortSignal,
-    ) AbortSignal {
+    ) *AbortSignal {
         return cppFn("unref", .{this});
     }
 
-    // pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSValue) ?*AbortSignal { return cppFn("fromJS", .{globalThis, value}); }
+    pub fn fromJS(value: JSValue) ?*AbortSignal { return cppFn("fromJS", .{value}); }
 
     pub const Extern = [_][]const u8{
         "ref",
         "unref",
-        // "signal",
+        "signal",
+        "abortReason",
+        "aborted",
         // "addListener",
-        // "fromJS",
+        "fromJS",
     };
 };
 
@@ -2863,6 +2877,7 @@ pub const JSValue = enum(JSValueReprInt) {
 
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
+
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {

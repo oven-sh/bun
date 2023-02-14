@@ -84,6 +84,7 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
+#include "webcore/JSAbortSignal.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -3726,4 +3727,47 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue2),
         JSC::JSValue::decode(JSValue3),
         JSC::JSValue::decode(JSValue4));
+}
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->signalAbort(JSC::JSValue::decode(JSValue1));
+    return arg0;
+}
+
+extern "C" bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    return abortSignal->aborted();
+}
+
+extern "C" JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    return JSC::JSValue::encode(abortSignal->reason().getValue());
+}
+
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->ref();
+    return arg0;
+}
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->deref();
+    return arg0;
+}
+extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    WebCore::JSAbortSignal* object = JSC::jsDynamicCast<WebCore::JSAbortSignal*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return reinterpret_cast<JSC__AbortSignal*>(&object->wrapped());
 }

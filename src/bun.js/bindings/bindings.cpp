@@ -3760,12 +3760,9 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
 extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
 {
     JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-    if (decodedValue.isEmpty() || !decodedValue.isCell())
+    if (decodedValue.isEmpty())
         return nullptr;
-
-    JSC::JSCell* cell = decodedValue.asCell();
-    WebCore::JSAbortSignal* object = JSC::jsDynamicCast<WebCore::JSAbortSignal*>(cell);
-
+    WebCore::JSAbortSignal* object = JSC::jsDynamicCast<WebCore::JSAbortSignal*>(decodedValue);
     if (!object)
         return nullptr;
 

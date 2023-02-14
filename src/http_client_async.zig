@@ -1022,15 +1022,18 @@ pub fn init(
 //     return;
 // }
 pub fn hasSignalAborted(this: *HTTPClient) bool {
-    log("hasSignalAborted", .{});
     if (this.signal != null) {
         var signal = this.signal.?;
         var obj = signal.swap();
-        if (JSC.AbortSignal.fromJS(obj)) |signal_| {
-            return signal_.aborted();
+        if (obj.as(JSC.AbortSignal)) |signal_| {
+            const aborted = signal_.aborted();
+            log("hasSignalAborted {any}", .{aborted});
+            return aborted;
         }
+        log("hasSignalAborted (signal is invalid)", .{});
         return false;
     }
+    log("hasSignalAborted (signal == null)", .{});
     return false;
 }
 

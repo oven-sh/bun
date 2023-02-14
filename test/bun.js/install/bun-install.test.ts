@@ -1835,3 +1835,199 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
   });
   await access(join(package_dir, "bun.lockb"));
 });
+
+it("should report error on invalid format for package.json", async () => {
+  await writeFile(join(package_dir, "package.json"), "foo");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
+    "bun install",
+    "",
+    "",
+    "error: Unexpected foo",
+    "foo",
+    "^",
+    `${package_dir}/package.json:1:1 0`,
+    `ParserError parsing package.json in "${package_dir}/"`,
+    "",
+  ]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toEqual("");
+  expect(await exited).toBe(1);
+});
+
+it("should report error on invalid format for dependencies", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: [],
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
+    "bun install",
+    "",
+    "",
+    "error: dependencies expects a map of specifiers, e.g.",
+    '"dependencies": {',
+    '  "bun": "latest"',
+    "}",
+    '{"name":"foo","version":"0.0.1","dependencies":[]}',
+    "                                ^",
+    `${package_dir}/package.json:1:33 32`,
+    "",
+  ]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toEqual("");
+  expect(await exited).toBe(1);
+});
+
+it("should report error on invalid format for optionalDependencies", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      optionalDependencies: "bar",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
+    "bun install",
+    "",
+    "",
+    "error: optionalDependencies expects a map of specifiers, e.g.",
+    '"optionalDependencies": {',
+    '  "bun": "latest"',
+    "}",
+    '{"name":"foo","version":"0.0.1","optionalDependencies":"bar"}',
+    "                                ^",
+    `${package_dir}/package.json:1:33 32`,
+    "",
+  ]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toEqual("");
+  expect(await exited).toBe(1);
+});
+
+it("should report error on invalid format for workspaces", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: {
+        packages: ["bar"],
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
+    "bun install",
+    "",
+    "",
+    "error: Workspaces expects an array of strings, e.g.",
+    '"workspaces": [',
+    '  "path/to/package"',
+    "]",
+    '{"name":"foo","version":"0.0.1","workspaces":{"packages":["bar"]}}',
+    "                                ^",
+    `${package_dir}/package.json:1:33 32`,
+    "",
+  ]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toEqual("");
+  expect(await exited).toBe(1);
+});
+
+it("should report error on duplicated workspace packages", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      workspaces: ["bar", "baz"],
+    }),
+  );
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.0.2",
+    }),
+  );
+  await mkdir(join(package_dir, "baz"));
+  await writeFile(
+    join(package_dir, "baz", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.0.3",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.replace(/^bun install v.+\n/, "bun install\n").split(/\r?\n/)).toEqual([
+    "bun install",
+    "",
+    "",
+    'error: Workspace name "moo" already exists',
+    '{"name":"foo","version":"0.0.1","workspaces":["bar","baz"]}',
+    "                                                    ^",
+    `${package_dir}/package.json:1:53 52`,
+    "",
+  ]);
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toEqual("");
+  expect(await exited).toBe(1);
+});

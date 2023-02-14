@@ -85,6 +85,7 @@
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
 #include "webcore/JSAbortSignal.h"
+#include "JSAbortAlgorithm.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -3755,6 +3756,19 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0) {
 extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
+    return arg0;
+}
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason)) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    
+    if(abortSignal->aborted()){
+        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue()));
+        return arg0;
+    }
+
+    abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
+
     return arg0;
 }
 extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)

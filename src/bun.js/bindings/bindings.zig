@@ -1519,14 +1519,13 @@ pub const AbortSignal = extern opaque {
     pub const name = "JSC::AbortSignal";
     pub const namespace = "JSC";
 
-    // pub fn addListener(
-    //     this: *AbortSignal,
-    //     ctx: ?*anyopaque,
-    //     callback: *const fn(?*anyopaque, JSValue) void,
-    // ) *AbortSignal {
-    //     return cppFn("addListener", .{ this, ctx, callback });
-    // }
-
+    pub fn addListener(
+        this: *AbortSignal,
+        ctx: ?*anyopaque,
+        callback: *const fn(?*anyopaque, JSValue) callconv(.C) void,
+    ) *AbortSignal {
+        return cppFn("addListener", .{ this, ctx, callback });
+    }
     pub fn signal(
         this: *AbortSignal,
         reason: JSValue,
@@ -1566,7 +1565,7 @@ pub const AbortSignal = extern opaque {
         "signal",
         "abortReason",
         "aborted",
-        // "addListener",
+        "addListener",
         "fromJS",
     };
 };

@@ -659,6 +659,7 @@ pub fn onOpen(
             ssl.configureHTTPClient(hostname);
         }
     }
+    client.addAbortSignalEventListenner(is_ssl, socket);
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -992,6 +993,8 @@ proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
 signal: ?JSC.Strong = null,
 globalThis: ?*JSC.JSGlobalObject = null,
+abort_handler: ?*anyopaque = null,
+abort_handler_deinit: ?*const fn(?*anyopaque) void = null,
 pub fn init(
     allocator: std.mem.Allocator,
     method: Method,
@@ -1001,26 +1004,63 @@ pub fn init(
     signal: ?JSC.Strong,
     globalThis: ?*JSC.JSGlobalObject,
 ) HTTPClient {
-    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis };
+    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis, .abort_handler = null, .abort_handler_deinit = null };
 }
 
-// pub fn addAbortSignalEventListenner(this: *HTTPClient) void {
-//     if (this.globalThis) |globalThis| {
-//         if (this.signal != null) {
-//             var signal = this.signal.?;
-//             var obj = signal.swap().asObject();
-//             var addEventListener = obj.getDirect(globalThis, JSC.ZigString.static("addEventListener"));
+pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
+    return struct {
+        client: *HTTPClient,
+        socket: NewHTTPContext(is_ssl).HTTPSocket,
+        pub fn init(client: *HTTPClient, socket: NewHTTPContext(is_ssl).HTTPSocket) !*@This() {
+            var ctx = try client.allocator.create(@This());
+            ctx.client = client;
+            ctx.socket = socket;
+            return ctx;
+        }
 
-//             const args = [_]JSC.JSValue{
-//                 JSC.ZigString.static("abort"),
-//                 onAbortHandler,
-//             };
-//             addEventListener.callWithThis(addEventListener, globalThis, addEventListener, args);
-//             // return aborted.asBoolean();
-//         }
-//     }
-//     return;
-// }
+        pub fn onAborted(this: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
+
+           log("onAborted", .{});
+            if (this) | this_ | {
+                const self = bun.cast(*@This(), this_);
+                // if (self.client.globalThis) |_| {
+                    // const slice = reason.toString(globalThis).toSlice(this.client.allocator);
+                self.client.closeAndFail(error.Canceled, is_ssl, self.socket);
+
+                // }
+            }
+        }
+
+        pub fn deinit(this: ?*anyopaque) void {
+            if (this) | this_ | {
+                var self = bun.cast(*@This(), this_);
+                const allocator = self.client.allocator;
+                allocator.destroy(self);
+            }
+            
+        }
+    };
+}
+
+pub fn addAbortSignalEventListenner(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (this.signal != null) {
+        var signal = this.signal.?;
+        var obj = signal.swap();
+        if (obj.as(JSC.AbortSignal)) |signal_| {
+
+            const handler = ClientSocketAbortHandler(is_ssl).init(this, socket) catch unreachable;
+            this.abort_handler = bun.cast(*anyopaque, handler);
+            this.abort_handler_deinit = ClientSocketAbortHandler(is_ssl).deinit;
+            _ = signal_.addListener(this.abort_handler.?, ClientSocketAbortHandler(is_ssl).onAborted);
+            log("addAbortSignalEventListenner added!", .{});
+            return;
+        }
+        log("addAbortSignalEventListenner (signal is invalid)", .{});
+        return;
+    }
+    log("addAbortSignalEventListenner (signal == null)", .{});
+}
+
 pub fn hasSignalAborted(this: *HTTPClient) bool {
     if (this.signal != null) {
         var signal = this.signal.?;
@@ -1050,14 +1090,16 @@ pub fn deinit(this: *HTTPClient) void {
         tunnel.deinit();
         this.proxy_tunnel = null;
     }
+
     if (this.signal != null) {
         var signal = this.signal.?;
-        var obj = signal.swap();
-        if (obj.as(JSC.AbortSignal)) |signal_| {
-            _ = signal_.unref();
-        }
         signal.deinit();
         this.signal = null;
+    }
+    if (this.abort_handler != null and this.abort_handler_deinit != null) {
+        this.abort_handler_deinit.?(this.abort_handler.?);
+        this.abort_handler = null;
+        this.abort_handler_deinit = null;
     }
     this.state.compressed_body.deinit();
     this.state.response_message_buffer.deinit();

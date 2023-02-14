@@ -887,8 +887,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
-                            _ = signal_.ref();
+                        if (signal_arg.as(JSC.AbortSignal)) |_| {
                             signal = JSC.Strong.create(signal_arg, globalThis);
                         }
                     }
@@ -1004,8 +1003,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
-                            _ = signal_.ref();
+                        if (signal_arg.as(JSC.AbortSignal)) |_| {
                             signal = JSC.Strong.create(signal_arg, globalThis);
                         }
                     }

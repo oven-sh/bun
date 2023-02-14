@@ -846,23 +846,28 @@ var internalCreateWriteStream = function createWriteStream(path, options) {
 
 export var createWriteStream = internalCreateWriteStream;
 
-export var WriteStream = Object.defineProperty(
-  function WriteStream(path, options) {
-    var _InternalWriteStream = getLazyWriteStream();
-    return new _InternalWriteStream(path, options);
-  },
-  Symbol.hasInstance,
-  { value: (instance) => instance[writeStreamSymbol] === true },
-);
+// NOTE: This was too smart and doesn't actually work
+// export var WriteStream = Object.defineProperty(
+//   function WriteStream(path, options) {
+//     var _InternalWriteStream = getLazyWriteStream();
+//     return new _InternalWriteStream(path, options);
+//   },
+//   Symbol.hasInstance,
+//   { value: (instance) => instance[writeStreamSymbol] === true },
+// );
 
-export var ReadStream = Object.defineProperty(
-  function ReadStream(path, options) {
-    var _InternalReadStream = getLazyReadStream();
-    return new _InternalReadStream(path, options);
-  },
-  Symbol.hasInstance,
-  { value: (instance) => instance[readStreamSymbol] === true },
-);
+// export var ReadStream = Object.defineProperty(
+//   function ReadStream(path, options) {
+//     var _InternalReadStream = getLazyReadStream();
+//     return new _InternalReadStream(path, options);
+//   },
+//   Symbol.hasInstance,
+//   { value: (instance) => instance[readStreamSymbol] === true },
+// );
+
+// These aren't so lazy anymore, but we do what we can
+export var WriteStream = getLazyWriteStream();
+export var ReadStream = getLazyReadStream();
 
 Object.defineProperties(fs, {
   createReadStream: {

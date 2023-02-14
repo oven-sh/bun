@@ -1144,7 +1144,8 @@ pub const Fetch = struct {
             return null;
         }
 
-        var deferred_promise = JSC.C.JSObjectMakeDeferredPromise(globalThis, null, null, null);
+        var promise = JSPromise.Strong.init(globalThis);
+        var promise_val = promise.value();
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         _ = FetchTasklet.queue(
@@ -1153,9 +1154,9 @@ pub const Fetch = struct {
             .{ .method = method, .url = url, .headers = headers orelse Headers{
                 .allocator = bun.default_allocator,
             }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer },
-            JSC.JSValue.fromRef(deferred_promise),
+            promise_val,
         ) catch unreachable;
-        return deferred_promise;
+        return promise_val.asRef();
     }
 };
 

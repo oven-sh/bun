@@ -538,6 +538,7 @@ pub const Fetch = struct {
 
     pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
     pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
+    pub const fetch_error_unexpected_body = "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
     pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
@@ -842,8 +843,8 @@ pub const Fetch = struct {
         var globalThis = ctx.ptr();
 
         if (arguments.len == 0) {
-            const fetch_error = fetch_error_no_args;
-            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            const err = JSC.toTypeError(.ERR_MISSING_ARGS, fetch_error_no_args, .{}, ctx);
+            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
         }
 
         var headers: ?Headers = null;
@@ -1046,8 +1047,8 @@ pub const Fetch = struct {
                             var url_zig = proxy_str.getZigString(globalThis);
 
                             if (url_zig.len == 0) {
-                                const fetch_error = fetch_error_blank_url;
-                                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+                                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
                             }
 
                             if (proxy_arg.isNull()) {
@@ -1100,8 +1101,8 @@ pub const Fetch = struct {
                             };
 
                             if (url_slice.len == 0) {
-                                const fetch_error = fetch_error_blank_url;
-                                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+                                return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
                             }
 
                             url = ZigURL.parse(url_slice.slice());
@@ -1115,8 +1116,8 @@ pub const Fetch = struct {
                         };
 
                         if (url_slice.len == 0) {
-                            const fetch_error = fetch_error_blank_url;
-                            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+                            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
                         }
 
                         url = ZigURL.parse(url_slice.slice());
@@ -1131,8 +1132,8 @@ pub const Fetch = struct {
                 };
 
                 if (url_slice.len == 0) {
-                    const fetch_error = fetch_error_blank_url;
-                    return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                    const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, ctx);
+                    return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
                 }
 
                 url = ZigURL.parse(url_slice.slice());
@@ -1140,11 +1141,17 @@ pub const Fetch = struct {
             }
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
-            exception.* = ZigString.init(fetch_error).toErrorInstance(globalThis).asObjectRef();
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
+            exception.* = err.asObjectRef();
             return null;
         }
 
         var deferred_promise = JSC.C.JSObjectMakeDeferredPromise(globalThis, null, null, null);
+
+        if (!method.hasRequestBody() and body.size() > 0) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
+            return JSPromise.rejectedPromiseValue(globalThis, err).asRef();
+        }
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
         _ = FetchTasklet.queue(

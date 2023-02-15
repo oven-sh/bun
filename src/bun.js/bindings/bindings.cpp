@@ -722,12 +722,29 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
+
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    auto init = argument0.value().isUndefined() ? std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>() : std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, argument0.value()));
+    using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>;
+    using Converter = std::optional<Converter<TargetType>::ReturnType>;
+    auto init = argument0.value().isUndefined() ? Converter() : Converter(convert<TargetType>(*lexicalGlobalObject, argument0.value()));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
+
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    if (init)
-        headers->fill(WTFMove(init.value()));
+    if (init) {
+        // `fill` doesn't set an exception on the VM if it fails, it returns an
+        //  ExceptionOr<void>.  So we need to check for the exception and, if set,
+        //  translate it to JSValue and throw it.
+        auto possibleException = headers->fill(WTFMove(init.value()));
+        if (possibleException.hasException()) {
+            auto message = Zig::toZigString(ex.releaseException().message());
+
+            // Convert to a TypeError and throw
+            auto error = JSC__JSValue__createTypeError(&message, &Zig::ZigStringEmpty, lexicalGlobalObject);
+            JSC__VM__throwError(&lexicalGlobalObject->vm(), lexicalGlobalObject, error);
+
+            return nullptr;
+        }
+    }
     return headers;
 }
 

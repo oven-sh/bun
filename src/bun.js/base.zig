@@ -1718,6 +1718,12 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
 }
 
+/// Print a JSValue to stdout; this is only meant for debugging purposes
+pub fn dump(value: JSValue, ctx: js.JSContextRef) !void {
+    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx };
+    return std.io.getStdOut().writer().print("{}\n", .{value.toFmt(ctx, &formatter)});
+}
+
 pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {

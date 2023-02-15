@@ -2803,22 +2803,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(ptr)));
     }
 
-    pub const Formatter = struct {
-        value: JSValue,
-        global: *JSGlobalObject,
-
-        pub fn format(formatter: Formatter, comptime fmt: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
-            const self = formatter.value;
-            const kind: JSType = jsType(self);
-            if (kind.isStringLike()) {
-                var zig_str = self.getZigString();
-                return try zig_str.format(fmt, opts, writer);
-            }
-
-            if (kind) {}
-        }
-    };
-
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
         return cppFn("coerceToInt32", .{ this, globalThis });
     }

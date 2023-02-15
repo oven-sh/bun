@@ -691,7 +691,7 @@ pub const Fetch = struct {
             if (this.result.isTimeout()) {
                 //Timeout with reason
                 if (this.result.reason) |exception| {
-                    if (exception.isEmptyOrUndefinedOrNull()) {
+                    if (!exception.isEmptyOrUndefinedOrNull()) {
                         return exception;
                     }
                 }
@@ -703,7 +703,7 @@ pub const Fetch = struct {
             if (this.result.isAbort()) {
                 //Abort can be TimeoutError (AbortSignal.timeout(ms)) or AbortError so we need to detect
                 if (this.result.reason) |exception| {
-                    if (exception.isEmptyOrUndefinedOrNull()) {
+                    if (!exception.isEmptyOrUndefinedOrNull()) {
                         return exception;
                     }
                 }

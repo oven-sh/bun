@@ -1016,7 +1016,6 @@ pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
             if (this) |this_| {
                 const self = bun.cast(*@This(), this_);
                 self.client.closeAndAbort(reason, is_ssl, self.socket);
-                
             }
         }
 

@@ -41,6 +41,23 @@ describe("AbortSignal", ()=> {
     }
     expect(name).toBe("AbortError");
   })
+  it("AbortErrorWithReason", async ()=> {
+    let name, message;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort("My Reason");
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+      name = error.name;
+      message = error.message;
+    }
+    expect(name).toBe("AbortError");
+    expect(message).toBe("My Reason");
+  })
   it("TimeoutError", async ()=> {
     let name;
     try {

@@ -209,29 +209,19 @@ pub const ZigString = extern struct {
         return ZigString__toJSONObject(&this, globalThis);
     }
 
-    pub fn substring(this: ZigString, offset: usize) ZigString {
+    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
+        var len: usize = undefined;
+        if(maxlen == 0){
+            len = this.len;
+        }else {
+            len = @max(this.len, maxlen);
+        }
+        
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..]);
+            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
 
-        var out = ZigString.init(this.slice()[@min(this.len, offset)..]);
-        if (this.isUTF8()) {
-            out.markUTF8();
-        }
-
-        if (this.isGloballyAllocated()) {
-            out.mark();
-        }
-
-        return out;
-    }
-
-    pub fn substr_slice(this: ZigString, offset: usize, maxlen: usize) ZigString {
-        if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..@min(this.len, maxlen)]);
-        }
-
-        var out = ZigString.init(this.slice()[@min(this.len, offset)..@min(this.len, maxlen)]);
+        var out = ZigString.init(this.slice()[@min(this.len, offset)..len]);
         if (this.isUTF8()) {
             out.markUTF8();
         }

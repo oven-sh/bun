@@ -1832,8 +1832,8 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
         **anyopaque,
         NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
     );
-    this.fail(err, null);
     socket.close(0, null);
+    this.fail(err, null);
 }
 
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2129,21 +2129,22 @@ pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bo
         **anyopaque,
         NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
     );
+    socket.close(0, null);
     if (this.globalThis) |globalThis| {
         const reason_str = reason.toString(globalThis).getZigString(globalThis);
 
         if (reason_str.len >= 12) {
-            var type_str = reason_str.substr_slice(0, 10);
+            var type_str = reason_str.substring(0, 10);
             const ABORT_ERROR = JSC.ZigString.init("AbortError");
             if (type_str.eql(ABORT_ERROR)) {
-                const message_str = reason_str.substring(12);
+                const message_str = reason_str.substring(12, reason_str.len);
                 const exception = JSC.AbortSignal.createAbortError(&message_str, &JSC.ZigString.Empty, globalThis);
                 this.fail(error.Canceled, exception);
             } else {
-                type_str = reason_str.substr_slice(0, 12);
+                type_str = reason_str.substring(0, 12);
                 const TIMEOUT_ERROR = JSC.ZigString.init("TimeoutError");
                 if (type_str.eql(TIMEOUT_ERROR)) {
-                    const message_str = reason_str.substring(14);
+                    const message_str = reason_str.substring(14, reason_str.len);
                     const exception = JSC.AbortSignal.createTimeoutError(&message_str, &JSC.ZigString.Empty, globalThis);
                     this.fail(error.Canceled, exception);
                 } else {
@@ -2158,8 +2159,6 @@ pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bo
     } else {
         this.fail(error.Canceled, null);
     }
-
-    socket.close(0, null);
 }
 
 fn fail(this: *HTTPClient, err: anyerror, exception: ?JSC.JSValue) void {

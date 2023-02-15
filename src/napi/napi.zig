@@ -247,27 +247,29 @@ pub export fn napi_create_int64(_: napi_env, value: i64, result: *napi_value) na
     return .ok;
 }
 pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    var len = length;
-    if (NAPI_AUTO_LENGTH == length) {
-        len = bun.len(@ptrCast([*:0]const u8, str));
-    }
-    result.* = JSC.ZigString.init(str[0..len]).toValueGC(env);
+    const slice = if (NAPI_AUTO_LENGTH == length)
+        bun.sliceTo(@ptrCast([*:0]const u8, str), 0)
+    else
+        str[0..length];
+
+    result.* = JSC.ZigString.init(slice).toValueGC(env);
     return .ok;
 }
 pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
-    var len = length;
-    if (NAPI_AUTO_LENGTH == length) {
-        len = bun.len(@ptrCast([*:0]const u8, str));
-    }
-    result.* = JSC.ZigString.init(str[0..len]).withEncoding().toValueGC(env);
+    const slice = if (NAPI_AUTO_LENGTH == length)
+        bun.sliceTo(@ptrCast([*:0]const u8, str), 0)
+    else
+        str[0..length];
+    result.* = JSC.ZigString.init(slice).withEncoding().toValueGC(env);
     return .ok;
 }
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
-    var len = length;
-    if (NAPI_AUTO_LENGTH == length) {
-        len = bun.len(@ptrCast([*:0]const char16_t, str));
-    }
-    result.* = JSC.ZigString.from16(str, len).toValueGC(env);
+    const slice = if (NAPI_AUTO_LENGTH == length)
+        bun.sliceTo(@ptrCast([*:0]const char16_t, str), 0)
+    else
+        str[0..length];
+
+    result.* = JSC.ZigString.from16(slice.ptr, length).toValueGC(env);
     return .ok;
 }
 pub extern fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status;
@@ -1370,6 +1372,9 @@ pub export fn napi_create_threadsafe_function(
 ) napi_status {
     // TODO: don't do this
     // just have a GC hook for this...
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
+        return napi_status.function_expected;
+    }
     JSC.C.JSValueProtect(env.ref(), func.asObjectRef());
     var function = bun.default_allocator.create(ThreadSafeFunction) catch return .generic_failure;
     function.* = .{

@@ -3,17 +3,10 @@ var drainMicrotasks = () => {
   drainMicrotasks();
 };
 
-const warnOnce = fn => {
-  let warned = false;
-  return (...args) => {
-    if (!warned) {
-      warned = true;
-      fn(...args);
-    }
-  };
+var notImplemented = () => {
+  console.warn("[bun]: async_hooks has not been implemented yet :(");
+  notImplemented = () => {};
 };
-
-const notImplemented = warnOnce(() => console.warn("[bun]: async_hooks has not been implemented yet :("));
 
 class AsyncLocalStorage {
   #store;
@@ -39,9 +32,9 @@ class AsyncLocalStorage {
 
   run(store, callback, ...args) {
     if (typeof callback !== "function") throw new TypeError("ERR_INVALID_CALLBACK");
-    const prev = this.#store;
+    var prev = this.#store;
     var result, err;
-    process.nextTick(() => {
+    process.nextTick(store => {
       this.enterWith(store);
       try {
         result = callback(...args);
@@ -49,8 +42,9 @@ class AsyncLocalStorage {
         err = e;
       } finally {
         this.#store = prev;
+        prev = undefined;
       }
-    });
+    }, store);
     drainMicrotasks();
     if (typeof err !== "undefined") {
       throw err;

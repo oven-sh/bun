@@ -1369,7 +1369,7 @@ pub fn NewPrinter(
                                 if (i < n) {
                                     const c2: CodeUnitType = text[i];
 
-                                    if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
+                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
                                         i += 1;
 
                                         // Escape this character if UTF-8 isn't allowed
@@ -1420,7 +1420,7 @@ pub fn NewPrinter(
                                     }
                                 } else {
                                     // chars < 255 as two digit hex escape
-                                    if (c < 0xFF) {
+                                    if (c <= 0xFF) {
                                         var ptr = e.writer.reserve(4) catch unreachable;
                                         ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
                                         e.writer.advance(4);

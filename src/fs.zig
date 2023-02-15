@@ -203,22 +203,13 @@ pub const FileSystem = struct {
         // }
 
         pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
-            var _kind: Entry.Kind = undefined;
-            switch (entry.kind) {
-                .Directory => {
-                    _kind = Entry.Kind.dir;
-                },
-                .SymLink => {
-                    // This might be wrong!
-                    _kind = Entry.Kind.file;
-                },
-                .File => {
-                    _kind = Entry.Kind.file;
-                },
-                else => {
-                    return;
-                },
-            }
+            const _kind: Entry.Kind = switch (entry.kind) {
+                .Directory => .dir,
+                // This might be wrong!
+                .SymLink => .file,
+                .File => .file,
+                else => return,
+            };
             // entry.name only lives for the duration of the iteration
 
             const name = if (entry.name.len >= strings.StringOrTinyString.Max)
@@ -231,22 +222,20 @@ pub const FileSystem = struct {
             else
                 strings.StringOrTinyString.initLowerCase(entry.name);
 
-            var stored = try EntryStore.instance.append(
-                Entry{
-                    .base_ = name,
-                    .base_lowercase_ = name_lowercased,
-                    .dir = dir.dir,
-                    .mutex = Mutex.init(),
-                    // Call "stat" lazily for performance. The "@material-ui/icons" package
-                    // contains a directory with over 11,000 entries in it and running "stat"
-                    // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .SymLink,
-                    .cache = Entry.Cache{
-                        .symlink = PathString.empty,
-                        .kind = _kind,
-                    },
+            const stored = try EntryStore.instance.append(.{
+                .base_ = name,
+                .base_lowercase_ = name_lowercased,
+                .dir = dir.dir,
+                .mutex = Mutex.init(),
+                // Call "stat" lazily for performance. The "@material-ui/icons" package
+                // contains a directory with over 11,000 entries in it and running "stat"
+                // for each entry was a big performance issue for that package.
+                .need_stat = entry.kind == .SymLink,
+                .cache = .{
+                    .symlink = PathString.empty,
+                    .kind = _kind,
                 },
-            );
+            });
 
             const stored_name = stored.base();
 
@@ -270,7 +259,7 @@ pub const FileSystem = struct {
                 Output.prettyln("\n  {s}", .{dir});
             }
 
-            return DirEntry{ .dir = dir, .data = EntryMap{} };
+            return .{ .dir = dir, .data = .{} };
         }
 
         pub const Err = struct {
@@ -363,7 +352,7 @@ pub const FileSystem = struct {
     };
 
     pub const Entry = struct {
-        cache: Cache = Cache{},
+        cache: Cache = .{},
         dir: string,
 
         base_: strings.StringOrTinyString,
@@ -406,7 +395,7 @@ pub const FileSystem = struct {
         pub const Cache = struct {
             symlink: PathString = PathString.empty,
             fd: StoredFileDescriptorType = 0,
-            kind: Kind = Kind.file,
+            kind: Kind = .file,
         };
 
         pub const Kind = enum {

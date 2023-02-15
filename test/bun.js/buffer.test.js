@@ -25,6 +25,16 @@ Object.assign(assert, {
   },
 });
 
+// https://github.com/oven-sh/bun/issues/2052
+it("Buffer global is settable", () => {
+  var prevBuffer = globalThis.Buffer;
+  globalThis.Buffer = 42;
+  expect(globalThis.Buffer).toBe(42);
+  globalThis.Buffer = prevBuffer;
+  expect(globalThis.Buffer).toBe(BufferModule.Buffer);
+  expect(globalThis.Buffer).toBe(prevBuffer);
+});
+
 it("Buffer.alloc", () => {
   // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
   // internal limits should be updated if this fails.

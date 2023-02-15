@@ -34,9 +34,9 @@ public:
         return WebCore::subspaceForImpl<JSArrayBufferSinkConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -72,9 +72,9 @@ public:
         return WebCore::subspaceForImpl<JSArrayBufferSink, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -126,9 +126,9 @@ public:
         return WebCore::subspaceForImpl<JSReadableArrayBufferSinkController, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -181,9 +181,9 @@ public:
         return WebCore::subspaceForImpl<JSFileSinkConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -219,9 +219,9 @@ public:
         return WebCore::subspaceForImpl<JSFileSink, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -273,9 +273,9 @@ public:
         return WebCore::subspaceForImpl<JSReadableFileSinkController, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -328,9 +328,9 @@ public:
         return WebCore::subspaceForImpl<JSHTTPResponseSinkConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -366,9 +366,9 @@ public:
         return WebCore::subspaceForImpl<JSHTTPResponseSink, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -420,9 +420,9 @@ public:
         return WebCore::subspaceForImpl<JSReadableHTTPResponseSinkController, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -475,9 +475,9 @@ public:
         return WebCore::subspaceForImpl<JSHTTPSResponseSinkConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -513,9 +513,9 @@ public:
         return WebCore::subspaceForImpl<JSHTTPSResponseSink, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);
@@ -567,9 +567,9 @@ public:
         return WebCore::subspaceForImpl<JSReadableHTTPSResponseSinkController, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
     }
 
     static void destroy(JSC::JSCell*);

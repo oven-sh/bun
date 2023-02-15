@@ -135,9 +135,9 @@ public:
         return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
     }
 
     DECLARE_EXPORT_INFO;

@@ -473,9 +473,9 @@ JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSEventEmitter, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForEventEmitter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventEmitter = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventEmitter = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForEventEmitter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventEmitter = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventEmitter = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

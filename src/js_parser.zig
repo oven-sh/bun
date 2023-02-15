@@ -18902,7 +18902,7 @@ fn NewParser_(
                 // }
             }
 
-            return js_ast.Ast{
+            return .{
                 .runtime_imports = p.runtime_imports,
                 .parts = parts,
                 .module_scope = p.module_scope.*,

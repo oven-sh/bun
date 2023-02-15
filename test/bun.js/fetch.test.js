@@ -172,6 +172,31 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
     server.stop();
   });
+
+  it("provide body", async () => {
+    const server = Bun.serve({
+      port: 4084,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    // POST with body
+    const url = `http://${server.hostname}:${server.port}`;
+    const response = await fetch(url, { method: "POST", body: "buntastic" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("buntastic");
+
+    // GET cannot have body
+    try {
+      await fetch(url, { body: "buntastic" });
+      expect(false).toBe(true);
+    } catch (exception) {
+      expect(exception instanceof TypeError).toBe(true);
+    }
+
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -630,7 +655,7 @@ describe("Response", () => {
       await body.json();
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof SyntaxError);
+      expect(exception instanceof SyntaxError).toBe(true);
     }
   });
 

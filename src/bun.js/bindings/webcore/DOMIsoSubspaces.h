@@ -467,8 +467,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForFileList;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReader;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReaderSync;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenList;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenListIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;

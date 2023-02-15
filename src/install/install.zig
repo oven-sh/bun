@@ -5708,7 +5708,6 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
         progress: *std.Progress,
-        node_modules_path: stringZ,
         node_modules_folder: std.fs.IterableDir,
         skip_verify_installed_version_number: bool,
         skip_delete: bool,
@@ -5928,7 +5927,6 @@ pub const PackageManager = struct {
 
                                     var bin_linker = Bin.Linker{
                                         .bin = bin,
-                                        .package_installed_path = this.node_modules_path["node_modules".len..],
                                         .package_installed_node_modules = this.node_modules_folder.dir.fd,
                                         .global_bin_path = this.options.bin_path,
                                         .global_bin_dir = this.options.global_bin_dir.dir,
@@ -6186,7 +6184,6 @@ pub const PackageManager = struct {
                 .resolutions = resolutions,
                 .lockfile = lockfile,
                 .node = &install_node,
-                .node_modules_path = "node_modules",
                 .node_modules_folder = node_modules_folder,
                 .progress = progress,
                 .skip_verify_installed_version_number = skip_verify_installed_version_number,
@@ -6208,7 +6205,6 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_path = node_modules.relative_path;
                 installer.node_modules_folder = try cwd.openIterableDir(node_modules.relative_path, .{});
 
                 var remaining = node_modules.dependencies;

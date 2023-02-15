@@ -51,12 +51,12 @@ namespace WebCore {
 const JSC::ConstructAbility s_processObjectInternalsGetStdioWriteStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdioWriteStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdioWriteStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 9968;
+const int s_processObjectInternalsGetStdioWriteStreamCodeLength = 9767;
 static const JSC::Intrinsic s_processObjectInternalsGetStdioWriteStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "(function (fd_, rawRequire) {\n" \
     "  var module = { path: \"node:process\", require: rawRequire };\n" \
-    "  var require = (path) => module.require(path);\n" \
+    "  var require = path => module.require(path);\n" \
     "\n" \
     "  function createStdioWriteStream(fd_) {\n" \
     "    var { Duplex, eos, destroy } = require(\"node:stream\");\n" \
@@ -103,20 +103,11 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "      _destroy(err, callback) {\n" \
     "        if (!err && this.#onClose !== null) {\n" \
     "          var AbortError = class AbortError extends Error {\n" \
-    "            constructor(\n" \
-    "              message = \"The operation was aborted\",\n" \
-    "              options = void 0,\n" \
-    "            ) {\n" \
+    "            constructor(message = \"The operation was aborted\", options = void 0) {\n" \
     "              if (options !== void 0 && typeof options !== \"object\") {\n" \
-    "                throw new Error(\n" \
-    "                  `Invalid AbortError options:\\n" \
+    "                throw new Error(`Invalid AbortError options:\\n" \
     "\\n" \
-    "${JSON.stringify(\n" \
-    "                    options,\n" \
-    "                    null,\n" \
-    "                    2,\n" \
-    "                  )}`,\n" \
-    "                );\n" \
+    "${JSON.stringify(options, null, 2)}`);\n" \
     "              }\n" \
     "              super(message, options);\n" \
     "              this.code = \"ABORT_ERR\";\n" \
@@ -158,7 +149,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "            }\n" \
     "          });\n" \
     "\n" \
-    "          eos(stream, (err) => {\n" \
+    "          eos(stream, err => {\n" \
     "            this.#writable = false;\n" \
     "            if (err) {\n" \
     "              destroy(stream, err);\n" \
@@ -197,7 +188,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "          this.push(null);\n" \
     "        });\n" \
     "\n" \
-    "        eos(readStream, (err) => {\n" \
+    "        eos(readStream, err => {\n" \
     "          this.#readable = false;\n" \
     "          if (err) {\n" \
     "            destroy(readStream, err);\n" \
@@ -230,12 +221,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "    if (!encoding) return true;\n" \
     "\n" \
     "    var normalied = encoding.toLowerCase();\n" \
-    "    return (\n" \
-    "      normalied === \"utf8\" ||\n" \
-    "      normalied === \"utf-8\" ||\n" \
-    "      normalied === \"buffer\" ||\n" \
-    "      normalied === \"binary\"\n" \
-    "    );\n" \
+    "    return normalied === \"utf8\" || normalied === \"utf-8\" || normalied === \"buffer\" || normalied === \"binary\";\n" \
     "  }\n" \
     "\n" \
     "  var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {\n" \
@@ -389,7 +375,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
     "            this.#performCallback(callback);\n" \
     "            this.emit(\"drain\");\n" \
     "          },\n" \
-    "          (err) => this.#performCallback(callback, err),\n" \
+    "          err => this.#performCallback(callback, err),\n" \
     "        );\n" \
     "        return false;\n" \
     "      }\n" \
@@ -472,12 +458,12 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4415;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4305;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd_, rawRequire, Bun) {\n" \
     "  var module = { path: \"node:process\", require: rawRequire };\n" \
-    "  var require = (path) => module.require(path);\n" \
+    "  var require = path => module.require(path);\n" \
     "\n" \
     "  var { Duplex, eos, destroy } = require(\"node:stream\");\n" \
     "\n" \
@@ -526,15 +512,9 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "        var AbortError = class AbortError extends Error {\n" \
     "          constructor(message = \"The operation was aborted\", options = void 0) {\n" \
     "            if (options !== void 0 && typeof options !== \"object\") {\n" \
-    "              throw new Error(\n" \
-    "                `Invalid AbortError options:\\n" \
+    "              throw new Error(`Invalid AbortError options:\\n" \
     "\\n" \
-    "${JSON.stringify(\n" \
-    "                  options,\n" \
-    "                  null,\n" \
-    "                  2,\n" \
-    "                )}`,\n" \
-    "              );\n" \
+    "${JSON.stringify(options, null, 2)}`);\n" \
     "            }\n" \
     "            super(message, options);\n" \
     "            this.code = \"ABORT_ERR\";\n" \
@@ -652,7 +632,7 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "        }\n" \
     "      });\n" \
     "\n" \
-    "      eos(writeStream, (err) => {\n" \
+    "      eos(writeStream, err => {\n" \
     "        this.#writable = false;\n" \
     "        if (err) {\n" \
     "          destroy(writeStream, err);\n" \

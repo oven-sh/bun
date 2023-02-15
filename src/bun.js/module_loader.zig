@@ -2027,32 +2027,9 @@ pub const ModuleLoader = struct {
                 .source_code = ZigString.init(
                     \\const symbol = Symbol.for("CommonJS");
                     \\const lazy = globalThis[Symbol.for("Bun.lazy")];
-                    \\// creating this triggers a watchpoint in JSC, so lets delay doing that.
-                    \\var masqueradesAsUndefined, hasMasqueradedAsUndefined;
-                    \\const target = {[symbol]: 0};
-                    \\const proxy = new Proxy(target, {
-                    \\  get: function (target, prop) {
-                    \\    if (prop in target) {
-                    \\       return target[prop];
-                    \\    }
-                    \\
-                    \\    if (!hasMasqueradedAsUndefined) {
-                    \\      masqueradesAsUndefined = lazy("masqueradesAsUndefined");
-                    \\      hasMasqueradedAsUndefined = true;
-                    \\    }
-                    \\    
-                    \\    return masqueradesAsUndefined;
-                    \\  },
-                    \\  set: function (target, prop, value) {
-                    \\     target[prop] = value;
-                    \\     return true;
-                    \\  },
-                    \\  has: function (target, prop) {
-                    \\      return prop in target;
-                    \\  },
-                    \\});
-                    \\
-                    \\export default proxy;
+                    \\var masqueradesAsUndefined = lazy("masqueradesAsUndefined");
+                    \\masqueradesAsUndefined[symbol] = 0;
+                    \\export default masqueradesAsUndefined;
                     \\
                 ),
                 .specifier = ZigString.init(specifier),

@@ -32,9 +32,10 @@ class AsyncLocalStorage {
 
   run(store, callback, ...args) {
     if (typeof callback !== "function") throw new TypeError("ERR_INVALID_CALLBACK");
-    var prev = this.#store;
     var result, err;
+
     process.nextTick(store => {
+      const prev = this.#store;
       this.enterWith(store);
       try {
         result = callback(...args);
@@ -42,7 +43,6 @@ class AsyncLocalStorage {
         err = e;
       } finally {
         this.#store = prev;
-        prev = undefined;
       }
     }, store);
     drainMicrotasks();

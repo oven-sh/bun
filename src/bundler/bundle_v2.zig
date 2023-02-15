@@ -69,6 +69,10 @@ const EventLoop = bun.JSC.AnyEventLoop;
 const MultiArrayList = bun.MultiArrayList;
 const Stmt = js_ast.Stmt;
 const Expr = js_ast.Expr;
+const E = js_ast.E;
+const S = js_ast.S;
+const G = js_ast.G;
+const B = js_ast.B;
 const Binding = js_ast.Binding;
 const AutoBitSet = bun.bit_set.AutoBitSet;
 const renamer = bun.renamer;
@@ -1041,7 +1045,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
 const RefVoidMapManaged = std.ArrayHashMap(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
-const RefExportData = bun.StringArrayHashMapUnmanaged(ExportData);
+const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
 
 pub const WrapKind = enum {
@@ -1135,7 +1139,7 @@ pub const JSMeta = struct {
     ///
     /// Re-exports come from other files and are the result of resolving export
     /// star statements (i.e. "export * from 'foo'").
-    resolved_exports: RefExportData = .{},
+    resolved_exports: ResolvedExports = .{},
     resolved_export_star: ExportData = ExportData{},
 
     /// Never iterate over "resolvedExports" directly. Instead, iterate over this
@@ -2075,7 +2079,7 @@ const LinkerContext = struct {
             // are ignored for those modules.
             {
                 var export_star_ctx: ?ExportStarContext = null;
-                var resolved_exports: []RefExportData = this.graph.meta.items(.resolved_exports);
+                var resolved_exports: []ResolvedExports = this.graph.meta.items(.resolved_exports);
                 var resolved_export_stars: []ExportData = this.graph.meta.items(.resolved_export_star);
 
                 for (reachable) |source_index_| {
@@ -2373,7 +2377,7 @@ const LinkerContext = struct {
                         this.allocator,
                         @as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper)),
                     ) catch unreachable;
-                    var resolved_exports_list: *RefExportData = &this.graph.meta.items(.resolved_exports)[id];
+                    var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                     for (aliases) |alias| {
                         var export_ = resolved_exports_list.get(alias).?;
                         var target_source_index = export_.data.source_index.get();
@@ -2628,7 +2632,15 @@ const LinkerContext = struct {
         }
     }
 
-    pub fn createExportsForFile(c: *LinkerContext, allocator_: std.mem.Allocator, id: u32, resolved_exports: *RefExportData, imports_to_bind: []RefImportData, export_aliases: []const string, re_exports_count: usize) void {
+    pub fn createExportsForFile(
+        c: *LinkerContext,
+        allocator_: std.mem.Allocator,
+        id: u32,
+        resolved_exports: *ResolvedExports,
+        imports_to_bind: []RefImportData,
+        export_aliases: []const string,
+        re_exports_count: usize,
+    ) void {
         ////////////////////////////////////////////////////////////////////////////////
         // WARNING: This method is run in parallel over all files. Do not mutate data
         // for other files within this method or you will create a data race.
@@ -2858,7 +2870,7 @@ const LinkerContext = struct {
         // we must use this allocator here
         const allocator_ = worker.allocator;
 
-        var resolved_exports: *RefExportData = &c.graph.meta.items(.resolved_exports)[id];
+        var resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
@@ -3096,7 +3108,7 @@ const LinkerContext = struct {
             imports_to_bind: []RefImportData,
             wrapper_refs: []const ?Ref,
             sorted_and_filtered_export_aliases: []const []const string,
-            resolved_exports: []const RefExportData,
+            resolved_exports: []const ResolvedExports,
             ctx: *LinkerContext,
             symbols: *Symbol.Map,
 
@@ -3648,20 +3660,411 @@ const LinkerContext = struct {
         const toESMRef = c.graph.symbols.follow(runtime_members.get("toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
-        var r = try c.renameSymbolsInChunk(allocator, chunk, chunk.content.javascript.files_in_chunk_order);
+        var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
         defer r.deinit();
-        const part_ranges = chunk.content.javascript.parts_in_chunk_in_order;
-        for (part_ranges) |part_range| {
+        const part_ranges = repr.parts_in_chunk_in_order;
+        var stmts = StmtList.init(allocator);
+        defer stmts.deinit();
+
+        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create(allocator);
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        for (part_ranges) |part_range, i| {
+            if (i > 0) arena.reset(.retain_capacity);
             c.generateCodeForFileInChunkJS(
                 allocator,
+                r,
                 chunk,
                 part_range,
                 toCommonJSRef,
                 toESMRef,
                 runtimeRequireRef,
                 &chunk.entry_bits,
+                &stmts,
+                allocator,
+                arena.allocator(),
             );
         }
+    }
+
+    const StmtList = struct {
+        inside_wrapper_prefix: std.ArrayList(Stmt),
+        outside_wrapper_prefix: std.ArrayList(Stmt),
+        inside_wrapper_suffix: std.ArrayList(Stmt),
+
+        all_stmts: std.ArrayList(Stmt),
+
+        pub fn reset(this: *StmtList) void {
+            this.inside_wrapper_prefix.clearRetainingCapacity();
+            this.outside_wrapper_prefix.clearRetainingCapacity();
+            this.inside_wrapper_suffix.clearRetainingCapacity();
+            this.all_stmts.clearRetainingCapacity();
+        }
+
+        pub fn deinit(this: *StmtList) void {
+            this.inside_wrapper_prefix.deinit();
+            this.outside_wrapper_prefix.deinit();
+            this.inside_wrapper_suffix.deinit();
+            this.all_stmts.deinit();
+        }
+
+        pub fn init(allocator: std.mem.Allocator) StmtList {
+            return .{
+                .inside_wrapper_prefix = std.ArrayList(Stmt).init(allocator),
+                .outside_wrapper_prefix = std.ArrayList(Stmt).init(allocator),
+                .inside_wrapper_suffix = std.ArrayList(Stmt).init(allocator),
+                .all_stmts = std.ArrayList(Stmt).init(allocator),
+            };
+        }
+    };
+
+    fn generateCodeForFileInChunkJS(
+        c: *LinkerContext,
+        r: renamer.Renamer,
+        chunk: *Chunk,
+        part_range: PartRange,
+        toCommonJSRef: Ref,
+        toESMRef: Ref,
+        runtimeRequireRef: Ref,
+        entry_bits: *AutoBitSet,
+        stmts: *StmtList,
+        allocator: std.mem.Allocator,
+        temp_allocator: std.mem.Allocator,
+    ) js_printer.PrintResult {
+        var repr = &chunk.content.javascript;
+        // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
+        var parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()][part_range.part_index_begin..part_range.part_index_end];
+        const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
+        const flags: JSMeta.Flags = c.graph.meta.items(.flags)[part_range.source_index.get()];
+        const wrapper_part_index = c.graph.meta.items(.wrapper_part_index)[part_range.source_index.get()];
+        const uses_exports_ref = c.graph.ast.items(.uses_exports_ref)[part_range.source_index.get()];
+        const uses_module_ref = c.graph.ast.items(.uses_module_ref)[part_range.source_index.get()];
+        const exports_ref = c.graph.ast.items(.exports_ref)[part_range.source_index.get()];
+        const module_ref = c.graph.ast.items(.module_ref)[part_range.source_index.get()];
+        const wrapper_ref = c.graph.ast.items(.wrapper_ref)[part_range.source_index.get()];
+
+        js_ast.Expr.Data.Store.reset();
+        js_ast.Stmt.Data.Store.reset();
+
+        var needs_wrapper = false;
+
+        const namespace_export_part_index = js_ast.namespace_export_part_index;
+
+        stmts.reset();
+
+        // TODO: handle directive
+        if (namespace_export_part_index >= part_range.part_index_begin and
+            namespace_export_part_index < part_range.part_index_end and
+            parts[namespace_export_part_index].is_live)
+        {
+            c.convertStmtsForChunk(part_range.source_index, stmts, parts[namespace_export_part_index].stmts);
+
+            switch (flags.wrap) {
+                .esm => {
+                    stmts.outside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                },
+                .cjs => {
+                    stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
+                },
+            }
+            stmts.inside_wrapper_suffix.clearRetainingCapacity();
+        }
+
+        // TODO: defaultLazyExport
+
+        // Add all other parts in this chunk
+        for (parts) |part| {
+            if (!part.is_live) {
+                // Skip the part if it's not in this chunk
+
+                continue;
+            }
+
+            if (part.part_index == namespace_export_part_index) {
+                // Skip the namespace export part because we already handled it above
+                continue;
+            }
+
+            if (part.part_index == wrapper_part_index) {
+                // Skip the wrapper part because we already handled it above
+                needs_wrapper = true;
+                continue;
+            }
+
+            // TODO: lazy default export
+
+            // convert
+            c.convertStmtsForChunk(part_range.source_index, stmts, part.stmts);
+        }
+
+        // Hoist all import statements before any normal statements. ES6 imports
+        // are different than CommonJS imports. All modules imported via ES6 import
+        // statements are evaluated before the module doing the importing is
+        // evaluated (well, except for cyclic import scenarios). We need to preserve
+        // these semantics even when modules imported via ES6 import statements end
+        // up being CommonJS modules.
+
+        stmts.all_stmts.appendSlice(stmts.inside_wrapper_prefix.items) catch unreachable;
+
+        var out_stmts = stmts.all_stmts.items;
+        // Optionally wrap all statements in a closure
+        if (needs_wrapper) {
+            switch (flags.wrap) {
+                .cjs => {
+                    // Only include the arguments that are actually used
+                    var args = std.ArrayList(js_ast.G.Arg).initCapacity(
+                        temp_allocator,
+                        @boolToInt(uses_exports_ref) + @boolToInt(uses_module_ref),
+                    ) catch unreachable;
+
+                    if (uses_exports_ref) {
+                        args.appendAssumeCapacity(
+                            js_ast.G.Arg{
+                                .binding = js_ast.Binding.alloc(
+                                    temp_allocator,
+                                    js_ast.B.Identifier{
+                                        .ref = exports_ref,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            },
+                        );
+                    }
+
+                    if (uses_module_ref) {
+                        args.appendAssumeCapacity(
+                            js_ast.G.Arg{
+                                .binding = js_ast.Binding.alloc(
+                                    temp_allocator,
+                                    js_ast.B.Identifier{
+                                        .ref = module_ref,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            },
+                        );
+                    }
+
+                    // TODO: variants of the runtime functions
+                    var cjs_args = temp_allocator.alloc(Expr, 1) catch unreachable;
+                    cjs_args[0] = Expr.init(
+                        E.Arrow,
+                        E.Arrow{
+                            .args = args.items,
+                            .body = .{
+                                .block = Stmt.init(
+                                    S.Block,
+                                    .{
+                                        .stmts = stmts.all_stmts.items,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            },
+                        },
+                        Logger.Loc.Empty,
+                    );
+
+                    const commonjs_wrapper_definition = Expr.init(
+                        E.Call,
+                        E.Call{
+                            .target = Expr.init(
+                                E.Identifier,
+                                E.Identifier{
+                                    .ref = toCommonJSRef,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                            .args = cjs_args,
+                        },
+                        Logger.Loc.Empty,
+                    );
+
+                    // "var require_foo = __commonJS(...);"
+                    {
+                        var decls = temp_allocator.alloc(G.Decl, 1) catch unreachable;
+                        decls[0] = G.Decl{
+                            .binding = Binding.alloc(
+                                temp_allocator,
+                                B.Identifier{
+                                    .ref = wrapper_ref.?,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                            .value = commonjs_wrapper_definition,
+                        };
+
+                        stmts.outside_wrapper_prefix.append(
+                            Stmt.init(
+                                S.Local,
+                                S.Local{
+                                    .decls = decls,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    }
+                },
+                .esm => {
+                    // The wrapper only needs to be "async" if there is a transitive async
+                    // dependency. For correctness, we must not use "async" if the module
+                    // isn't async because then calling "require()" on that module would
+                    // swallow any exceptions thrown during module initialization.
+                    const is_async = flags.is_async_or_has_async_dependency;
+
+                    // Hoist all top-level "var" and "function" declarations out of the closure
+                    {
+                        const Hoisty = struct {
+                            decls: std.ArrayList(G.Decl),
+
+                            pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
+                                w.decls.append(
+                                    G.Decl{
+                                        .binding = Binding.alloc(
+                                            w.decls.allocator,
+                                            B.Identifier{
+                                                .ref = ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = Expr.init(
+                                            E.Identifier,
+                                            E.Identifier{
+                                                .ref = ref,
+                                            },
+                                            loc,
+                                        ),
+                                    },
+                                ) catch unreachable;
+                                return Expr.init(
+                                    E.Identifier,
+                                    E.Identifier{
+                                        .ref = ref,
+                                    },
+                                    loc,
+                                );
+                            }
+                        };
+                        var hoisty = Hoisty{
+                            .decls = std.ArrayList(G.Decl).init(temp_allocator),
+                        };
+                        var end: usize = 0;
+                        for (stmts.all_stmts.items) |stmt_| {
+                            var stmt: Stmt = stmt_;
+                            switch (stmt.data) {
+                                .s_local => |local| {
+                                    var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
+                                    for (local.decls) |*decl| {
+                                        const binding = decl.binding.toExpr(hoisty);
+                                        if (decl.value) |other| {
+                                            value = value.joinWithComma(
+                                                binding.assign(
+                                                    other,
+                                                    temp_allocator,
+                                                ),
+                                                temp_allocator,
+                                            );
+                                        }
+                                    }
+
+                                    if (value.isEmpty()) {
+                                        continue;
+                                    }
+                                    stmt = Stmt.init(
+                                        S.Expr,
+                                        S.Expr{
+                                            .expr = value,
+                                        },
+                                        stmt.loc,
+                                    );
+                                },
+                                .s_function => {
+                                    stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
+                                    continue;
+                                },
+                            }
+                            stmts.all_stmts.items[end] = stmt;
+                            end += 1;
+                        }
+                        stmts.all_stmts.items.len = end;
+                    }
+
+                    // TODO: variants of the runtime functions
+
+                    // "__esm(() => { ... })"
+                    var esm_args = temp_allocator.alloc(Expr, 1) catch unreachable;
+                    esm_args[0] = Expr.init(
+                        E.Arrow,
+                        E.Arrow{
+                            .args = &.{},
+                            .is_async = is_async,
+                            .body = .{
+                                .block = Stmt.init(
+                                    S.Block,
+                                    .{
+                                        .stmts = stmts.all_stmts.items,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            },
+                        },
+                        Logger.Loc.Empty,
+                    );
+
+                    // "var init_foo = __esm(...);"
+                    {
+                        const value = Expr.init(
+                            E.Call,
+                            E.Call{
+                                .target = Expr.init(
+                                    E.Identifier,
+                                    E.Identifier{
+                                        .ref = toESMRef,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                                .args = esm_args,
+                            },
+                            Logger.Loc.Empty,
+                        );
+
+                        var decls = temp_allocator.alloc(G.Decl, 1) catch unreachable;
+                        decls[0] = G.Decl{
+                            .binding = Binding.alloc(
+                                temp_allocator,
+                                B.Identifier{
+                                    .ref = wrapper_ref.?,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                            .value = value,
+                        };
+
+                        stmts.outside_wrapper_prefix.append(
+                            Stmt.init(
+                                S.Local,
+                                S.Local{
+                                    .decls = decls,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    }
+                },
+                else => {},
+            }
+
+            out_stmts = stmts.outside_wrapper_prefix.items;
+        }
+
+        const print_options = js_printer.Options{
+            // TODO: IIFE
+            .indent = 0,
+
+            .allocator = allocator,
+            .to_module_ref = toESMRef,
+            .require_ref = runtimeRequireRef,
+        };
     }
 
     pub fn generateChunksInParallel(c: *LinkerContext, chunks_: []Chunk) ![]options.OutputFile {
@@ -4505,14 +4908,14 @@ const LinkerContext = struct {
         source_index_stack: std.ArrayList(Index.Int),
         exports_kind: []js_ast.ExportsKind,
         named_exports: []js_ast.Ast.NamedExports,
-        resolved_exports: []RefExportData,
+        resolved_exports: []ResolvedExports,
         imports_to_bind: []RefImportData,
         export_star_records: []const []const Index.Int,
         allocator: std.mem.Allocator,
 
         pub fn addExports(
             this: *ExportStarContext,
-            resolved_exports: *RefExportData,
+            resolved_exports: *ResolvedExports,
             source_index: Index.Int,
         ) void {
             // Avoid infinite loops due to cycles in the export star graph
@@ -4926,4 +5329,11 @@ pub const CrossChunkImport = struct {
 
         std.sort.sort(CrossChunkImport, result.items, void{}, CrossChunkImport.lessThan);
     }
+};
+
+const CompileResult = union(enum) {
+    javascript: struct {
+        source_index: Index.Int,
+        reslt: js_printer.PrintResult,
+    },
 };

@@ -490,6 +490,8 @@ pub const Options = struct {
 
     minify_whitespace: bool = false,
 
+    require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
+
     // TODO: remove this
     // The reason for this is:
     // 1. You're bundling a React component
@@ -513,6 +515,44 @@ pub const Options = struct {
     pub inline fn unindent(self: *Options) void {
         self.indent -|= 1;
     }
+
+    pub fn requireOrImportMetaForSource(self: *const Options, id: u32) RequireOrImportMeta {
+        if (self.require_or_import_meta_for_source_callback.ctx == null)
+            return .{};
+
+        return self.require_or_import_meta_for_source_callback.call(id);
+    }
+};
+
+pub const RequireOrImportMeta = struct {
+    // CommonJS files will return the "require_*" wrapper function and an invalid
+    // exports object reference. Lazily-initialized ESM files will return the
+    // "init_*" wrapper function and the exports object for that file.
+    wrapper_ref: Ref = Ref.None,
+    exports_ref: Ref = Ref.None,
+    is_wrapper_async: bool = false,
+
+    pub const Callback = struct {
+        const Fn = fn (*anyopaque, u32) RequireOrImportMeta;
+
+        ctx: ?*anyopaque = null,
+        callback: *const Fn = undefined,
+
+        pub fn call(self: Callback, id: u32) RequireOrImportMeta {
+            return self.callback(self.ctx, id);
+        }
+
+        pub fn init(
+            comptime Type: type,
+            comptime callback: (fn (t: *Type, id: u32) RequireOrImportMeta),
+            ctx: *Type,
+        ) Callback {
+            return Callback{
+                .ctx = bun.cast(*anyopaque, ctx),
+                .callback = @ptrCast(*const Fn, callback),
+            };
+        }
+    };
 };
 
 pub const PrintResult = union(enum) {

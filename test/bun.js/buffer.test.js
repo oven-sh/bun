@@ -2555,6 +2555,6 @@ it("repro #2063", () => {
   const buf = Buffer.from("eyJlbWFpbCI6Ijg3MTg4NDYxN0BxcS5jb20iLCJpZCI6OCwicm9sZSI6Im5vcm1hbCIsImlhdCI6MTY3NjI4NDQyMSwiZXhwIjoxNjc2ODg5MjIxfQ", 'base64');
   expect(buf.length).toBe(85);
   expect(buf[82]).toBe(50);
-  expect(buf[82]).toBe(49);
-  expect(buf[82]).toBe(125);
+  expect(buf[83]).toBe(49);
+  expect(buf[84]).toBe(125);
 });

@@ -49,8 +49,9 @@ pub fn decodeLenUpperBound(len: usize) usize {
 
 pub fn decodeLen(source: anytype) usize {
     return zig_base64.standard.Decoder.calcSizeForSlice(source) catch {
-        //fallback
-        return source.len / 4 * 3;
+
+        //fallback; add 2 to allow for potentially missing padding
+        return source.len / 4 * 3 + 2;
     };
 }
 

@@ -232,17 +232,19 @@ bool CryptoKeyOKP::isValidOKPAlgorithm(CryptoAlgorithmIdentifier algorithm)
 
 auto CryptoKeyOKP::algorithm() const -> KeyAlgorithm
 {
-    CryptoEcKeyAlgorithm result;
+    CryptoKeyAlgorithm result;
+    // FIXME: This should be set to the actual algorithm name in the case of X25519
     result.name = CryptoAlgorithmRegistry::singleton().name(algorithmIdentifier());
 
-    switch (m_curve) {
-    case NamedCurve::X25519:
-        result.namedCurve = X25519;
-        break;
-    case NamedCurve::Ed25519:
-        result.namedCurve = Ed25519;
-        break;
-    }
+    // This is commented out because the spec doesn't define the namedCurve field for OKP keys
+    // switch (m_curve) {
+    // case NamedCurve::X25519:
+    //     result.namedCurve = X25519;
+    //     break;
+    // case NamedCurve::Ed25519:
+    //     result.namedCurve = Ed25519;
+    //     break;
+    // }
 
     return result;
 }

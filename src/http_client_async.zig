@@ -705,12 +705,7 @@ pub fn onTimeout(
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {
-        if (client.globalThis) |globalThis| {
-            const exception = JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, globalThis);
-            client.fail(error.Timeout, exception);
-        } else {
-            client.fail(error.Timeout, null);
-        }
+        client.fail(error.Timeout, null);
     }
 }
 pub fn onConnectError(
@@ -998,7 +993,6 @@ proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
 signal: ?*JSC.AbortSignal = null,
-globalThis: ?*JSC.JSGlobalObject = null,
 abort_handler: ?*anyopaque = null,
 abort_handler_deinit: ?*const fn (?*anyopaque) void = null,
 pub fn init(
@@ -1007,23 +1001,23 @@ pub fn init(
     url: URL,
     header_entries: Headers.Entries,
     header_buf: string,
-    signal: ?*JSC.AbortSignal,
-    globalThis: ?*JSC.JSGlobalObject,
+    signal: ?*JSC.AbortSignal
 ) HTTPClient {
-    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .globalThis = globalThis, .abort_handler = null, .abort_handler_deinit = null };
+    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .abort_handler = null, .abort_handler_deinit = null };
 }
 
 pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
     return struct {
         client: *HTTPClient,
         socket: NewHTTPContext(is_ssl).HTTPSocket,
+
         pub fn init(client: *HTTPClient, socket: NewHTTPContext(is_ssl).HTTPSocket) !*@This() {
             var ctx = try client.allocator.create(@This());
             ctx.client = client;
             ctx.socket = socket;
             return ctx;
         }
-
+        
         pub fn onAborted(this: ?*anyopaque, reason: JSC.JSValue) callconv(.C) void {
             log("onAborted", .{});
             if (this) |this_| {
@@ -1250,9 +1244,9 @@ pub const AsyncHTTP = struct {
     };
     const AtomicState = std.atomic.Atomic(State);
 
-    pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, callback: HTTPClientResult.Callback, http_proxy: ?URL, signal: ?*JSC.AbortSignal, globalThis: ?*JSC.JSGlobalObject) AsyncHTTP {
+    pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, callback: HTTPClientResult.Callback, http_proxy: ?URL, signal: ?*JSC.AbortSignal) AsyncHTTP {
         var this = AsyncHTTP{ .allocator = allocator, .url = url, .method = method, .request_headers = headers, .request_header_buf = headers_buf, .request_body = request_body, .response_buffer = response_buffer, .completion_callback = callback, .http_proxy = http_proxy };
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, globalThis);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
         if (http_proxy) |proxy| {
@@ -1283,7 +1277,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, null);
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null);
     }
 
     fn reset(this: *AsyncHTTP) !void {
@@ -2130,45 +2124,17 @@ pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bo
         NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
     );
     socket.close(0, null);
-    if (this.globalThis) |globalThis| {
-        const reason_str = reason.toString(globalThis).getZigString(globalThis);
-
-        if (reason_str.len >= 12) {
-            var type_str = reason_str.substring(0, 10);
-            const ABORT_ERROR = JSC.ZigString.init("AbortError");
-            if (type_str.eql(ABORT_ERROR)) {
-                const message_str = reason_str.substring(12, reason_str.len);
-                const exception = JSC.AbortSignal.createAbortError(&message_str, &JSC.ZigString.Empty, globalThis);
-                this.fail(error.Canceled, exception);
-            } else {
-                type_str = reason_str.substring(0, 12);
-                const TIMEOUT_ERROR = JSC.ZigString.init("TimeoutError");
-                if (type_str.eql(TIMEOUT_ERROR)) {
-                    const message_str = reason_str.substring(14, reason_str.len);
-                    const exception = JSC.AbortSignal.createTimeoutError(&message_str, &JSC.ZigString.Empty, globalThis);
-                    this.fail(error.Canceled, exception);
-                } else {
-                    const exception = JSC.AbortSignal.createAbortError(&reason_str, &JSC.ZigString.Empty, globalThis);
-                    this.fail(error.Canceled, exception);
-                }
-            }
-        } else {
-            const exception = JSC.AbortSignal.createAbortError(&reason_str, &JSC.ZigString.Empty, globalThis);
-            this.fail(error.Canceled, exception);
-        }
-    } else {
-        this.fail(error.Canceled, null);
-    }
+    this.fail(error.Aborted, reason);
 }
 
-fn fail(this: *HTTPClient, err: anyerror, exception: ?JSC.JSValue) void {
+fn fail(this: *HTTPClient, err: anyerror, reason: ?JSC.JSValue) void {
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;
     this.state.stage = .fail;
 
     const callback = this.completion_callback;
-    const result = this.toResult(this.cloned_metadata, exception);
+    const result = this.toResult(this.cloned_metadata, reason);
     this.state.reset();
     this.proxy_tunneling = false;
 
@@ -2254,10 +2220,18 @@ pub const HTTPClientResult = struct {
     fail: anyerror = error.NoError,
     redirected: bool = false,
     headers_buf: []picohttp.Header = &.{},
-    exception: ?JSC.JSValue = null,
+    reason: ?JSC.JSValue = null,
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
         return this.fail == error.NoError;
+    }
+
+    pub fn isTimeout(this: *const HTTPClientResult) bool {
+        return this.fail == error.Timeout;
+    }
+
+    pub fn isAbort(this: *const HTTPClientResult) bool {
+        return this.fail == error.Aborted;
     }
 
     pub fn deinitMetadata(this: *HTTPClientResult) void {
@@ -2299,7 +2273,7 @@ pub const HTTPClientResult = struct {
     };
 };
 
-pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata, exception: ?JSC.JSValue) HTTPClientResult {
+pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata, reason: ?JSC.JSValue) HTTPClientResult {
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .response = metadata.response,
@@ -2307,7 +2281,7 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata, exception: ?J
         .redirected = this.remaining_redirect_count != default_redirect_count,
         .href = metadata.url,
         .fail = this.state.fail,
-        .exception = exception,
+        .reason = reason,
         .headers_buf = metadata.response.headers,
     };
 }

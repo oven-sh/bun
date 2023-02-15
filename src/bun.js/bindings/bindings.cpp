@@ -3796,9 +3796,8 @@ extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* mess
 
     error->putDirect(
         vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, ABORT_ERROR_NAME),
-        0);
+        JSC::JSValue(JSC::jsOwnedString(vm, ABORT_ERROR_NAME)),
+    0);
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -3819,9 +3818,8 @@ extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* me
 
     error->putDirect(
         vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(
-            vm, TIMEOUT_ERROR_NAME),
-        0);
+        JSC::JSValue(JSC::jsOwnedString(vm, TIMEOUT_ERROR_NAME)),
+    0);
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -3830,6 +3828,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* me
     }
 
     return JSC::JSValue::encode(error);
+}
 #pragma mark - WebCore::DOMFormData
 
 CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString* arg1, ZigString* arg2)

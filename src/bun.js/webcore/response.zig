@@ -688,9 +688,53 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            if (this.result.exception) |exception| {
+
+            if (this.result.isTimeout()){
+                //Timeout with reason
+                if(this.result.reason) |reason| {
+                    const reason_str = reason.toString(this.global_this).getZigString(this.global_this);
+                    const exception = JSC.AbortSignal.createTimeoutError(&reason_str, &JSC.ZigString.Empty, this.global_this);
+                    return exception;
+                }
+                //Timeout without reason
+                const exception = JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return exception;
+            } 
+            
+            if (this.result.isAbort()){
+                  //Abort can be TimeoutError (AbortSignal.timeout(ms)) or AbortError so we need to detect
+                  if(this.result.reason) |reason| {
+                    const reason_str = reason.toString(this.global_this).getZigString( this.global_this);
+                    if (reason_str.len >= 12) {
+                        var type_str = reason_str.substring(0, 10);
+                        const ABORT_ERROR = JSC.ZigString.init("AbortError");
+                        if (type_str.eql(ABORT_ERROR)) {
+                            const message_str = reason_str.substring(12, reason_str.len);
+                            const exception = JSC.AbortSignal.createAbortError(&message_str, &JSC.ZigString.Empty, this.global_this);
+                            return exception;
+                        } else {
+                            type_str = reason_str.substring(0, 12);
+                            const TIMEOUT_ERROR = JSC.ZigString.init("TimeoutError");
+                            if (type_str.eql(TIMEOUT_ERROR)) {
+                                const message_str = reason_str.substring(14, reason_str.len);
+                                const exception = JSC.AbortSignal.createTimeoutError(&message_str, &JSC.ZigString.Empty, this.global_this);
+                                return exception;
+                            } else {
+                                const exception = JSC.AbortSignal.createAbortError(&reason_str, &JSC.ZigString.Empty, this.global_this);
+                                return exception;
+                            }
+                        }
+                    } else {
+                        const exception = JSC.AbortSignal.createAbortError(&reason_str, &JSC.ZigString.Empty, this.global_this);
+                        return exception;
+                    }
+                } 
+
+                //Abort without reason
+                const exception = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
                 return exception;
             }
+
             const fetch_error = JSC.SystemError{
                 .code = ZigString.init(@errorName(this.result.fail)),
                 .message = ZigString.init("fetch() failed"),
@@ -791,7 +835,7 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy, fetch_options.signal, fetch_options.globalThis);
+            ), proxy, fetch_options.signal);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;

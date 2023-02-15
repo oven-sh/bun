@@ -180,7 +180,7 @@ pub const PluginRunner = struct {
             JSC.ZigString.init("");
         const on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
-            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0),
+            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0, 0),
             JSC.ZigString.init(importer),
             target,
         ) orelse return null;

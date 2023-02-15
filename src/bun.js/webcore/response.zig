@@ -688,6 +688,31 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            if (this.result.isTimeout()) {
+                //Timeout with reason
+                if (this.result.reason) |exception| {
+                    if (!exception.isEmptyOrUndefinedOrNull()) {
+                        return exception;
+                    }
+                }
+                //Timeout without reason
+                const exception = JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return exception;
+            }
+
+            if (this.result.isAbort()) {
+                //Abort can be TimeoutError (AbortSignal.timeout(ms)) or AbortError so we need to detect
+                if (this.result.reason) |exception| {
+                    if (!exception.isEmptyOrUndefinedOrNull()) {
+                        return exception;
+                    }
+                }
+
+                //Abort without reason
+                const exception = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                return exception;
+            }
+
             const fetch_error = JSC.SystemError{
                 .code = ZigString.init(@errorName(this.result.fail)),
                 .message = ZigString.init("fetch() failed"),
@@ -788,7 +813,7 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy);
+            ), proxy, fetch_options.signal);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -800,7 +825,7 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "" };
+        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "", signal: ?*JSC.AbortSignal = null, globalThis: ?*JSGlobalObject };
 
         pub fn queue(
             allocator: std.mem.Allocator,
@@ -862,6 +887,8 @@ pub const Fetch = struct {
         var verbose = false;
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
+        var signal: ?*JSC.AbortSignal = null;
+
         var url_proxy_buffer: []const u8 = undefined;
 
         if (first_arg.as(Request)) |request| {
@@ -928,6 +955,12 @@ pub const Fetch = struct {
                     }
                     if (options.get(globalThis, "verbose")) |verb| {
                         verbose = verb.toBoolean();
+                    }
+                    if (options.get(globalThis, "signal")) |signal_arg| {
+                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                            _ = signal_.ref();
+                            signal = signal_;
+                        }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (!proxy_arg.isUndefined()) {
@@ -1039,6 +1072,12 @@ pub const Fetch = struct {
 
                     if (options.get(globalThis, "verbose")) |verb| {
                         verbose = verb.toBoolean();
+                    }
+                    if (options.get(globalThis, "signal")) |signal_arg| {
+                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                            _ = signal_.ref();
+                            signal = signal_;
+                        }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
                         if (!proxy_arg.isUndefined()) {
@@ -1159,7 +1198,7 @@ pub const Fetch = struct {
             globalThis,
             .{ .method = method, .url = url, .headers = headers orelse Headers{
                 .allocator = bun.default_allocator,
-            }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer },
+            }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer, .signal = signal, .globalThis = globalThis },
             JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;
         return deferred_promise;

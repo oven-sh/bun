@@ -2223,6 +2223,7 @@ pub const HardcodedModule = enum {
         string,
         .{
             .{ "assert", "node:assert" },
+            .{ "async_hooks", "node:async_hooks" },
             .{ "buffer", "node:buffer" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
@@ -2245,6 +2246,7 @@ pub const HardcodedModule = enum {
             .{ "module", "node:module" },
             .{ "net", "node:net" },
             .{ "node:assert", "node:assert" },
+            .{ "node:async_hooks", "node:async_hooks" },
             .{ "node:buffer", "node:buffer" },
             .{ "node:child_process", "node:child_process" },
             .{ "node:crypto", "node:crypto" },
@@ -2314,6 +2316,8 @@ pub const HardcodedModule = enum {
 pub const DisabledModule = bun.ComptimeStringMap(
     void,
     .{
+        .{"async_hooks"},
+        .{"node:async_hooks"},
         .{"node:tls"},
         .{"node:worker_threads"},
         .{"tls"},

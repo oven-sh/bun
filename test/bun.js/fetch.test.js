@@ -35,7 +35,7 @@ describe("AbortSignal", ()=> {
         await Bun.sleep(10);
         controller.abort();
       }
-      await Promise.all([fetch("http://127.0.0.1:54321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
     } catch (error){
       name = error.name;
     }
@@ -45,7 +45,7 @@ describe("AbortSignal", ()=> {
     let name;
     try {
       const signal = AbortSignal.timeout(10);
-      await fetch("http://127.0.0.1:54321", { signal: signal }).then((res)=> res.text());
+      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text());
     } catch (error){
       name = error.name;
     }

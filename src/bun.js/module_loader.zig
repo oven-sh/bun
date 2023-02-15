@@ -2021,6 +2021,44 @@ pub const ModuleLoader = struct {
                     .hash = 0,
                 };
             }
+        } else if (DisabledModule.has(specifier)) {
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(
+                    \\const symbol = Symbol.for("CommonJS");
+                    \\const lazy = globalThis[Symbol.for("Bun.lazy")];
+                    \\// creating this triggers a watchpoint in JSC, so lets delay doing that.
+                    \\var masqueradesAsUndefined, hasMasqueradedAsUndefined;
+                    \\const target = {[symbol]: 0};
+                    \\const proxy = new Proxy(target, {
+                    \\  get: function (target, prop) {
+                    \\    if (prop in target) {
+                    \\       return target[prop];
+                    \\    }
+                    \\
+                    \\    if (!hasMasqueradedAsUndefined) {
+                    \\      masqueradesAsUndefined = lazy("masqueradesAsUndefined");
+                    \\      hasMasqueradedAsUndefined = true;
+                    \\    }
+                    \\    
+                    \\    return masqueradesAsUndefined;
+                    \\  },
+                    \\  set: function (target, prop, value) {
+                    \\     target[prop] = value;
+                    \\     return true;
+                    \\  },
+                    \\  has: function (target, prop) {
+                    \\      return prop in target;
+                    \\  },
+                    \\});
+                    \\
+                    \\export default proxy;
+                    \\
+                ),
+                .specifier = ZigString.init(specifier),
+                .source_url = ZigString.init(specifier),
+                .hash = 0,
+            };
         }
 
         return null;
@@ -2209,11 +2247,11 @@ pub const HardcodedModule = enum {
         .{
             .{ "assert", "node:assert" },
             .{ "buffer", "node:buffer" },
-            .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
+            .{ "bun", "bun" },
             .{ "child_process", "node:child_process" },
             .{ "crypto", "node:crypto" },
             .{ "depd", "depd" },
@@ -2262,6 +2300,7 @@ pub const HardcodedModule = enum {
             .{ "node:util", "node:util" },
             .{ "node:util/types", "node:util/types" },
             .{ "node:wasi", "node:wasi" },
+            .{ "node:worker_threads", "node:worker_threads" },
             .{ "node:zlib", "node:zlib" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
@@ -2287,6 +2326,7 @@ pub const HardcodedModule = enum {
             .{ "util", "node:util" },
             .{ "util/types", "node:util/types" },
             .{ "wasi", "node:wasi" },
+            .{ "worker_threads", "node:worker_threads" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
             .{ "zlib", "node:zlib" },

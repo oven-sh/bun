@@ -178,6 +178,56 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     return @ptrToInt(start) - @ptrToInt(self_ptr);
 }
 
+pub fn split(self: string, delimiter: string) SplitIterator {
+    return SplitIterator{
+        .buffer = self,
+        .index = 0,
+        .delimiter = delimiter,
+    };
+}
+
+pub const SplitIterator = struct {
+    buffer: []const u8,
+    index: ?usize,
+    delimiter: []const u8,
+
+    const Self = @This();
+
+    /// Returns a slice of the first field. This never fails.
+    /// Call this only to get the first field and then use `next` to get all subsequent fields.
+    pub fn first(self: *Self) []const u8 {
+        std.debug.assert(self.index.? == 0);
+        return self.next().?;
+    }
+
+    /// Returns a slice of the next field, or null if splitting is complete.
+    pub fn next(self: *Self) ?[]const u8 {
+        const start = self.index orelse return null;
+        const end = if (indexOf(self.buffer[start..], self.delimiter)) |delim_start| blk: {
+            const del = delim_start + start;
+            self.index = del + self.delimiter.len;
+            break :blk delim_start + start;
+        } else blk: {
+            self.index = null;
+            break :blk self.buffer.len;
+        };
+
+        return self.buffer[start..end];
+    }
+
+    /// Returns a slice of the remaining bytes. Does not affect iterator state.
+    pub fn rest(self: Self) []const u8 {
+        const end = self.buffer.len;
+        const start = self.index orelse end;
+        return self.buffer[start..end];
+    }
+
+    /// Resets the iterator to the initial slice.
+    pub fn reset(self: *Self) void {
+        self.index = 0;
+    }
+};
+
 // --
 // This is faster when the string is found, by about 2x for a 8 MB file.
 // It is slower when the string is NOT found

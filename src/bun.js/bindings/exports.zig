@@ -2087,6 +2087,20 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
                         blob.writeFormat(this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.DOMFormData) != null) {
+                        const toJSONFunction = value.get(this.globalThis, "toJSON").?;
+
+                        this.addForNewLine("FormData (entries) ".len);
+                        writer.writeAll(comptime Output.prettyFmt("<r><blue>FormData<r> <d>(entries)<r> ", enable_ansi_colors));
+
+                        return this.printAs(
+                            .Object,
+                            Writer,
+                            writer_,
+                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            .Object,
+                            enable_ansi_colors,
+                        );
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);

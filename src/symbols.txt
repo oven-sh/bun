@@ -54,6 +54,7 @@ _napi_delete_reference
 _napi_detach_arraybuffer
 _napi_escape_handle
 _napi_fatal_error
+_napi_fatal_exception
 _napi_get_all_property_names
 _napi_get_and_clear_last_exception
 _napi_get_array_length
@@ -80,6 +81,7 @@ _napi_get_undefined
 _napi_get_uv_event_loop
 _napi_get_value_bigint_int64
 _napi_get_value_bigint_uint64
+_napi_get_value_bigint_words
 _napi_get_value_bool
 _napi_get_value_double
 _napi_get_value_external

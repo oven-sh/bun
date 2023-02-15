@@ -75,6 +75,37 @@ pub const Request = struct {
     pub const getJSON = RequestMixin.getJSON;
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
+    pub const getFormData = RequestMixin.getFormData;
+
+    pub fn getContentType(
+        this: *Request,
+    ) ?ZigString.Slice {
+        if (this.uws_request) |req| {
+            if (req.header("content-type")) |value| {
+                return ZigString.Slice.fromUTF8NeverFree(value);
+            }
+        }
+
+        if (this.headers) |headers| {
+            if (headers.fastGet(.ContentType)) |value| {
+                return value.toSlice(bun.default_allocator);
+            }
+        }
+
+        if (this.body == .Blob) {
+            if (this.body.Blob.content_type.len > 0)
+                return ZigString.Slice.fromUTF8NeverFree(this.body.Blob.content_type);
+        }
+
+        return null;
+    }
+
+    pub fn getFormDataEncoding(this: *Request) ?*bun.FormData.AsyncFormData {
+        var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+        defer content_type_slice.deinit();
+        const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
+        return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
+    }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -341,17 +372,21 @@ pub const Request = struct {
                     }).slice();
                     request.url_was_allocated = request.url.len > 0;
                 } else {
+                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
+                        request.headers = req_init.headers;
+                        request.method = req_init.method;
+                    }
+
                     if (urlOrObject.fastGet(globalThis, .body)) |body_| {
                         if (Body.Value.fromJS(globalThis, body_)) |body| {
                             request.body = body;
                         } else {
+                            if (request.headers) |head| {
+                                head.deref();
+                            }
+
                             return null;
                         }
-                    }
-
-                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
-                        request.headers = req_init.headers;
-                        request.method = req_init.method;
                     }
 
                     if (urlOrObject.fastGet(globalThis, .url)) |url| {
@@ -363,17 +398,21 @@ pub const Request = struct {
                 }
             },
             else => {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1], arguments[1].jsType()) catch null) |req_init| {
+                    request.headers = req_init.headers;
+                    request.method = req_init.method;
+                }
+
                 if (arguments[1].fastGet(globalThis, .body)) |body_| {
                     if (Body.Value.fromJS(globalThis, body_)) |body| {
                         request.body = body;
                     } else {
+                        if (request.headers) |head| {
+                            head.deref();
+                        }
+
                         return null;
                     }
-                }
-
-                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1], arguments[1].jsType()) catch null) |req_init| {
-                    request.headers = req_init.headers;
-                    request.method = req_init.method;
                 }
 
                 request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
@@ -381,6 +420,14 @@ pub const Request = struct {
                 }).slice();
                 request.url_was_allocated = request.url.len > 0;
             },
+        }
+
+        if (request.body == .Blob and
+            request.headers != null and
+            request.body.Blob.content_type.len > 0 and
+            !request.headers.?.fastHas(.ContentType))
+        {
+            request.headers.?.put("content-type", request.body.Blob.content_type);
         }
 
         return request;
@@ -423,6 +470,13 @@ pub const Request = struct {
                 this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
+
+                if (this.body == .Blob) {
+                    const content_type = this.body.Blob.content_type;
+                    if (content_type.len > 0) {
+                        this.headers.?.put("content-type", content_type);
+                    }
+                }
             }
         }
 

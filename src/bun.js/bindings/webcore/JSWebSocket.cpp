@@ -677,9 +677,9 @@ JSC::GCClient::IsoSubspace* JSWebSocket::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSWebSocket, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWebSocket = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForWebSocket.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWebSocket = std::forward<decltype(space)>(space); });
 }
 
 void JSWebSocket::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

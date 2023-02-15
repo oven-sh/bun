@@ -25,6 +25,16 @@ Object.assign(assert, {
   },
 });
 
+// https://github.com/oven-sh/bun/issues/2052
+it("Buffer global is settable", () => {
+  var prevBuffer = globalThis.Buffer;
+  globalThis.Buffer = 42;
+  expect(globalThis.Buffer).toBe(42);
+  globalThis.Buffer = prevBuffer;
+  expect(globalThis.Buffer).toBe(BufferModule.Buffer);
+  expect(globalThis.Buffer).toBe(prevBuffer);
+});
+
 it("Buffer.alloc", () => {
   // Verify the maximum Uint8Array size. There is no concrete limit by spec. The
   // internal limits should be updated if this fails.
@@ -2539,4 +2549,12 @@ it("should not perform out-of-bound access on invalid UTF-8 byte sequence", () =
   const str = buf.toString();
   expect(str.length).toBe(6);
   expect(str).toBe("\uFFFD\x13\x12\x11\x10\x09");
+});
+
+it("repro #2063", () => {
+  const buf = Buffer.from("eyJlbWFpbCI6Ijg3MTg4NDYxN0BxcS5jb20iLCJpZCI6OCwicm9sZSI6Im5vcm1hbCIsImlhdCI6MTY3NjI4NDQyMSwiZXhwIjoxNjc2ODg5MjIxfQ", 'base64');
+  expect(buf.length).toBe(85);
+  expect(buf[82]).toBe(50);
+  expect(buf[83]).toBe(49);
+  expect(buf[84]).toBe(125);
 });

@@ -18,6 +18,7 @@ test("exists", () => {
   expect(typeof TextEncoder !== "undefined").toBe(true);
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);
+  expect(typeof FormData !== "undefined").toBe(true);
 });
 
 test("CloseEvent", () => {

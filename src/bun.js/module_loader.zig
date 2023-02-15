@@ -212,7 +212,7 @@ pub const ModuleLoader = struct {
 
             const DeferredDependencyError = struct {
                 dependency: Dependency,
-                root_dependency_id: Install.PackageID,
+                root_dependency_id: Install.DependencyID,
                 err: anyerror,
             };
 
@@ -228,7 +228,7 @@ pub const ModuleLoader = struct {
                 _ = this.vm().packageManager().scheduleNetworkTasks();
             }
 
-            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.PackageID, err: anyerror) void {
+            pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
                 var this = bun.cast(*Queue, ctx);
                 debug("onDependencyError: {s}", .{this.vm().packageManager().lockfile.str(&dependency.name)});
 
@@ -236,7 +236,7 @@ pub const ModuleLoader = struct {
                 var i: usize = 0;
                 outer: for (modules) |module_| {
                     var module = module_;
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
                     for (root_dependency_ids) |dep, dep_i| {
                         if (dep != root_dependency_id) continue;
                         module.resolveError(
@@ -289,7 +289,7 @@ pub const ModuleLoader = struct {
                         *Queue,
                         this,
                         .{
-                            .onExtract = onExtract,
+                            .onExtract = {},
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
@@ -302,7 +302,7 @@ pub const ModuleLoader = struct {
                         *Queue,
                         this,
                         .{
-                            .onExtract = onExtract,
+                            .onExtract = {},
                             .onResolve = onResolve,
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
@@ -369,16 +369,18 @@ pub const ModuleLoader = struct {
             ) void {
                 debug("onPackageDownloadError: {s}", .{name});
 
+                const resolution_ids = this.vm().packageManager().lockfile.buffers.resolutions.items;
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
                 outer: for (modules) |module_| {
                     var module = module_;
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
-                    for (root_dependency_ids) |dep, dep_i| {
-                        if (this.vm().packageManager().dynamicRootDependencies().items[dep].resolution_id != package_id) continue;
+                    const record_ids = module.parse_result.pending_imports.items(.import_record_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    for (root_dependency_ids) |dependency_id, import_id| {
+                        if (resolution_ids[dependency_id] != package_id) continue;
                         module.downloadError(
                             this.vm(),
-                            module.parse_result.pending_imports.items(.import_record_id)[dep_i],
+                            record_ids[import_id],
                             .{
                                 .name = name,
                                 .resolution = resolution,
@@ -395,27 +397,6 @@ pub const ModuleLoader = struct {
                 this.map.items.len = i;
             }
 
-            pub fn onExtract(this: *Queue, package_id: Install.PackageID, _: Install.ExtractData, comptime _: PackageManager.Options.LogLevel) void {
-                if (comptime Environment.allow_assert) {
-                    const lockfile = this.vm().packageManager().lockfile;
-                    debug("onExtract: {s} ({d})", .{
-                        lockfile.str(&lockfile.packages.get(package_id).name),
-                        package_id,
-                    });
-                }
-                this.onPackageID(package_id);
-            }
-
-            pub fn onPackageID(this: *Queue, package_id: Install.PackageID) void {
-                var values = this.map.items;
-                for (values) |value| {
-                    var package_ids = value.parse_result.pending_imports.items(.resolution_id);
-
-                    _ = package_id;
-                    _ = package_ids;
-                }
-            }
-
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
                 if (pm.pending_tasks > 0) return;
@@ -426,16 +407,15 @@ pub const ModuleLoader = struct {
                 for (modules) |mod| {
                     var module = mod;
                     var tags = module.parse_result.pending_imports.items(.tag);
-                    var root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
+                    const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
                     // var esms = module.parse_result.pending_imports.items(.esm);
                     // var versions = module.parse_result.pending_imports.items(.dependency);
                     var done_count: usize = 0;
                     for (tags) |tag, tag_i| {
                         const root_id = root_dependency_ids[tag_i];
-                        if (root_id == Install.invalid_package_id) continue;
-                        const root_items = pm.dynamicRootDependencies().items;
-                        if (root_items.len <= root_id) continue;
-                        const package_id = root_items[root_id].resolution_id;
+                        const resolution_ids = pm.lockfile.buffers.resolutions.items;
+                        if (root_id >= resolution_ids.len) continue;
+                        const package_id = resolution_ids[root_id];
 
                         switch (tag) {
                             .resolve => {
@@ -1148,7 +1128,7 @@ pub const ModuleLoader = struct {
                     return resolved_source;
                 }
 
-                return ResolvedSource{
+                return .{
                     .allocator = null,
                     .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                     .specifier = ZigString.init(display_specifier),
@@ -1733,6 +1713,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:async_hooks" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "async_hooks.exports.js")),
+                        .specifier = ZigString.init("node:async_hooks"),
+                        .source_url = ZigString.init("node:async_hooks"),
+                        .hash = 0,
+                    };
+                },
 
                 .@"node:fs/promises" => {
                     return ResolvedSource{
@@ -2041,6 +2030,21 @@ pub const ModuleLoader = struct {
                     .hash = 0,
                 };
             }
+        } else if (DisabledModule.has(specifier)) {
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(
+                    \\const symbol = Symbol.for("CommonJS");
+                    \\const lazy = globalThis[Symbol.for("Bun.lazy")];
+                    \\var masqueradesAsUndefined = lazy("masqueradesAsUndefined");
+                    \\masqueradesAsUndefined[symbol] = 0;
+                    \\export default masqueradesAsUndefined;
+                    \\
+                ),
+                .specifier = ZigString.init(specifier),
+                .source_url = ZigString.init(specifier),
+                .hash = 0,
+            };
         }
 
         return null;
@@ -2136,6 +2140,7 @@ pub const HardcodedModule = enum {
     @"bun:sqlite",
     @"detect-libc",
     @"node:assert",
+    @"node:async_hooks",
     @"node:buffer",
     @"node:child_process",
     @"node:crypto",
@@ -2148,7 +2153,6 @@ pub const HardcodedModule = enum {
     @"node:https",
     @"node:module",
     @"node:net",
-    @"node:tls",
     @"node:os",
     @"node:path",
     @"node:path/posix",
@@ -2163,6 +2167,7 @@ pub const HardcodedModule = enum {
     @"node:string_decoder",
     @"node:timers",
     @"node:timers/promises",
+    @"node:tls",
     @"node:tty",
     @"node:url",
     @"node:util",
@@ -2188,6 +2193,7 @@ pub const HardcodedModule = enum {
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
+            .{ "node:async_hooks", HardcodedModule.@"node:async_hooks" },
             .{ "node:child_process", HardcodedModule.@"node:child_process" },
             .{ "node:crypto", HardcodedModule.@"node:crypto" },
             .{ "node:dns", HardcodedModule.@"node:dns" },
@@ -2224,92 +2230,103 @@ pub const HardcodedModule = enum {
             .{ "ws", HardcodedModule.ws },
         },
     );
+    pub const Alias = struct {
+        path: string,
+        tag: ImportRecord.Tag = ImportRecord.Tag.hardcoded,
+    };
     pub const Aliases = bun.ComptimeStringMap(
-        string,
+        Alias,
         .{
-            .{ "assert", "node:assert" },
-            .{ "buffer", "node:buffer" },
-            .{ "bun", "bun" },
-            .{ "bun:ffi", "bun:ffi" },
-            .{ "bun:jsc", "bun:jsc" },
-            .{ "bun:sqlite", "bun:sqlite" },
-            .{ "bun:wrap", "bun:wrap" },
-            .{ "child_process", "node:child_process" },
-            .{ "crypto", "node:crypto" },
-            .{ "depd", "depd" },
-            .{ "detect-libc", "detect-libc" },
-            .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
-            .{ "dns", "node:dns" },
-            .{ "dns/promises", "node:dns/promises" },
-            .{ "events", "node:events" },
-            .{ "ffi", "bun:ffi" },
-            .{ "fs", "node:fs" },
-            .{ "fs/promises", "node:fs/promises" },
-            .{ "http", "node:http" },
-            .{ "https", "node:https" },
-            .{ "module", "node:module" },
-            .{ "net", "node:net" },
-            .{ "node:assert", "node:assert" },
-            .{ "node:buffer", "node:buffer" },
-            .{ "node:child_process", "node:child_process" },
-            .{ "node:crypto", "node:crypto" },
-            .{ "node:dns", "node:dns" },
-            .{ "node:dns/promises", "node:dns/promises" },
-            .{ "node:events", "node:events" },
-            .{ "node:fs", "node:fs" },
-            .{ "node:fs/promises", "node:fs/promises" },
-            .{ "node:http", "node:http" },
-            .{ "node:https", "node:https" },
-            .{ "node:module", "node:module" },
-            .{ "node:net", "node:net" },
-            .{ "node:os", "node:os" },
-            .{ "node:path", "node:path" },
-            .{ "node:path/posix", "node:path/posix" },
-            .{ "node:path/win32", "node:path/win32" },
-            .{ "node:perf_hooks", "node:perf_hooks" },
-            .{ "node:process", "node:process" },
-            .{ "node:readline", "node:readline" },
-            .{ "node:readline/promises", "node:readline/promises" },
-            .{ "node:stream", "node:stream" },
-            .{ "node:stream/consumers", "node:stream/consumers" },
-            .{ "node:stream/web", "node:stream/web" },
-            .{ "node:string_decoder", "node:string_decoder" },
-            .{ "node:timers", "node:timers" },
-            .{ "node:timers/promises", "node:timers/promises" },
-            .{ "node:tls", "node:tls" },
-            .{ "node:tty", "node:tty" },
-            .{ "node:url", "node:url" },
-            .{ "node:util", "node:util" },
-            .{ "node:util/types", "node:util/types" },
-            .{ "node:wasi", "node:wasi" },
-            .{ "node:zlib", "node:zlib" },
-            .{ "os", "node:os" },
-            .{ "path", "node:path" },
-            .{ "path/posix", "node:path/posix" },
-            .{ "path/win32", "node:path/win32" },
-            .{ "perf_hooks", "node:perf_hooks" },
-            .{ "process", "node:process" },
-            .{ "readable-stream", "node:stream" },
-            .{ "readable-stream/consumer", "node:stream/consumers" },
-            .{ "readable-stream/web", "node:stream/web" },
-            .{ "readline", "node:readline" },
-            .{ "readline/promises", "node:readline/promises" },
-            .{ "stream", "node:stream" },
-            .{ "stream/consumers", "node:stream/consumers" },
-            .{ "stream/web", "node:stream/web" },
-            .{ "string_decoder", "node:string_decoder" },
-            .{ "timers", "node:timers" },
-            .{ "timers/promises", "node:timers/promises" },
-            .{ "tls", "node:tls" },
-            .{ "tty", "node:tty" },
-            .{ "undici", "undici" },
-            .{ "url", "node:url" },
-            .{ "util", "node:util" },
-            .{ "util/types", "node:util/types" },
-            .{ "wasi", "node:wasi" },
-            .{ "ws", "ws" },
-            .{ "ws/lib/websocket", "ws" },
-            .{ "zlib", "node:zlib" },
+            .{ "assert", .{ .path = "node:assert" } },
+            .{ "async_hooks", .{ .path = "node:async_hooks" } },
+            .{ "buffer", .{ .path = "node:buffer" } },
+            .{ "bun:ffi", .{ .path = "bun:ffi" } },
+            .{ "bun:jsc", .{ .path = "bun:jsc" } },
+            .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:wrap", .{ .path = "bun:wrap" } },
+            .{ "bun", .{ .path = "bun", .tag = .bun } },
+            .{ "child_process", .{ .path = "node:child_process" } },
+            .{ "crypto", .{ .path = "node:crypto" } },
+            .{ "depd", .{ .path = "depd" } },
+            .{ "detect-libc", .{ .path = "detect-libc" } },
+            .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
+            .{ "dns", .{ .path = "node:dns" } },
+            .{ "dns/promises", .{ .path = "node:dns/promises" } },
+            .{ "events", .{ .path = "node:events" } },
+            .{ "ffi", .{ .path = "bun:ffi" } },
+            .{ "fs", .{ .path = "node:fs" } },
+            .{ "fs/promises", .{ .path = "node:fs/promises" } },
+            .{ "http", .{ .path = "node:http" } },
+            .{ "https", .{ .path = "node:https" } },
+            .{ "module", .{ .path = "node:module" } },
+            .{ "net", .{ .path = "node:net" } },
+            .{ "node:assert", .{ .path = "node:assert" } },
+            .{ "node:async_hooks", .{ .path = "node:async_hooks" } },
+            .{ "node:buffer", .{ .path = "node:buffer" } },
+            .{ "node:child_process", .{ .path = "node:child_process" } },
+            .{ "node:crypto", .{ .path = "node:crypto" } },
+            .{ "node:dns", .{ .path = "node:dns" } },
+            .{ "node:dns/promises", .{ .path = "node:dns/promises" } },
+            .{ "node:events", .{ .path = "node:events" } },
+            .{ "node:fs", .{ .path = "node:fs" } },
+            .{ "node:fs/promises", .{ .path = "node:fs/promises" } },
+            .{ "node:http", .{ .path = "node:http" } },
+            .{ "node:https", .{ .path = "node:https" } },
+            .{ "node:module", .{ .path = "node:module" } },
+            .{ "node:net", .{ .path = "node:net" } },
+            .{ "node:os", .{ .path = "node:os" } },
+            .{ "node:path", .{ .path = "node:path" } },
+            .{ "node:path/posix", .{ .path = "node:path/posix" } },
+            .{ "node:path/win32", .{ .path = "node:path/win32" } },
+            .{ "node:perf_hooks", .{ .path = "node:perf_hooks" } },
+            .{ "node:process", .{ .path = "node:process" } },
+            .{ "node:readline", .{ .path = "node:readline" } },
+            .{ "node:readline/promises", .{ .path = "node:readline/promises" } },
+            .{ "node:stream", .{ .path = "node:stream" } },
+            .{ "node:stream/consumers", .{ .path = "node:stream/consumers" } },
+            .{ "node:stream/web", .{ .path = "node:stream/web" } },
+            .{ "node:string_decoder", .{ .path = "node:string_decoder" } },
+            .{ "node:timers", .{ .path = "node:timers" } },
+            .{ "node:timers/promises", .{ .path = "node:timers/promises" } },
+            .{ "node:tls", .{ .path = "node:tls" } },
+            .{ "node:tty", .{ .path = "node:tty" } },
+            .{ "node:url", .{ .path = "node:url" } },
+            .{ "node:util", .{ .path = "node:util" } },
+            .{ "node:util/types", .{ .path = "node:util/types" } },
+            .{ "node:wasi", .{ .path = "node:wasi" } },
+            .{ "node:worker_threads", .{ .path = "node:worker_threads" } },
+            .{ "node:zlib", .{ .path = "node:zlib" } },
+            .{ "os", .{ .path = "node:os" } },
+            .{ "path", .{ .path = "node:path" } },
+            .{ "path/posix", .{ .path = "node:path/posix" } },
+            .{ "path/win32", .{ .path = "node:path/win32" } },
+            .{ "perf_hooks", .{ .path = "node:perf_hooks" } },
+            .{ "process", .{ .path = "node:process" } },
+            .{ "readable-stream", .{ .path = "node:stream" } },
+            .{ "readable-stream/consumer", .{ .path = "node:stream/consumers" } },
+            .{ "readable-stream/web", .{ .path = "node:stream/web" } },
+            .{ "readline", .{ .path = "node:readline" } },
+            .{ "readline/promises", .{ .path = "node:readline/promises" } },
+            .{ "stream", .{ .path = "node:stream" } },
+            .{ "stream/consumers", .{ .path = "node:stream/consumers" } },
+            .{ "stream/web", .{ .path = "node:stream/web" } },
+            .{ "string_decoder", .{ .path = "node:string_decoder" } },
+            .{ "timers", .{ .path = "node:timers" } },
+            .{ "timers/promises", .{ .path = "node:timers/promises" } },
+            .{ "tls", .{ .path = "node:tls" } },
+            .{ "tty", .{ .path = "node:tty" } },
+            .{ "undici", .{ .path = "undici" } },
+            .{ "url", .{ .path = "node:url" } },
+            .{ "util", .{ .path = "node:util" } },
+            .{ "util/types", .{ .path = "node:util/types" } },
+            .{ "wasi", .{ .path = "node:wasi" } },
+            .{ "worker_threads", .{ .path = "node:worker_threads" } },
+            .{ "ws", .{ .path = "ws" } },
+            .{ "ws/lib/websocket", .{ .path = "ws" } },
+            .{ "zlib", .{ .path = "node:zlib" } },
+
+            // // Prisma has an edge build, but has not set it in package.json exports
+            // .{ "@prisma/client", .{ .path = "@prisma/client/edge", .tag = .none } },
         },
     );
 };
@@ -2317,6 +2334,8 @@ pub const HardcodedModule = enum {
 pub const DisabledModule = bun.ComptimeStringMap(
     void,
     .{
+        .{"async_hooks"},
+        .{"node:async_hooks"},
         .{"node:tls"},
         .{"node:worker_threads"},
         .{"tls"},

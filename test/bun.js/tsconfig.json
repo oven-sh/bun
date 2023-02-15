@@ -3,7 +3,8 @@
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
     "paths": {
-      "foo/bar": ["baz.js"]
+      "foo/bar": ["baz.js"],
+      "@faasjs/*": ["*.js"]
     },
     "baseUrl": "."
   },

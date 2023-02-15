@@ -987,6 +987,9 @@ pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@boolToInt(ssl), this);
     }
+    pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
+        return us_socket_local_port(@boolToInt(ssl), this);
+    }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
 extern fn uws_app_close(ssl: i32, app: *uws_app_s) void;
@@ -1057,6 +1060,12 @@ pub fn NewApp(comptime ssl: bool) type {
                     unreachable;
                 }
                 return us_listen_socket_close(ssl_flag, @ptrCast(*uws.ListenSocket, this));
+            }
+            pub inline fn getLocalPort(this: *ThisApp.ListenSocket) i32 {
+                if (comptime is_bindgen) {
+                    unreachable;
+                }
+                return us_socket_local_port(ssl_flag, @ptrCast(*uws.Socket, this));
             }
         };
 

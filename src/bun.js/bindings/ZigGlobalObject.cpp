@@ -167,6 +167,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 
+#include "JSDOMFormData.h"
+
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -575,7 +577,7 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
+JSC_DEFINE_CUSTOM_GETTER(JSBuffer_privateGetter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
@@ -583,6 +585,9 @@ JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     return JSC::JSValue::encode(
         thisObject->JSBufferConstructor());
 }
+
+GENERATED_CONSTRUCTOR_GETTER(JSBuffer);
+GENERATED_CONSTRUCTOR_SETTER(JSBuffer);
 
 GENERATED_CONSTRUCTOR_GETTER(JSTextDecoder);
 GENERATED_CONSTRUCTOR_SETTER(JSTextDecoder);
@@ -610,6 +615,9 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSTextEncoder);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSURLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSURLSearchParams);
+
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMFormData);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMFormData);
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
@@ -1129,6 +1137,15 @@ enum ReadableStreamTag : int32_t {
     Bytes = 4,
 };
 
+JSC_DEFINE_HOST_FUNCTION(functionCallNotImplemented,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwTypeError(globalObject, scope, "Not implemented yet in Bun :("_s);
+    return JSC::JSValue::encode(JSC::JSValue {});
+}
+
 // we're trying out a new way to do this lazy loading
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1148,6 +1165,7 @@ JSC:
         static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
+        static NeverDestroyed<const String> masqueradesAsUndefined(MAKE_STATIC_STRING_IMPL("masqueradesAsUndefined"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -1225,6 +1243,10 @@ JSC:
         if (string == createImportMeta) {
             Zig::ImportMetaObject* obj = Zig::ImportMetaObject::create(globalObject, callFrame->argument(1));
             return JSValue::encode(obj);
+        }
+
+        if (string == masqueradesAsUndefined) {
+            return JSValue::encode(InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 0, String(), functionCallNotImplemented));
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -3221,14 +3243,17 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr);
+    auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, JSBuffer_setter);
+    auto realBufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_privateGetter, nullptr);
 
+    //
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPublicName(), bufferAccessor,
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), bufferAccessor,
+        JSC::PropertyAttribute::DontDelete | 0);
+    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), realBufferAccessor,
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("FormData"_s, JSDOMFormData);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageEvent"_s, JSMessageEvent);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
@@ -3547,6 +3572,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSFetchHeadersSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
+    visitor.append(thisObject->m_JSDOMFormDataSetterValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

@@ -624,7 +624,7 @@ fn NewLexer_(
 
                         switch (lexer.code_point) {
                             // 0 cannot be in this list because it may be a legacy octal literal
-                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
+                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', '\\', 0x2028, 0x2029 => {
                                 lexer.step();
 
                                 continue :stringLiteral;

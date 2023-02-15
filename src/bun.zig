@@ -774,6 +774,7 @@ pub fn zero(comptime Type: type) Type {
 }
 pub const c_ares = @import("./deps/c_ares.zig");
 pub const URL = @import("./url.zig").URL;
+pub const FormData = @import("./url.zig").FormData;
 
 var needs_proc_self_workaround: bool = false;
 
@@ -944,3 +945,5 @@ pub fn cstring(input: []const u8) [:0]const u8 {
     }
     return @ptrCast([*:0]const u8, input.ptr)[0..input.len :0];
 }
+
+pub const Semver = @import("./install/semver.zig");

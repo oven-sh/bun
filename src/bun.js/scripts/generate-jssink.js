@@ -1,11 +1,6 @@
 import { resolve } from "path";
 
-const classes = [
-  "ArrayBufferSink",
-  "FileSink",
-  "HTTPResponseSink",
-  "HTTPSResponseSink",
-];
+const classes = ["ArrayBufferSink", "FileSink", "HTTPResponseSink", "HTTPSResponseSink"];
 const SINK_COUNT = 5;
 
 function names(name) {
@@ -22,8 +17,7 @@ function names(name) {
 }
 function header() {
   function classTemplate(name) {
-    const { constructor, className, controller, writableStreamName } =
-      names(name);
+    const { constructor, className, controller, writableStreamName } = names(name);
 
     return `class ${constructor} final : public JSC::InternalFunction {                                                                                                     
         public:                                                                                                                                                                     
@@ -42,9 +36,9 @@ function header() {
                 return WebCore::subspaceForImpl<${constructor}, WebCore::UseCustomHeapCellType::No>(                                                                    
                     vm,                                                                                                                                                             
                     [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },                                                                                 
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },                                                               
+                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = std::forward<decltype(space)>(space); },                                                               
                     [](auto& spaces) { return spaces.m_subspaceForJSSinkConstructor.get(); },                                                                                       
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = WTFMove(space); });                                                                    
+                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkConstructor = std::forward<decltype(space)>(space); });                                                                    
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)                                                          
@@ -81,9 +75,9 @@ function header() {
                 return WebCore::subspaceForImpl<${className}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                     vm,                                                                                                                                                             
                     [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },                                                                                            
-                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },                                                                          
+                    [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = std::forward<decltype(space)>(space); },                                                                          
                     [](auto& spaces) { return spaces.m_subspaceForJSSink.get(); },                                                                                                  
-                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = WTFMove(space); });                                                                               
+                    [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSink = std::forward<decltype(space)>(space); });                                                                               
             }                                                                                                                                                                       
                                                                                                                                                                                     
             static void destroy(JSC::JSCell*);                                                                                                                                      
@@ -137,9 +131,9 @@ function header() {
                     return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                         vm,                                                                                                                                                             
                         [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },                                                                                            
-                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },                                                                          
+                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },                                                                          
                         [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },                                                                                                  
-                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = WTFMove(space); });                                                                               
+                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });                                                                               
                 }                                                                                                                                                                       
                                                                                                                                                                                         
                 static void destroy(JSC::JSCell*);                                                                                                                                      
@@ -312,13 +306,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
   var isFirst = true;
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerPrototypeName,
-      constructor,
-    } = names(name);
+    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
 
     templ += `
 
@@ -507,48 +495,24 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     templ += `
 /* Source for JS${name}PrototypeTableValues.lut.h
 @begin JS${name}PrototypeTable
-  close      ${`${name}__doClose`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 0
-  flush      ${`${name}__flush`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 1
-  end        ${`${name}__end`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 0
-  start      ${`${name}__start`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 1
-  write      ${`${name}__write`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 1
-  ref        ${`${name}__ref`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 0
-  unref      ${`${name}__unref`.padEnd(
-    padding + 8,
-  )} ReadOnly|DontDelete|Function 0
+  close      ${`${name}__doClose`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+  flush      ${`${name}__flush`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+  end        ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+  start      ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+  write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+  ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+  unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
 @end
 */
 
 
 /* Source for ${controllerPrototypeName}TableValues.lut.h
 @begin ${controllerPrototypeName}Table
-  close        ${`${controller}__close`.padEnd(
-    protopad + 4,
-  )}  ReadOnly|DontDelete|Function 0
-  flush        ${`${name}__flush`.padEnd(
-    protopad + 4,
-  )}  ReadOnly|DontDelete|Function 1
-  end          ${`${controller}__end`.padEnd(
-    protopad + 4,
-  )}  ReadOnly|DontDelete|Function 0
-  start        ${`${name}__start`.padEnd(
-    protopad + 4,
-  )}  ReadOnly|DontDelete|Function 1
-  write        ${`${name}__write`.padEnd(
-    protopad + 4,
-  )}  ReadOnly|DontDelete|Function 1
+  close        ${`${controller}__close`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
+  flush        ${`${name}__flush`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+  end          ${`${controller}__end`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
+  start        ${`${name}__start`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+  write        ${`${name}__write`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
 @end
 */
 
@@ -561,14 +525,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 `;
 
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerPrototypeName,
-      constructor,
-      controllerName,
-    } = names(name);
+    const { className, controller, prototypeName, controllerPrototypeName, constructor, controllerName } = names(name);
     templ += `
 #pragma mark - ${name}
 
@@ -892,13 +849,7 @@ default:
   templ += footer;
 
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerPrototypeName,
-      constructor,
-    } = names(name);
+    const { className, controller, prototypeName, controllerPrototypeName, constructor } = names(name);
 
     templ += `
 extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
@@ -995,7 +946,4 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
 }
 
 await Bun.write(resolve(import.meta.dir + "/../bindings/JSSink.h"), header());
-await Bun.write(
-  resolve(import.meta.dir + "/../bindings/JSSink.cpp"),
-  await implementation(),
-);
+await Bun.write(resolve(import.meta.dir + "/../bindings/JSSink.cpp"), await implementation());

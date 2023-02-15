@@ -1819,7 +1819,7 @@ pub const Resolver = struct {
     }
     fn dirInfoForResolution(
         r: *ThisResolver,
-        dir_path: []const u8,
+        dir_path: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
         std.debug.assert(r.package_manager != null);
@@ -1833,7 +1833,7 @@ pub const Resolver = struct {
         var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
-        var needs_iter: bool = true;
+        var needs_iter = true;
         var open_dir = std.fs.cwd().openIterableDir(dir_path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => unreachable,
@@ -1855,7 +1855,9 @@ pub const Resolver = struct {
         if (needs_iter) {
             const allocator = r.fs.allocator;
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
-                .entries = Fs.FileSystem.DirEntry.init(dir_path),
+                .entries = Fs.FileSystem.DirEntry.init(
+                    Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                ),
             }) catch unreachable;
 
             if (FeatureFlags.store_file_descriptors) {
@@ -1870,7 +1872,7 @@ pub const Resolver = struct {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        var dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, DirInfo{}) catch unreachable;
+        var dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
 
         try r.dirInfoUncached(
             dir_info_ptr,
@@ -1979,7 +1981,6 @@ pub const Resolver = struct {
                         .pending = .{
                             .esm = cloned,
                             .dependency = version,
-                            .resolution_id = Install.invalid_package_id,
                             .root_dependency_id = id,
                             .string_buf = builder.allocatedSlice(),
                             .tag = .resolve,

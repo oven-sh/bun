@@ -289,6 +289,8 @@ export class Server extends EventEmitter {
       }
       this.emit("error", err);
     }
+
+    return this;
   }
 }
 

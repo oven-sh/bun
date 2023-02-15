@@ -889,15 +889,13 @@ pub const Printer = struct {
                         try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                     }
                 }
-                Global.exit(1);
-                return;
+                Global.crash();
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
                     std.mem.span(lockfile_path),
                 });
-                Global.exit(1);
-                return;
+                Global.crash();
             },
 
             .ok => {},
@@ -1372,9 +1370,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
         }
     }
 
-    if (any_failed) {
-        Global.exit(1);
-    }
+    if (any_failed) Global.crash();
 }
 
 pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
@@ -2281,19 +2277,19 @@ pub const Package = extern struct {
     }
 
     pub fn parseMain(
-        lockfile: *Lockfile,
         package: *Lockfile.Package,
+        lockfile: *Lockfile,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime features: Features,
     ) !void {
-        return parse(lockfile, package, allocator, log, source, void, void{}, features);
+        return package.parse(lockfile, allocator, log, source, void, void{}, features);
     }
 
     pub fn parse(
-        lockfile: *Lockfile,
         package: *Lockfile.Package,
+        lockfile: *Lockfile,
         allocator: std.mem.Allocator,
         log: *logger.Log,
         source: logger.Source,
@@ -2303,10 +2299,7 @@ pub const Package = extern struct {
     ) !void {
         initializeStore();
 
-        // A valid package.json always has "{}" characters
-        if (source.contents.len < 2) return error.InvalidPackageJSON;
-
-        var json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
+        const json = json_parser.ParseJSONUTF8(&source, log, allocator) catch |err| {
             if (Output.enable_ansi_colors) {
                 log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -2314,11 +2307,10 @@ pub const Package = extern struct {
             }
 
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-            Global.exit(1);
+            Global.crash();
         };
 
-        try parseWithJSON(
-            package,
+        try package.parseWithJSON(
             lockfile,
             allocator,
             log,
@@ -2398,7 +2390,12 @@ pub const Package = extern struct {
                 );
                 dependency_version.value.workspace = path;
                 var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(u32, external_name.hash));
-                if (workspace_entry.found_existing) return error.@"Workspace name already exists";
+                if (workspace_entry.found_existing) {
+                    log.addErrorFmt(&source, key.loc, allocator, "Workspace name \"{s}\" already exists", .{
+                        external_name.slice(buf),
+                    }) catch {};
+                    return error.InstallFailed;
+                }
                 workspace_entry.value_ptr.* = path;
             },
             else => {},
@@ -2593,6 +2590,15 @@ pub const Package = extern struct {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
                     .e_array => |arr| {
+                        if (!group.behavior.isWorkspace()) {
+                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                                \\{0s} expects a map of specifiers, e.g.
+                                \\"{0s}": {{
+                                \\  "bun": "latest"
+                                \\}}
+                            , .{group.prop}) catch {};
+                            return error.InvalidPackageJSON;
+                        }
                         if (arr.items.len == 0) break :brk;
 
                         workspace_names = try allocator.alloc(string, arr.items.len);
@@ -2604,7 +2610,15 @@ pub const Package = extern struct {
 
                         for (arr.slice()) |item, i| {
                             defer fallback.fixed_buffer_allocator.reset();
-                            const path = item.asString(allocator) orelse return error.InvalidPackageJSON;
+                            const path = item.asString(allocator) orelse {
+                                log.addErrorFmt(&source, item.loc, allocator,
+                                    \\Workspaces expects an array of strings, e.g.
+                                    \\"workspaces": [
+                                    \\  "path/to/package"
+                                    \\]
+                                , .{}) catch {};
+                                return error.InvalidPackageJSON;
+                            };
 
                             var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
                                 if (err == error.FileNotFound) {
@@ -2661,7 +2675,17 @@ pub const Package = extern struct {
                             var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
 
                             _ = try workspace_json.parseExpr();
-                            if (!workspace_json.has_found_name) return error.InvalidPackageJSON;
+                            if (!workspace_json.has_found_name) {
+                                log.addErrorFmt(
+                                    &source,
+                                    dependencies_q.loc,
+                                    allocator,
+                                    "Missing \"name\" from package.json in {s}",
+                                    .{workspace_source.path.text},
+                                ) catch {};
+                                // report errors for multiple workspaces
+                                continue;
+                            }
 
                             const workspace_name = workspace_json.found_name;
 
@@ -2671,15 +2695,38 @@ pub const Package = extern struct {
                             workspace_names[i] = try allocator.dupe(u8, workspace_name);
                         }
 
-                        if (orig_msgs_len != log.msgs.items.len) {
-                            return error.InstallFailed;
-                        }
+                        if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
                         total_dependencies_count += @truncate(u32, arr.items.len);
                     },
                     .e_object => |obj| {
+                        if (group.behavior.isWorkspace()) {
+                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                                \\Workspaces expects an array of strings, e.g.
+                                \\"workspaces": [
+                                \\  "path/to/package"
+                                \\]
+                            , .{}) catch {};
+                            return error.InvalidPackageJSON;
+                        }
                         for (obj.properties.slice()) |item| {
-                            const key = item.key.?.asString(allocator) orelse return error.InvalidPackageJSON;
-                            const value = item.value.?.asString(allocator) orelse return error.InvalidPackageJSON;
+                            const key = item.key.?.asString(allocator) orelse {
+                                log.addErrorFmt(&source, item.key.?.loc, allocator,
+                                    \\{0s} expects a map of specifiers, e.g.
+                                    \\"{0s}": {{
+                                    \\  "bun": "latest"
+                                    \\}}
+                                , .{group.prop}) catch {};
+                                return error.InvalidPackageJSON;
+                            };
+                            const value = item.value.?.asString(allocator) orelse {
+                                log.addErrorFmt(&source, item.value.?.loc, allocator,
+                                    \\{0s} expects a map of specifiers, e.g.
+                                    \\"{0s}": {{
+                                    \\  "bun": "latest"
+                                    \\}}
+                                , .{group.prop}) catch {};
+                                return error.InvalidPackageJSON;
+                            };
 
                             string_builder.count(key);
                             string_builder.count(value);
@@ -2691,7 +2738,24 @@ pub const Package = extern struct {
                         }
                         total_dependencies_count += @truncate(u32, obj.properties.len);
                     },
-                    else => {},
+                    else => {
+                        if (group.behavior.isWorkspace()) {
+                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                                \\Workspaces expects an array of strings, e.g.
+                                \\"workspaces": [
+                                \\  "path/to/package"
+                                \\]
+                            , .{}) catch {};
+                        } else {
+                            log.addErrorFmt(&source, dependencies_q.loc, allocator,
+                                \\{0s} expects a map of specifiers, e.g.
+                                \\"{0s}": {{
+                                \\  "bun": "latest"
+                                \\}}
+                            , .{group.prop}) catch {};
+                        }
+                        return error.InvalidPackageJSON;
+                    },
                 }
             }
         }
@@ -2701,7 +2765,7 @@ pub const Package = extern struct {
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
 
         const total_len = lockfile.buffers.dependencies.items.len + total_dependencies_count;
-        std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+        if (Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
         const off = lockfile.buffers.dependencies.items.len;
 
         var package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
@@ -2899,7 +2963,7 @@ pub const Package = extern struct {
                             }
                         }
                     },
-                    else => {},
+                    else => unreachable,
                 }
             }
         }

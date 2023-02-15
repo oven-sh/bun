@@ -3782,3 +3782,49 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
 
     return reinterpret_cast<JSC__AbortSignal*>(&object->wrapped());
 }
+
+extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* message, const ZigString* arg1,
+    JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    ZigString code = *arg1;
+    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+    static const char* error_name = "AbortError";
+
+    error->putDirect(
+        vm, vm.propertyNames->name,
+        JSC::JSValue(JSC::jsOwnedString(
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying(error_name, 10)))),
+        0);
+
+    if (code.len > 0) {
+        auto clientData = WebCore::clientData(vm);
+        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
+    }
+
+    return JSC::JSValue::encode(error);
+}
+
+extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* message, const ZigString* arg1,
+    JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    ZigString code = *arg1;
+    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+    static const char* error_name = "TimeoutError";
+
+    error->putDirect(
+        vm, vm.propertyNames->name,
+        JSC::JSValue(JSC::jsOwnedString(
+            vm, WTF::String(WTF::StringImpl::createWithoutCopying(error_name, 12)))),
+        0);
+
+    if (code.len > 0) {
+        auto clientData = WebCore::clientData(vm);
+        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
+    }
+
+    return JSC::JSValue::encode(error);
+}

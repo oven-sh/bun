@@ -644,6 +644,9 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            if (this.result.exception) |exception| {
+                return exception;
+            }
             const fetch_error = JSC.SystemError{
                 .code = ZigString.init(@errorName(this.result.fail)),
                 .message = ZigString.init("fetch() failed"),
@@ -756,7 +759,7 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "", signal: ?JSC.Strong = null, globalThis: ?*JSGlobalObject };
+        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "", signal: ?*JSC.AbortSignal = null, globalThis: ?*JSGlobalObject };
 
         pub fn queue(
             allocator: std.mem.Allocator,
@@ -818,7 +821,7 @@ pub const Fetch = struct {
         var verbose = false;
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
-        var signal: ?JSC.Strong = null;
+        var signal: ?*JSC.AbortSignal = null;
 
         var url_proxy_buffer: []const u8 = undefined;
 
@@ -887,8 +890,9 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |_| {
-                            signal = JSC.Strong.create(signal_arg, globalThis);
+                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                            _ = signal_.ref();
+                            signal = signal_;
                         }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {
@@ -1003,8 +1007,9 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |_| {
-                            signal = JSC.Strong.create(signal_arg, globalThis);
+                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                            _ = signal_.ref();
+                            signal = signal_;
                         }
                     }
                     if (options.get(globalThis, "proxy")) |proxy_arg| {

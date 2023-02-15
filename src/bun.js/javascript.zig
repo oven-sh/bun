@@ -1160,7 +1160,21 @@ pub const VirtualMachine = struct {
         }
 
         if (JSC.HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
-            res.* = ErrorableZigString.ok(ZigString.init(hardcoded));
+            if (hardcoded.tag == .none) {
+                resolveMaybeNeedsTrailingSlash(
+                    res,
+                    global,
+                    ZigString.init(hardcoded.path),
+                    source,
+                    query_string,
+                    is_esm,
+                    is_a_file_path,
+                    realpath,
+                );
+                return;
+            }
+
+            res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
             return;
         }
         var old_log = jsc_vm.log;

@@ -336,7 +336,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed => {
+        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
@@ -349,7 +349,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
@@ -368,7 +368,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
                     \\  <cyan>sudo sysctl -p<r>
                     \\  <cyan>ulimit -n 2147483646<r>
@@ -410,7 +410,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                     \\You may also need to run:
@@ -430,7 +430,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                     \\That will only work for the current shell. To fix this for the entire system, run:
@@ -474,7 +474,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                 ,

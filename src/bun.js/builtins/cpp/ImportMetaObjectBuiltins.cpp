@@ -168,7 +168,7 @@ const char* const s_importMetaObjectLoadCJS2ESMCode =
 const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireESMCodeLength = 626;
+const int s_importMetaObjectRequireESMCodeLength = 616;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectRequireESMCode =
     "(function (resolved) {\n" \
@@ -184,7 +184,7 @@ const char* const s_importMetaObjectRequireESMCode =
     "  }\n" \
     "  var exports = @Loader.getModuleNamespaceObject(entry.module);\n" \
     "  var commonJS = exports.default;\n" \
-    "  var cjs = commonJS && commonJS[@commonJSSymbol];\n" \
+    "  var cjs = commonJS?.[@commonJSSymbol];\n" \
     "  if (cjs === 0) {\n" \
     "    return commonJS;\n" \
     "  } else if (cjs && @isCallable(commonJS)) {\n" \

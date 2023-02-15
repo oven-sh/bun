@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2017 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,34 +23,54 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#include "config.h"
+#include "CommonCryptoDERUtilities.h"
 
 #if ENABLE(WEB_CRYPTO)
 
 namespace WebCore {
 
-enum class CryptoAlgorithmIdentifier {
-    RSAES_PKCS1_v1_5 = 1,
-    RSASSA_PKCS1_v1_5,
-    RSA_PSS,
-    RSA_OAEP,
-    ECDSA,
-    ECDH,
-    AES_CTR,
-    AES_CBC,
-    AES_GCM,
-    AES_CFB,
-    AES_KW,
-    HMAC,
-    SHA_1,
-    SHA_224,
-    SHA_256,
-    SHA_384,
-    SHA_512,
-    HKDF,
-    PBKDF2,
-    Ed25519
-};
+size_t bytesUsedToEncodedLength(uint8_t octet)
+{
+    if (octet < MaxLengthInOneByte)
+        return 1;
+    return octet - MaxLengthInOneByte + 1;
+}
+
+size_t extraBytesNeededForEncodedLength(size_t length)
+{
+    if (!length)
+        return 0;
+    size_t result = 1;
+    while (result < sizeof(length) && length >= (1 << (result * 8)))
+        result += 1;
+    return result;
+}
+
+void addEncodedASN1Length(Vector<uint8_t>& in, size_t length)
+{
+    if (length < MaxLengthInOneByte) {
+        in.append(length);
+        return;
+    }
+
+    size_t extraBytes = extraBytesNeededForEncodedLength(length);
+    in.append(128 + extraBytes); // 128 is used to set the first bit of this byte.
+
+    size_t lastPosition = in.size() + extraBytes - 1;
+    in.grow(in.size() + extraBytes);
+    for (size_t i = 0; i < extraBytes; i++) {
+        in[lastPosition - i] = length & 0xff;
+        length = length >> 8;
+    }
+}
+
+size_t bytesNeededForEncodedLength(size_t length)
+{
+    if (length < MaxLengthInOneByte)
+        return 1;
+    return 1 + extraBytesNeededForEncodedLength(length);
+}
 
 } // namespace WebCore
 

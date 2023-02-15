@@ -995,14 +995,7 @@ proxy_tunnel: ?ProxyTunnel = null,
 signal: ?*JSC.AbortSignal = null,
 abort_handler: ?*anyopaque = null,
 abort_handler_deinit: ?*const fn (?*anyopaque) void = null,
-pub fn init(
-    allocator: std.mem.Allocator,
-    method: Method,
-    url: URL,
-    header_entries: Headers.Entries,
-    header_buf: string,
-    signal: ?*JSC.AbortSignal
-) HTTPClient {
+pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*JSC.AbortSignal) HTTPClient {
     return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .abort_handler = null, .abort_handler_deinit = null };
 }
 
@@ -1017,12 +1010,13 @@ pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
             ctx.socket = socket;
             return ctx;
         }
-        
+
         pub fn onAborted(this: ?*anyopaque, reason: JSC.JSValue) callconv(.C) void {
             log("onAborted", .{});
             if (this) |this_| {
                 const self = bun.cast(*@This(), this_);
                 self.client.closeAndAbort(reason, is_ssl, self.socket);
+                
             }
         }
 

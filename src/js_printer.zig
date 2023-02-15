@@ -1713,6 +1713,28 @@ pub fn NewPrinter(
                         wrap = true;
                     }
 
+                    const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
+
+                    if (is_unbound_eval) {
+                        if (e.args.len == 1 and e.args.ptr[0].data == .e_string and is_bun_platform) {
+                            // prisma:
+                            //
+                            //   eval("__dirname")
+                            //
+                            // We don't have a __dirname variable defined in our ESM <> CJS compat mode
+                            // (Perhaps we should change that for cases like this?)
+                            //
+                            //
+                            if (e.args.ptr[0].data.e_string.eqlComptime("__dirname")) {
+                                p.print("import.meta.dir");
+                                return;
+                            } else if (e.args.ptr[0].data.e_string.eqlComptime("__filename")) {
+                                p.print("import.meta.file");
+                                return;
+                            }
+                        }
+                    }
+
                     if (wrap) {
                         p.print("(");
                     }
@@ -1726,7 +1748,7 @@ pub fn NewPrinter(
                     }
                     // We don't ever want to accidentally generate a direct eval expression here
                     p.call_target = e.target.data;
-                    if (!e.is_direct_eval and p.isUnboundEvalIdentifier(e.target)) {
+                    if (is_unbound_eval) {
                         p.print("(0, ");
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");

@@ -736,7 +736,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
         //  translate it to JSValue and throw it.
         auto possibleException = headers->fill(WTFMove(init.value()));
         if (possibleException.hasException()) {
-            auto message = Zig::toZigString(ex.releaseException().message());
+            auto message = Zig::toZigString(possibleException.releaseException().message());
 
             // Convert to a TypeError and throw
             auto error = JSC__JSValue__createTypeError(&message, &Zig::ZigStringEmpty, lexicalGlobalObject);

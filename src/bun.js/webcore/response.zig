@@ -997,8 +997,12 @@ pub const Fetch = struct {
                             headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                             // TODO: make this one pass
                         } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                            defer headers__.deref();
                             headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                            headers__.deref();
+                        } else {
+                            // Converting the headers failed; return null and
+                            //  let the set exception get thrown
+                            return null;
                         }
                     }
 

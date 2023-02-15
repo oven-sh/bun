@@ -270,10 +270,12 @@ pub const Linker = struct {
 
                     if (comptime is_bun) {
                         if (JSC.HardcodedModule.Aliases.get(import_record.path.text)) |replacement| {
-                            import_record.path.text = replacement;
-                            import_record.tag = if (strings.eqlComptime(replacement, "bun")) ImportRecord.Tag.bun else .hardcoded;
-                            externals.append(record_index) catch unreachable;
-                            continue;
+                            import_record.path.text = replacement.path;
+                            import_record.tag = replacement.tag;
+                            if (replacement.tag != .none) {
+                                externals.append(record_index) catch unreachable;
+                                continue;
+                            }
                         }
 
                         if (JSC.DisabledModule.has(import_record.path.text)) {

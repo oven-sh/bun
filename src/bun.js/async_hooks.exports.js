@@ -1,3 +1,8 @@
+var drainMicrotasks = () => {
+  ({ drainMicrotasks } = import.meta.require("bun:jsc"));
+  drainMicrotasks();
+};
+
 const warnOnce = fn => {
   let warned = false;
   return (...args) => {
@@ -16,6 +21,7 @@ class AsyncLocalStorage {
 
   constructor() {
     this._enabled = false;
+    this.#store = null;
   }
 
   enterWith(store) {
@@ -28,19 +34,28 @@ class AsyncLocalStorage {
   exit(cb, ...args) {
     this.#store = null;
     notImplemented();
-    cb(...args);
+    typeof cb === "function" && cb(...args);
   }
 
   run(store, callback, ...args) {
     if (typeof callback !== "function") throw new TypeError("ERR_INVALID_CALLBACK");
     const prev = this.#store;
-    this.enterWith(store);
-
-    try {
-      return callback(...args);
-    } finally {
-      this.#store = prev;
+    var result, err;
+    process.nextTick(() => {
+      this.enterWith(store);
+      try {
+        result = callback(...args);
+      } catch (e) {
+        err = e;
+      } finally {
+        this.#store = prev;
+      }
+    });
+    drainMicrotasks();
+    if (typeof err !== "undefined") {
+      throw err;
     }
+    return result;
   }
 
   getStore() {
@@ -153,7 +168,17 @@ class AsyncResource {
 
   runInAsyncScope(fn, ...args) {
     notImplemented();
-    process.nextTick(fn, ...args);
+    var result, err;
+    process.nextTick(fn => {
+      try {
+        result = fn(...args);
+      } catch (err2) {
+        err = err2;
+      }
+    }, fn);
+    drainMicrotasks();
+    if (err) throw err;
+    return result;
   }
 
   asyncId() {

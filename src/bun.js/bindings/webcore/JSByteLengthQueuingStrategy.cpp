@@ -171,8 +171,8 @@ JSC::GCClient::IsoSubspace* JSByteLengthQueuingStrategy::subspaceForImpl(JSC::VM
     return WebCore::subspaceForImpl<JSByteLengthQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); });
 }
 }

@@ -167,6 +167,8 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 
+#include "JSDOMFormData.h"
+
 constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 
 #ifdef __APPLE__
@@ -575,7 +577,7 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
+JSC_DEFINE_CUSTOM_GETTER(JSBuffer_privateGetter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
@@ -583,6 +585,9 @@ JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     return JSC::JSValue::encode(
         thisObject->JSBufferConstructor());
 }
+
+GENERATED_CONSTRUCTOR_GETTER(JSBuffer);
+GENERATED_CONSTRUCTOR_SETTER(JSBuffer);
 
 GENERATED_CONSTRUCTOR_GETTER(JSTextDecoder);
 GENERATED_CONSTRUCTOR_SETTER(JSTextDecoder);
@@ -610,6 +615,9 @@ WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSTextEncoder);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSURLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSURLSearchParams);
+
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSDOMFormData);
+WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSDOMFormData);
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
 
@@ -3221,14 +3229,17 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr);
+    auto bufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_getter, JSBuffer_setter);
+    auto realBufferAccessor = JSC::CustomGetterSetter::create(vm, JSBuffer_privateGetter, nullptr);
 
+    //
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPublicName(), bufferAccessor,
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), bufferAccessor,
+        JSC::PropertyAttribute::DontDelete | 0);
+    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().BufferPrivateName(), realBufferAccessor,
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);
+    PUT_WEBCORE_GENERATED_CONSTRUCTOR("FormData"_s, JSDOMFormData);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageEvent"_s, JSMessageEvent);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
@@ -3547,6 +3558,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_JSFetchHeadersSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);
     visitor.append(thisObject->m_JSURLSearchParamsSetterValue);
+    visitor.append(thisObject->m_JSDOMFormDataSetterValue);
 
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);

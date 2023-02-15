@@ -328,9 +328,9 @@ JSC::GCClient::IsoSubspace* JSAbortSignal::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSAbortSignal, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortSignal = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortSignal = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForAbortSignal.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortSignal = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortSignal = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

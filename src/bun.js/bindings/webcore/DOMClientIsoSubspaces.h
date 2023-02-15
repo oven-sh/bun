@@ -35,8 +35,8 @@ public:
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForURLSearchParams;
 

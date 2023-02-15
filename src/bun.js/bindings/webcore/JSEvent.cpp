@@ -583,9 +583,9 @@ JSC::GCClient::IsoSubspace* JSEvent::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSEvent, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEvent = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEvent = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEvent = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForEvent = std::forward<decltype(space)>(space); });
 }
 
 void JSEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

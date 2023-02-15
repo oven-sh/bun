@@ -97,12 +97,203 @@ pub const Blob = struct {
     pub const SizeType = u52;
     pub const max_size = std.math.maxInt(SizeType);
 
+    pub fn getFormDataEncoding(this: *Blob) ?*bun.FormData.AsyncFormData {
+        var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+        defer content_type_slice.deinit();
+        const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
+        return bun.FormData.AsyncFormData.init(this.allocator orelse bun.default_allocator, encoding) catch unreachable;
+    }
+
+    const FormDataContext = struct {
+        allocator: std.mem.Allocator,
+        joiner: StringJoiner,
+        boundary: []const u8,
+        failed: bool = false,
+        globalThis: *JSC.JSGlobalObject,
+
+        pub fn onEntry(this: *FormDataContext, name: ZigString, entry: JSC.DOMFormData.FormDataEntry) void {
+            if (this.failed) return;
+            var globalThis = this.globalThis;
+
+            const allocator = this.allocator;
+            const joiner = &this.joiner;
+            const boundary = this.boundary;
+
+            joiner.append("--", 0, null);
+            joiner.append(boundary, 0, null);
+            joiner.append("\r\n", 0, null);
+
+            joiner.append("Content-Disposition: form-data; name=\"", 0, null);
+            const name_slice = name.toSlice(allocator);
+            joiner.append(name_slice.slice(), 0, name_slice.allocator.get());
+            name_slice.deinit();
+
+            switch (entry) {
+                .string => |value| {
+                    joiner.append("\"\r\n\r\n", 0, null);
+                    const value_slice = value.toSlice(allocator);
+                    joiner.append(value_slice.slice(), 0, value_slice.allocator.get());
+                },
+                .file => |value| {
+                    joiner.append("\"; filename=\"", 0, null);
+                    const filename_slice = value.filename.toSlice(allocator);
+                    joiner.append(filename_slice.slice(), 0, filename_slice.allocator.get());
+                    filename_slice.deinit();
+                    joiner.append("\"\r\n", 0, null);
+
+                    const blob = value.blob;
+                    const content_type = if (blob.content_type.len > 0) blob.content_type else "application/octet-stream";
+                    joiner.append("Content-Type: ", 0, null);
+                    joiner.append(content_type, 0, null);
+                    joiner.append("\r\n\r\n", 0, null);
+
+                    if (blob.store) |store| {
+                        blob.resolveSize();
+
+                        switch (store.data) {
+                            .file => |file| {
+
+                                // TODO: make this async + lazy
+                                const res = JSC.Node.NodeFS.readFile(
+                                    globalThis.bunVM().nodeFS(),
+                                    .{
+                                        .encoding = .buffer,
+                                        .path = file.pathlike,
+                                        .offset = blob.offset,
+                                        .max_size = blob.size,
+                                    },
+                                    .sync,
+                                );
+
+                                switch (res) {
+                                    .err => |err| {
+                                        globalThis.throwValue(err.toJSC(globalThis));
+                                        this.failed = true;
+                                    },
+                                    .result => |result| {
+                                        joiner.append(result.slice(), 0, result.buffer.allocator);
+                                    },
+                                }
+                            },
+                            .bytes => |_| {
+                                joiner.append(blob.sharedView(), 0, null);
+                            },
+                        }
+                    }
+                },
+            }
+
+            joiner.append("\r\n", 0, null);
+        }
+    };
+
+    pub fn getContentType(
+        this: *Blob,
+    ) ?ZigString.Slice {
+        if (this.content_type.len > 0)
+            return ZigString.Slice.fromUTF8NeverFree(this.content_type);
+
+        return null;
+    }
+
+    const URLSearchParamsConverter = struct {
+        allocator: std.mem.Allocator,
+        buf: []u8 = "",
+        globalThis: *JSC.JSGlobalObject,
+        pub fn convert(this: *URLSearchParamsConverter, str: ZigString) void {
+            var out = str.toSlice(this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
+            this.buf = bun.constStrToU8(out.slice());
+        }
+    };
+
+    pub fn fromURLSearchParams(
+        globalThis: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        search_params: *JSC.URLSearchParams,
+    ) Blob {
+        var converter = URLSearchParamsConverter{
+            .allocator = allocator,
+            .globalThis = globalThis,
+        };
+        search_params.toString(URLSearchParamsConverter, &converter, URLSearchParamsConverter.convert);
+        var store = Blob.Store.init(converter.buf, allocator) catch unreachable;
+        store.mime_type = MimeType.all.@"application/x-www-form-urlencoded";
+
+        var blob = Blob.initWithStore(store, globalThis);
+        blob.content_type = store.mime_type.value;
+        return blob;
+    }
+
+    pub fn fromDOMFormData(
+        globalThis: *JSC.JSGlobalObject,
+        allocator: std.mem.Allocator,
+        form_data: *JSC.DOMFormData,
+    ) Blob {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        var stack_allocator = std.heap.stackFallback(1024, arena.allocator());
+        var stack_mem_all = stack_allocator.get();
+
+        var hex_buf: [70]u8 = undefined;
+        const boundary = brk: {
+            var random = globalThis.bunVM().rareData().nextUUID();
+            var formatter = std.fmt.fmtSliceHexLower(&random);
+            break :brk std.fmt.bufPrint(&hex_buf, "-WebkitFormBoundary{any}", .{formatter}) catch unreachable;
+        };
+
+        var context = FormDataContext{
+            .allocator = allocator,
+            .joiner = StringJoiner{ .use_pool = false, .node_allocator = stack_mem_all },
+            .boundary = boundary,
+            .globalThis = globalThis,
+        };
+
+        form_data.forEach(FormDataContext, &context, FormDataContext.onEntry);
+        if (context.failed) {
+            return Blob.initEmpty(globalThis);
+        }
+
+        context.joiner.append("--", 0, null);
+        context.joiner.append(boundary, 0, null);
+        context.joiner.append("--\r\n", 0, null);
+
+        var store = Blob.Store.init(context.joiner.done(allocator) catch unreachable, allocator) catch unreachable;
+        var blob = Blob.initWithStore(store, globalThis);
+        blob.content_type = std.fmt.allocPrint(allocator, "multipart/form-data; boundary=\"{s}\"", .{boundary}) catch unreachable;
+        blob.content_type_allocated = true;
+
+        return blob;
+    }
+
     pub fn contentType(this: *const Blob) string {
         return this.content_type;
     }
 
     pub fn isDetached(this: *const Blob) bool {
         return this.store == null;
+    }
+
+    export fn Blob__dupeFromJS(value: JSC.JSValue) ?*Blob {
+        var this = Blob.fromJS(value) orelse return null;
+        return Blob__dupe(this);
+    }
+
+    export fn Blob__dupe(ptr: *anyopaque) *Blob {
+        var this = bun.cast(*Blob, ptr);
+        var new = bun.default_allocator.create(Blob) catch unreachable;
+        new.* = this.dupe();
+        new.allocator = bun.default_allocator;
+        return new;
+    }
+
+    export fn Blob__destroy(this: *Blob) void {
+        this.finalize();
+    }
+
+    comptime {
+        _ = Blob__dupeFromJS;
+        _ = Blob__destroy;
+        _ = Blob__dupe;
     }
 
     pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
@@ -2107,6 +2298,14 @@ pub const Blob = struct {
         return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
     }
 
+    pub fn getFormData(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return promisified(this.toFormData(globalThis, .temporary), globalThis);
+    }
+
     pub fn getWriter(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
@@ -2389,21 +2588,20 @@ pub const Blob = struct {
                 };
 
                 if (args.len > 1) {
-                    var options = args[0];
-                    if (options.isCell()) {
+                    const options = args[1];
+                    if (options.isObject()) {
                         // type, the ASCII-encoded string in lower case
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
                         if (options.get(globalThis, "type")) |content_type| {
                             if (content_type.isString()) {
-                                var content_type_str = content_type.getZigString(globalThis);
-                                if (!content_type_str.is16Bit()) {
-                                    var slice = content_type_str.trimmedSlice();
-                                    var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
-                                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                                    blob.content_type_allocated = true;
-                                }
+                                var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                                defer content_type_str.deinit();
+                                var slice = content_type_str.slice();
+                                var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                                blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                                blob.content_type_allocated = true;
                             }
                         }
                     }
@@ -2764,6 +2962,16 @@ pub const Blob = struct {
         }
     }
 
+    pub fn toFormDataWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime _: Lifetime) JSValue {
+        var encoder = this.getFormDataEncoding() orelse return {
+            return ZigString.init("Invalid encoding").toErrorInstance(global);
+        };
+        defer encoder.deinit();
+
+        return bun.FormData.toJS(global, buf, encoder.encoding) catch |err|
+            global.createErrorInstance("FormData encoding failed: {s}", .{@errorName(err)});
+    }
+
     pub fn toArrayBufferWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
         switch (comptime lifetime) {
             .clone => {
@@ -2808,6 +3016,19 @@ pub const Blob = struct {
             return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
 
         return toArrayBufferWithBytes(this, global, bun.constStrToU8(view_), lifetime);
+    }
+
+    pub fn toFormData(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        if (this.needsToReadFile()) {
+            return this.doReadFile(toFormDataWithBytes, global);
+        }
+
+        var view_ = this.sharedView();
+
+        if (view_.len == 0)
+            return JSC.DOMFormData.create(global);
+
+        return toFormDataWithBytes(this, global, bun.constStrToU8(view_), lifetime);
     }
 
     pub inline fn get(

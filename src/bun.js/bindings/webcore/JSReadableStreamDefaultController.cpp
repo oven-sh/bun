@@ -176,9 +176,9 @@ JSC::GCClient::IsoSubspace* JSReadableStreamDefaultController::subspaceForImpl(J
     return WebCore::subspaceForImpl<JSReadableStreamDefaultController, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultController = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultController = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultController = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultController = std::forward<decltype(space)>(space); });
 }
 
 }

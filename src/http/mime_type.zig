@@ -1844,7 +1844,7 @@ pub const all = struct {
     pub const @"application/x-virtualbox-vmdk": MimeType = MimeType{ .category = .application, .value = "application/x-virtualbox-vmdk" };
     pub const @"application/x-wais-source": MimeType = MimeType{ .category = .application, .value = "application/x-wais-source" };
     pub const @"application/x-web-app-manifest+json": MimeType = MimeType{ .category = .application, .value = "application/x-web-app-manifest+json" };
-    pub const @"application/x-www-form-urlencoded": MimeType = MimeType{ .category = .application, .value = "application/x-www-form-urlencoded" };
+    pub const @"application/x-www-form-urlencoded": MimeType = MimeType{ .category = .application, .value = "application/x-www-form-urlencoded;charset=UTF-8" };
     pub const @"application/x-x509-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-cert" };
     pub const @"application/x-x509-ca-ra-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-ca-ra-cert" };
     pub const @"application/x-x509-next-ca-cert": MimeType = MimeType{ .category = .application, .value = "application/x-x509-next-ca-cert" };

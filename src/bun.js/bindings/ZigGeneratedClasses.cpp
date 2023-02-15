@@ -79,9 +79,9 @@ public:
         return WebCore::subspaceForImpl<JSBlobConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForBlobConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBlobConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBlobConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForBlobConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBlobConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBlobConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBlobPrototype* prototype);
@@ -102,6 +102,9 @@ extern "C" void BlobClass__finalize(void*);
 
 extern "C" EncodedJSValue BlobPrototype__getArrayBuffer(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(BlobPrototype__arrayBufferCallback);
+
+extern "C" EncodedJSValue BlobPrototype__getFormData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BlobPrototype__formDataCallback);
 
 extern "C" EncodedJSValue BlobPrototype__getJSON(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(BlobPrototype__jsonCallback);
@@ -131,6 +134,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBlobPrototype, JSBlobPrototype::Base);
 
 static const HashTableValue JSBlobPrototypeTableValues[] = {
     { "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__arrayBufferCallback, 0 } },
+    { "formData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__formDataCallback, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__jsonCallback, 0 } },
     { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BlobPrototype__sizeGetterWrap, 0 } },
     { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__sliceCallback, 2 } },
@@ -168,6 +172,22 @@ JSC_DEFINE_HOST_FUNCTION(BlobPrototype__arrayBufferCallback, (JSGlobalObject * l
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return BlobPrototype__getArrayBuffer(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BlobPrototype__formDataCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBlob* thisObject = jsDynamicCast<JSBlob*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BlobPrototype__getFormData(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_HOST_FUNCTION(BlobPrototype__jsonCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -486,9 +506,9 @@ public:
         return WebCore::subspaceForImpl<JSCryptoHasherConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForCryptoHasherConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasherConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoHasherConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForCryptoHasherConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasherConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoHasherConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSCryptoHasherPrototype* prototype);
@@ -862,9 +882,9 @@ public:
         return WebCore::subspaceForImpl<JSDirentConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForDirentConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirentConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirentConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForDirentConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDirentConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForDirentConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSDirentPrototype* prototype);
@@ -1312,9 +1332,9 @@ public:
         return WebCore::subspaceForImpl<JSExpectConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForExpectConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForExpectConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForExpectConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForExpectConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForExpectConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForExpectConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSExpectPrototype* prototype);
@@ -2373,9 +2393,9 @@ public:
         return WebCore::subspaceForImpl<JSFileSystemRouterConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForFileSystemRouterConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouterConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFileSystemRouterConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForFileSystemRouterConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouterConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForFileSystemRouterConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSFileSystemRouterPrototype* prototype);
@@ -3166,9 +3186,9 @@ public:
         return WebCore::subspaceForImpl<JSMD4Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForMD4Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD4Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD4Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForMD4Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD4Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD4Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSMD4Prototype* prototype);
@@ -3471,9 +3491,9 @@ public:
         return WebCore::subspaceForImpl<JSMD5Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForMD5Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForMD5Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSMD5Prototype* prototype);
@@ -4239,9 +4259,9 @@ public:
         return WebCore::subspaceForImpl<JSNodeJSFSConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForNodeJSFSConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeJSFSConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNodeJSFSConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForNodeJSFSConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeJSFSConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForNodeJSFSConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSNodeJSFSPrototype* prototype);
@@ -6109,9 +6129,9 @@ public:
         return WebCore::subspaceForImpl<JSRequestConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForRequestConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequestConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequestConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForRequestConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequestConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequestConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
@@ -6154,6 +6174,9 @@ JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__credentialsGetterWrap);
 extern "C" JSC::EncodedJSValue RequestPrototype__getDestination(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__destinationGetterWrap);
 
+extern "C" EncodedJSValue RequestPrototype__getFormData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(RequestPrototype__formDataCallback);
+
 extern "C" JSC::EncodedJSValue RequestPrototype__getHeaders(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__headersGetterWrap);
 
@@ -6195,6 +6218,7 @@ static const HashTableValue JSRequestPrototypeTableValues[] = {
     { "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__cloneCallback, 1 } },
     { "credentials"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__credentialsGetterWrap, 0 } },
     { "destination"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__destinationGetterWrap, 0 } },
+    { "formData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__formDataCallback, 0 } },
     { "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__headersGetterWrap, 0 } },
     { "integrity"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__integrityGetterWrap, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__jsonCallback, 0 } },
@@ -6346,6 +6370,22 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__destinationGetterWrap, (JSGlobalObjec
     JSC::EncodedJSValue result = RequestPrototype__getDestination(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(RequestPrototype__formDataCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSRequest* thisObject = jsDynamicCast<JSRequest*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return RequestPrototype__getFormData(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__headersGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -6759,9 +6799,9 @@ public:
         return WebCore::subspaceForImpl<JSResponseConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForResponseConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponseConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponseConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForResponseConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponseConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponseConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
@@ -6794,6 +6834,9 @@ JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__bodyUsedGetterWrap);
 
 extern "C" EncodedJSValue ResponsePrototype__doClone(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(ResponsePrototype__cloneCallback);
+
+extern "C" EncodedJSValue ResponsePrototype__getFormData(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(ResponsePrototype__formDataCallback);
 
 extern "C" JSC::EncodedJSValue ResponsePrototype__getHeaders(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(ResponsePrototype__headersGetterWrap);
@@ -6830,6 +6873,7 @@ static const HashTableValue JSResponsePrototypeTableValues[] = {
     { "body"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__bodyGetterWrap, 0 } },
     { "bodyUsed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__bodyUsedGetterWrap, 0 } },
     { "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__cloneCallback, 1 } },
+    { "formData"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__formDataCallback, 0 } },
     { "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__headersGetterWrap, 0 } },
     { "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__jsonCallback, 0 } },
     { "ok"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__okGetterWrap, 0 } },
@@ -6944,6 +6988,22 @@ JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__cloneCallback, (JSGlobalObject * lex
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
 
     return ResponsePrototype__doClone(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(ResponsePrototype__formDataCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSResponse* thisObject = jsDynamicCast<JSResponse*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return ResponsePrototype__getFormData(thisObject->wrapped(), lexicalGlobalObject, callFrame);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(ResponsePrototype__headersGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -7375,9 +7435,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA1Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA1Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA1Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA1Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA1Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA1Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA1Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA1Prototype* prototype);
@@ -7680,9 +7740,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA224Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA224Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA224Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA224Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA224Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA224Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA224Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA224Prototype* prototype);
@@ -7985,9 +8045,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA256Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA256Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA256Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA256Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA256Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA256Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA256Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA256Prototype* prototype);
@@ -8290,9 +8350,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA384Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA384Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA384Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA384Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA384Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA384Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA384Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA384Prototype* prototype);
@@ -8595,9 +8655,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA512Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA512Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA512Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA512Prototype* prototype);
@@ -8900,9 +8960,9 @@ public:
         return WebCore::subspaceForImpl<JSSHA512_256Constructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForSHA512_256Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512_256Constructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSHA512_256Constructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForSHA512_256Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512_256Constructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForSHA512_256Constructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSHA512_256Prototype* prototype);
@@ -9205,9 +9265,9 @@ public:
         return WebCore::subspaceForImpl<JSServerWebSocketConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForServerWebSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocketConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForServerWebSocketConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForServerWebSocketConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocketConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForServerWebSocketConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSServerWebSocketPrototype* prototype);
@@ -9924,9 +9984,9 @@ public:
         return WebCore::subspaceForImpl<JSStatsConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForStatsConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStatsConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStatsConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForStatsConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForStatsConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForStatsConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStatsPrototype* prototype);
@@ -12255,9 +12315,9 @@ public:
         return WebCore::subspaceForImpl<JSTextDecoderConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTextDecoderConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype);
@@ -12619,9 +12679,9 @@ public:
         return WebCore::subspaceForImpl<JSTranspilerConstructor, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForTranspilerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspilerConstructor = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspilerConstructor = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForTranspilerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspilerConstructor = WTFMove(space); });
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspilerConstructor = std::forward<decltype(space)>(space); });
     }
 
     void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTranspilerPrototype* prototype);

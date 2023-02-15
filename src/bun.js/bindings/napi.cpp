@@ -812,7 +812,6 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 
     if (NapiPrototype* object = jsDynamicCast<NapiPrototype*>(val)) {
         object->napiRef = ref;
-        return napi_invalid_arg;
     }
 
     *result = toNapi(ref);

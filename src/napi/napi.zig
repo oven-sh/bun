@@ -1372,6 +1372,9 @@ pub export fn napi_create_threadsafe_function(
 ) napi_status {
     // TODO: don't do this
     // just have a GC hook for this...
+    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
+        return napi_status.function_expected;
+    }
     JSC.C.JSValueProtect(env.ref(), func.asObjectRef());
     var function = bun.default_allocator.create(ThreadSafeFunction) catch return .generic_failure;
     function.* = .{

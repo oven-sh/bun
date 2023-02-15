@@ -1764,7 +1764,7 @@ it("should consider peerDependencies during hoisting", async () => {
   expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-exec", "baz-run"]);
   expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-exec"))).toBe(join("..", "baz", "index.js"));
   expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(
-    join("..", "bar", "node_modules", "baz", "index.js"),
+    join("..", "..", "bar", "node_modules", "baz", "index.js"),
   );
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBe(join("..", "bar"));
   expect(await readdirSorted(join(package_dir, "bar"))).toEqual(["node_modules", "package.json"]);

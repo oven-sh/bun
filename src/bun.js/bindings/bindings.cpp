@@ -3694,6 +3694,40 @@ restart:
     }
 }
 
+inline bool propertyCompare(const std::pair<String, JSValue>& a, const std::pair<String, JSValue>& b)
+{
+    return codePointCompare(a.first.impl(), b.first.impl()) < 0;
+}
+
+void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol))
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSObject* object = value.getObject();
+    if (!object)
+        return;
+
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSC::PropertyNameArray properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+
+    Vector<std::pair<String, JSValue>> ordered_properties;
+    for (auto property : properties) {
+        JSValue propertyValue = object->getDirect(vm, property);
+        ordered_properties.append(std::pair<String, JSValue>(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string(), propertyValue));
+    }
+
+    std::sort(ordered_properties.begin(), ordered_properties.end(), propertyCompare);
+
+    for (auto item : ordered_properties) {
+        ZigString key = toZigString(item.first);
+        JSValue propertyValue = item.second;
+        JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
+        iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyValue.isSymbol());
+    }
+}
+
 extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
     return JSValue::encode(JSC::jsString(globalObject, JSC::JSValue::decode(JSValue0).toString(globalObject), JSC::JSValue::decode(JSValue1).toString(globalObject)));

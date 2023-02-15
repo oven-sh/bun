@@ -8,7 +8,6 @@ const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
-const diff = @import("../../deps/zig-diff/main.zig").diff;
 const Edit = @import("../../deps/zig-diff/main.zig").Edit;
 
 const JSC = @import("bun").JSC;
@@ -65,44 +64,134 @@ fn notImplementedProp(
 }
 
 pub const DiffFormatter = struct {
-    received_value: JSValue,
-    expected_value: JSValue,
-    label: []const u8,
+    received: JSValue,
+    expected: JSValue,
     globalObject: *JSC.JSGlobalObject,
+    not: bool = false,
 
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var diff_buf = std.ArrayList(Edit).init(default_allocator);
-        var received_value_array = MutableString.init(default_allocator, 0) catch unreachable;
-        var expected_value_array = MutableString.init(default_allocator, 0) catch unreachable;
+        var diff = std.ArrayList(Edit).init(default_allocator);
+        var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
+        var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
         defer {
-            diff_buf.deinit();
-            received_value_array.deinit();
-            expected_value_array.deinit();
+            diff.deinit();
+            received_buf.deinit();
+            expected_buf.deinit();
         }
 
-        this.received_value.getDiff(&received_value_array, this.expected_value, &expected_value_array, &diff_buf, this.globalObject);
-        const received_value_slice = received_value_array.toOwnedSliceLeaky();
-        const expected_value_slice = expected_value_array.toOwnedSliceLeaky();
+        this.received.getDiff(&received_buf, this.expected, &expected_buf, &diff, this.globalObject);
+        const received_slice = received_buf.toOwnedSliceLeaky();
+        const expected_slice = expected_buf.toOwnedSliceLeaky();
 
-        try writer.writeAll(this.label);
-        try writer.writeAll("\n\n");
+        if (this.not) {
+            const not_fmt = "Expected: not <green>{s}<r>";
+            if (Output.enable_ansi_colors) {
+                try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
+            } else {
+                try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
+            }
+            return;
+        }
 
-        const should_diff: bool = (this.received_value.isObject() and this.expected_value.isObject()) or (this.received_value.isString() and this.expected_value.isString());
+        const should_diff: bool = (this.received.isObject() and this.expected.isObject()) or (this.received.isString() and this.expected.isString());
         if (!should_diff) {
             try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
-            try writer.writeAll(expected_value_slice);
-            try writer.writeAll(Output.prettyFmt("<red>Received<r>: ", true));
-            try writer.writeAll(received_value_slice);
+            try writer.writeAll(expected_slice);
+            try writer.writeAll(Output.prettyFmt("\n<red>Received<r>: ", true));
+            try writer.writeAll(received_slice);
             return;
         }
 
         const equal_fmt = "<d>{s}<r>";
         const delete_fmt = "<red>{s}<r>";
         const insert_fmt = "<green>{s}<r>";
-        for (diff_buf.items) |edit| {
+
+        if (this.expected.isString()) {
+            try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
+            var i: usize = 0;
+            for (diff.items) |edit| {
+                if (edit.type != .Insert) continue;
+                const s = edit.range[0];
+                const e = edit.range[1];
+                const str = expected_slice[s..e];
+                if (i < s) try writer.writeAll(expected_slice[i..s]);
+                i = e;
+                try writer.print(Output.prettyFmt(insert_fmt, true), .{str});
+            }
+            if (i < expected_slice.len) try writer.writeAll(expected_slice[i..]);
+
+            try writer.writeAll(Output.prettyFmt("\n<red>Received<r>: ", true));
+            i = 0;
+            for (diff.items) |edit| {
+                if (edit.type == .Insert) continue;
+                const s = edit.range[0];
+                const e = edit.range[1];
+                const str = received_slice[s..e];
+                if (i < s) try writer.writeAll(received_slice[i..s]);
+                i = e;
+                if (edit.type == .Delete) {
+                    try writer.print(Output.prettyFmt(delete_fmt, true), .{str});
+                } else {
+                    try writer.writeAll(str);
+                }
+            }
+
+            if (i < received_slice.len) try writer.writeAll(received_slice[i..]);
+            return;
+        }
+
+        if (Output.enable_ansi_colors) {
+            try writer.writeAll(Output.prettyFmt("  <d>", true));
+            // :(
+            try writer.writeAll("{");
+            try writer.writeAll(Output.prettyFmt("<r>\n", true));
+        } else {
+            try writer.writeAll("  {\n");
+        }
+
+        var i: usize = 0;
+        for (diff.items) |edit| {
+            if (edit.type != .Insert) continue;
+            const s = edit.range[0];
+            const e = edit.range[1];
+            const str = expected_slice[s..e];
+            if (i < s) try writer.writeAll(expected_slice[i..s]);
+            i = e;
+            try writer.print(Output.prettyFmt(insert_fmt, true), .{str});
+        }
+        if (i < expected_slice.len) try writer.writeAll(expected_slice[i..]);
+
+        i = 0;
+        for (diff.items) |edit| {
+            if (edit.type == .Insert) continue;
+            const s = edit.range[0];
+            const e = edit.range[1];
+            const str = received_slice[s..e];
+            if (i < s) try writer.writeAll(received_slice[i..s]);
+            i = e;
+            if (edit.type == .Delete) {
+                try writer.print(Output.prettyFmt(delete_fmt, true), .{str});
+            } else {
+                try writer.writeAll(str);
+            }
+        }
+
+        if (i < received_slice.len) try writer.writeAll(received_slice[i..]);
+
+        if (Output.enable_ansi_colors) {
+            try writer.writeAll(Output.prettyFmt("  <d>", true));
+            // :(
+            try writer.writeAll("}");
+            try writer.writeAll(Output.prettyFmt("<r>\n", true));
+        } else {
+            try writer.writeAll("  }\n");
+        }
+        // return;
+
+        for (diff.items) |edit| {
             switch (edit.type) {
                 .Equal => {
-                    const s = received_value_slice[edit.range[0]..edit.range[1]];
+                    const s = received_slice[edit.range[0]..edit.range[1]];
                     if (Output.enable_ansi_colors) {
                         try writer.print(Output.prettyFmt(equal_fmt, true), .{s});
                     } else {
@@ -110,7 +199,7 @@ pub const DiffFormatter = struct {
                     }
                 },
                 .Delete => {
-                    const s = received_value_slice[edit.range[0]..edit.range[1]];
+                    const s = received_slice[edit.range[0]..edit.range[1]];
                     if (Output.enable_ansi_colors) {
                         try writer.print(Output.prettyFmt(delete_fmt, true), .{s});
                     } else {
@@ -118,7 +207,7 @@ pub const DiffFormatter = struct {
                     }
                 },
                 .Insert => {
-                    const s = expected_value_slice[edit.range[0]..edit.range[1]];
+                    const s = expected_slice[edit.range[0]..edit.range[1]];
                     if (Output.enable_ansi_colors) {
                         try writer.print(Output.prettyFmt(insert_fmt, true), .{s});
                     } else {
@@ -127,15 +216,6 @@ pub const DiffFormatter = struct {
                 },
             }
         }
-    }
-
-    pub fn init(received_value: JSValue, expected_value: JSValue, comptime label_fmt: []const u8, enable_color: bool, globalObject: *JSC.JSGlobalObject) DiffFormatter {
-        return .{
-            .received_value = received_value,
-            .expected_value = expected_value,
-            .label = if (enable_color) Output.prettyFmt(label_fmt, true) else Output.prettyFmt(label_fmt, false),
-            .globalObject = globalObject,
-        };
     }
 };
 
@@ -405,36 +485,54 @@ pub const Expect = struct {
         }
 
         active_test_expectation_counter.actual += 1;
-        const left = arguments[0];
-        left.ensureStillAlive();
-        const right = Expect.capturedValueGetCached(thisValue) orelse {
+        const right = arguments[0];
+        right.ensureStillAlive();
+        const left = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
-        right.ensureStillAlive();
+        left.ensureStillAlive();
 
         const not = this.op.contains(.not);
-        var pass = left.isSameValue(right, globalObject);
+        var pass = right.isSameValue(left, globalObject);
         if (comptime Environment.allow_assert) {
-            std.debug.assert(pass == JSC.C.JSValueIsStrictEqual(globalObject, left.asObjectRef(), right.asObjectRef()));
+            std.debug.assert(pass == JSC.C.JSValueIsStrictEqual(globalObject, right.asObjectRef(), left.asObjectRef()));
         }
 
         if (not) pass = !pass;
         if (pass) return thisValue;
 
         // handle failure
-        var lhs_fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-        var rhs_fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-        if (comptime Environment.allow_assert) {
-            Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
-        }
+        const label = brk: {
+            if (not) {
+                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toBe<d>(<r><green>expected<r><d>)<r>";
+                if (Output.enable_ansi_colors) {
+                    break :brk Output.prettyFmt(not_label_fmt, true);
+                }
+                break :brk Output.prettyFmt(not_label_fmt, false);
+            }
+            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toBe<d>(<r><green>expected<r><d>)<r>";
+            if (Output.enable_ansi_colors) {
+                break :brk Output.prettyFmt(label_fmt, true);
+            }
+            break :brk Output.prettyFmt(label_fmt, false);
+        };
 
-        if (not) {
-            globalObject.throw("\n\tExpected: not {any}\n\tReceived: {any}", .{ left.toFmt(globalObject, &lhs_fmt), right.toFmt(globalObject, &rhs_fmt) });
-        } else {
-            globalObject.throw("\n\tExpected: {any}\n\tReceived: {any}", .{ left.toFmt(globalObject, &lhs_fmt), right.toFmt(globalObject, &rhs_fmt) });
-        }
+        globalObject.throw("{s}\n\n{any}\n", .{
+            label,
+            DiffFormatter{
+                .expected = right,
+                .received = left,
+                .globalObject = globalObject,
+                .not = not,
+            },
+        });
+
         return .zero;
+    }
+
+    pub fn fmtLabel(comptime label_fmt: []const u8) string {
+        return if (Output.enable_ansi_colors) Output.prettyFmt(label_fmt, true) else Output.prettyFmt(label_fmt, false);
     }
 
     pub fn toHaveLength(
@@ -800,18 +898,30 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        if (not) {
-            globalObject.throw("Expected values to not be equal", .{});
-        } else {
-            const diff_fmt = DiffFormatter.init(
-                value,
-                expected,
-                "<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>",
-                Output.enable_ansi_colors,
-                globalObject,
-            );
-            globalObject.throw("Expected values to be equal\n\n{any}", .{diff_fmt});
-        }
+        const label = brk: {
+            if (not) {
+                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toEqual<d>(<r><green>expected<r><d>)<r>";
+                if (Output.enable_ansi_colors) {
+                    break :brk Output.prettyFmt(not_label_fmt, true);
+                }
+                break :brk Output.prettyFmt(not_label_fmt, false);
+            }
+            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toEqual<d>(<r><green>expected<r><d>)<r>";
+            if (Output.enable_ansi_colors) {
+                break :brk Output.prettyFmt(label_fmt, true);
+            }
+            break :brk Output.prettyFmt(label_fmt, false);
+        };
+
+        globalObject.throw("{s}\n\n{any}\n", .{
+            label,
+            DiffFormatter{
+                .received = value,
+                .expected = expected,
+                .globalObject = globalObject,
+                .not = not,
+            },
+        });
 
         return .zero;
     }
@@ -849,18 +959,30 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        if (not) {
-            globalObject.throw("Expected values to not be strictly equal", .{});
-        } else {
-            const diff_fmt = DiffFormatter.init(
-                value,
-                expected,
-                "<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>",
-                Output.enable_ansi_colors,
-                globalObject,
-            );
-            globalObject.throw("Expected values to be strictly equal\n\n{any}", .{diff_fmt});
-        }
+        const label = brk: {
+            if (not) {
+                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>";
+                if (Output.enable_ansi_colors) {
+                    break :brk Output.prettyFmt(not_label_fmt, true);
+                }
+                break :brk Output.prettyFmt(not_label_fmt, false);
+            }
+            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toStrictEqual<d>(<r><green>expected<r><d>)<r>";
+            if (Output.enable_ansi_colors) {
+                break :brk Output.prettyFmt(label_fmt, true);
+            }
+            break :brk Output.prettyFmt(label_fmt, false);
+        };
+
+        globalObject.throw("{s}\n\n{any}\n", .{
+            label,
+            DiffFormatter{
+                .received = value,
+                .expected = expected,
+                .globalObject = globalObject,
+                .not = not,
+            },
+        });
 
         return .zero;
     }
@@ -916,26 +1038,44 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
+        const label = brk: {
+            if (not) {
+                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toHaveProperty<d>(<r><green>expected<r><d>)<r>";
+                if (Output.enable_ansi_colors) {
+                    break :brk Output.prettyFmt(not_label_fmt, true);
+                }
+                break :brk Output.prettyFmt(not_label_fmt, false);
+            }
+            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>expected<r><d>)<r>";
+            if (Output.enable_ansi_colors) {
+                break :brk Output.prettyFmt(label_fmt, true);
+            }
+            break :brk Output.prettyFmt(label_fmt, false);
+        };
+
         var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
             if (!expected_property.isEmpty() and expected_value != null) {
-                globalObject.throw("Expected property \"{any}\" to not be equal to: {any}", .{ expected_property.toFmt(globalObject, &fmt), expected_value.?.toFmt(globalObject, &fmt) });
+                globalObject.throw("{s}\n\n{any}\n", .{
+                    label,
+                    expected_value.?.toFmt(globalObject, &fmt),
+                });
             } else {
-                globalObject.throw("Expected \"{any}\" to not have property: {any}", .{ value.toFmt(globalObject, &fmt), expected_property_path.toFmt(globalObject, &fmt) });
+                globalObject.throw("Expected to not have property at path: {any}\n", .{expected_property_path.toFmt(globalObject, &fmt)});
             }
         } else {
             if (!expected_property.isEmpty() and expected_value != null) {
                 // deepEqual case
-                const diff_fmt = DiffFormatter.init(
-                    expected_property,
-                    expected_value.?,
-                    "<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>, <r><green>value<r><d>)<r>",
-                    Output.enable_ansi_colors,
-                    globalObject,
-                );
-                globalObject.throw("Expected values to be equal\n\n{any}", .{diff_fmt});
+                globalObject.throw("{s}\n\n{any}\n", .{
+                    label,
+                    DiffFormatter{
+                        .received = expected_property,
+                        .expected = expected_value.?,
+                        .globalObject = globalObject,
+                    },
+                });
             } else {
-                globalObject.throw("Expected \"{any}\" to have property: {any}", .{ value.toFmt(globalObject, &fmt), expected_property_path.toFmt(globalObject, &fmt) });
+                globalObject.throw("Expected to have property at path: {any}\n", .{expected_property_path.toFmt(globalObject, &fmt)});
             }
         }
 

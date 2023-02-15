@@ -2691,6 +2691,15 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("forEachProperty", .{ this, globalThis, ctx, callback });
     }
 
+    pub fn forEachPropertyOrdered(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: PropertyIteratorFn,
+    ) void {
+        cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
@@ -3419,8 +3428,9 @@ pub const JSValue = enum(JSValueReprInt) {
             Writer,
             writer,
             false,
-            true,
             false,
+            false,
+            true,
         );
         buffered_writer.flush() catch unreachable;
         const value_str = v1_buf.toOwnedSliceLeaky();
@@ -3436,8 +3446,9 @@ pub const JSValue = enum(JSValueReprInt) {
             Writer,
             writer,
             false,
-            true,
             false,
+            false,
+            true,
         );
         buffered_writer.flush() catch unreachable;
         const expected_str = v2_buf.toOwnedSliceLeaky();
@@ -3674,6 +3685,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "fastGet_",
         "forEach",
         "forEachProperty",
+        "forEachPropertyOrdered",
         "fromEntries",
         "fromInt64NoTruncate",
         "fromUInt64NoTruncate",

@@ -1185,9 +1185,20 @@ static JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 
     RETURN_IF_EXCEPTION(scope, {});
 
+    size_t count = callFrame->argumentCount();
+    MarkedArgumentBuffer args;
+
+    if (count > 6) {
+        for (size_t i = 6; i < count; i++) {
+            args.append(callFrame->uncheckedArgument(i));
+        }
+    }
+
     callFrame->setThisValue(prototype->subclass(newTarget));
     napi->constructor()(globalObject, callFrame);
-    size_t count = callFrame->argumentCount();
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSValue thisValue = callFrame->thisValue();
 
     switch (count) {
     case 0: {
@@ -1230,15 +1241,11 @@ static JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
         JSC::ensureStillAliveHere(callFrame->argument(3));
         JSC::ensureStillAliveHere(callFrame->argument(4));
         JSC::ensureStillAliveHere(callFrame->argument(5));
-        for (int i = 6; i < count; i++) {
-            JSC::ensureStillAliveHere(callFrame->argument(i));
-        }
         break;
     }
     }
-    RETURN_IF_EXCEPTION(scope, {});
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(callFrame->thisValue()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisValue));
 }
 
 NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char* utf8name,

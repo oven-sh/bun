@@ -7,10 +7,10 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   # top-level
   logLevel = "debug"
 
-+ # would be nice
+  # would be nice
 + extends = "base.bunfig.toml"
 
-+ # import mapping
+  # import mapping
 + paths = { "react" = "macro:bun-macro-relay" }
 
 + tmpDir = "~/.bun/tmp"
@@ -41,11 +41,11 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   [dev]
   port = 5000
 + logLevel = "debug" # overrides top-level logLevel
-+ # new `bun dev` stuff goes under here
+  # new `bun dev` stuff goes under here
 
-+ # list of files to run before running a file
-+ # for initializing plugins
-+ # can be extended later with other lifecycle hooks
+  # list of files to run before running a file
+  # for initializing plugins
+  # can be extended later with other lifecycle hooks
 + preload = [ "plugins.ts" ]
 
   # this should be done with import mapping
@@ -69,9 +69,8 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   "bagel" = "lox" # only support strings
 
   # this should be implemented with plugins
-  # and `pre`
+  # and `preload`
 - [loaders]
-- # When loading a .bagel file, run the JS parser
 - ".bagel" = "js"
 
   [test]
@@ -89,9 +88,9 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   prefer = "online" # online, offline, latest
 
 
-- # deprecate object form
-- # overloading keys is more confusing than helpful imo
-- # there should be one right way to do things ideally
+  # deprecate object form
+  # overloading keys is more confusing than helpful imo
+  # there should be one right way to do things ideally
   registry = "https://registry.yarnpkg.com/"
   registry = "https://username:password@registry.yarnpkg.com/"
 

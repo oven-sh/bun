@@ -1002,7 +1002,6 @@ pub const Fetch = struct {
                         } else {
                             // Converting the headers failed; return null and
                             //  let the set exception get thrown
-                            @import("../base.zig").dump(headers_, globalThis) catch {};
                             return null;
                         }
                     }

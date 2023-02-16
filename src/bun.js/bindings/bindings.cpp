@@ -735,7 +735,8 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
         //  translate it to JSValue and throw it.
         auto possibleException = headers->fill(WTFMove(init.value()));
-        WebCore::propagateException(*lexicalGlobalObject, throwScope, possibleException.releaseException());
+        if (possibleException.hasException())
+            WebCore::propagateException(*lexicalGlobalObject, throwScope, possibleException.releaseException());
     }
     return headers;
 }

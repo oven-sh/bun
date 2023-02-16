@@ -1,7 +1,5 @@
 # Bunfig overhaul
 
-Convert Bunfig to JSON. Update and standardize the format.
-
 ```diff
 
   # top-level
@@ -27,6 +25,10 @@ Convert Bunfig to JSON. Update and standardize the format.
 - publicDir = "public"
 - external = ["jquery"]
 - origin = "http://localhost:3000"
+- jsx = "react" # react, solid, react-jsx, react-jsxDEV
+- jsxImportSource
+- jsxFragment
+- jsxFactory
 
   # redundant with $PORT
   # also it's weird that this corresponds to a Bun.js API instead of a CLI command
@@ -39,10 +41,10 @@ Convert Bunfig to JSON. Update and standardize the format.
 + logLevel = "debug" # overrides top-level logLevel
 + # new `bun dev` stuff goes under here
 
-+ [run]
 + # list of files to run before running a file
 + # for initializing plugins
-+  pre = [ "plugins.ts" ]
++ # can be extended later with other lifecycle hooks
++ preload = [ "plugins.ts" ]
 
   # this should be done with import mapping
   # specifying named import thing is weird
@@ -51,21 +53,24 @@ Convert Bunfig to JSON. Update and standardize the format.
 - [macros]
 - react-relay = { "graphql" = "bun-macro-relay" }
 
-  # deprecate
+  # deprecate `bun bun` stuff
 - [bundle]
-- path = "node_modules.bun"
+- saveTo = "node_modules.bun"
+- outDir = "."
 - entryPoints = ["./app/index.ts"]
 - [bundle.packages]
 - "@bigapp/design-system" = true
+
 
   [define]
 - "process.env.bagel" = "'lox'"
   "bagel" = "lox" # only support strings
 
-
-  [loaders]
-  # When loading a .bagel file, run the JS parser
-  ".bagel" = "js"
+  # this should be implemented with plugins
+  # and `pre`
+- [loaders]
+- # When loading a .bagel file, run the JS parser
+- ".bagel" = "js"
 
   [test]
 - root = "test/bun.js" # too limited
@@ -73,8 +78,14 @@ Convert Bunfig to JSON. Update and standardize the format.
 + logLevel = "debug" # overrides top-level logLevel
 
 
+  autoinstall = tre
+
   [install]
 + logLevel = "debug" # overrides top-level logLevel
+
+  auto = true # true, false, force, fallback, disable
+  prefer = "online" # online, offline, latest
+
 
 - # deprecate object form
 - # overloading keys is more confusing than helpful imo
@@ -97,6 +108,10 @@ Convert Bunfig to JSON. Update and standardize the format.
 + [global]
 + dir = "~/.bun/install/global"
 + bin = "~/.bun/bin"
+
+
+  # deprecate, object form only (see below)
+- cache = true
 
   [install.cache]
   dir = "~/.bun/install/cache"

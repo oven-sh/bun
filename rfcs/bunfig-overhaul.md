@@ -13,8 +13,14 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   # import mapping
 + paths = { "react" = "macro:bun-macro-relay" }
 
-+ tmpDir = "~/.bun/tmp"
 
+  # list of files to run before running a file
+  # for initializing plugins
+  # can be extended later with other lifecycle hooks
++ preload = [ "plugins.ts" ]
+
+  # also: deprecate DISABLE_BUN_ANALYTICS
+  # or at least rename to BUN_TELEMETRY_DISABLE
 + [telemetry]
 + disable = false
 
@@ -42,11 +48,6 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   port = 5000
 + logLevel = "debug" # overrides top-level logLevel
   # new `bun dev` stuff goes under here
-
-  # list of files to run before running a file
-  # for initializing plugins
-  # can be extended later with other lifecycle hooks
-+ preload = [ "plugins.ts" ]
 
   # this should be done with import mapping
   # specifying named import thing is weird

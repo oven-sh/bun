@@ -79,18 +79,10 @@ Booleans: Only `true` and `"true"` should be considered truthy.
 + matchers = [ "**/*[.|_][spec|test].{js|jsx|ts|tsx}" ]
 + logLevel = "debug" # overrides top-level logLevel
 
-  # add config settings for autoinstall
-+ [autoinstall]
-+ disabled = false
-+ prefer = "online" # online, offline, latest
-+ ttl = 86400
+
 
   [install]
 + logLevel = "debug" # overrides top-level logLevel
-
-  # see `autoinstall` section above
-- auto = true # true, false, force, fallback, disable
-- prefer = "online" # online, offline, latest
 
   registry = "https://registry.yarnpkg.com/"
   registry = "https://username:password@registry.yarnpkg.com/"
@@ -99,7 +91,7 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   # there should be one right way to do things ideally
 - registry = { url = "https://registry.yarnpkg.com/", token = "123456", username = "myusername", password = "mypassword" }
 
-  # good stuff
+
   production = "$NODE_ENV"
   dryRun = true
   optional = true
@@ -112,6 +104,13 @@ Booleans: Only `true` and `"true"` should be considered truthy.
 + dir = "~/.bun/install/global"
 + bin = "~/.bun/bin"
 
+  # add separate section for autoinstall
+- auto = true # true, false, force, fallback, disable
+- prefer = "online" # online, offline, latest
++ [autoinstall]
++ disabled = false
++ prefer = "online" # online, offline, latest
++ ttl = 86400
 
   # deprecate, object form only (see below)
 - cache = true

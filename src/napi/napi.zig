@@ -238,19 +238,18 @@ const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
 };
 pub export fn napi_create_array_with_length(env: napi_env, length: usize, result: *napi_value) napi_status {
     log("napi_create_array_with_length", .{});
-    if (length < prefilled_undefined_args_array.len) {
-        result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), length, @ptrCast([*]const JSC.C.JSValueRef, &prefilled_undefined_args_array[0..length]), null));
-        return .ok;
+    const len = @intCast(u32, length);
+
+    const array = JSC.JSValue.createEmptyArray(env, len);
+    array.ensureStillAlive();
+
+    var i: u32 = 0;
+    while (i < len) : (i += 1) {
+        array.putIndex(env, i, JSValue.jsUndefined());
     }
 
-    const allocator = env.bunVM().allocator;
-    var undefined_args = allocator.alloc(JSC.C.JSValueRef, length) catch return genericFailure();
-    defer allocator.free(undefined_args);
-    for (undefined_args) |_, i| {
-        undefined_args[i] = JSValue.jsUndefined().asObjectRef();
-    }
-    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), length, undefined_args.ptr, null));
-
+    array.ensureStillAlive();
+    result.* = array;
     return .ok;
 }
 pub export fn napi_create_double(_: napi_env, value: f64, result: *napi_value) napi_status {

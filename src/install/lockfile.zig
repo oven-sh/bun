@@ -2931,7 +2931,7 @@ pub const Package = extern struct {
                             const key = item.key.?;
                             const value = item.value.?;
                             const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
-                            const version = value.asString(allocator).?;
+                            const version = value.asString(allocator) orelse "";
                             var tag: ?Dependency.Version.Tag = null;
                             var workspace_path: ?String = null;
 

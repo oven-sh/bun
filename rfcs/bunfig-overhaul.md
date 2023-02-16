@@ -1,5 +1,7 @@
 # Bunfig overhaul
 
+Booleans: Only `true` and `"true"` should be considered truthy.
+
 ```diff
 
   # top-level
@@ -97,7 +99,7 @@
 - registry = { url = "https://registry.yarnpkg.com/", token = "123456", username = "myusername", password = "mypassword" }
 
   # good stuff
-  production = false
+  production = "$NODE_ENV"
   dryRun = true
   optional = true
   dev = true
@@ -116,11 +118,10 @@
   [install.cache]
   dir = "~/.bun/install/cache"
 
-  # whats the difference?
 - disable = false
-  mode = "global" # global = use global cache, local = use node_modules/.cache
++ mode = "global" # global = use global cache, local = use node_modules/.cache
 - disableManifest = false # these are basically the same
-  ttl = 300 # 0 = always check latest
++ ttl = 300 # 0 = always check latest
 
   [install.lockfile]
 
@@ -129,26 +130,27 @@
 
 - savePath = "bun.lockb"
 + path = "bun.lockb"
-  bun = {
-    name = "bun.lockb",
-  }
 
-- print = "yarn" # this is terrible
+- print = "yarn" # terrible
 + external = [{
 +   type: "yarn",
 +   path: "yarn.lock",
 +   version: 1 # eventually
 + }]
 
-  # we should make things less flexible here - strings only
-  # people are happier when there's one right way to do things
+
   [install.scopes]
-  # always require @ sign
-- "mybigcompany" = "https://registry.mybigcompany.com"
   "@mybigcompany" = "https://registry.mybigcompany.com"
+
+  # always require at sign
+  # there should be one right way to do things
+- "mybigcompany" = "https://registry.mybigcompany.com"
+
   "@mybigcompany5" = "https://username:password@registry.yarnpkg.com/"
   "@mybigcompany5" = "https://:$npm_token@registry.yarnpkg.com/"
 
+  # drop object form
+  # there should be one right way to do things
 - "@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
 - "mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
 - "@mybigcompany2" = { token = "$npm_config_token" }

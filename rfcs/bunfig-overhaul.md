@@ -78,14 +78,18 @@ Booleans: Only `true` and `"true"` should be considered truthy.
 + matchers = [ "**/*[.|_][spec|test].{js|jsx|ts|tsx}" ]
 + logLevel = "debug" # overrides top-level logLevel
 
-
-  autoinstall = tre
+  # add config settings for autoinstall
++ [autoinstall]
++ disabled = false
++ prefer = "online" # online, offline, latest
++ ttl = 86400
 
   [install]
 + logLevel = "debug" # overrides top-level logLevel
 
-  auto = true # true, false, force, fallback, disable
-  prefer = "online" # online, offline, latest
+  # see `autoinstall` section above
+- auto = true # true, false, force, fallback, disable
+- prefer = "online" # online, offline, latest
 
   registry = "https://registry.yarnpkg.com/"
   registry = "https://username:password@registry.yarnpkg.com/"

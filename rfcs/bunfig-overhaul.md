@@ -1,6 +1,11 @@
 # Bunfig overhaul
 
-Booleans: Only `true` and `"true"` should be considered truthy.
+## Booleans
+
+- Only `true` and `"true"` should be considered truthy.
+- Default value should always be `false`
+
+## Diff
 
 ```diff
 
@@ -108,7 +113,7 @@ Booleans: Only `true` and `"true"` should be considered truthy.
 - auto = true # true, false, force, fallback, disable
 - prefer = "online" # online, offline, latest
 + [autoinstall]
-+ disabled = false
++ disable = false
 + prefer = "online" # online, offline, latest
 + ttl = 86400
 

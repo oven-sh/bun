@@ -190,7 +190,6 @@ it("should handle workspaces", async () => {
 });
 
 it("should handle workspaces with packages array", async () => {
-  rmSync(join(package_dir, "./bun.lockb"), { recursive: true, force: true });
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({

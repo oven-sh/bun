@@ -1189,6 +1189,13 @@ pub const Finalizer = struct {
 
 // TODO: generate comptime version of this instead of runtime checking
 pub const ThreadSafeFunction = struct {
+    pub const Callback = union(enum) {
+        js: JSValue,
+        c: struct {
+            js: JSValue,
+            napi_threadsafe_function_call_js: napi_threadsafe_function_call_js,
+        },
+    };
     /// thread-safe functions can be "referenced" and "unreferenced". A
     /// "referenced" thread-safe function will cause the event loop on the thread
     /// on which it is created to remain alive until the thread-safe function is
@@ -1207,14 +1214,15 @@ pub const ThreadSafeFunction = struct {
     concurrent_task: JSC.ConcurrentTask = .{},
     concurrent_finalizer_task: JSC.ConcurrentTask = .{},
 
-    javascript_function: JSValue,
+    env: napi_env,
+
     finalizer_task: JSC.AnyTask = undefined,
     finalizer: Finalizer = Finalizer{ .fun = null, .ctx = null },
     channel: Queue,
 
     ctx: ?*anyopaque = null,
 
-    call_js: ?napi_threadsafe_function_call_js = null,
+    callback: Callback = undefined,
 
     const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
     pub const Queue = union(enum) {
@@ -1286,18 +1294,16 @@ pub const ThreadSafeFunction = struct {
 
     pub fn call(this: *ThreadSafeFunction) void {
         var task = this.channel.tryReadItem() catch null orelse return;
-        if (this.call_js) |cb| {
-            cb(this.event_loop.global, this.javascript_function, task, this.ctx);
-        } else {
-            // TODO: wrapper that reports errors
-            _ = JSC.C.JSObjectCallAsFunction(
-                this.event_loop.global,
-                this.javascript_function.asObjectRef(),
-                JSC.JSValue.jsUndefined().asObjectRef(),
-                0,
-                null,
-                null,
-            );
+        switch (this.callback) {
+            .js => |js_function| {
+                const err = js_function.call(this.env, &.{});
+                if (err.isAnyError()) {
+                    this.env.bunVM().onUnhandledError(this.env, err);
+                }
+            },
+            .c => |cb| {
+                cb.napi_threadsafe_function_call_js(this.env, cb.js, this.ctx, task);
+            },
         }
     }
 
@@ -1319,7 +1325,11 @@ pub const ThreadSafeFunction = struct {
             fun(this.event_loop.global, opaq, this.finalizer.ctx);
         }
 
-        JSC.C.JSValueUnprotect(this.event_loop.global, this.javascript_function.asObjectRef());
+        if (this.callback == .js) {
+            this.callback.js.unprotect();
+        } else if (this.callback == .c) {
+            this.callback.c.js.unprotect();
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -1367,20 +1377,32 @@ pub export fn napi_create_threadsafe_function(
     thread_finalize_data: ?*anyopaque,
     thread_finalize_cb: napi_finalize,
     context: ?*anyopaque,
-    call_js_cb: napi_threadsafe_function_call_js,
+    call_js_cb: ?napi_threadsafe_function_call_js,
     result: *napi_threadsafe_function,
 ) napi_status {
-    // TODO: don't do this
-    // just have a GC hook for this...
-    if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
+    log("napi_create_threadsafe_function", .{});
+    if (call_js_cb == null and (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm()))) {
         return napi_status.function_expected;
     }
     JSC.C.JSValueProtect(env.ref(), func.asObjectRef());
     var function = bun.default_allocator.create(ThreadSafeFunction) catch return .generic_failure;
+
+    if (!func.isEmptyOrUndefinedOrNull()) {
+        func.protect();
+    }
+
+    var function = bun.default_allocator.create(ThreadSafeFunction) catch return genericFailure();
     function.* = .{
         .event_loop = env.bunVM().eventLoop(),
-        .javascript_function = func,
-        .call_js = call_js_cb,
+        .env = env,
+        .callback = if (call_js_cb) |c| .{
+            .c = .{
+                .napi_threadsafe_function_call_js = c,
+                .js = if (func == .zero) JSC.JSValue.jsUndefined() else func,
+            },
+        } else .{
+            .js = func,
+        },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
         .owning_threads = .{},

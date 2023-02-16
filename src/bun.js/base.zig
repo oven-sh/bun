@@ -1719,9 +1719,10 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 }
 
 /// Print a JSValue to stdout; this is only meant for debugging purposes
-pub fn dump(value: JSValue, ctx: js.JSContextRef) !void {
-    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx };
-    return std.io.getStdOut().writer().print("{}\n", .{value.toFmt(ctx, &formatter)});
+pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
+    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+    try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
+    Output.flush();
 }
 
 pub const JSStringList = std.ArrayList(js.JSStringRef);

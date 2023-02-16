@@ -87,14 +87,11 @@ Booleans: Only `true` and `"true"` should be considered truthy.
   auto = true # true, false, force, fallback, disable
   prefer = "online" # online, offline, latest
 
-
-  # deprecate object form
-  # overloading keys is more confusing than helpful imo
-  # there should be one right way to do things ideally
   registry = "https://registry.yarnpkg.com/"
   registry = "https://username:password@registry.yarnpkg.com/"
 
   # deprecate object form
+  # there should be one right way to do things ideally
 - registry = { url = "https://registry.yarnpkg.com/", token = "123456", username = "myusername", password = "mypassword" }
 
   # good stuff

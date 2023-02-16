@@ -1027,14 +1027,14 @@ const Arguments = struct {
 
                 if (val.isObject()) {
                     if (val.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
-                        flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
+                        flags = FileSystemFlags.fromJS(ctx, flags_, flags, exception) orelse flags;
                     }
 
                     if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 } else if (!val.isEmpty()) {
-                    flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                    flags = FileSystemFlags.fromJS(ctx, val, flags, exception) orelse flags;
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
@@ -1508,7 +1508,7 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
-                        flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                        flag = FileSystemFlags.fromJS(ctx, flag_, flag, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -1615,7 +1615,7 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
-                        flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                        flag = FileSystemFlags.fromJS(ctx, flag_, flag, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -1785,7 +1785,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    mode = FileSystemFlags.fromJS(ctx, arg, exception) orelse {
+                    mode = FileSystemFlags.fromJS(ctx, arg, mode, exception) orelse {
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid mode",

@@ -1954,6 +1954,8 @@ interface AbortSignal extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+
+  timeout(milliseconds: number): AbortSignal;
 }
 
 declare var AbortSignal: {

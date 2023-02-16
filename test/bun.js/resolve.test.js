@@ -72,6 +72,7 @@ it("import.meta.resolve", async () => {
 
   // works with tsconfig.json "paths"
   expect(await import.meta.resolve("foo/bar")).toBe(join(import.meta.path, "../baz.js"));
+  expect(await import.meta.resolve("@faasjs/baz")).toBe(join(import.meta.path, "../baz.js"));
 
   // works with package.json "exports"
   writePackageJSONExportsFixture();

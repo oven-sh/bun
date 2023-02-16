@@ -1,3 +1,5 @@
+const { EventEmitter } = import.meta.require("events");
+
 export var fetch = Bun.fetch;
 export var Response = globalThis.Response;
 export var Headers = globalThis.Headers;
@@ -20,7 +22,7 @@ function notImplemented() {
   throw new Error("Not implemented in bun");
 }
 export function request() {
-  throw new Error("Not implemented in bun");
+  throw new Error("TODO: Not implemented in bun yet!");
 }
 export function stream() {
   throw new Error("Not implemented in bun");
@@ -59,13 +61,24 @@ export function Undici() {
   throw new Error("Not implemented in bun");
 }
 
-Undici.Dispatcher =
-  Undici.Pool =
-  Undici.BalancedPool =
-  Undici.Client =
-  Undici.buildConnector =
+class Dispatcher extends EventEmitter {}
+class Agent extends Dispatcher {}
+class Pool extends Dispatcher {}
+class BalancedPool extends Dispatcher {}
+class Client extends Dispatcher {
+  request() {
+    throw new Error("Not implemented in bun");
+  }
+}
+
+Undici.Dispatcher = Dispatcher;
+Undici.Pool = Pool;
+Undici.BalancedPool = BalancedPool;
+Undici.Client = Client;
+Undici.Agent = Agent;
+
+Undici.buildConnector =
   Undici.errors =
-  Undici.Agent =
   Undici.setGlobalDispatcher =
   Undici.getGlobalDispatcher =
   Undici.request =
@@ -100,5 +113,11 @@ export default {
   MockPool,
   MockAgent,
   mockErrors,
+  Dispatcher,
+  Pool,
+  BalancedPool,
+  Client,
+  Agent,
   Undici,
+  [Symbol.for("CommonJS")]: 0,
 };

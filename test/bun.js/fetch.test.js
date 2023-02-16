@@ -8,6 +8,66 @@ const exampleFixture = fs.readFileSync(
   "utf8",
 );
 
+let server ;
+beforeAll(() => {
+  server = Bun.serve({
+    async fetch(){
+      await Bun.sleep(2000);
+      return new Response("Hello")
+    },
+    port: 64321
+  });
+  
+});
+afterAll(() => {
+  server.stop();
+});
+
+
+describe("AbortSignal", ()=> {
+  it("AbortError", async ()=> {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+      name = error.name;
+    }
+    expect(name).toBe("AbortError");
+  })
+  it("AbortErrorWithReason", async ()=> {
+    let reason;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort("My Reason");
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+        reason = error
+    }
+    expect(reason).toBe("My Reason");
+  })
+  it("TimeoutError", async ()=> {
+    let name;
+    try {
+      const signal = AbortSignal.timeout(10);
+      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text());
+    } catch (error){
+      name = error.name;
+    }
+    expect(name).toBe("TimeoutError");
+  })
+})
+
 describe("Headers", () => {
   it(".toJSON", () => {
     var headers = new Headers({
@@ -170,6 +230,31 @@ describe("fetch", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBe(null);
     expect(response.redirected).toBe(true);
+    server.stop();
+  });
+
+  it("provide body", async () => {
+    const server = Bun.serve({
+      port: 4084,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    // POST with body
+    const url = `http://${server.hostname}:${server.port}`;
+    const response = await fetch(url, { method: "POST", body: "buntastic" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("buntastic");
+
+    // GET cannot have body
+    try {
+      await fetch(url, { body: "buntastic" });
+      expect(false).toBe(true);
+    } catch (exception) {
+      expect(exception instanceof TypeError).toBe(true);
+    }
+
     server.stop();
   });
 });
@@ -630,7 +715,7 @@ describe("Response", () => {
       await body.json();
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof SyntaxError);
+      expect(exception instanceof SyntaxError).toBe(true);
     }
   });
 

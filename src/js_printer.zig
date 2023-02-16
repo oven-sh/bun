@@ -1369,7 +1369,7 @@ pub fn NewPrinter(
                                 if (i < n) {
                                     const c2: CodeUnitType = text[i];
 
-                                    if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
+                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
                                         i += 1;
 
                                         // Escape this character if UTF-8 isn't allowed
@@ -1420,7 +1420,7 @@ pub fn NewPrinter(
                                     }
                                 } else {
                                     // chars < 255 as two digit hex escape
-                                    if (c < 0xFF) {
+                                    if (c <= 0xFF) {
                                         var ptr = e.writer.reserve(4) catch unreachable;
                                         ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
                                         e.writer.advance(4);
@@ -1713,6 +1713,28 @@ pub fn NewPrinter(
                         wrap = true;
                     }
 
+                    const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
+
+                    if (is_unbound_eval) {
+                        if (e.args.len == 1 and e.args.ptr[0].data == .e_string and is_bun_platform) {
+                            // prisma:
+                            //
+                            //   eval("__dirname")
+                            //
+                            // We don't have a __dirname variable defined in our ESM <> CJS compat mode
+                            // (Perhaps we should change that for cases like this?)
+                            //
+                            //
+                            if (e.args.ptr[0].data.e_string.eqlComptime("__dirname")) {
+                                p.print("import.meta.dir");
+                                return;
+                            } else if (e.args.ptr[0].data.e_string.eqlComptime("__filename")) {
+                                p.print("import.meta.file");
+                                return;
+                            }
+                        }
+                    }
+
                     if (wrap) {
                         p.print("(");
                     }
@@ -1726,7 +1748,7 @@ pub fn NewPrinter(
                     }
                     // We don't ever want to accidentally generate a direct eval expression here
                     p.call_target = e.target.data;
-                    if (!e.is_direct_eval and p.isUnboundEvalIdentifier(e.target)) {
+                    if (is_unbound_eval) {
                         p.print("(0, ");
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");

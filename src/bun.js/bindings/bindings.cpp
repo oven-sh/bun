@@ -84,6 +84,8 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/HashMapImpl.h"
 #include "JavaScriptCore/HashMapImplInlines.h"
+#include "webcore/JSAbortSignal.h"
+#include "JSAbortAlgorithm.h"
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
@@ -3742,6 +3744,101 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue4));
 }
 
+extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->signalAbort(JSC::JSValue::decode(JSValue1));
+    return arg0;
+}
+
+extern "C" bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    return abortSignal->aborted();
+}
+
+extern "C" JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    return JSC::JSValue::encode(abortSignal->reason().getValue());
+}
+
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->ref();
+    return arg0;
+}
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->deref();
+    return arg0;
+}
+
+extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason)) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    
+    if(abortSignal->aborted()){
+        callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue()));
+        return arg0;
+    }
+
+    abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
+
+    return arg0;
+}
+extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty())
+        return nullptr;
+    WebCore::JSAbortSignal* object = JSC::jsDynamicCast<WebCore::JSAbortSignal*>(decodedValue);
+    if (!object)
+        return nullptr;
+
+    return reinterpret_cast<JSC__AbortSignal*>(&object->wrapped());
+}
+static auto ABORT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("AbortError");
+extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* message, const ZigString* arg1,
+    JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    ZigString code = *arg1;
+    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+
+    error->putDirect(
+        vm, vm.propertyNames->name,
+        JSC::JSValue(JSC::jsOwnedString(vm, ABORT_ERROR_NAME)),
+    0);
+
+    if (code.len > 0) {
+        auto clientData = WebCore::clientData(vm);
+        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
+    }
+
+    return JSC::JSValue::encode(error);
+}
+
+static auto TIMEOUT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("TimeoutError");
+extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* message, const ZigString* arg1,
+    JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+    ZigString code = *arg1;
+    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
+
+    error->putDirect(
+        vm, vm.propertyNames->name,
+        JSC::JSValue(JSC::jsOwnedString(vm, TIMEOUT_ERROR_NAME)),
+    0);
+
+    if (code.len > 0) {
+        auto clientData = WebCore::clientData(vm);
+        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
+        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
+    }
+
+    return JSC::JSValue::encode(error);
+}
 #pragma mark - WebCore::DOMFormData
 
 CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString* arg1, ZigString* arg2)

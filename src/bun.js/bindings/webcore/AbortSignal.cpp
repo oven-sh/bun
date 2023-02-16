@@ -105,6 +105,12 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     for (auto& algorithm : algorithms)
         algorithm(reason);
 
+    auto callbacks = std::exchange(m_native_callbacks, {});
+    for (auto callback : callbacks) {
+        const auto [ ctx, func ] = callback;
+        func(ctx, JSC::JSValue::encode(reason));
+    }
+
     // 5. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }

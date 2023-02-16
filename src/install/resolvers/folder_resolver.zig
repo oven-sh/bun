@@ -149,9 +149,8 @@ pub const FolderResolution = union(Tag) {
 
         const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
 
-        try Lockfile.Package.parse(
+        try package.parse(
             manager.lockfile,
-            &package,
             manager.allocator,
             manager.log,
             source,

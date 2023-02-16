@@ -329,7 +329,7 @@ const NetworkTask = struct {
 
         var url = URL.parse(this.url_buf);
         var http_proxy: ?URL = env_loader.getHttpProxy(url);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy);
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
@@ -396,7 +396,7 @@ const NetworkTask = struct {
         var url = URL.parse(this.url_buf);
         var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy);
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
@@ -767,11 +767,10 @@ const PackageInstall = struct {
         resolution: *const Resolution,
         buf: []const u8,
     ) bool {
-        if (resolution.tag == .github) {
-            return this.verifyGitHubResolution(resolution, buf);
-        }
-
-        return this.verifyPackageJSONNameAndVersion();
+        return switch (resolution.tag) {
+            .github => this.verifyGitHubResolution(resolution, buf),
+            else => this.verifyPackageJSONNameAndVersion(),
+        };
     }
 
     fn verifyPackageJSONNameAndVersion(this: *PackageInstall) bool {
@@ -1026,7 +1025,7 @@ const PackageInstall = struct {
                             progress_.refresh();
 
                             Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Global.exit(1);
+                            Global.crash();
                         };
                     };
                     defer outfile.close();
@@ -1043,7 +1042,7 @@ const PackageInstall = struct {
                         progress_.refresh();
 
                         Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                        Global.exit(1);
+                        Global.crash();
                     };
                 }
 
@@ -1222,8 +1221,8 @@ const PackageInstall = struct {
         };
     }
 
-    pub fn uninstall(this: *PackageInstall) !void {
-        try this.destination_dir.dir.deleteTree(bun.span(this.destination_dir_subpath));
+    pub fn uninstall(this: *PackageInstall) void {
+        this.destination_dir.dir.deleteTree(bun.span(this.destination_dir_subpath)) catch {};
     }
 
     fn isDanglingSymlink(path: [:0]const u8) bool {
@@ -1253,7 +1252,7 @@ const PackageInstall = struct {
         const dest_path = this.destination_dir_subpath;
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstall() catch {};
+        if (!skip_delete and !strings.eqlComptime(dest_path, ".")) this.uninstall();
 
         const subdir = std.fs.path.dirname(dest_path);
         var dest_dir = if (subdir) |dir| brk: {
@@ -1309,7 +1308,7 @@ const PackageInstall = struct {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
+        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall();
 
         var supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
             Method.symlink
@@ -1883,7 +1882,7 @@ pub const PackageManager = struct {
         return cachedGitHubFolderNamePrint(&cached_package_folder_name_buf, this.lockfile.str(&repository.resolved));
     }
 
-    pub fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository) stringZ {
+    fn cachedGitHubFolderNamePrintGuess(buf: []u8, string_buf: []const u8, repository: *const Repository) stringZ {
         return std.fmt.bufPrintZ(
             buf,
             "@GH@{any}-{any}-{any}",
@@ -3027,9 +3026,8 @@ pub const PackageManager = struct {
                 );
                 var package = Lockfile.Package{};
 
-                Lockfile.Package.parse(
+                package.parse(
                     manager.lockfile,
-                    &package,
                     manager.allocator,
                     manager.log,
                     package_json_source,
@@ -3043,7 +3041,7 @@ pub const PackageManager = struct {
                     if (comptime log_level != .silent) {
                         const string_buf = manager.lockfile.buffers.string_bytes.items;
                         Output.prettyErrorln("<r><red>error:<r> expected package.json in <b>{any}<r> to be a JSON file: {s}\n", .{
-                            package.resolution.fmtURL(&manager.options, string_buf),
+                            resolution.fmtURL(&manager.options, string_buf),
                             @errorName(err),
                         });
                     }
@@ -4668,7 +4666,7 @@ pub const PackageManager = struct {
 
             var lockfile: Lockfile = undefined;
             var name: string = "";
-            var package: Lockfile.Package = Lockfile.Package{};
+            var package = Lockfile.Package{};
 
             // Step 1. parse the nearest package.json file
             {
@@ -4685,18 +4683,20 @@ pub const PackageManager = struct {
                 );
                 try lockfile.initEmpty(ctx.allocator);
 
-                try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
+                try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
-                    if (manager.options.log_level != .silent)
+                    if (manager.options.log_level != .silent) {
                         Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                    }
                     Global.crash();
                 } else if (!strings.isNPMPackageName(name)) {
-                    if (manager.options.log_level != .silent)
-                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
+                    if (manager.options.log_level != .silent) {
+                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{any}\"<r>", .{
                             name,
                             package_json_source.path.text,
                         });
+                    }
                     Global.crash();
                 }
             }
@@ -4830,7 +4830,7 @@ pub const PackageManager = struct {
 
             var lockfile: Lockfile = undefined;
             var name: string = "";
-            var package: Lockfile.Package = Lockfile.Package{};
+            var package = Lockfile.Package{};
 
             // Step 1. parse the nearest package.json file
             {
@@ -4847,18 +4847,20 @@ pub const PackageManager = struct {
                 );
                 try lockfile.initEmpty(ctx.allocator);
 
-                try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
+                try package.parseMain(&lockfile, ctx.allocator, manager.log, package_json_source, Features.folder);
                 name = lockfile.str(&package.name);
                 if (name.len == 0) {
-                    if (manager.options.log_level != .silent)
+                    if (manager.options.log_level != .silent) {
                         Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                    }
                     Global.crash();
                 } else if (!strings.isNPMPackageName(name)) {
-                    if (manager.options.log_level != .silent)
+                    if (manager.options.log_level != .silent) {
                         Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
                             name,
                             package_json_source.path.text,
                         });
+                    }
                     Global.crash();
                 }
             }
@@ -4922,7 +4924,7 @@ pub const PackageManager = struct {
             Global.exit(0);
         } else {
             Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
-            Global.exit(1);
+            Global.crash();
         }
     }
 
@@ -5102,7 +5104,7 @@ pub const PackageManager = struct {
             //         cli.omit.peer = true;
             //     } else {
             //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-            //         Global.exit(1);
+            //         Global.crash();
             //     }
             // }
 
@@ -5208,7 +5210,7 @@ pub const PackageManager = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
                         positional,
                     });
-                    Global.exit(1);
+                    Global.crash();
                 };
                 if (switch (version.tag) {
                     .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
@@ -5218,7 +5220,7 @@ pub const PackageManager = struct {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> unrecognised dependency format: {s}", .{
                         positional,
                     });
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 var request = UpdateRequest{
@@ -5461,12 +5463,10 @@ pub const PackageManager = struct {
         if (op == .remove) {
             if (current_package_json.data != .e_object) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
-                Global.exit(1);
-                return;
+                Global.crash();
             } else if (current_package_json.data.e_object.properties.len == 0) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
-                Global.exit(1);
-                return;
+                Global.crash();
             } else if (current_package_json.asProperty("devDependencies") == null and
                 current_package_json.asProperty("dependencies") == null and
                 current_package_json.asProperty("optionalDependencies") == null and
@@ -5474,7 +5474,6 @@ pub const PackageManager = struct {
             {
                 Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
                 Global.exit(0);
-                return;
             }
         }
 
@@ -5709,7 +5708,6 @@ pub const PackageManager = struct {
         manager: *PackageManager,
         lockfile: *Lockfile,
         progress: *std.Progress,
-        node_modules_path: stringZ,
         node_modules_folder: std.fs.IterableDir,
         skip_verify_installed_version_number: bool,
         skip_delete: bool,
@@ -5929,7 +5927,6 @@ pub const PackageManager = struct {
 
                                     var bin_linker = Bin.Linker{
                                         .bin = bin,
-                                        .package_installed_path = this.node_modules_path["node_modules".len..],
                                         .package_installed_node_modules = this.node_modules_folder.dir.fd,
                                         .global_bin_path = this.options.bin_path,
                                         .global_bin_dir = this.options.global_bin_dir.dir,
@@ -5959,8 +5956,8 @@ pub const PackageManager = struct {
                                         }
 
                                         if (this.manager.options.enable.fail_early) {
-                                            installer.uninstall() catch {};
-                                            Global.exit(1);
+                                            installer.uninstall();
+                                            Global.crash();
                                         }
                                     }
                                 }
@@ -6187,7 +6184,6 @@ pub const PackageManager = struct {
                 .resolutions = resolutions,
                 .lockfile = lockfile,
                 .node = &install_node,
-                .node_modules_path = "node_modules",
                 .node_modules_folder = node_modules_folder,
                 .progress = progress,
                 .skip_verify_installed_version_number = skip_verify_installed_version_number,
@@ -6209,7 +6205,6 @@ pub const PackageManager = struct {
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_path = node_modules.relative_path;
                 installer.node_modules_folder = try cwd.openIterableDir(node_modules.relative_path, .{});
 
                 var remaining = node_modules.dependencies;
@@ -6337,9 +6332,7 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (this.options.enable.fail_early) {
-                            Global.exit(1);
-                        }
+                        if (this.options.enable.fail_early) Global.crash();
                     }
 
                     continue :outer;
@@ -6460,7 +6453,7 @@ pub const PackageManager = struct {
                     Output.flush();
                 }
 
-                if (manager.options.enable.fail_early) Global.exit(1);
+                if (manager.options.enable.fail_early) Global.crash();
             },
             .ok => {
                 differ: {
@@ -6479,9 +6472,8 @@ pub const PackageManager = struct {
                     try lockfile.initEmpty(ctx.allocator);
                     var maybe_root = Lockfile.Package{};
 
-                    try Lockfile.Package.parseMain(
+                    try maybe_root.parseMain(
                         &lockfile,
-                        &maybe_root,
                         ctx.allocator,
                         ctx.log,
                         package_json_source,
@@ -6504,11 +6496,10 @@ pub const PackageManager = struct {
                     had_any_diffs = had_any_diffs or sum > 0;
 
                     if (manager.options.enable.frozen_lockfile and had_any_diffs) {
-                        if (log_level != .silent) {
+                        if (comptime log_level != .silent) {
                             Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                         }
-
-                        Global.exit(1);
+                        Global.crash();
                     }
 
                     // If you changed packages, we will copy over the new package from the new lockfile
@@ -6591,16 +6582,14 @@ pub const PackageManager = struct {
             try manager.lockfile.initEmpty(ctx.allocator);
 
             if (manager.options.enable.frozen_lockfile) {
-                if (log_level != .silent) {
+                if (comptime log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
-
-                Global.exit(1);
+                Global.crash();
             }
 
-            try Lockfile.Package.parseMain(
+            try root.parseMain(
                 manager.lockfile,
-                &root,
                 ctx.allocator,
                 ctx.log,
                 package_json_source,
@@ -6615,10 +6604,7 @@ pub const PackageManager = struct {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
             }
-            manager.enqueueDependencyList(
-                root.dependencies,
-                true,
-            );
+            manager.enqueueDependencyList(root.dependencies, true);
         }
 
         manager.flushDependencyQueue();
@@ -6644,10 +6630,10 @@ pub const PackageManager = struct {
                     *PackageManager,
                     manager,
                     .{
-                        .onExtract = void{},
-                        .onResolve = void{},
-                        .onPackageManifestError = void{},
-                        .onPackageDownloadError = void{},
+                        .onExtract = {},
+                        .onResolve = {},
+                        .onPackageManifestError = {},
+                        .onPackageDownloadError = {},
                         .progress_bar = true,
                     },
                     log_level,
@@ -6668,9 +6654,7 @@ pub const PackageManager = struct {
             try manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
         }
 
-        if (manager.log.errors > 0) {
-            Global.exit(1);
-        }
+        if (manager.log.errors > 0) Global.crash();
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

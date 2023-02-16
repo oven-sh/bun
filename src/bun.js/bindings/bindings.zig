@@ -209,12 +209,19 @@ pub const ZigString = extern struct {
         return ZigString__toJSONObject(&this, globalThis);
     }
 
-    pub fn substring(this: ZigString, offset: usize) ZigString {
+    pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
+        var len: usize = undefined;
+        if(maxlen == 0){
+            len = this.len;
+        }else {
+            len = @max(this.len, maxlen);
+        }
+        
         if (this.is16Bit()) {
-            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..]);
+            return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
 
-        var out = ZigString.init(this.slice()[@min(this.len, offset)..]);
+        var out = ZigString.init(this.slice()[@min(this.len, offset)..len]);
         if (this.isUTF8()) {
             out.markUTF8();
         }
@@ -1661,6 +1668,72 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
         }
     }.callback;
 }
+
+pub const AbortSignal = extern opaque {
+    pub const shim = Shimmer("JSC", "AbortSignal", @This());
+    const cppFn = shim.cppFn;
+    pub const include = "WebCore/AbortSignal.h";
+    pub const name = "JSC::AbortSignal";
+    pub const namespace = "JSC";
+
+    pub fn addListener(
+        this: *AbortSignal,
+        ctx: ?*anyopaque,
+        callback: *const fn (?*anyopaque, JSValue) callconv(.C) void,
+    ) *AbortSignal {
+        return cppFn("addListener", .{ this, ctx, callback });
+    }
+    pub fn signal(
+        this: *AbortSignal,
+        reason: JSValue,
+    ) *AbortSignal {
+        return cppFn("signal", .{ this, reason });
+    }
+
+    pub fn aborted(this: *AbortSignal) bool {
+        return cppFn("aborted", .{this});
+    }
+
+    pub fn abortReason(this: *AbortSignal) JSValue {
+        return cppFn("abortReason", .{this});
+    }
+
+    pub fn ref(
+        this: *AbortSignal,
+    ) *AbortSignal {
+        return cppFn("ref", .{this});
+    }
+
+    pub fn unref(
+        this: *AbortSignal,
+    ) *AbortSignal {
+        return cppFn("unref", .{this});
+    }
+
+    pub fn fromJS(value: JSValue) ?*AbortSignal {
+        return cppFn("fromJS", .{value});
+    }
+
+    pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
+        return cppFn("createAbortError", .{ message, code, global });
+    }
+
+    pub fn createTimeoutError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
+        return cppFn("createTimeoutError", .{ message, code, global });
+    }
+
+    pub const Extern = [_][]const u8{
+        "createAbortError",
+        "createTimeoutError",
+        "ref",
+        "unref",
+        "signal",
+        "abortReason",
+        "aborted",
+        "addListener",
+        "fromJS",
+    };
+};
 
 pub const JSPromise = extern struct {
     pub const shim = Shimmer("JSC", "JSPromise", @This());

@@ -16,6 +16,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+import { rmSync } from "fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -176,6 +177,50 @@ it("should handle workspaces", async () => {
   expect(err).toContain("Saved lockfile");
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + Bar@workspace:bar",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle workspaces with packages array", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      workspaces: { packages: ["bar"] },
+    }),
+  );
+  await mkdir(join(package_dir, "bar"));
+  await writeFile(
+    join(package_dir, "bar", "package.json"),
+    JSON.stringify({
+      name: "Bar",
+      version: "0.0.2",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     " + Bar@workspace:bar",
     "",
@@ -1948,7 +1993,7 @@ it("should report error on invalid format for workspaces", async () => {
       name: "foo",
       version: "0.0.1",
       workspaces: {
-        packages: ["bar"],
+        packages: { bar: true },
       },
     }),
   );
@@ -1970,7 +2015,7 @@ it("should report error on invalid format for workspaces", async () => {
     '"workspaces": [',
     '  "path/to/package"',
     "]",
-    '{"name":"foo","version":"0.0.1","workspaces":{"packages":["bar"]}}',
+    '{"name":"foo","version":"0.0.1","workspaces":{"packages":{"bar":true}}}',
     "                                ^",
     `${package_dir}/package.json:1:33 32`,
     "",

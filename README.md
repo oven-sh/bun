@@ -5142,10 +5142,9 @@ On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 
 #### Install Zig (macOS)
 
-Install the latest version of Zig via Homebrew:
-
+Install the version of Zig referenced in the [`Dockerfile`](./Dockerfile) using [zigup](https://github.com/marler8997/zigup). For example:
 ```bash
-brew install zig --head
+zigup 0.11.0-dev.1393+38eebf3c4
 ```
 
 #### Build bun (macOS)
@@ -5155,6 +5154,7 @@ One-off command to run:
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1 --checkout
+bun install
 make vendor identifier-cache webcrypto-debug
 ```
 

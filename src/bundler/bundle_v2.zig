@@ -1571,6 +1571,13 @@ const LinkerContext = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
         tree_shaking: bool = true,
+
+        mode: Mode = Mode.bundle,
+
+        pub const Mode = enum {
+            passthrough,
+            bundle,
+        };
     };
 
     fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
@@ -3719,30 +3726,651 @@ const LinkerContext = struct {
         }
     };
 
+    fn shouldRemoveImportExportStmt(
+        c: *LinkerContext,
+        stmts: *StmtList,
+        loc: Logger.Loc,
+        namespace_ref: Ref,
+        import_record_index: u32,
+        allocator: std.mem.Allocator,
+        ast: *const js_ast.Ast,
+    ) !bool {
+        const record = ast.import_records.at(import_record_index);
+
+        // Is this an external import?
+        if (!record.source_index.isValid()) {
+            // Keep the "import" statement if import statements are supported
+            if (c.options.output_format.keepES6ImportExportSyntax()) {
+                return false;
+            }
+
+            // Otherwise, replace this statement with a call to "require()"
+            stmts.inside_wrapper_prefix.append(
+                Stmt.alloc(
+                    S.Local,
+                    S.Local{
+                        .decls = try bun.fromSlice(
+                            []G.Decl,
+                            allocator,
+                            &.{
+                                .{
+                                    .binding = Binding.alloc(
+                                        allocator,
+                                        B.Identifier{
+                                            .ref = namespace_ref,
+                                        },
+                                        loc,
+                                    ),
+                                    .value = Expr.init(
+                                        E.Require,
+                                        E.Require{
+                                            .import_record_index = import_record_index,
+                                        },
+                                        loc,
+                                    ),
+                                },
+                            },
+                        ),
+                    },
+                    record.range.loc,
+                ),
+            ) catch unreachable;
+            return true;
+        }
+
+        // We don't need a call to "require()" if this is a self-import inside a
+        // CommonJS-style module, since we can just reference the exports directly.
+        if (ast.exports_kind == .cjs and c.graph.symbols.follow(namespace_ref).eql(ast.exports_ref)) {
+            return true;
+        }
+
+        const other_flags = c.graph.meta.items(.flags)[record.source_index.get()];
+        switch (other_flags.wrap) {
+            .none => {
+                // Remove the statement entirely if this module is not wrapped
+            },
+            .cjs => {
+                // Replace the statement with a call to "require()" if this module is not wrapped
+                try stmts.inside_wrapper_prefix.append(
+                    Stmt.alloc(
+                        S.Local,
+                        S.Local{
+                            .decls = try bun.fromSlice(
+                                []G.Decl,
+                                allocator,
+                                &.{
+                                    .{
+                                        .binding = Binding.alloc(
+                                            allocator,
+                                            B.Identifier{
+                                                .ref = namespace_ref,
+                                            },
+                                            loc,
+                                        ),
+                                        .value = Expr.init(
+                                            E.Require,
+                                            E.Require{
+                                                .import_record_index = import_record_index,
+                                            },
+                                            loc,
+                                        ),
+                                    },
+                                },
+                            ),
+                        },
+                        loc,
+                    ),
+                );
+            },
+            .esm => {
+                // Ignore this file if it's not included in the bundle. This can happen for
+                // wrapped ESM files but not for wrapped CommonJS files because we allow
+                // tree shaking inside wrapped ESM files.
+                if (!c.graph.files_live.isSet(record.source_index.get())) {
+                    return true;
+                }
+
+                // Replace the statement with a call to "init()"
+                const value: Expr = brk: {
+                    const default = Expr.init(
+                        E.Call,
+                        E.Call{
+                            .target = Expr.initIdentifier(
+                                c.graph.ast.items(.wrapper_ref)[record.source_index.get()].?,
+                                loc,
+                            ),
+                        },
+                        loc,
+                    );
+
+                    if (other_flags.is_async_or_has_async_dependency) {
+                        // This currently evaluates sibling dependencies in serial instead of in
+                        // parallel, which is incorrect. This should be changed to store a promise
+                        // and await all stored promises after all imports but before any code.
+                        break :brk Expr.init(E.Await, E.Await{
+                            .value = default,
+                        });
+                    }
+
+                    break :brk default;
+                };
+
+                try stmts.inside_wrapper_prefix.append(
+                    Stmt.alloc(
+                        S.SExpr,
+                        S.SExpr{
+                            .value = value,
+                        },
+                        loc,
+                    ),
+                );
+            },
+        }
+    }
+
+    fn convertStmtsForChunk(
+        c: *LinkerContext,
+        source_index: u32,
+        stmts: *StmtList,
+        part_stmts: []const js_ast.Stmt,
+        chunk: *Chunk,
+        allocator: std.mem.Allocator,
+        wrap: WrapKind,
+        ast: *const js_ast.Ast,
+    ) !void {
+        const shouldExtractESMStmtsForWrap = wrap != .none;
+        const shouldStripExports = c.options.mode != .passthrough or !chunk.isEntryPoint();
+
+        const flags = c.graph.meta.items(.flag);
+
+        // If this file is a CommonJS entry point, double-write re-exports to the
+        // external CommonJS "module.exports" object in addition to our internal ESM
+        // export namespace object. The difference between these two objects is that
+        // our internal one must not have the "__esModule" marker while the external
+        // one must have the "__esModule" marker. This is done because an ES module
+        // importing itself should not see the "__esModule" marker but a CommonJS module
+        // importing us should see the "__esModule" marker.
+        var module_exports_for_export: ?Expr = null;
+        if (c.options.output_format == .cjs and chunk.isEntryPoint()) {
+            module_exports_for_export = Expr.init(
+                E.Dot,
+                E.Dot{
+                    .target = Expr.init(
+                        E.Identifier,
+                        E.Identifier{
+                            .ref = c.unbound_module_ref,
+                        },
+                        Logger.Loc.Empty,
+                    ),
+                    .name = "exports",
+                },
+                Logger.Loc.Empty,
+            );
+        }
+
+        for (part_stmts) |_stmt| {
+            var stmt = _stmt;
+            switch (stmt.data) {
+                .s_import => |s| {
+                    // "import * as ns from 'path'"
+                    // "import {foo} from 'path'"
+                    if (c.shouldRemoveImportExportStmt(
+                        source_index,
+                        stmts,
+                        stmt.loc,
+                        s.namespace_ref,
+                        s.import_record_index,
+                        allocator,
+                        ast,
+                    )) {
+                        continue;
+                    }
+
+                    // Make sure these don't end up in the wrapper closure
+                    if (shouldExtractESMStmtsForWrap) {
+                        try stmts.outside_wrapper_prefix.append(stmt);
+                        continue;
+                    }
+                },
+                .s_export_star => |s| {
+                    // "export * as ns from 'path'"
+                    if (s.alias) |alias| {
+                        if (c.shouldRemoveImportExportStmt(
+                            source_index,
+                            stmts,
+                            stmt.loc,
+                            s.namespace_ref,
+                            s.import_record_index,
+                            chunk,
+                            allocator,
+                            ast,
+                        )) {
+                            continue;
+                        }
+
+                        if (shouldStripExports) {
+                            // Turn this statement into "import * as ns from 'path'"
+                            stmt = Stmt.alloc(
+                                S.Import,
+                                S.Import{
+                                    .namespace_ref = s.namespace_ref,
+                                    .import_record_index = s.import_record_index,
+                                    .star_name_loc = alias.loc,
+                                },
+                                stmt.loc,
+                            );
+                        }
+
+                        // Make sure these don't end up in the wrapper closure
+                        if (shouldExtractESMStmtsForWrap) {
+                            try stmts.outside_wrapper_prefix.append(stmt);
+                            continue;
+                        }
+
+                        break;
+                    }
+
+                    // "export * from 'path'"
+                    if (!shouldStripExports) {
+                        break;
+                    }
+
+                    const record = ast.import_records.at(s.import_record_index);
+
+                    // Is this export star evaluated at run time?
+                    if (!record.source_index.isValid() and c.options.output_format.keepES6ImportExportSyntax()) {
+                        if (record.calls_runtime_re_export_fn) {
+                            // Turn this statement into "import * as ns from 'path'"
+                            stmt = Stmt.alloc(
+                                S.Import,
+                                S.Import{
+                                    .namespace_ref = s.namespace_ref,
+                                    .import_record_index = s.import_record_index,
+                                    .star_name_loc = stmt.loc,
+                                },
+                                stmt.loc,
+                            );
+
+                            // Prefix this module with "__reExport(exports, ns, module.exports)"
+                            const export_star_ref = c.runtimeFunction("__reExport");
+                            var args = try allocator.alloc(Expr, 2 + @boolToInt(module_exports_for_export != null));
+                            args[0..2].* = .{
+                                Expr.init(
+                                    E.Identifier,
+                                    E.Identifier{
+                                        .ref = ast.exports_ref,
+                                    },
+                                    stmt.loc,
+                                ),
+                                Expr.init(
+                                    E.Identifier,
+                                    E.Identifier{
+                                        .ref = s.namespace_ref,
+                                    },
+                                    stmt.loc,
+                                ),
+                            };
+
+                            if (module_exports_for_export) |mod| {
+                                args[3] = mod;
+                            }
+
+                            try stmts.inside_wrapper_prefix.append(
+                                Stmt.alloc(
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .expr = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.init(
+                                                    E.Identifier,
+                                                    E.Identifier{
+                                                        .ref = export_star_ref,
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                                .args = args,
+                                            },
+                                            stmt.loc,
+                                        ),
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
+
+                            // Make sure these don't end up in the wrapper closure
+                            if (shouldExtractESMStmtsForWrap) {
+                                try stmts.outside_wrapper_prefix.append(stmt);
+                                continue;
+                            }
+                        }
+                    } else {
+                        if (record.source_index.isValid()) {
+                            const flag = flags[record.source_index.get()];
+                            if (flag.wrap == .esm) {
+                                try stmts.inside_wrapper_prefix.append(
+                                    Stmt.alloc(
+                                        S.SExpr,
+                                        .{
+                                            .value = Expr.init(
+                                                E.Call,
+                                                E.Call{
+                                                    .target = Expr.init(
+                                                        E.Identifier,
+                                                        E.Identifier{
+                                                            .ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()].?,
+                                                        },
+                                                        stmt.loc,
+                                                    ),
+                                                },
+                                                stmt.loc,
+                                            ),
+                                        },
+                                        stmt.loc,
+                                    ),
+                                );
+                            }
+                        }
+
+                        if (record.calls_runtime_re_export_fn) {
+                            const target: Expr = brk: {
+                                if (c.graph.ast.items(.exports_kind)[source_index] == .esm_with_dynamic_fallback) {
+                                    // Prefix this module with "__reExport(exports, otherExports, module.exports)"
+                                    break :brk Expr.initIdentifier(c.graph.ast.items(.exports_ref)[source_index], stmt.loc);
+                                }
+
+                                break :brk Expr.init(
+                                    E.Require,
+                                    E.Require{
+                                        .import_record_index = s.import_record_index,
+                                    },
+                                    stmt.loc,
+                                    .{},
+                                );
+                            };
+
+                            // Prefix this module with "__reExport(exports, require(path), module.exports)"
+                            const export_star_ref = c.runtimeFunction("__reExport");
+                            var args = try allocator.alloc(Expr, 2 + @boolToInt(module_exports_for_export != null));
+                            args[0..2].* = .{
+                                Expr.init(
+                                    E.Identifier,
+                                    E.Identifier{
+                                        .ref = ast.exports_ref,
+                                    },
+                                    stmt.loc,
+                                ),
+                                target,
+                            };
+
+                            if (module_exports_for_export) |mod| {
+                                args[3] = mod;
+                            }
+
+                            try stmts.inside_wrapper_prefix.append(
+                                Stmt.alloc(
+                                    S.SExpr,
+                                    S.SExpr{
+                                        .expr = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.init(
+                                                    E.Identifier,
+                                                    E.Identifier{
+                                                        .ref = export_star_ref,
+                                                    },
+                                                    stmt.loc,
+                                                ),
+                                                .args = args,
+                                            },
+                                            stmt.loc,
+                                        ),
+                                    },
+                                    stmt.loc,
+                                ),
+                            );
+
+                            // Remove the export star statement
+                            continue;
+                        }
+                    }
+                },
+
+                .s_export_from => |s| {
+                    // "export {foo} from 'path'"
+
+                    if (try c.shouldRemoveImportExportStmt(
+                        source_index,
+                        stmts,
+                        stmt.loc,
+                        s.namespace_ref,
+                        s.import_record_index,
+                        allocator,
+                        ast,
+                    )) {
+                        continue;
+                    }
+
+                    if (shouldStripExports) {
+                        // Turn this statement into "import {foo} from 'path'"
+
+                        for (s.items) |*item| {
+                            item.alias = item.original_name;
+                        }
+
+                        stmt = Stmt.alloc(
+                            S.Import,
+                            S.Import{
+                                .items = s.items,
+                                .import_record_index = s.import_record_index,
+                                .star_name_loc = stmt.loc,
+                                .namespace_ref = s.namespace_ref,
+                                .is_single_line = s.is_single_line,
+                            },
+                            stmt.loc,
+                        );
+                    }
+
+                    // Make sure these don't end up in the wrapper closure
+                    if (shouldExtractESMStmtsForWrap) {
+                        try stmts.outside_wrapper_prefix.append(stmt);
+                        continue;
+                    }
+                },
+
+                .s_export_clause => {
+                    // "export {foo}"
+
+                    if (shouldStripExports) {
+                        // Remove export statements entirely
+
+                        continue;
+                    }
+
+                    // Make sure these don't end up in the wrapper closure
+                    if (shouldExtractESMStmtsForWrap) {
+                        try stmts.outside_wrapper_prefix.append(stmt);
+                        continue;
+                    }
+                },
+
+                .s_function => |s| {
+
+                    // Strip the "export" keyword while bundling
+                    if (shouldStripExports and s.func.flags.contains(.is_export)) {
+                        // Be c areful to not modify the original statement
+                        stmt = Stmt.alloc(
+                            S.Function,
+                            S.Function{
+                                .func = s.func,
+                            },
+                            stmt.loc,
+                        );
+                        stmt.data.s_function.func.flags.remove(.is_export);
+                    }
+                },
+
+                .s_class => |s| {
+
+                    // Strip the "export" keyword while bundling
+                    if (shouldStripExports and s.is_export) {
+                        // Be c areful to not modify the original statement
+                        stmt = Stmt.alloc(
+                            S.Class,
+                            S.Class{
+                                .class = s.class,
+                                .is_export = false,
+                            },
+                            stmt.loc,
+                        );
+                    }
+                },
+
+                .s_local => |s| {
+                    // Strip the "export" keyword while bundling
+                    if (shouldStripExports and s.is_export) {
+                        // Be c areful to not modify the original statement
+                        stmt = Stmt.alloc(
+                            S.Local,
+                            s.*,
+                            stmt.loc,
+                        );
+                        stmt.data.s_local.is_export = false;
+                    }
+                },
+
+                .s_export_default => |s| {
+                    // "export default foo"
+
+                    if (shouldStripExports) {
+                        switch (s.value) {
+                            .stmt => {
+                                var stmt2 = s.value.stmt;
+                                switch (stmt2.data) {
+                                    .s_expr => |s2| {
+                                        // "export default foo;" => "var default = foo;"
+                                        stmt = Stmt.alloc(
+                                            S.Local,
+                                            S.Local{
+                                                .decls = try bun.from(
+                                                    []js_ast.Decl,
+                                                    allocator,
+                                                    &.{
+                                                        .{
+                                                            .binding = Binding.alloc(
+                                                                allocator,
+                                                                B.Identifier{
+                                                                    .ref = s.default_name.ref.?,
+                                                                },
+                                                                s2.loc,
+                                                            ),
+                                                            .value = s2.value,
+                                                        },
+                                                    },
+                                                ),
+                                            },
+                                            stmt.loc,
+                                        );
+                                    },
+                                    .s_function => |s2| {
+                                        // "export default function() {}" => "function default() {}"
+                                        // "export default function foo() {}" => "function foo() {}"
+
+                                        // Be careful to not modify the original statement
+                                        stmt = Stmt.alloc(
+                                            S.Function,
+                                            S.Function{
+                                                .func = s2.func,
+                                            },
+                                            stmt.loc,
+                                        );
+                                        stmt.data.s_function.func.name = s.default_name;
+                                    },
+
+                                    .s_class => |s2| {
+                                        // "export default class {}" => "class default {}"
+                                        // "export default class foo {}" => "class foo {}"
+
+                                        // Be careful to not modify the original statement
+                                        stmt = Stmt.alloc(
+                                            S.Class,
+                                            S.Class{
+                                                .class = s2.class,
+                                                .is_export = false,
+                                            },
+                                            stmt.loc,
+                                        );
+                                        stmt.data.s_class.class.class_name = s.default_name;
+                                    },
+
+                                    else => bun.unreachablePanic(
+                                        "Unexpected type {any}",
+                                        .{stmt2.data},
+                                    ),
+                                }
+                            },
+                            .expr => |e| {
+                                stmt = Stmt.alloc(
+                                    S.Local,
+                                    S.Local{
+                                        .decls = try bun.from(
+                                            []js_ast.Decl,
+                                            allocator,
+                                            &.{
+                                                .{
+                                                    .binding = Binding.alloc(
+                                                        allocator,
+                                                        B.Identifier{
+                                                            .ref = s.default_name.ref.?,
+                                                        },
+                                                        e.loc,
+                                                    ),
+                                                    .value = e,
+                                                },
+                                            },
+                                        ),
+                                    },
+                                    stmt.loc,
+                                );
+                            },
+                        }
+                    }
+                },
+
+                else => {},
+            }
+
+            try stmts.inside_wrapper_suffix.append(stmt);
+        }
+    }
+
+    fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
+        return c.graph.ast.items(.module_scope)[Ref.RuntimeRef.source_index].members.get(name).?.ref;
+    }
+
     fn generateCodeForFileInChunkJS(
         c: *LinkerContext,
+        writer: *js_printer.BufferWriter,
         r: renamer.Renamer,
         chunk: *Chunk,
         part_range: PartRange,
         toCommonJSRef: Ref,
         toESMRef: Ref,
         runtimeRequireRef: Ref,
-        entry_bits: *AutoBitSet,
         stmts: *StmtList,
         allocator: std.mem.Allocator,
         temp_allocator: std.mem.Allocator,
     ) js_printer.PrintResult {
-        var repr = &chunk.content.javascript;
         // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
         var parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()][part_range.part_index_begin..part_range.part_index_end];
         const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
-        const flags: JSMeta.Flags = c.graph.meta.items(.flags)[part_range.source_index.get()];
+        _ = resolved_exports;
+        const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
+        const flags = all_flags[part_range.source_index.get()];
         const wrapper_part_index = c.graph.meta.items(.wrapper_part_index)[part_range.source_index.get()];
-        const uses_exports_ref = c.graph.ast.items(.uses_exports_ref)[part_range.source_index.get()];
-        const uses_module_ref = c.graph.ast.items(.uses_module_ref)[part_range.source_index.get()];
-        const exports_ref = c.graph.ast.items(.exports_ref)[part_range.source_index.get()];
-        const module_ref = c.graph.ast.items(.module_ref)[part_range.source_index.get()];
-        const wrapper_ref = c.graph.ast.items(.wrapper_ref)[part_range.source_index.get()];
+
+        // referencing everything by array makes the code a lot more annoying :(
+        const ast: js_ast.Ast = c.graph.ast.get(part_range.source_index.get());
 
         js_ast.Expr.Data.Store.reset();
         js_ast.Stmt.Data.Store.reset();
@@ -3758,7 +4386,17 @@ const LinkerContext = struct {
             namespace_export_part_index < part_range.part_index_end and
             parts[namespace_export_part_index].is_live)
         {
-            c.convertStmtsForChunk(part_range.source_index, stmts, parts[namespace_export_part_index].stmts);
+            c.convertStmtsForChunk(
+                part_range.source_index,
+                stmts,
+                parts[namespace_export_part_index].stmts,
+                chunk,
+                temp_allocator,
+                flags.wrap,
+                ast,
+            ) catch |err| return .{
+                .err = err,
+            };
 
             switch (flags.wrap) {
                 .esm => {
@@ -3795,7 +4433,17 @@ const LinkerContext = struct {
             // TODO: lazy default export
 
             // convert
-            c.convertStmtsForChunk(part_range.source_index, stmts, part.stmts);
+            c.convertStmtsForChunk(
+                part_range.source_index,
+                stmts,
+                part.stmts,
+                chunk,
+                temp_allocator,
+                flags.wrap,
+                ast,
+            ) catch |err| return .{
+                .err = err,
+            };
         }
 
         // Hoist all import statements before any normal statements. ES6 imports
@@ -3807,7 +4455,7 @@ const LinkerContext = struct {
 
         stmts.all_stmts.appendSlice(stmts.inside_wrapper_prefix.items) catch unreachable;
 
-        var out_stmts = stmts.all_stmts.items;
+        var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
         // Optionally wrap all statements in a closure
         if (needs_wrapper) {
             switch (flags.wrap) {
@@ -3815,16 +4463,16 @@ const LinkerContext = struct {
                     // Only include the arguments that are actually used
                     var args = std.ArrayList(js_ast.G.Arg).initCapacity(
                         temp_allocator,
-                        @boolToInt(uses_exports_ref) + @boolToInt(uses_module_ref),
+                        @boolToInt(ast.uses_exports_ref) + @boolToInt(ast.uses_module_ref),
                     ) catch unreachable;
 
-                    if (uses_exports_ref) {
+                    if (ast.uses_exports_ref) {
                         args.appendAssumeCapacity(
                             js_ast.G.Arg{
                                 .binding = js_ast.Binding.alloc(
                                     temp_allocator,
                                     js_ast.B.Identifier{
-                                        .ref = exports_ref,
+                                        .ref = ast.exports_ref,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -3832,13 +4480,13 @@ const LinkerContext = struct {
                         );
                     }
 
-                    if (uses_module_ref) {
+                    if (ast.uses_module_ref) {
                         args.appendAssumeCapacity(
                             js_ast.G.Arg{
                                 .binding = js_ast.Binding.alloc(
                                     temp_allocator,
                                     js_ast.B.Identifier{
-                                        .ref = module_ref,
+                                        .ref = ast.module_ref,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -3887,7 +4535,7 @@ const LinkerContext = struct {
                             .binding = Binding.alloc(
                                 temp_allocator,
                                 B.Identifier{
-                                    .ref = wrapper_ref.?,
+                                    .ref = ast.wrapper_ref.?,
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -4033,7 +4681,7 @@ const LinkerContext = struct {
                             .binding = Binding.alloc(
                                 temp_allocator,
                                 B.Identifier{
-                                    .ref = wrapper_ref.?,
+                                    .ref = ast.wrapper_ref.?,
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -4057,6 +4705,13 @@ const LinkerContext = struct {
             out_stmts = stmts.outside_wrapper_prefix.items;
         }
 
+        const parts_to_print = &[_]js_ast.Part{
+            js_ast.Part{
+                .kind = .stmts,
+                .stmts = out_stmts,
+            },
+        };
+
         const print_options = js_printer.Options{
             // TODO: IIFE
             .indent = 0,
@@ -4064,6 +4719,44 @@ const LinkerContext = struct {
             .allocator = allocator,
             .to_module_ref = toESMRef,
             .require_ref = runtimeRequireRef,
+            .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
+        };
+
+        writer.buffer.reset();
+        var printer = js_printer.BufferPrinter.init(
+            writer.*,
+        );
+        defer writer.* = printer.ctx;
+
+        switch (c.resolver.opts.platform.isBun()) {
+            inline else => |is_bun| {
+                return js_printer.print(
+                    *js_printer.BufferPrinter,
+                    &printer,
+                    is_bun,
+                    print_options,
+                    ast.import_records,
+                    parts_to_print,
+                    r,
+                );
+            },
+        }
+
+        unreachable;
+    }
+
+    fn requireOrImportMetaForSource(
+        c: *LinkerContext,
+        source_index: Index.Int,
+    ) js_printer.RequireOrImportMeta {
+        const flags = c.graph.meta.items(.flags)[source_index];
+        return .{
+            .exports_ref = if (flags.wrap == .esm)
+                c.graph.ast.items(.exports_ref)[source_index]
+            else
+                Ref.None,
+            .is_wrapper_async = flags.is_async_or_has_async_dependency,
+            .wrapper_ref = c.graph.ast.items(.wrapper_ref)[source_index] orelse Ref.None,
         };
     }
 
@@ -5175,6 +5868,10 @@ pub const Chunk = struct {
     entry_point: Chunk.EntryPoint = .{},
 
     is_executable: bool = false,
+
+    pub inline fn isEntryPoint(this: *const Chunk) bool {
+        return this.entry_point.is_entry_point;
+    }
 
     pub inline fn entryBits(this: *const Chunk) *const AutoBitSet {
         return &this.entry_bits;

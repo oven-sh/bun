@@ -200,14 +200,14 @@ pub const Response = struct {
         return JSValue.jsBoolean(this.isOK());
     }
 
-    fn getOrCreateHeaders(this: *Response) *FetchHeaders {
+    fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
         if (this.body.init.headers == null) {
             this.body.init.headers = FetchHeaders.createEmpty();
 
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.body.init.headers.?.put("content-type", content_type);
+                    this.body.init.headers.?.put("content-type", content_type, globalThis);
                 }
             }
         }
@@ -219,7 +219,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return this.getOrCreateHeaders().toJS(globalThis);
+        return this.getOrCreateHeaders(globalThis).toJS(globalThis);
     }
 
     pub fn doClone(
@@ -230,7 +230,7 @@ pub const Response = struct {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         const val = Response.makeMaybePooled(globalThis, cloned);
         if (this.body.init.headers) |headers| {
-            cloned.body.init.headers = headers.cloneThis();
+            cloned.body.init.headers = headers.cloneThis(globalThis);
         }
 
         return val;
@@ -406,8 +406,8 @@ pub const Response = struct {
             }
         }
 
-        var headers_ref = response.getOrCreateHeaders();
-        headers_ref.putDefault("content-type", MimeType.json.value);
+        var headers_ref = response.getOrCreateHeaders(globalThis);
+        headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -453,9 +453,9 @@ pub const Response = struct {
             }
         }
 
-        response.body.init.headers = response.getOrCreateHeaders();
+        response.body.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.body.init.headers.?;
-        headers_ref.put("location", url_string_slice.slice());
+        headers_ref.put("location", url_string_slice.slice(), globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -521,7 +521,7 @@ pub const Response = struct {
             response.body.value.Blob.content_type.len > 0 and
             !response.body.init.headers.?.fastHas(.ContentType))
         {
-            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type);
+            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
 
         return response;
@@ -1031,8 +1031,12 @@ pub const Fetch = struct {
                             headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                             // TODO: make this one pass
                         } else if (FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                            defer headers__.deref();
                             headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
-                            headers__.deref();
+                        } else {
+                            // Converting the headers failed; return null and
+                            //  let the set exception get thrown
+                            return null;
                         }
                     }
 
@@ -1185,7 +1189,8 @@ pub const Fetch = struct {
             return null;
         }
 
-        var deferred_promise = JSC.C.JSObjectMakeDeferredPromise(globalThis, null, null, null);
+        var promise = JSPromise.Strong.init(globalThis);
+        var promise_val = promise.value();
 
         if (!method.hasRequestBody() and body.size() > 0) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
@@ -1199,9 +1204,9 @@ pub const Fetch = struct {
             .{ .method = method, .url = url, .headers = headers orelse Headers{
                 .allocator = bun.default_allocator,
             }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer, .signal = signal, .globalThis = globalThis },
-            JSC.JSValue.fromRef(deferred_promise),
+            promise_val,
         ) catch unreachable;
-        return deferred_promise;
+        return promise_val.asRef();
     }
 };
 

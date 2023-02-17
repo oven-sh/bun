@@ -131,6 +131,10 @@ bool isValidHTTPHeaderValue(const String& value)
         c = value[i];
         if (c == 0x00 || c == 0x0A || c == 0x0D)
             return false;
+
+        //NOTE: The spec doesn't require ASCII or Latin1 but common
+        // implementations, including Node, disallow codepoints > 255
+        if (c > 255) return false;
     }
     return true;
 }

@@ -97,19 +97,27 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.utf8().data(), value.length()));
+        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(
+            value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()
+        ));
     }
 
     for (auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
         auto& value = header.value;
-        res->writeHeader(std::string_view(name.utf8().data(), name.length()), std::string_view(value.utf8().data(), value.length()));
+        res->writeHeader(
+            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
+            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length())
+        );
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         auto& name = header.key;
         auto& value = header.value;
-        res->writeHeader(std::string_view(name.utf8().data(), name.length()), std::string_view(value.utf8().data(), value.length()));
+        res->writeHeader(
+            std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
+            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length())
+        );
     }
 }
 

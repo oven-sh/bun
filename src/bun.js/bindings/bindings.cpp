@@ -94,6 +94,8 @@
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
+    //TODO need to not assume is8Bit throughout here
+
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
@@ -712,6 +714,10 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2)
 {
     headers->append(Zig::toString(*arg1), Zig::toString(*arg2));
+    //TODO need a globalobject, throwscope
+    //auto possibleException = headers->append(Zig::toString(*arg1), Zig::toString(*arg2));
+    //if (possibleException.hasException())
+        //WebCore::propagateException(*lexicalGlobalObject, throwScope, possibleException.releaseException());
 }
 WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* vm)
 {
@@ -726,7 +732,10 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
     EnsureStillAliveScope argument0 = JSC::JSValue::decode(argument0_);
 
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-    using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>;
+    // Note that we use IDLDOMString here rather than IDLByteString: while headers
+    //  should be ASCII only, we want the headers->fill implementation to discover
+    //  and error on invalid names and values
+    using TargetType = IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>;
     using Converter = std::optional<Converter<TargetType>::ReturnType>;
     auto init = argument0.value().isUndefined() ? Converter() : Converter(convert<TargetType>(*lexicalGlobalObject, argument0.value()));
     RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -751,14 +760,18 @@ JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* headers, JSC__JS
 }
 JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* arg1)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    clone->fill(*headers);
+    auto possibleException = clone->fill(*headers);
+    if (possibleException.hasException())
+        WebCore::propagateException(*arg1, throwScope, possibleException.releaseException());
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* headers)
 {
+    //TODO need global, throwscope to handle possible error
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     clone->fill(*headers);
     return clone;
@@ -774,14 +787,27 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
     auto iter = headers->createIterator();
     uint32_t i = 0;
     unsigned count = 0;
+
     for (auto pair = iter.next(); pair; pair = iter.next()) {
         auto name = pair->key;
         auto value = pair->value;
         names[count] = { i, name.length() };
-        memcpy(&buf[i], name.characters8(), name.length());
+
+        if (name.is8Bit())
+            memcpy(&buf[i], name.characters16(), name.length());
+        else {
+            //auto str = StringImpl();
+            //StringImpl::createUninitialized(utf16.length(), &str);
+            StringImpl::copyCharacters(&buf[i], name.characters16(), name.length());
+        }
+
         i += name.length();
         values[count++] = { i, value.length() };
-        memcpy(&buf[i], value.characters8(), value.length());
+        if (value.is8Bit())
+            memcpy(&buf[i], value.characters8(), value.length());
+        else
+            StringImpl::copyCharacters(&buf[i], value.characters16(), value.length());
+
         i += value.length();
     }
 }
@@ -893,6 +919,7 @@ void WebCore__FetchHeaders__deref(WebCore__FetchHeaders* arg0)
 
 JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, StringPointer* arg1, StringPointer* arg2, const ZigString* arg3, uint32_t count)
 {
+    auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
     ZigString buf = *arg3;
@@ -903,24 +930,30 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
+    auto possibleException = headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
+    if (possibleException.hasException())
+        WebCore::propagateException(*arg0, throwScope, possibleException.releaseException());
     pairs.releaseBuffer();
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
 }
 void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* headers, const ZigString* arg1, ZigString* arg2)
 {
+    //TODO need globalobject, throwscope
     *arg2 = Zig::toZigString(headers->get(Zig::toString(*arg1)).releaseReturnValue());
 }
 bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString* arg1)
 {
+    //TODO need globalobject, throwscope
     return headers->has(Zig::toString(*arg1)).releaseReturnValue();
 }
 void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2)
 {
+    //TODO need globalobject, throwscope
     headers->set(Zig::toString(*arg1), Zig::toString(*arg2));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1)
 {
+    //TODO need globalobject, throwscope
     headers->remove(Zig::toString(*arg1));
 }
 

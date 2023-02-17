@@ -291,18 +291,6 @@ pub const Os = struct {
         });
     }
 
-    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        JSC.markBinding(@src());
-
-        const machine_name = if (comptime Environment.isLinux) b: {
-                                const uts = std.os.uname();
-                                break :b std.mem.span(&uts.machine);
-                             }
-                             else "unknown";
-
-        return JSC.ZigString.init(machine_name).withEncoding().toValueGC(globalThis);
-    }
-
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 

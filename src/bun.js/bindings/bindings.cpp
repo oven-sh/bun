@@ -802,7 +802,7 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         names[count] = { i, name.length() };
 
         if (name.is8Bit())
-            memcpy(&buf[i], name.characters16(), name.length());
+            memcpy(&buf[i], name.characters8(), name.length());
         else {
             StringImpl::copyCharacters(&buf[i], name.characters16(), name.length());
         }

@@ -30,8 +30,7 @@ describe("Headers", async () => {
 
   it("Header values must be valid", async () => {
     expect(() => fetch(url, {headers: {"x-test": "\0" }})).toThrow("Header 'x-test' has invalid value: '\0'");
-    // Doesn't throw, investigate
-    //expect(() => fetch(url, {headers: {"x-test": "❤️" }})).toThrow("Header 'x-test' has invalid value: '❤️'");
+    expect(() => fetch(url, {headers: {"x-test": "❤️" }})).toThrow("Header 'x-test' has invalid value: '❤️'");
   });
 
   it("repro 1602", async () => {
@@ -47,7 +46,7 @@ describe("Headers", async () => {
 
     // This one will pass
     expect(await fetchContent({"x-test": roundTripString})).toBe(roundTripString);
-    // This will hang
+    // This would hang
     expect(await fetchContent({"x-test": origString})).toBe(origString);
   });
 });

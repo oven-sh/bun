@@ -94,24 +94,22 @@
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
-    //TODO need to not assume is8Bit throughout here
-
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
+        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.commonHeaders()) {
         const auto& name = WebCore::httpHeaderNameString(header.key);
         auto& value = header.value;
-        res->writeHeader(std::string_view(reinterpret_cast<const char*>(name.characters8()), name.length()), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
+        res->writeHeader(std::string_view(name.utf8().data(), name.length()), std::string_view(value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
         auto& name = header.key;
         auto& value = header.value;
-        res->writeHeader(std::string_view(reinterpret_cast<const char*>(name.characters8()), name.length()), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
+        res->writeHeader(std::string_view(name.utf8().data(), name.length()), std::string_view(value.utf8().data(), value.length()));
     }
 }
 
@@ -711,13 +709,13 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
     return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 }
-void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2)
+void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
+                                   JSC__JSGlobalObject* lexicalGlobalObject)
 {
-    headers->append(Zig::toString(*arg1), Zig::toString(*arg2));
-    //TODO need a globalobject, throwscope
-    //auto possibleException = headers->append(Zig::toString(*arg1), Zig::toString(*arg2));
-    //if (possibleException.hasException())
-        //WebCore::propagateException(*lexicalGlobalObject, throwScope, possibleException.releaseException());
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+    WebCore::propagateException(*lexicalGlobalObject, throwScope,
+        headers->append(Zig::toString(*arg1), Zig::toString(*arg2))
+    );
 }
 WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* vm)
 {
@@ -745,9 +743,9 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
         // `fill` doesn't set an exception on the VM if it fails, it returns an
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
         //  translate it to JSValue and throw it.
-        auto possibleException = headers->fill(WTFMove(init.value()));
-        if (possibleException.hasException())
-            WebCore::propagateException(*lexicalGlobalObject, throwScope, possibleException.releaseException());
+        WebCore::propagateException(*lexicalGlobalObject, throwScope,
+            headers->fill(WTFMove(init.value()))
+        );
     }
     return headers;
 }
@@ -763,17 +761,19 @@ JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__J
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    auto possibleException = clone->fill(*headers);
-    if (possibleException.hasException())
-        WebCore::propagateException(*arg1, throwScope, possibleException.releaseException());
+    WebCore::propagateException(*arg1, throwScope,
+        clone->fill(*headers)
+    );
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
 
-WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* headers)
+WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* lexicalGlobalObject)
 {
-    //TODO need global, throwscope to handle possible error
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
-    clone->fill(*headers);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope,
+        clone->fill(*headers)
+    );
     return clone;
 }
 
@@ -796,8 +796,6 @@ void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer
         if (name.is8Bit())
             memcpy(&buf[i], name.characters16(), name.length());
         else {
-            //auto str = StringImpl();
-            //StringImpl::createUninitialized(utf16.length(), &str);
             StringImpl::copyCharacters(&buf[i], name.characters16(), name.length());
         }
 
@@ -930,31 +928,43 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    auto possibleException = headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
-    if (possibleException.hasException())
-        WebCore::propagateException(*arg0, throwScope, possibleException.releaseException());
+    WebCore::propagateException(*arg0, throwScope, 
+        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)))
+    );
     pairs.releaseBuffer();
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
 }
-void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* headers, const ZigString* arg1, ZigString* arg2)
+void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* headers, const ZigString* arg1, ZigString* arg2, JSC__JSGlobalObject* global)
 {
-    //TODO need globalobject, throwscope
-    *arg2 = Zig::toZigString(headers->get(Zig::toString(*arg1)).releaseReturnValue());
+    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    auto result = headers->get(Zig::toString(*arg1));
+    if (result.hasException())
+        WebCore::propagateException(*global, throwScope, result.releaseException());
+    else
+        *arg2 = Zig::toZigString(result.releaseReturnValue());
 }
-bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString* arg1)
+bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {
-    //TODO need globalobject, throwscope
-    return headers->has(Zig::toString(*arg1)).releaseReturnValue();
+    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    auto result = headers->has(Zig::toString(*arg1));
+    if (result.hasException())
+        WebCore::propagateException(*global, throwScope, result.releaseException());
+    else
+        return result.releaseReturnValue();
 }
-void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2)
+void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* global)
 {
-    //TODO need globalobject, throwscope
-    headers->set(Zig::toString(*arg1), Zig::toString(*arg2));
+    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    WebCore::propagateException(*global, throwScope,
+        headers->set(Zig::toString(*arg1), Zig::toString(*arg2))
+    );
 }
-void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1)
+void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {
-    //TODO need globalobject, throwscope
-    headers->remove(Zig::toString(*arg1));
+    auto throwScope = DECLARE_THROW_SCOPE(global->vm());
+    WebCore::propagateException(*global, throwScope,
+        headers->remove(Zig::toString(*arg1))
+    );
 }
 
 void WebCore__FetchHeaders__fastRemove_(WebCore__FetchHeaders* headers, unsigned char headerName)

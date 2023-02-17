@@ -269,7 +269,7 @@ pub const Request = struct {
         globalObject: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         if (this.headers) |headers_ref| {
-            if (headers_ref.get("referrer")) |referrer| {
+            if (headers_ref.get("referrer", globalObject)) |referrer| {
                 return ZigString.init(referrer).toValueGC(globalObject);
             }
         }
@@ -427,7 +427,7 @@ pub const Request = struct {
             request.body.Blob.content_type.len > 0 and
             !request.headers.?.fastHas(.ContentType))
         {
-            request.headers.?.put("content-type", request.body.Blob.content_type);
+            request.headers.?.put("content-type", request.body.Blob.content_type, globalThis);
         }
 
         return request;
@@ -474,7 +474,7 @@ pub const Request = struct {
                 if (this.body == .Blob) {
                     const content_type = this.body.Blob.content_type;
                     if (content_type.len > 0) {
-                        this.headers.?.put("content-type", content_type);
+                        this.headers.?.put("content-type", content_type, globalThis);
                     }
                 }
             }
@@ -501,10 +501,10 @@ pub const Request = struct {
         };
 
         if (this.headers) |head| {
-            req.headers = head.cloneThis();
+            req.headers = head.cloneThis(globalThis);
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
-            this.headers = req.headers.?.cloneThis().?;
+            this.headers = req.headers.?.cloneThis(globalThis).?;
         }
     }
 

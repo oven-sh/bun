@@ -200,14 +200,14 @@ pub const Response = struct {
         return JSValue.jsBoolean(this.isOK());
     }
 
-    fn getOrCreateHeaders(this: *Response) *FetchHeaders {
+    fn getOrCreateHeaders(this: *Response, globalThis: *JSC.JSGlobalObject) *FetchHeaders {
         if (this.body.init.headers == null) {
             this.body.init.headers = FetchHeaders.createEmpty();
 
             if (this.body.value == .Blob) {
                 const content_type = this.body.value.Blob.content_type;
                 if (content_type.len > 0) {
-                    this.body.init.headers.?.put("content-type", content_type);
+                    this.body.init.headers.?.put("content-type", content_type, globalThis);
                 }
             }
         }
@@ -219,7 +219,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return this.getOrCreateHeaders().toJS(globalThis);
+        return this.getOrCreateHeaders(globalThis).toJS(globalThis);
     }
 
     pub fn doClone(
@@ -230,7 +230,7 @@ pub const Response = struct {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         const val = Response.makeMaybePooled(globalThis, cloned);
         if (this.body.init.headers) |headers| {
-            cloned.body.init.headers = headers.cloneThis();
+            cloned.body.init.headers = headers.cloneThis(globalThis);
         }
 
         return val;
@@ -406,8 +406,8 @@ pub const Response = struct {
             }
         }
 
-        var headers_ref = response.getOrCreateHeaders();
-        headers_ref.putDefault("content-type", MimeType.json.value);
+        var headers_ref = response.getOrCreateHeaders(globalThis);
+        headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -453,9 +453,9 @@ pub const Response = struct {
             }
         }
 
-        response.body.init.headers = response.getOrCreateHeaders();
+        response.body.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.body.init.headers.?;
-        headers_ref.put("location", url_string_slice.slice());
+        headers_ref.put("location", url_string_slice.slice(), globalThis);
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
@@ -521,7 +521,7 @@ pub const Response = struct {
             response.body.value.Blob.content_type.len > 0 and
             !response.body.init.headers.?.fastHas(.ContentType))
         {
-            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type);
+            response.body.init.headers.?.put("content-type", response.body.value.Blob.content_type, globalThis);
         }
 
         return response;

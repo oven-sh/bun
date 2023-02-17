@@ -1,10 +1,10 @@
 const std = @import("std");
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Lock = @import("../lock.zig").Lock;
 const Microtask = JSC.Microtask;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const WebCore = JSC.WebCore;
@@ -21,17 +21,17 @@ const JSValue = JSC.JSValue;
 const js = JSC.C;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
-const NetworkThread = @import("http").NetworkThread;
-const uws = @import("uws");
+const NetworkThread = @import("bun").HTTP.NetworkThread;
+const uws = @import("bun").uws;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {
     return struct {
         const This = @This();
         ctx: *Context,
-        task: WorkPoolTask = .{ .callback = runFromThreadPool },
+        task: WorkPoolTask = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
-        promise: JSValue,
+        promise: JSC.JSPromise.Strong = .{},
         globalThis: *JSGlobalObject,
         concurrent_task: JSC.ConcurrentTask = .{},
 
@@ -41,13 +41,13 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.vm.event_loop,
+                .event_loop = VirtualMachine.get().event_loop,
                 .ctx = value,
                 .allocator = allocator,
-                .promise = JSValue.createInternalPromise(globalThis),
                 .globalThis = globalThis,
             };
-            this.promise.protect();
+            var promise = JSC.JSPromise.create(globalThis);
+            this.promise.strong.set(globalThis, promise.asValue(globalThis));
             this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
@@ -60,18 +60,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromJS(this: *This) void {
-            var promise_value = this.promise;
+            var promise = this.promise.swap();
             this.ref.unref(this.event_loop.virtual_machine);
-
-            promise_value.ensureStillAlive();
-            promise_value.unprotect();
-
-            var promise = promise_value.asInternalPromise() orelse {
-                if (comptime @hasDecl(Context, "deinit")) {
-                    @call(.{}, Context.deinit, .{this.ctx});
-                }
-                return;
-            };
 
             var ctx = this.ctx;
 
@@ -93,10 +83,16 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 }
 
 pub fn IOTask(comptime Context: type) type {
+    return WorkTask(Context, true);
+}
+
+pub fn WorkTask(comptime Context: type, comptime async_io: bool) type {
     return struct {
+        const TaskType = if (async_io) NetworkThread.Task else WorkPoolTask;
+
         const This = @This();
         ctx: *Context,
-        task: NetworkThread.Task = .{ .callback = runFromThreadPool },
+        task: TaskType = .{ .callback = &runFromThreadPool },
         event_loop: *JSC.EventLoop,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
@@ -118,7 +114,7 @@ pub fn IOTask(comptime Context: type) type {
             return this;
         }
 
-        pub fn runFromThreadPool(task: *NetworkThread.Task) void {
+        pub fn runFromThreadPool(task: *TaskType) void {
             var this = @fieldParentPtr(This, "task", task);
             Context.run(this.ctx, this);
         }
@@ -131,8 +127,12 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             this.ref.ref(this.event_loop.virtual_machine);
-            NetworkThread.init() catch return;
-            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            if (comptime async_io) {
+                NetworkThread.init() catch return;
+                NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
+            } else {
+                WorkPool.schedule(&this.task);
+            }
         }
 
         pub fn onFinish(this: *This) void {
@@ -142,7 +142,7 @@ pub fn IOTask(comptime Context: type) type {
         pub fn deinit(this: *This) void {
             var allocator = this.allocator;
             this.ref.unref(this.event_loop.virtual_machine);
-            this.* = undefined;
+
             allocator.destroy(this);
         }
     };
@@ -150,7 +150,7 @@ pub fn IOTask(comptime Context: type) type {
 
 pub const AnyTask = struct {
     ctx: ?*anyopaque,
-    callback: fn (*anyopaque) void,
+    callback: *const (fn (*anyopaque) void),
 
     pub fn run(this: *AnyTask) void {
         @setRuntimeSafety(false);
@@ -173,6 +173,7 @@ pub const AnyTask = struct {
     }
 };
 
+
 pub const CppTask = opaque {
     extern fn Bun__performTask(globalObject: *JSGlobalObject, task: *CppTask) void;
     pub fn run(this: *CppTask, global: *JSGlobalObject) void {
@@ -183,7 +184,9 @@ pub const CppTask = opaque {
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 const HotReloadTask = JSC.HotReloader.HotReloadTask;
+const PollPendingModulesTask = JSC.ModuleLoader.AsyncModule.Queue;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
+const GetAddrInfoRequestTask = JSC.DNS.GetAddrInfoRequest.Task;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
@@ -197,6 +200,8 @@ pub const Task = TaggedPointerUnion(.{
     ThreadSafeFunction,
     CppTask,
     HotReloadTask,
+    PollPendingModulesTask,
+    GetAddrInfoRequestTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -217,13 +222,145 @@ pub const ConcurrentTask = struct {
     }
 };
 
-const AsyncIO = @import("io");
+const AsyncIO = @import("bun").AsyncIO;
+
+// This type must be unique per JavaScript thread
+pub const GarbageCollectionController = struct {
+    gc_timer: *uws.Timer = undefined,
+    gc_last_heap_size: usize = 0,
+    gc_last_heap_size_on_repeating_timer: usize = 0,
+    heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
+    gc_timer_state: GCTimerState = GCTimerState.pending,
+    gc_repeating_timer: *uws.Timer = undefined,
+    gc_timer_interval: i32 = 0,
+    gc_repeating_timer_fast: bool = true,
+
+    pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
+        var actual = vm.uws_event_loop.?;
+        this.gc_timer = uws.Timer.createFallthrough(actual, this);
+        this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
+
+        var gc_timer_interval: i32 = 1000;
+        if (vm.bundler.env.map.get("BUN_GC_TIMER_INTERVAL")) |timer| {
+            if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
+                if (parsed > 0) {
+                    gc_timer_interval = parsed;
+                }
+            } else |_| {}
+        }
+        this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
+        this.gc_timer_interval = gc_timer_interval;
+    }
+
+    pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
+        this.gc_timer_state = .scheduled;
+        this.gc_timer.set(this, onGCTimer, 16, 0);
+    }
+
+    pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
+        return @fieldParentPtr(VirtualMachine, "gc_controller", this);
+    }
+
+    pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
+        var this = timer.as(*GarbageCollectionController);
+        this.gc_timer_state = .run_on_next_tick;
+    }
+
+    // We want to always run GC once in awhile
+    // But if you have a long-running instance of Bun, you don't want the
+    // program constantly using CPU doing GC for no reason
+    //
+    // So we have two settings for this GC timer:
+    //
+    //    - Fast: GC runs every 1 second
+    //    - Slow: GC runs every 30 seconds
+    //
+    // When the heap size is increasing, we always switch to fast mode
+    // When the heap size has been the same or less for 30 seconds, we switch to slow mode
+    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.EnumLiteral)) void {
+        if (setting == .fast and !this.gc_repeating_timer_fast) {
+            this.gc_repeating_timer_fast = true;
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        } else if (setting == .slow and this.gc_repeating_timer_fast) {
+            this.gc_repeating_timer_fast = false;
+            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+        }
+    }
+
+    pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
+        var this = timer.as(*GarbageCollectionController);
+        const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
+        this.performGC();
+        this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
+        if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
+            if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
+                // make the timer interval longer
+                this.updateGCRepeatTimer(.slow);
+            }
+        } else {
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
+            this.updateGCRepeatTimer(.fast);
+        }
+    }
+
+    pub fn processGCTimer(this: *GarbageCollectionController) void {
+        var vm = this.bunVM().global.vm();
+        const this_heap_size = vm.blockBytesAllocated();
+        const prev = this.gc_last_heap_size;
+
+        switch (this.gc_timer_state) {
+            .run_on_next_tick => {
+                // When memory usage is not stable, run the GC more.
+                if (this_heap_size != prev) {
+                    this.scheduleGCTimer();
+                    this.updateGCRepeatTimer(.fast);
+                } else {
+                    this.gc_timer_state = .pending;
+                }
+                vm.collectAsync();
+                this.gc_last_heap_size = this_heap_size;
+            },
+            .pending => {
+                if (this_heap_size != prev) {
+                    this.updateGCRepeatTimer(.fast);
+
+                    if (this_heap_size > prev * 2) {
+                        this.performGC();
+                    } else {
+                        this.scheduleGCTimer();
+                    }
+                }
+            },
+            .scheduled => {
+                if (this_heap_size > prev * 2) {
+                    this.updateGCRepeatTimer(.fast);
+                    this.performGC();
+                }
+            },
+        }
+    }
+
+    pub fn performGC(this: *GarbageCollectionController) void {
+        var vm = this.bunVM().global.vm();
+        vm.collectAsync();
+        this.gc_last_heap_size = vm.blockBytesAllocated();
+    }
+
+    pub const GCTimerState = enum {
+        pending,
+        scheduled,
+        run_on_next_tick,
+    };
+};
 
 pub const EventLoop = struct {
     tasks: Queue = undefined,
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
     global: *JSGlobalObject = undefined,
-    virtual_machine: *VirtualMachine = undefined,
+    virtual_machine: *JSC.VirtualMachine = undefined,
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
@@ -289,6 +426,14 @@ pub const EventLoop = struct {
                     var any: *CppTask = task.get(CppTask).?;
                     any.run(global);
                 },
+                @field(Task.Tag, typeBaseName(@typeName(PollPendingModulesTask))) => {
+                    this.virtual_machine.modules.onPoll();
+                },
+                @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
+                    var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
+                    any.runFromJS();
+                    any.deinit();
+                },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else unreachable,
@@ -298,10 +443,7 @@ pub const EventLoop = struct {
             global_vm.drainMicrotasks();
         }
 
-        if (this.tasks.count == 0) {
-            this.tasks.head = 0;
-        }
-
+        this.tasks.head = if (this.tasks.count == 0) 0 else this.tasks.head;
         return @truncate(u32, counter);
     }
 
@@ -335,19 +477,59 @@ pub const EventLoop = struct {
     }
 
     pub fn autoTick(this: *EventLoop) void {
-        if (this.virtual_machine.uws_event_loop.?.num_polls > 0 or this.virtual_machine.uws_event_loop.?.active > 0) {
-            this.virtual_machine.uws_event_loop.?.tick();
+        var ctx = this.virtual_machine;
+        var loop = ctx.uws_event_loop.?;
+
+        // Some tasks need to keep the event loop alive for one more tick.
+        // We want to keep the event loop alive long enough to process those ticks and any microtasks
+        //
+        // BUT. We don't actually have an idle event in that case.
+        // That means the process will be waiting forever on nothing.
+        // So we need to drain the counter immediately before entering uSockets loop
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
+        if (loop.num_polls > 0 or loop.active > 0) {
+            loop.tick();
+            this.processGCTimer();
             // this.afterUSocketsTick();
         }
     }
 
-    // TODO: fix this technical debt
+    pub fn autoTickActive(this: *EventLoop) void {
+        var loop = this.virtual_machine.uws_event_loop.?;
+
+        var ctx = this.virtual_machine;
+
+        const pending_unref = ctx.pending_unref_counter;
+        if (pending_unref > 0) {
+            ctx.pending_unref_counter = 0;
+            loop.unrefCount(pending_unref);
+        }
+
+        if (loop.active > 0) {
+            loop.tick();
+            this.processGCTimer();
+            // this.afterUSocketsTick();
+        }
+    }
+
+    pub fn processGCTimer(this: *EventLoop) void {
+        this.virtual_machine.gc_controller.processGCTimer();
+    }
+
     pub fn tick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
         this.tickConcurrent();
+
+        this.processGCTimer();
+
         var global_vm = ctx.global.vm();
         while (true) {
-            while (this.tickWithCount() > 0) {
+            while (this.tickWithCount() > 0) : (this.global.handleRejectedPromises()) {
                 this.tickConcurrent();
             } else {
                 global_vm.releaseWeakRefs();
@@ -358,6 +540,8 @@ pub const EventLoop = struct {
             break;
         }
 
+        // TODO: unify the event loops
+        // This needs a hook into JSC to schedule timers
         this.global.vm().doWork();
 
         while (this.tickWithCount() > 0) {
@@ -372,25 +556,22 @@ pub const EventLoop = struct {
 
         ctx.global.vm().releaseWeakRefs();
         ctx.global.vm().drainMicrotasks();
+        var loop = ctx.uws_event_loop orelse return;
 
-        if (ctx.poller.loop != null and ctx.poller.loop.?.active > 0 or (ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered and (ctx.uws_event_loop.?.num_polls > 0 or this.start_server_on_next_tick))) {
+        if (loop.active > 0 or (ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered and (loop.num_polls > 0 or this.start_server_on_next_tick))) {
             if (this.tickConcurrentWithCount() > 0) {
                 this.tick();
-            } else {
-                if ((@intCast(c_ulonglong, ctx.uws_event_loop.?.internal_loop_data.iteration_nr) % 1_000) == 1) {
-                    _ = ctx.global.vm().runGC(true);
-                }
             }
 
             ctx.is_us_loop_entered = true;
             this.start_server_on_next_tick = false;
             ctx.enterUWSLoop();
             ctx.is_us_loop_entered = false;
+            ctx.autoGarbageCollect();
         }
     }
 
-    // TODO: fix this technical debt
-    pub fn waitForPromise(this: *EventLoop, promise: *JSC.JSInternalPromise) void {
+    pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.global.vm())) {
             JSC.JSPromise.Status.Pending => {
                 while (promise.status(this.global.vm()) == .Pending) {
@@ -424,14 +605,34 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
+    pub fn enqueueTaskWithTimeout(this: *EventLoop, task: Task, timeout: i32) void {
+        // TODO: make this more efficient!
+        var loop = this.virtual_machine.uws_event_loop orelse @panic("EventLoop.enqueueTaskWithTimeout: uSockets event loop is not initialized");
+        var timer = uws.Timer.createFallthrough(loop, task.ptr());
+        timer.set(task.ptr(), callTask, timeout, 0);
+    }
+
+    pub fn callTask(timer: *uws.Timer) callconv(.C) void {
+        var task = Task.from(timer.as(*anyopaque));
+        timer.deinit();
+
+        JSC.VirtualMachine.get().enqueueTask(task);
+    }
+
     pub fn ensureWaker(this: *EventLoop) void {
         JSC.markBinding(@src());
         if (this.virtual_machine.uws_event_loop == null) {
             var actual = uws.Loop.get().?;
             this.virtual_machine.uws_event_loop = actual;
+            this.virtual_machine.gc_controller.init(this.virtual_machine);
             // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
         }
+    }
+
+    /// Asynchronously run the garbage collector and track how much memory is now allocated
+    pub fn performGC(this: *EventLoop) void {
+        this.virtual_machine.gc_controller.performGC();
     }
 
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
@@ -442,353 +643,5 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop) |loop| {
             loop.wakeup();
         }
-    }
-};
-
-pub const Poller = struct {
-    /// kqueue() or epoll()
-    /// 0 == unset
-    loop: ?*uws.Loop = null,
-
-    pub fn dispatchKQueueEvent(loop: *uws.Loop, kqueue_event: *const std.os.system.kevent64_s) void {
-        if (comptime !Environment.isMac) {
-            unreachable;
-        }
-        var ptr = Pollable.from(@intToPtr(?*anyopaque, kqueue_event.udata));
-
-        switch (ptr.tag()) {
-            @field(Pollable.Tag, "FileBlobLoader") => {
-                var loader = ptr.as(FileBlobLoader);
-                loader.poll_ref.deactivate(loop);
-
-                loader.onPoll(@bitCast(i64, kqueue_event.data), kqueue_event.flags);
-            },
-            @field(Pollable.Tag, "Subprocess") => {
-                var loader = ptr.as(JSC.Subprocess);
-
-                loader.poll_ref.deactivate(loop);
-                loader.onExitNotification();
-            },
-            @field(Pollable.Tag, "BufferedInput") => {
-                var loader = ptr.as(JSC.Subprocess.BufferedInput);
-
-                loader.poll_ref.deactivate(loop);
-
-                loader.onReady(@bitCast(i64, kqueue_event.data));
-            },
-            @field(Pollable.Tag, "BufferedOutput") => {
-                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
-
-                loader.poll_ref.deactivate(loop);
-
-                loader.ready(@bitCast(i64, kqueue_event.data));
-            },
-            @field(Pollable.Tag, "FileSink") => {
-                var loader = ptr.as(JSC.WebCore.FileSink);
-                loader.poll_ref.deactivate(loop);
-
-                loader.onPoll(0, 0);
-            },
-            else => |tag| {
-                bun.Output.panic(
-                    "Internal error\nUnknown pollable tag: {d}\n",
-                    .{@enumToInt(tag)},
-                );
-            },
-        }
-    }
-
-    fn dispatchEpollEvent(loop: *uws.Loop, epoll_event: *linux.epoll_event) void {
-        var ptr = Pollable.from(@intToPtr(?*anyopaque, epoll_event.data.ptr));
-        switch (ptr.tag()) {
-            @field(Pollable.Tag, "FileBlobLoader") => {
-                var loader = ptr.as(FileBlobLoader);
-                loader.poll_ref.deactivate(loop);
-
-                loader.onPoll(0, 0);
-            },
-            @field(Pollable.Tag, "Subprocess") => {
-                var loader = ptr.as(JSC.Subprocess);
-                loader.poll_ref.deactivate(loop);
-
-                loader.onExitNotification();
-            },
-            @field(Pollable.Tag, "FileSink") => {
-                var loader = ptr.as(JSC.WebCore.FileSink);
-                loader.poll_ref.deactivate(loop);
-
-                loader.onPoll(0, 0);
-            },
-
-            @field(Pollable.Tag, "BufferedInput") => {
-                var loader = ptr.as(JSC.Subprocess.BufferedInput);
-
-                loader.poll_ref.deactivate(loop);
-
-                loader.onReady(0);
-            },
-            @field(Pollable.Tag, "BufferedOutput") => {
-                var loader = ptr.as(JSC.Subprocess.BufferedOutput);
-
-                loader.poll_ref.deactivate(loop);
-
-                loader.ready(0);
-            },
-            else => unreachable,
-        }
-    }
-
-    const timeout = std.mem.zeroes(std.os.timespec);
-    const linux = std.os.linux;
-
-    const FileBlobLoader = JSC.WebCore.FileBlobLoader;
-    const FileSink = JSC.WebCore.FileSink;
-    const Subprocess = JSC.Subprocess;
-    const BufferedInput = Subprocess.BufferedInput;
-    const BufferedOutput = Subprocess.BufferedOutput;
-    /// epoll only allows one pointer
-    /// We unfortunately need two pointers: one for a function call and one for the context
-    /// We use a tagged pointer union and then call the function with the context pointer
-    pub const Pollable = TaggedPointerUnion(.{
-        FileBlobLoader,
-        FileSink,
-        Subprocess,
-        BufferedInput,
-        BufferedOutput,
-    });
-    const Kevent = std.os.Kevent;
-    const kevent = std.c.kevent;
-
-    pub fn watch(this: *Poller, fd: JSC.Node.FileDescriptor, flag: Flag, comptime ContextType: type, ctx: *ContextType) JSC.Maybe(void) {
-        if (this.loop == null) {
-            this.loop = uws.Loop.get();
-            JSC.VirtualMachine.vm.uws_event_loop = this.loop.?;
-        }
-        const watcher_fd = this.loop.?.fd;
-
-        if (comptime Environment.isLinux) {
-            const flags: u32 = switch (flag) {
-                .process, .read => linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ONESHOT,
-                .write => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | linux.EPOLL.ONESHOT,
-            };
-
-            var event = linux.epoll_event{ .events = flags, .data = .{ .u64 = @ptrToInt(Pollable.init(ctx).ptr()) } };
-
-            const ctl = linux.epoll_ctl(
-                watcher_fd,
-                linux.EPOLL.CTL_ADD,
-                fd,
-                &event,
-            );
-
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
-                return errno;
-            }
-
-            ctx.poll_ref.activate(this.loop.?);
-
-            return JSC.Maybe(void).success;
-        } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            changelist[0] = switch (flag) {
-                .read => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_READ,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
-                    .ext = .{ 0, 0 },
-                },
-                .write => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_WRITE,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD | std.c.EV_ONESHOT,
-                    .ext = .{ 0, 0 },
-                },
-                .process => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_PROC,
-                    .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_ADD,
-                    .ext = .{ 0, 0 },
-                },
-            };
-
-            // output events only include change errors
-            const KEVENT_FLAG_ERROR_EVENTS = 0x000002;
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            const rc = rc: {
-                while (true) {
-                    const rc = std.os.system.kevent64(
-                        watcher_fd,
-                        &changelist,
-                        1,
-                        // The same array may be used for the changelist and eventlist.
-                        &changelist,
-                        1,
-                        KEVENT_FLAG_ERROR_EVENTS,
-                        &timeout,
-                    );
-
-                    if (std.c.getErrno(rc) == .INTR) continue;
-                    break :rc rc;
-                }
-            };
-
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
-                return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
-            const errno = std.c.getErrno(rc);
-
-            if (errno == .SUCCESS) {
-                ctx.poll_ref.activate(this.loop.?);
-
-                return JSC.Maybe(void).success;
-            }
-
-            switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(errno), .kevent).?,
-                else => unreachable,
-            }
-        } else {
-            @compileError("TODO: Poller");
-        }
-    }
-
-    pub fn unwatch(this: *Poller, fd: JSC.Node.FileDescriptor, flag: Flag, comptime ContextType: type, ctx: *ContextType) JSC.Maybe(void) {
-        if (this.loop == null) {
-            this.loop = uws.Loop.get();
-            JSC.VirtualMachine.vm.uws_event_loop = this.loop.?;
-        }
-        const watcher_fd = this.loop.?.fd;
-
-        if (comptime Environment.isLinux) {
-            const ctl = linux.epoll_ctl(
-                watcher_fd,
-                linux.EPOLL.CTL_DEL,
-                fd,
-                null,
-            );
-
-            if (JSC.Maybe(void).errnoSys(ctl, .epoll_ctl)) |errno| {
-                return errno;
-            }
-
-            ctx.poll_ref.deactivate(this.loop.?);
-
-            return JSC.Maybe(void).success;
-        } else if (comptime Environment.isMac) {
-            var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
-            changelist[0] = switch (flag) {
-                .read => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_READ,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
-                    .ext = .{ 0, 0 },
-                },
-                .write => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_WRITE,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
-                    .ext = .{ 0, 0 },
-                },
-                .process => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_PROC,
-                    .data = 0,
-                    .fflags = std.c.NOTE_EXIT,
-                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
-                    .flags = std.c.EV_DELETE | std.c.EV_ONESHOT,
-                    .ext = .{ 0, 0 },
-                },
-            };
-
-            // output events only include change errors
-            const KEVENT_FLAG_ERROR_EVENTS = 0x000002;
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            const rc = std.os.system.kevent64(
-                watcher_fd,
-                &changelist,
-                1,
-                // The same array may be used for the changelist and eventlist.
-                &changelist,
-                1,
-                KEVENT_FLAG_ERROR_EVENTS,
-                &timeout,
-            );
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (changelist[0].flags == std.c.EV_ERROR) {
-                return JSC.Maybe(void).errnoSys(changelist[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
-            const errno = std.c.getErrno(rc);
-
-            if (errno == .SUCCESS) {
-                ctx.poll_ref.deactivate(this.loop.?);
-                return JSC.Maybe(void).success;
-            }
-
-            switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(errno), .kevent).?,
-                else => unreachable,
-            }
-        } else {
-            @compileError("TODO: Poller");
-        }
-    }
-
-    pub fn tick(this: *Poller) void {
-        var loop = this.loop orelse return;
-        if (loop.active == 0) return;
-        loop.tick();
-    }
-
-    pub fn onTick(loop: *uws.Loop, tagged_pointer: ?*anyopaque) callconv(.C) void {
-        _ = loop;
-        _ = tagged_pointer;
-        if (comptime Environment.isMac)
-            dispatchKQueueEvent(loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)])
-        else if (comptime Environment.isLinux)
-            dispatchEpollEvent(loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)]);
-    }
-
-    pub const Flag = enum {
-        read,
-        write,
-        process,
-    };
-
-    comptime {
-        @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 };

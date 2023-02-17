@@ -1,5 +1,5 @@
 const options = @import("./options.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,7 +14,8 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
-const JSAst = @import("./js_ast.zig");
+const JSAst = bun.JSAst;
+const content = @import("root").content;
 // packages/bun-cli-*/bun
 const BUN_ROOT = "../../";
 
@@ -31,27 +32,22 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
     return code;
 }
 pub const ErrorCSS = struct {
-    const ErrorCSSPath = "packages/bun-error/dist/bun-error.css";
-    const ErrorCSSPathDev = "packages/bun-error/bun-error.css";
-
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorCSSPath);
-
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, ErrorCSSPathDev };
+            var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
-                ProdSourceContent,
+                content.error_css,
             );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
-            return ProdSourceContent;
+            return content.error_css;
         }
     }
 };
@@ -59,26 +55,22 @@ pub const ErrorCSS = struct {
 pub const ReactRefresh = @embedFile("./react-refresh.js");
 
 pub const ErrorJS = struct {
-    const ErrorJSPath = "packages/bun-error/dist/index.js";
-
-    pub const ProdSourceContent = @embedFile("../" ++ ErrorJSPath);
-
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
             var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
-            var paths = [_]string{ dirname, BUN_ROOT, ErrorJSPath };
+            var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
-                "Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"",
-                ProdSourceContent,
+                "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
+                content.error_js,
             );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
-            return ProdSourceContent;
+            return content.error_js;
         }
     }
 };
@@ -125,7 +117,7 @@ pub const Fallback = struct {
 
     pub inline fn scriptContent() string {
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -212,7 +204,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithoutRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -249,7 +241,7 @@ pub const Runtime = struct {
 
     pub inline fn sourceContentWithRefresh() string {
         if (comptime Environment.isDebug) {
-            var dirpath = std.fs.path.dirname(@src().file).?;
+            var dirpath = comptime bun.Environment.base_path ++ std.fs.path.dirname(@src().file).?;
             var env = std.process.getEnvMap(default_allocator) catch unreachable;
 
             const dir = std.mem.replaceOwned(
@@ -298,6 +290,10 @@ pub const Runtime = struct {
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
+        inlining: bool = false,
+
+        inject_jest_globals: bool = false,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {
@@ -332,7 +328,7 @@ pub const Runtime = struct {
                 value: JSAst.Expr,
             },
 
-            pub const Map = std.StringArrayHashMapUnmanaged(ReplaceableExport);
+            pub const Map = bun.StringArrayHashMapUnmanaged(ReplaceableExport);
         };
     };
 
@@ -364,6 +360,8 @@ pub const Runtime = struct {
         __exportDefault: ?GeneratedSymbol = null,
         __FastRefreshRuntime: ?GeneratedSymbol = null,
         __merge: ?GeneratedSymbol = null,
+        __decorateClass: ?GeneratedSymbol = null,
+        __decorateParam: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -384,6 +382,8 @@ pub const Runtime = struct {
             "__exportDefault",
             "__FastRefreshRuntime",
             "__merge",
+            "__decorateClass",
+            "__decorateParam",
         };
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
@@ -483,6 +483,16 @@ pub const Runtime = struct {
                                 return Entry{ .key = 15, .value = val.ref };
                             }
                         },
+                        16 => {
+                            if (@field(this.runtime_imports, all[16])) |val| {
+                                return Entry{ .key = 16, .value = val.ref };
+                            }
+                        },
+                        17 => {
+                            if (@field(this.runtime_imports, all[17])) |val| {
+                                return Entry{ .key = 17, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -543,6 +553,8 @@ pub const Runtime = struct {
                 13 => (@field(imports, all[13]) orelse return null).ref,
                 14 => (@field(imports, all[14]) orelse return null).ref,
                 15 => (@field(imports, all[15]) orelse return null).ref,
+                16 => (@field(imports, all[16]) orelse return null).ref,
+                17 => (@field(imports, all[17]) orelse return null).ref,
                 else => null,
             };
         }

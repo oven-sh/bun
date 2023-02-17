@@ -23,7 +23,7 @@ var hmr = new FastHMR(2469023238, "multiple-imports.js", FastRefresh), exports =
   const bacon = React;
   const bacon2 = jsx(JSXFrag, {
     children: "hello"
-  }, undefined, false, undefined, this);
+  });
   function test() {
     console.assert(bacon === React);
     console.assert(bacon === React2);

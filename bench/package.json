@@ -14,5 +14,8 @@
     "async": "cd async && bun run deps && bun run build && bun run bench",
     "sqlite": "cd sqlite && bun run deps && bun run build && bun run bench",
     "modules:node_os": "cd modules/node_os && bun run deps &&bun run build && bun run bench"
+  },
+  "devDependencies": {
+    "fast-deep-equal": "^3.1.3"
   }
 }

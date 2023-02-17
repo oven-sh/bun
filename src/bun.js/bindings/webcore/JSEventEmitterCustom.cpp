@@ -4,6 +4,17 @@
 #include "EventEmitter.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
+#include "ZigGlobalObject.h"
+
+#include "JSDOMConstructor.h"
+#include "JSDOMConvertBase.h"
+#include "JSDOMConvertBoolean.h"
+#include "JSDOMConvertDictionary.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertNullable.h"
+#include "JSDOMConvertNumbers.h"
+#include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -22,23 +33,50 @@ EventEmitter* JSEventEmitter::toWrapped(VM& vm, JSValue value)
 
 std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
-    if (auto* target = jsDynamicCast<JSEventEmitter*>(thisValue))
-        return makeUnique<JSEventEmitterWrapper>(target->wrapped(), *target);
-    if (auto* object = jsDynamicCast<JSNonFinalObject*>(thisValue)) {
-        // need to create a EventEmitter for Object.
-        // use `mapPrivateName` as it is not occupied.
-        auto emitterTag = WebCore::clientData(vm)->builtinNames().mapPrivateName();
-        JSC::JSValue value = object->getDirect(vm, emitterTag);
-        if (!value) {
-            Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-            value = WebCore::toJSNewlyCreated(lexicalGlobalObject, globalObject, EventEmitter::create(*globalObject->scriptExecutionContext()));
-            object->putDirect(vm, emitterTag, value);
-        }
-        auto* target = jsCast<JSEventEmitter*>(value);
-        return makeUnique<JSEventEmitterWrapper>(target->wrapped(), *target);
+    if (auto* emitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, thisValue)) {
+        return std::make_unique<JSEventEmitterWrapper>(emitter->wrapped(), asObject(thisValue));
     }
 
     return nullptr;
+}
+
+JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
+{
+    if (thisValue.inherits<JSEventEmitter>())
+        return jsCast<JSEventEmitter*>(asObject(thisValue));
+
+    if (UNLIKELY(thisValue.isUndefinedOrNull() || !thisValue.isObject())) {
+        return nullptr;
+    }
+
+    auto* thisObject = asObject(thisValue);
+
+    auto clientData = WebCore::clientData(vm);
+    auto name = clientData->builtinNames()._eventsPublicName();
+    if (JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name)) {
+        if (!_events.isUndefinedOrNull() && _events.inherits<JSEventEmitter>()) {
+            return jsCast<JSEventEmitter*>(asObject(_events));
+        }
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto impl = EventEmitter::create(*globalObject->scriptExecutionContext());
+    impl->setThisObject(thisObject);
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto result = toJSNewlyCreated<IDLInterface<EventEmitter>>(*lexicalGlobalObject, *globalObject, throwScope, WTFMove(impl));
+
+    thisObject->putDirect(vm, name, result, 0);
+
+    if (scope.exception()) {
+        scope.clearException();
+        return nullptr;
+    }
+
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+
+    return jsCast<JSEventEmitter*>(asObject(result));
 }
 
 template<typename Visitor>

@@ -1,3 +1,4 @@
+// @ts-nocheck
 const isDropdown = true;
 const iconName = "";
 const adjustedPadding = 5;

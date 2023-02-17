@@ -1,4 +1,4 @@
-import { file } from "bun";
+import { file, serve } from "bun";
 
 serve({
   fetch(req: Request) {
@@ -6,7 +6,7 @@ serve({
 
     // If the URL is empty, display this file.
     if (pathname === "") {
-      return new Response(file(import.meta.url));
+      return new Response(file(import.meta.url.replace("file://", "")));
     }
 
     return new Response(file(pathname));

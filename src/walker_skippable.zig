@@ -10,7 +10,7 @@ skip_dirnames: []const u64 = &[_]u64{},
 skip_all: []const u64 = &[_]u64{},
 seed: u64 = 0,
 
-const Dir = std.fs.Dir;
+const Dir = std.fs.IterableDir;
 
 pub const WalkerEntry = struct {
     /// The containing directory. This can be used to operate directly on `basename`
@@ -78,7 +78,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
             self.name_buffer.shrinkRetainingCapacity(cur_len);
 
             if (base.kind == .Directory) {
-                var new_dir = top.iter.dir.openDir(base.name, .{ .iterate = true }) catch |err| switch (err) {
+                var new_dir = top.iter.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
                     error.NameTooLong => unreachable, // no path sep in base.name
                     else => |e| return e,
                 };
@@ -92,7 +92,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                 }
             }
             return WalkerEntry{
-                .dir = top.iter.dir,
+                .dir = .{ .dir = top.iter.dir },
                 .basename = self.name_buffer.items[dirname_len..],
                 .path = self.name_buffer.items,
                 .kind = base.kind,
@@ -108,12 +108,15 @@ pub fn next(self: *Walker) !?WalkerEntry {
 }
 
 pub fn deinit(self: *Walker) void {
-    while (self.stack.popOrNull()) |*item| {
-        if (self.stack.items.len != 0) {
-            item.iter.dir.close();
+    if (self.stack.items.len > 0) {
+        for (self.stack.items[1..]) |*item| {
+            if (self.stack.items.len != 0) {
+                item.iter.dir.close();
+            }
         }
+        self.stack.deinit();
     }
-    self.stack.deinit();
+
     self.name_buffer.allocator.free(self.skip_all);
     self.name_buffer.deinit();
 }

@@ -214,7 +214,7 @@ export function decodeMappings(mappings, sourcesCount) {
 export function remapPosition(
   decodedMappings: Int32Array,
   line: number,
-  column: number
+  column: number,
 ) {
   if (!(decodedMappings instanceof Int32Array)) {
     throw new Error("decodedMappings must be an Int32Array");

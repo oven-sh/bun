@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const JSXRuntime = @import("options.zig").JSX.Runtime;
 const Runtime = @import("runtime.zig").Runtime;
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -17,17 +17,13 @@ const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
 const allocators = @import("allocators.zig");
-const JSC = @import("javascript_core");
-const HTTP = @import("http");
+const JSC = @import("bun").JSC;
+const HTTP = @import("bun").HTTP;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const _hash_map = @import("hash_map.zig");
-const JSONParser = @import("./json_parser.zig");
-const StringHashMap = _hash_map.StringHashMap;
-const AutoHashMap = _hash_map.AutoHashMap;
-const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
+const JSONParser = bun.JSON;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
-const JSPrinter = @import("./js_printer.zig");
+const JSPrinter = bun.js_printer;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -48,7 +44,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             store: Self,
         };
 
-        const Block = struct {
+        pub const Block = struct {
             used: SizeType = 0,
             items: [count]UnionValueType align(MaxAlign) = undefined,
 
@@ -70,7 +66,7 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             const UsedSize = std.math.IntFittingRange(0, max + 1);
             used: UsedSize = 0,
             allocated: UsedSize = 0,
-            allocator: Allocator,
+            allocator: Allocator = default_allocator,
             ptrs: [max]*Block = undefined,
 
             pub fn tail(this: *Overflow) *Block {
@@ -121,8 +117,20 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             return used;
         }
 
+        /// Reset all AST nodes, allowing the memory to be reused for the next parse.
+        /// Only call this when we're done with ALL AST nodes, or you risk
+        /// undefined memory bugs.
+        ///
+        /// Nested parsing should either use the same store, or call
+        /// Store.reclaim.
         pub fn reset() void {
-            for (_self.overflow.slice()) |b| {
+            const blocks = _self.overflow.slice();
+            for (blocks) |b| {
+                if (comptime Environment.isDebug) {
+                    // ensure we crash if we use a freed value
+                    var bytes = std.mem.asBytes(&b.items);
+                    @memset(bytes, undefined, bytes.len);
+                }
                 b.used = 0;
             }
             _self.overflow.used = 0;
@@ -301,14 +309,14 @@ pub const Binding = struct {
     data: B,
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: B,
         loc: logger.Loc,
     };
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "binding", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn ToExpr(comptime expr_type: type, comptime func_type: anytype) type {
@@ -539,6 +547,7 @@ pub const G = struct {
         body_loc: logger.Loc = logger.Loc.Empty,
         close_brace_loc: logger.Loc = logger.Loc.Empty,
         properties: []Property = &([_]Property{}),
+        has_decorators: bool = false,
     };
 
     // invalid shadowing if left as Comment
@@ -550,13 +559,6 @@ pub const G = struct {
     };
 
     pub const Property = struct {
-        class_static_block: ?*ClassStaticBlock = null,
-        ts_decorators: ExprNodeList = ExprNodeList{},
-        // Key is optional for spread
-        key: ?ExprNodeIndex = null,
-
-        // This is omitted for class fields
-        value: ?ExprNodeIndex = null,
 
         // This is used when parsing a pattern that uses default values:
         //
@@ -570,6 +572,14 @@ pub const G = struct {
         initializer: ?ExprNodeIndex = null,
         kind: Kind = Kind.normal,
         flags: Flags.Property.Set = Flags.Property.None,
+
+        class_static_block: ?*ClassStaticBlock = null,
+        ts_decorators: ExprNodeList = ExprNodeList{},
+        // Key is optional for spread
+        key: ?ExprNodeIndex = null,
+
+        // This is omitted for class fields
+        value: ?ExprNodeIndex = null,
 
         pub const List = BabyList(Property);
 
@@ -1235,22 +1245,22 @@ pub const E = struct {
 
         pub inline fn toU64(self: Number) u64 {
             @setRuntimeSafety(false);
-            return @floatToInt(u64, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u64, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toUsize(self: Number) usize {
             @setRuntimeSafety(false);
-            return @floatToInt(usize, @maximum(@trunc(self.value), 0));
+            return @floatToInt(usize, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toU32(self: Number) u32 {
             @setRuntimeSafety(false);
-            return @floatToInt(u32, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u32, @max(@trunc(self.value), 0));
         }
 
         pub inline fn toU16(self: Number) u16 {
             @setRuntimeSafety(false);
-            return @floatToInt(u16, @maximum(@trunc(self.value), 0));
+            return @floatToInt(u16, @max(@trunc(self.value), 0));
         }
 
         pub fn jsonStringify(self: *const Number, opts: anytype, o: anytype) !void {
@@ -1550,19 +1560,19 @@ pub const E = struct {
 
         const PackageJSONSort = struct {
             const Fields = enum(u8) {
-                name,
-                version,
-                author,
-                repository,
-                config,
-                main,
-                module,
-                dependencies,
-                devDependencies,
-                optionalDependencies,
-                peerDependencies,
-                exports,
-                __fake,
+                name = 0,
+                version = 1,
+                author = 2,
+                repository = 3,
+                config = 4,
+                main = 5,
+                module = 6,
+                dependencies = 7,
+                devDependencies = 8,
+                optionalDependencies = 9,
+                peerDependencies = 10,
+                exports = 11,
+                __fake = 12,
 
                 pub const Map = ComptimeStringMap(Fields, .{
                     .{ "name", Fields.name },
@@ -1578,7 +1588,6 @@ pub const E = struct {
                     .{ "peerDependencies", Fields.peerDependencies },
                     .{ "exports", Fields.exports },
                 });
-                const max_key_size = 12;
 
                 pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
                     var lhs_key_size: u8 = @enumToInt(Fields.__fake);
@@ -1674,23 +1683,15 @@ pub const E = struct {
 
         pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
-            var bytes = allocator.alloc(u8, this.rope_len) catch unreachable;
-            var ptr = bytes.ptr;
-            var remain = bytes.len;
-            @memcpy(ptr, this.data.ptr, this.data.len);
-            ptr += this.data.len;
-            remain -= this.data.len;
             var str = this.next;
+            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
+
+            bytes.appendSliceAssumeCapacity(this.data);
             while (str) |strin| {
-                @memcpy(ptr, strin.data.ptr, strin.data.len);
-                ptr += strin.data.len;
-                remain -= strin.data.len;
-                var prev = strin;
+                bytes.appendSlice(strin.data) catch unreachable;
                 str = strin.next;
-                prev.next = null;
-                prev.end = null;
             }
-            this.data = bytes;
+            this.data = bytes.items;
             this.next = null;
         }
 
@@ -1734,13 +1735,13 @@ pub const E = struct {
                 switch (_t) {
                     @This() => {
                         if (other.isUTF8()) {
-                            return strings.eql(s.data, other.data);
+                            return strings.eqlLong(s.data, other.data, true);
                         } else {
                             return strings.utf16EqlString(other.slice16(), s.data);
                         }
                     },
                     bun.string => {
-                        return strings.eql(s.data, other);
+                        return strings.eqlLong(s.data, other, true);
                     },
                     []u16, []const u16 => {
                         return strings.utf16EqlString(other, s.data);
@@ -1849,33 +1850,6 @@ pub const E = struct {
 
         pub var empty = RegExp{ .value = "" };
 
-        pub fn usesLookBehindAssertion(this: *const RegExp) bool {
-            var pat = this.pattern();
-            while (pat.len > 0) {
-                const start = strings.indexOfChar(pat, '?') orelse return false;
-                if (start == 0) {
-                    pat = pat[1..];
-                    continue;
-                }
-                const l_paren = pat[start - 1];
-                if (start > 1 and pat[start - 2] == '\\') {
-                    pat = pat[start..];
-                    continue;
-                }
-                if (l_paren != '(' or pat.len < start + 1) {
-                    pat = pat[start..];
-                    continue;
-                }
-                const op = pat[start + 1];
-                if (op == '<') {
-                    return true;
-                }
-                pat = pat[start + 1 ..];
-            }
-
-            return false;
-        }
-
         pub fn pattern(this: RegExp) string {
 
             // rewind until we reach the /foo/gim
@@ -1957,14 +1931,14 @@ pub const Stmt = struct {
     data: Data,
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: Data,
         loc: logger.Loc,
     };
 
     pub fn jsonStringify(self: *const Stmt, options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "stmt", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn isTypeScript(self: *Stmt) bool {
@@ -1973,6 +1947,15 @@ pub const Stmt = struct {
 
     pub fn empty() Stmt {
         return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
+    }
+
+    pub fn toEmpty(this: Stmt) Stmt {
+        return .{
+            .data = .{
+                .s_empty = None,
+            },
+            .loc = this.loc,
+        };
     }
 
     const None = S.Empty{};
@@ -2207,6 +2190,13 @@ pub const Stmt = struct {
                 has_inited = false;
             }
 
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
+            }
+
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
                 return All.append(ValueType, value);
             }
@@ -2238,6 +2228,13 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
+        return .{
+            .loc = this.loc,
+            .data = try this.data.clone(allocator),
+        };
+    }
+
     pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
         var stmts = try allocator.alloc(Stmt, 1);
         stmts[0] = Stmt.alloc(S.Return, S.Return{ .value = this }, this.loc);
@@ -2249,6 +2246,10 @@ pub const Expr = struct {
                 .stmts = stmts,
             },
         }, this.loc);
+    }
+
+    pub fn canBeConstValue(this: Expr) bool {
+        return this.data.canBeConstValue();
     }
 
     pub fn fromBlob(
@@ -2412,10 +2413,7 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
-
-        const key_str = expr.data.e_string;
-
-        return if (key_str.isUTF8()) key_str.data else key_str.string(allocator) catch null;
+        return expr.data.e_string.string(allocator) catch null;
     }
 
     pub fn asBool(
@@ -2429,7 +2427,7 @@ pub const Expr = struct {
     pub const EFlags = enum { none, ts_decorator };
 
     const Serializable = struct {
-        @"type": Tag,
+        type: Tag,
         object: string,
         value: Data,
         loc: logger.Loc,
@@ -2554,7 +2552,7 @@ pub const Expr = struct {
     }
 
     pub fn jsonStringify(self: *const @This(), options: anytype, writer: anytype) !void {
-        return try std.json.stringify(Serializable{ .@"type" = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, options, writer);
+        return try std.json.stringify(Serializable{ .type = std.meta.activeTag(self.data), .object = "expr", .value = self.data, .loc = self.loc }, options, writer);
     }
 
     pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
@@ -2947,15 +2945,23 @@ pub const Expr = struct {
         // This should never make it to the printer
         inline_identifier,
 
+        // object, regex and array may have had side effects
+        pub fn isPrimitiveLiteral(tag: Tag) bool {
+            return switch (tag) {
+                .e_null, .e_undefined, .e_string, .e_boolean, .e_number, .e_big_int => true,
+                else => false,
+            };
+        }
+
         pub fn typeof(tag: Tag) ?string {
             return switch (tag) {
-                .e_null => "object",
+                .e_array, .e_object, .e_null, .e_reg_exp => "object",
                 .e_undefined => "undefined",
                 .e_boolean => "boolean",
                 .e_number => "number",
                 .e_big_int => "bigint",
                 .e_string => "string",
-                .e_function, .e_arrow => "function",
+                .e_class, .e_function, .e_arrow => "function",
                 else => null,
             };
         }
@@ -3524,20 +3530,20 @@ pub const Expr = struct {
     pub const PrimitiveType = enum {
         unknown,
         mixed,
-        @"null",
-        @"undefined",
+        null,
+        undefined,
         boolean,
         number,
-        @"string",
+        string,
         bigint,
 
         pub const static = std.enums.EnumSet(PrimitiveType).init(.{
-            .@"mixed" = true,
-            .@"null" = true,
-            .@"undefined" = true,
-            .@"boolean" = true,
-            .@"number" = true,
-            .@"string" = true,
+            .mixed = true,
+            .null = true,
+            .undefined = true,
+            .boolean = true,
+            .number = true,
+            .string = true,
             // for our purposes, bigint is dynamic
             // it is technically static though
             // .@"bigint" = true,
@@ -3609,15 +3615,141 @@ pub const Expr = struct {
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
 
+        pub fn clone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
+            return switch (this) {
+                .e_array => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_array)));
+                    item.* = el.*;
+                    return .{ .e_array = item };
+                },
+                .e_unary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_unary)));
+                    item.* = el.*;
+                    return .{ .e_unary = item };
+                },
+                .e_binary => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_binary)));
+                    item.* = el.*;
+                    return .{ .e_binary = item };
+                },
+                .e_class => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_class)));
+                    item.* = el.*;
+                    return .{ .e_class = item };
+                },
+                .e_new => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_new)));
+                    item.* = el.*;
+                    return .{ .e_new = item };
+                },
+                .e_function => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_function)));
+                    item.* = el.*;
+                    return .{ .e_function = item };
+                },
+                .e_call => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_call)));
+                    item.* = el.*;
+                    return .{ .e_call = item };
+                },
+                .e_dot => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_dot)));
+                    item.* = el.*;
+                    return .{ .e_dot = item };
+                },
+                .e_index => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_index)));
+                    item.* = el.*;
+                    return .{ .e_index = item };
+                },
+                .e_arrow => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_arrow)));
+                    item.* = el.*;
+                    return .{ .e_arrow = item };
+                },
+                .e_jsx_element => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_jsx_element)));
+                    item.* = el.*;
+                    return .{ .e_jsx_element = item };
+                },
+                .e_object => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_object)));
+                    item.* = el.*;
+                    return .{ .e_object = item };
+                },
+                .e_spread => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
+                    item.* = el.*;
+                    return .{ .e_spread = item };
+                },
+                .e_template_part => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
+                    item.* = el.*;
+                    return .{ .e_template_part = item };
+                },
+                .e_template => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
+                    item.* = el.*;
+                    return .{ .e_template = item };
+                },
+                .e_reg_exp => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_reg_exp)));
+                    item.* = el.*;
+                    return .{ .e_reg_exp = item };
+                },
+                .e_await => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_await)));
+                    item.* = el.*;
+                    return .{ .e_await = item };
+                },
+                .e_yield => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_yield)));
+                    item.* = el.*;
+                    return .{ .e_yield = item };
+                },
+                .e_if => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_if)));
+                    item.* = el.*;
+                    return .{ .e_if = item };
+                },
+                .e_import => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_import)));
+                    item.* = el.*;
+                    return .{ .e_import = item };
+                },
+                .e_big_int => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_big_int)));
+                    item.* = el.*;
+                    return .{ .e_big_int = item };
+                },
+                .e_string => |el| {
+                    var item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
+                    item.* = el.*;
+                    return .{ .e_string = item };
+                },
+                else => this,
+            };
+        }
+
+        pub fn canBeConstValue(this: Expr.Data) bool {
+            return switch (this) {
+                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_string => |str| str.next == null,
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+                else => false,
+            };
+        }
+
         pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
             return switch (data) {
                 .e_big_int => .bigint,
                 .e_boolean => .boolean,
-                .e_null => .@"null",
+                .e_null => .null,
                 .e_number => .number,
-                .e_string => .@"string",
-                .e_undefined => .@"undefined",
-                .e_template => if (data.e_template.tag == null) PrimitiveType.@"string" else PrimitiveType.unknown,
+                .e_string => .string,
+                .e_undefined => .undefined,
+                .e_template => if (data.e_template.tag == null) PrimitiveType.string else PrimitiveType.unknown,
                 .e_if => mergeKnownPrimitive(data.e_if.yes.data, data.e_if.no.data),
                 .e_binary => |binary| brk: {
                     switch (binary.op) {
@@ -3637,7 +3769,7 @@ pub const Expr = struct {
                         .bin_nullish_coalescing => {
                             const left = binary.left.data.knownPrimitive();
                             const right = binary.right.data.knownPrimitive();
-                            if (left == .@"null" or left == .@"undefined")
+                            if (left == .null or left == .undefined)
                                 break :brk right;
 
                             if (left != .unknown) {
@@ -3653,8 +3785,8 @@ pub const Expr = struct {
                             const left = binary.left.data.knownPrimitive();
                             const right = binary.right.data.knownPrimitive();
 
-                            if (left == .@"string" or right == .@"string")
-                                break :brk PrimitiveType.@"string";
+                            if (left == .string or right == .string)
+                                break :brk PrimitiveType.string;
 
                             if (left == .bigint or right == .bigint)
                                 break :brk PrimitiveType.bigint;
@@ -3706,8 +3838,8 @@ pub const Expr = struct {
                 },
 
                 .e_unary => switch (data.e_unary.op) {
-                    .un_void => PrimitiveType.@"undefined",
-                    .un_typeof => PrimitiveType.@"string",
+                    .un_void => PrimitiveType.undefined,
+                    .un_typeof => PrimitiveType.string,
                     .un_not, .un_delete => PrimitiveType.boolean,
                     .un_pos => PrimitiveType.number, // Cannot be bigint because that throws an exception
                     .un_neg, .un_cpl => switch (data.e_unary.value.data.knownPrimitive()) {
@@ -3744,12 +3876,27 @@ pub const Expr = struct {
             };
         }
 
+        pub fn toFiniteNumber(data: Expr.Data) ?f64 {
+            return switch (data) {
+                .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
+                .e_number => if (std.math.isFinite(data.e_number.value))
+                    data.e_number.value
+                else
+                    null,
+                else => null,
+            };
+        }
+
         pub const Equality = struct { equal: bool = false, ok: bool = false };
 
         // Returns "equal, ok". If "ok" is false, then nothing is known about the two
         // values. If "ok" is true, the equality or inequality of the two values is
         // stored in "equal".
-        pub fn eql(left: Expr.Data, right: Expr.Data) Equality {
+        pub fn eql(
+            left: Expr.Data,
+            right: Expr.Data,
+            allocator: std.mem.Allocator,
+        ) Equality {
             var equality = Equality{};
             switch (left) {
                 .e_null => {
@@ -3775,7 +3922,9 @@ pub const Expr = struct {
                 .e_string => |l| {
                     equality.ok = @as(Expr.Tag, right) == Expr.Tag.e_string;
                     if (equality.ok) {
-                        const r = right.e_string;
+                        var r = right.e_string;
+                        r.resovleRopeIfNeeded(allocator);
+                        l.resovleRopeIfNeeded(allocator);
                         equality.equal = r.eql(E.String, l);
                     }
                 },
@@ -3846,6 +3995,13 @@ pub const Expr = struct {
 
                 has_inited = true;
                 _ = All.init(allocator);
+            }
+
+            pub fn assert() void {
+                if (comptime Environment.allow_assert) {
+                    if (!has_inited)
+                        bun.unreachablePanic("Store must be init'd", .{});
+                }
             }
 
             pub fn reset() void {
@@ -4278,7 +4434,7 @@ pub const Op = struct {
             return @intToEnum(Level, @enumToInt(self) - i);
         }
 
-        pub inline fn add(self: Level, i: anytype) Level {
+        pub inline fn addF(self: Level, i: anytype) Level {
             return @intToEnum(Level, @enumToInt(self) + i);
         }
     };
@@ -4432,7 +4588,7 @@ pub const Ast = struct {
     export_star_import_records: []u32 = &([_]u32{}),
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
-    pub const NamedExports = std.StringArrayHashMap(NamedExport);
+    pub const NamedExports = bun.StringArrayHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
@@ -4448,6 +4604,15 @@ pub const Ast = struct {
             .separator = true,
         } };
         try std.json.stringify(self.parts, opts, stream);
+    }
+
+    /// Do not call this if it wasn't globally allocated!
+    pub fn deinit(this: *Ast) void {
+        // TODO: assert mimalloc-owned memory
+        if (this.parts.len > 0) bun.default_allocator.free(this.parts);
+        if (this.externals.len > 0) bun.default_allocator.free(this.externals);
+        if (this.symbols.len > 0) bun.default_allocator.free(this.symbols);
+        if (this.import_records.len > 0) bun.default_allocator.free(this.import_records);
     }
 };
 
@@ -4551,6 +4716,7 @@ pub const Part = struct {
         react_fast_refresh,
         dirname_filename,
         bun_plugin,
+        bun_test,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
@@ -4607,12 +4773,13 @@ pub const StrictModeKind = enum(u7) {
 };
 
 pub const Scope = struct {
+    pub const MemberHashMap = bun.StringHashMapUnmanaged(Member);
+
     id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
     children: std.ArrayListUnmanaged(*Scope) = .{},
-    // This is a special hash table that allows us to pass in the hash directly
-    members: StringHashMapUnmanaged(Member) = .{},
+    members: MemberHashMap = .{},
     generated: std.ArrayListUnmanaged(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
@@ -4628,6 +4795,33 @@ pub const Scope = struct {
     forbid_arguments: bool = false,
 
     strict_mode: StrictModeKind = StrictModeKind.sloppy_mode,
+
+    is_after_const_local_prefix: bool = false,
+
+    pub fn getMemberHash(name: []const u8) u64 {
+        return bun.StringHashMapContext.hash(.{}, name);
+    }
+
+    pub fn getMemberWithHash(this: *const Scope, name: []const u8, hash_value: u64) ?Member {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getAdapted(name, hashed);
+    }
+
+    pub fn getOrPutMemberWithHash(
+        this: *Scope,
+        allocator: std.mem.Allocator,
+        name: []const u8,
+        hash_value: u64,
+    ) !MemberHashMap.GetOrPutResult {
+        const hashed = bun.StringHashMapContext.Prehashed{
+            .value = hash_value,
+            .input = name,
+        };
+        return this.members.getOrPutContextAdapted(allocator, name, hashed, .{});
+    }
 
     pub fn reset(this: *Scope) void {
         this.children.clearRetainingCapacity();
@@ -4650,7 +4844,7 @@ pub const Scope = struct {
         loc: logger.Loc,
 
         pub fn eql(a: Member, b: Member) bool {
-            return @call(.{ .modifier = .always_inline }, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
+            return @call(.always_inline, Ref.eql, .{ a.ref, b.ref }) and a.loc.start == b.loc.start;
         }
     };
 
@@ -4770,7 +4964,7 @@ pub const Scope = struct {
         }
     }
 
-    pub fn kindStopsHoisting(s: *Scope) bool {
+    pub inline fn kindStopsHoisting(s: *const Scope) bool {
         return @enumToInt(s.kind) >= @enumToInt(Kind.entry);
     }
 };
@@ -4787,7 +4981,7 @@ pub const BunPlugin = struct {
 };
 
 pub const Macro = struct {
-    const JavaScript = @import("javascript_core");
+    const JavaScript = @import("bun").JSC;
     const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
@@ -4795,8 +4989,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = @import("./bundler.zig").Bundler;
-    const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
+    const Bundler = bun.Bundler;
+    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -4804,7 +4998,7 @@ pub const Macro = struct {
     pub const namespaceWithColon: string = namespace ++ ":";
 
     pub fn isMacroPath(str: string) bool {
-        return (str.len > namespaceWithColon.len and strings.eqlComptimeIgnoreLen(str[0..namespaceWithColon.len], namespaceWithColon));
+        return strings.hasPrefixComptime(str, namespaceWithColon);
     }
 
     pub const MacroContext = struct {
@@ -4865,6 +5059,7 @@ pub const Macro = struct {
                             "Macro \"{s}\" not found",
                             .{import_record_path},
                             .stmt,
+                            err,
                         ) catch unreachable;
                         return error.MacroNotFound;
                     },
@@ -5091,7 +5286,7 @@ pub const Macro = struct {
                 _: js.JSStringRef,
                 exception: js.ExceptionRef,
             ) js.JSObjectRef {
-                const args = if (this.data == .e_object) this.data.e_object.properties.slice() else &[_]G.Property{};
+                const args: []G.Property = if (this.data == .e_object) this.data.e_object.properties.slice() else &[_]G.Property{};
 
                 switch (args.len) {
                     0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
@@ -5300,7 +5495,7 @@ pub const Macro = struct {
                 ctx: js.JSContextRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
+                return @call(.always_inline, toPrimitiveAllowRecursion, .{ this, ctx, exception, false });
             }
 
             fn toPrimitiveWithRecursion(
@@ -5308,7 +5503,7 @@ pub const Macro = struct {
                 ctx: js.JSContextRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                return @call(.{ .modifier = .always_inline }, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
+                return @call(.always_inline, toPrimitiveAllowRecursion, .{ this, ctx, exception, true });
             }
 
             fn toPrimitiveAllowRecursion(this: *JSNode, ctx: js.JSContextRef, exception: js.ExceptionRef, comptime _: bool) js.JSValueRef {
@@ -5803,7 +5998,7 @@ pub const Macro = struct {
 
             pub const ids: std.EnumArray(Tag, Expr.Data) = brk: {
                 var list = std.EnumArray(Tag, Expr.Data).initFill(Expr.Data{ .e_number = E.Number{ .value = 0.0 } });
-                const fields: []const std.builtin.TypeInfo.EnumField = @typeInfo(Tag).Enum.fields;
+                const fields: []const std.builtin.Type.EnumField = @typeInfo(Tag).Enum.fields;
                 for (fields) |field| {
                     list.set(@intToEnum(Tag, field.value), Expr.Data{ .e_number = E.Number{ .value = @intToFloat(f64, field.value) } });
                 }
@@ -5979,7 +6174,7 @@ pub const Macro = struct {
             };
 
             pub const max_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var max_value: u8 = 0;
                 for (Enum.fields) |field| {
                     max_value = std.math.max(@as(u8, field.value), max_value);
@@ -5988,7 +6183,7 @@ pub const Macro = struct {
             };
 
             pub const min_tag: u8 = brk: {
-                const Enum: std.builtin.TypeInfo.Enum = @typeInfo(Tag).Enum;
+                const Enum: std.builtin.Type.Enum = @typeInfo(Tag).Enum;
                 var min: u8 = 255;
                 for (Enum.fields) |field| {
                     min = std.math.min(@as(u8, field.value), min);
@@ -6364,14 +6559,14 @@ pub const Macro = struct {
                                 },
                                 // null is cooerced to "null"
                                 .e_null => {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"null" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.null } });
                                 },
                                 // undefined is cooerced to "undefined"
                                 .e_undefined => {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.@"undefined" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = &E.String.undefined } });
                                 },
                                 .e_boolean => |boolean| {
-                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.@"true" else &E.String.@"false" } });
+                                    self.args.appendAssumeCapacity(Expr{ .loc = value.loc, .data = .{ .e_string = if (boolean.value) &E.String.true else &E.String.false } });
                                 },
                                 // these ones are not statically analyzable so we just leave them in as-is
                                 .e_template, .e_if, .e_identifier, .e_import_identifier, .e_index, .e_call, .e_private_identifier, .e_dot, .e_unary, .e_binary => {
@@ -6771,11 +6966,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -6793,11 +6986,9 @@ pub const Macro = struct {
                     var p = self.p;
 
                     const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
-                        if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
-                        } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
-                        }
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{
+                            str.string(self.p.allocator) catch unreachable,
+                        }) catch unreachable;
                         return false;
                     };
 
@@ -6862,7 +7053,7 @@ pub const Macro = struct {
                         js.JSType.kJSTypeNumber => {
                             const tag_int = @floatToInt(u8, JSC.JSValue.fromRef(value).asNumber());
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
-                                return TagOrJSNode{ .invalid = .{} };
+                                return TagOrJSNode{ .invalid = {} };
                             }
                             return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
                         },
@@ -6871,10 +7062,10 @@ pub const Macro = struct {
                                 return TagOrJSNode{ .node = node.* };
                             }
 
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                         else => {
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                     }
                 }
@@ -6886,7 +7077,7 @@ pub const Macro = struct {
                             if (tag_int < Tag.min_tag or tag_int > Tag.max_tag) {
                                 throwTypeError(ctx, "Node type has invalid value", writer.exception);
                                 writer.errored = true;
-                                return TagOrJSNode{ .invalid = .{} };
+                                return TagOrJSNode{ .invalid = {} };
                             }
                             return TagOrJSNode{ .tag = @intToEnum(JSNode.Tag, tag_int) };
                         },
@@ -6895,11 +7086,11 @@ pub const Macro = struct {
                                 return TagOrJSNode{ .node = node.* };
                             }
 
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                         else => {
                             throwTypeError(writer.ctx, "Invalid bun AST", writer.exception);
-                            return TagOrJSNode{ .invalid = .{} };
+                            return TagOrJSNode{ .invalid = {} };
                         },
                     }
                 }
@@ -7040,7 +7231,7 @@ pub const Macro = struct {
                                 return false;
                             }
 
-                            const JSLexer = @import("./js_lexer.zig");
+                            const JSLexer = bun.js_lexer;
 
                             var array_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = true,
@@ -7117,7 +7308,7 @@ pub const Macro = struct {
                         while (i < count) {
                             var nextArg = writer.eatArg() orelse return false;
                             if (js.JSValueIsArray(writer.ctx, nextArg.asRef())) {
-                                const extras = nextArg.getLengthOfArray(writer.ctx.ptr());
+                                const extras = @truncate(u32, nextArg.getLengthOfArray(writer.ctx.ptr()));
                                 count += std.math.max(@truncate(@TypeOf(count), extras), 1) - 1;
                                 items.ensureUnusedCapacity(extras) catch unreachable;
                                 items.expandToCapacity();
@@ -7209,20 +7400,18 @@ pub const Macro = struct {
                         return true;
                     },
                     .e_string => {
-                        var wtf_string = JSC.JSValue.toWTFString(writer.nextJSValue() orelse return false, writer.ctx.ptr());
-                        if (wtf_string.isEmpty()) {
+                        var str = (writer.nextJSValue() orelse return false).toSlice(writer.ctx.ptr(), writer.allocator);
+                        if (str.len == 0) {
                             expr.* = Expr{
                                 .loc = writer.loc,
                                 .data = .{
                                     .e_string = &E.String.empty,
                                 },
                             };
-                        } else if (wtf_string.is8Bit()) {
-                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters8()[0..wtf_string.length()]), writer.loc);
-                        } else if (wtf_string.is16Bit()) {
-                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters16()[0..wtf_string.length()]), writer.loc);
                         } else {
-                            unreachable;
+                            expr.* = Expr.init(E.String, E.String.init(
+                                (str.cloneIfNeeded(writer.allocator) catch unreachable).slice(),
+                            ), writer.loc);
                         }
                         return true;
                     },
@@ -7348,7 +7537,7 @@ pub const Macro = struct {
                                     }
                                 }
                             }
-                            return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .inline_inject = writer.inject.toOwnedSlice() catch @panic("TODO") }, .loc = writer.loc };
                         }
 
                         if (tag == Tag.s_import) {
@@ -7392,7 +7581,7 @@ pub const Macro = struct {
                                 fragment.append(node) catch unreachable;
                             }
 
-                            return JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() }, .loc = writer.loc };
+                            return JSNode{ .data = .{ .fragment = fragment.toOwnedSlice() catch @panic("TODO") }, .loc = writer.loc };
                         }
 
                         var expr: Expr = Expr{ .loc = writer.loc, .data = .{ .e_null = E.Null{} } };
@@ -7494,13 +7683,13 @@ pub const Macro = struct {
             const args_value = JSC.JSValue.fromRef(arguments[0]);
             var writer = Writer{
                 .inject = std.ArrayList(JSNode).init(JSCBase.getAllocator(ctx)),
-                .log = JavaScript.VirtualMachine.vm.log,
+                .log = JavaScript.VirtualMachine.get().log,
                 .ctx = ctx,
                 .loc = logger.Loc.Empty,
                 .allocator = JSCBase.getAllocator(ctx),
                 .exception = exception,
                 .args_value = args_value,
-                .args_len = args_value.getLengthOfArray(ctx.ptr()),
+                .args_len = @truncate(u32, args_value.getLengthOfArray(ctx.ptr())),
                 .args_i = 0,
                 .errored = false,
             };
@@ -7528,13 +7717,13 @@ pub const Macro = struct {
             },
             .{
                 .getProperty = .{
-                    .rfn = getProperty,
+                    .rfn = &getProperty,
                 },
                 .hasProperty = .{
-                    .rfn = hasProperty,
+                    .rfn = &hasProperty,
                 },
                 .getPropertyNames = .{
-                    .rfn = getPropertyNames,
+                    .rfn = &getPropertyNames,
                 },
             },
             .{},
@@ -7621,13 +7810,13 @@ pub const Macro = struct {
             },
             .{
                 .getProperty = .{
-                    .rfn = getProperty,
+                    .rfn = &getProperty,
                 },
                 .hasProperty = .{
-                    .rfn = hasProperty,
+                    .rfn = &hasProperty,
                 },
                 .getPropertyNames = .{
-                    .rfn = getPropertyNames,
+                    .rfn = &getPropertyNames,
                 },
             },
             .{},
@@ -7708,8 +7897,8 @@ pub const Macro = struct {
     ) !Macro {
         const path = resolved.path_pair.primary;
 
-        var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.vm_loaded)
-            JavaScript.VirtualMachine.vm
+        var vm: *JavaScript.VirtualMachine = if (JavaScript.VirtualMachine.isLoaded())
+            JavaScript.VirtualMachine.get()
         else brk: {
             var old_transform_options = resolver.opts.transform_options;
             resolver.opts.transform_options.node_modules_bundle_path = null;
@@ -7718,6 +7907,7 @@ pub const Macro = struct {
             var _vm = try JavaScript.VirtualMachine.init(default_allocator, resolver.opts.transform_options, null, log, env);
 
             _vm.enableMacroMode();
+            _vm.eventLoop().ensureWaker();
 
             try _vm.bundler.configureDefines();
             break :brk _vm;
@@ -7732,8 +7922,6 @@ pub const Macro = struct {
             vm.disableMacroMode();
             return error.MacroLoadError;
         }
-
-        JavaScript.VirtualMachine.vm_loaded = true;
 
         // We don't need to do anything with the result.
         // We just want to make sure the promise is finished.
@@ -7779,11 +7967,17 @@ pub const Macro = struct {
                     source: *const logger.Source,
                     id: i32,
                     visitor: Visitor,
-                ) callconv(.Async) MacroError!Expr {
+                ) MacroError!Expr {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global, macro_callback, null, args_count, &args_buf);
+                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
+                        macro.vm.global,
+                        macro_callback,
+                        null,
+                        args_count,
+                        &args_buf,
+                    );
 
                     var runner = Run{
                         .caller = caller,
@@ -8033,9 +8227,7 @@ pub const Macro = struct {
                             return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                         },
                         .String => {
-                            var zig_str = value.getZigString(this.global);
-                            zig_str.detectEncoding();
-                            var sliced = zig_str.toSlice(this.allocator);
+                            var sliced = value.toSlice(this.global, this.allocator).cloneIfNeeded(this.allocator) catch unreachable;
                             return Expr.init(E.String, E.String.init(sliced.slice()), this.caller.loc);
                         },
                         .Promise => {
@@ -8044,13 +8236,15 @@ pub const Macro = struct {
                                 return _entry.value_ptr.*;
                             }
 
-                            var promise = JSC.JSPromise.resolvedPromise(this.global, value);
-                            while (promise.status(this.global.vm()) == .Pending) {
-                                this.macro.vm.tick();
+                            var promise_result = JSC.JSValue.zero;
+                            var rejected = false;
+                            if (value.asAnyPromise()) |promise| {
+                                this.macro.vm.waitForPromise(promise);
+                                promise_result = promise.result(this.global.vm());
+                                rejected = promise.status(this.global.vm()) == .Rejected;
+                            } else {
+                                @panic("Unexpected promise type");
                             }
-
-                            const rejected = promise.status(this.global.vm()) == .Rejected;
-                            const promise_result = promise.result(this.global.vm());
 
                             if (promise_result.isUndefined() and this.is_top_level) {
                                 this.is_top_level = false;
@@ -8107,15 +8301,26 @@ pub const Macro = struct {
             args_buf[2] = null;
             const Run = NewRun(Visitor);
 
-            // Give it >= 256 KB stack space
-            // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
-            var pooled_frame = PooledFrame.get(default_allocator);
-            defer pooled_frame.release();
+            const CallFunction = @TypeOf(Run.runAsync);
+            const CallArgs = std.meta.ArgsTuple(CallFunction);
+            const CallData = struct {
+                threadlocal var call_args: CallArgs = undefined;
+                threadlocal var result: MacroError!Expr = undefined;
+                pub fn callWrapper(args: CallArgs) MacroError!Expr {
+                    JSC.markBinding(@src());
+                    call_args = args;
+                    Bun__startMacro(&call, JSC.VirtualMachine.get().global);
+                    return result;
+                }
 
-            var result: MacroError!Expr = error.MacroFailed;
+                pub fn call() callconv(.C) void {
+                    const call_args_copy = call_args;
+                    const local_result = @call(.auto, Run.runAsync, call_args_copy);
+                    result = local_result;
+                }
+            };
 
-            _ = nosuspend @asyncCall(std.mem.asBytes(&pooled_frame.data), &result, Run.runAsync, .{
+            return CallData.callWrapper(.{
                 macro,
                 log,
                 allocator,
@@ -8126,8 +8331,9 @@ pub const Macro = struct {
                 id,
                 visitor,
             });
-            return result;
         }
+
+        extern "C" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
     };
 };
 

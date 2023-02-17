@@ -26,8 +26,32 @@
 
 #include "DOMURL.h"
 #include "wtf/URLParser.h"
+#include "helpers.h"
+#include "JSURLSearchParams.h"
 
 namespace WebCore {
+
+extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const ZigString* input)
+{
+    String str = Zig::toString(*input);
+    auto result = URLSearchParams::create(str, nullptr);
+    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(result)));
+}
+
+extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue value)
+{
+    return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);
+}
+
+// callback accepting a void* and a const ZigString*, returning void
+typedef void (*URLSearchParams__toStringCallback)(void* ctx, const ZigString* str);
+
+extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
+{
+    String str = urlSearchParams->toString();
+    auto zig = Zig::toZigString(str);
+    callback(ctx, &zig);
+}
 
 URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)
     : m_associatedURL(associatedURL)
@@ -96,9 +120,11 @@ void URLSearchParams::set(const String& name, const String& value)
             return false;
         });
         updateURL();
+        needsSorting = true;
         return;
     }
     m_pairs.append({ name, value });
+    needsSorting = true;
     updateURL();
 }
 
@@ -106,6 +132,7 @@ void URLSearchParams::append(const String& name, const String& value)
 {
     m_pairs.append({ name, value });
     updateURL();
+    needsSorting = true;
 }
 
 Vector<String> URLSearchParams::getAll(const String& name) const
@@ -122,10 +149,12 @@ Vector<String> URLSearchParams::getAll(const String& name) const
 
 void URLSearchParams::remove(const String& name)
 {
-    m_pairs.removeAllMatching([&](const auto& pair) {
-        return pair.key == name;
-    });
+    if (!m_pairs.removeAllMatching([&](const auto& pair) {
+            return pair.key == name;
+        }))
+        return;
     updateURL();
+    needsSorting = true;
 }
 
 String URLSearchParams::toString() const

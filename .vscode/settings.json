@@ -7,10 +7,13 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
+  "zig.buildArgs": ["obj", "-Dfor-editor"],
+  "zig.buildOption": "build",
+  "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "AugusteRame.zls-vscode",
+    "editor.defaultFormatter": "JarredSumner.zig-unofficial",
     "editor.formatOnSave": true
   },
   "[ts]": {
@@ -31,7 +34,6 @@
   },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
-
   "lldb.verboseLogging": false,
   "files.exclude": {
     "**/.git": true,
@@ -44,8 +46,6 @@
     "**/*.xcscheme": true,
     "**/*.pem": true,
     "**/*.xcodeproj": true,
-    "packages/bun-types/*.d.ts": true,
-
     "test/snapshots": true,
     "test/snapshots-no-hmr": true,
     "src/bun.js/WebKit": true,
@@ -57,6 +57,8 @@
     "src/deps/uws": true,
     "src/deps/zlib": true,
     "src/deps/lol-html": true,
+    "src/deps/c-ares": true,
+    "src/deps/tinycc": true,
     "test/snippets/package-json-exports/_node_modules_copy": true
   },
   "C_Cpp.files.exclude": {
@@ -180,7 +182,13 @@
     "ethernet.h": "c",
     "inet.h": "c",
     "packet.h": "c",
-    "queue": "cpp"
+    "queue": "cpp",
+    "compare": "cpp",
+    "concepts": "cpp",
+    "typeindex": "cpp",
+    "__verbose_abort": "cpp"
   },
-  "cmake.configureOnOpen": false
+  "cmake.configureOnOpen": false,
+  "C_Cpp.errorSquiggles": "Enabled",
+  "eslint.workingDirectories": ["packages/bun-types"]
 }

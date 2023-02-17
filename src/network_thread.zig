@@ -1,17 +1,16 @@
-const ThreadPool = @import("thread_pool");
+const ThreadPool = @import("bun").ThreadPool;
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
 const Node = ThreadPool.Node;
 pub const Completion = AsyncIO.Completion;
 const std = @import("std");
-pub const AsyncIO = @import("io");
-const Output = @import("./global.zig").Output;
+pub const AsyncIO = @import("bun").AsyncIO;
+const Output = @import("bun").Output;
 const IdentityContext = @import("./identity_context.zig").IdentityContext;
 const HTTP = @import("./http_client_async.zig");
 const NetworkThread = @This();
-const Environment = @import("./global.zig").Environment;
+const Environment = @import("bun").Environment;
 const Lock = @import("./lock.zig").Lock;
-const FIFO = @import("./io/fifo.zig").FIFO;
 
 /// Single-thread in this pool
 io: *AsyncIO = undefined,
@@ -26,9 +25,9 @@ pub var global: NetworkThread = undefined;
 pub var global_loaded: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0);
 
 const log = Output.scoped(.NetworkThread, true);
-const Global = @import("./global.zig").Global;
+const Global = @import("bun").Global;
 pub fn onStartIOThread(waker: AsyncIO.Waker) void {
-    NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(@import("./global.zig").default_allocator);
+    NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(@import("bun").default_allocator);
     AsyncIO.global = AsyncIO.init(1024, 0, waker) catch |err| {
         log: {
             if (comptime Environment.isLinux) {
@@ -203,7 +202,7 @@ pub const AddressListCache = std.HashMap(u64, CachedAddressList, IdentityContext
 pub var address_list_cached: AddressListCache = undefined;
 pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16) !*std.net.AddressList {
     // const hash = CachedAddressList.hash(name, port);
-    // const now = @intCast(u64, @maximum(0, std.time.milliTimestamp()));
+    // const now = @intCast(u64, @max(0, std.time.milliTimestamp()));
     // if (address_list_cached.getPtr(hash)) |cached| {
     //     if (cached.expire_after > now) {
     //         return cached;
@@ -234,7 +233,7 @@ pub fn init() !void {
         const fd = try std.os.eventfd(0, std.os.linux.EFD.CLOEXEC | 0);
         global.waker = .{ .fd = fd };
     } else if (comptime Environment.isMac) {
-        global.waker = try AsyncIO.Waker.init(@import("./global.zig").default_allocator);
+        global.waker = try AsyncIO.Waker.init(@import("bun").default_allocator);
     } else {
         @compileLog("TODO: Waker");
     }

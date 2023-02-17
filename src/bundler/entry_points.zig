@@ -1,10 +1,10 @@
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 const std = @import("std");
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Fs = @import("../fs.zig");
-const js_ast = @import("../js_ast.zig");
-const Bundler = @import("../bundler.zig").Bundler;
+const js_ast = bun.JSAst;
+const Bundler = bun.Bundler;
 const strings = bun.strings;
 pub const FallbackEntryPoint = struct {
     code_buffer: [8096]u8 = undefined,
@@ -201,7 +201,7 @@ pub const ServerEntryPoint = struct {
                     \\        if (server) {{
                     \\           server.reload(entryNamespace.default);
                     \\        }} else {{
-                    \\           server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\           server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
                     \\           console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
                     \\        }}
                     \\      }}
@@ -211,7 +211,7 @@ pub const ServerEntryPoint = struct {
                     \\   if (server) {{
                     \\      server.reload(entryNamespace.default);
                     \\   }} else {{
-                    \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default))
+                    \\      server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);
                     \\      console.debug(`Started server ${{server.protocol}}//${{server.hostname}}:${{server.port}}`);
                     \\   }}
                     \\}}
@@ -277,9 +277,10 @@ pub const MacroEntryPoint = struct {
         hasher.update(js_ast.Macro.namespaceWithColon);
         hasher.update(entry_path);
         hasher.update(function_name);
-        const truncated_u32 = @truncate(u32, hasher.final());
+        const hash = hasher.final();
+        const fmt = bun.fmt.hexIntLower(hash);
 
-        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{x}.js", .{truncated_u32}) catch unreachable;
+        const specifier = std.fmt.bufPrint(buf, js_ast.Macro.namespaceWithColon ++ "//{any}.js", .{fmt}) catch unreachable;
         len.* = @truncate(u32, specifier.len);
 
         return generateIDFromSpecifier(specifier);

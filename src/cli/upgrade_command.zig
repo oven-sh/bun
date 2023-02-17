@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -10,34 +10,34 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const lex = bun.js_lexer;
+const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 const NetworkThread = HTTP.NetworkThread;
 
@@ -64,11 +64,9 @@ pub const Version = struct {
                     bun.default_allocator,
                     "bun-canary-timestamp-{any}",
                     .{
-                        std.fmt.fmtSliceHexLower(
-                            std.mem.asBytes(
-                                &bun.hash(
-                                    std.mem.asBytes(&Cli.start_time),
-                                ),
+                        bun.fmt.hexIntLower(
+                            bun.hash(
+                                std.mem.asBytes(&Cli.start_time),
                             ),
                         ),
                     },
@@ -118,12 +116,12 @@ pub const UpgradeCheckerThread = struct {
     }
 
     fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@intCast(u64, @maximum(std.time.milliTimestamp(), 0)));
+        var rand = std.rand.DefaultPrng.init(@intCast(u64, @max(std.time.milliTimestamp(), 0)));
         const delay = rand.random().intRangeAtMost(u64, 100, 10000);
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        NetworkThread.init() catch unreachable;
+        HTTP.HTTPThread.init() catch unreachable;
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -219,20 +217,13 @@ pub const UpgradeCommand = struct {
             }
         }
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
+
         var metadata_body = try MutableString.init(allocator, 2048);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            &metadata_body,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(allocator, .GET, api_url, header_entries, headers_buf, &metadata_body, "", 60 * std.time.ns_per_min, http_proxy);
         if (!silent) async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -353,7 +344,7 @@ pub const UpgradeCommand = struct {
 
                         if (asset.asProperty("size")) |size_| {
                             if (size_.expr.data == .e_number) {
-                                version.size = @intCast(u32, @maximum(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
+                                version.size = @intCast(u32, @max(@floatToInt(i32, std.math.ceil(size_.expr.data.e_number.value)), 0));
                             }
                         }
                         return version;
@@ -389,7 +380,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        try NetworkThread.init();
+        try HTTP.HTTPThread.init();
 
         var filesystem = try fs.FileSystem.init1(ctx.allocator, null);
         var env_loader: DotEnv.Loader = brk: {
@@ -452,24 +443,18 @@ pub const UpgradeCommand = struct {
             };
         }
 
+        var zip_url = URL.parse(version.zip_url);
+        var http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
+
         {
             var refresher = std.Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
             var async_http = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
             var zip_file_buffer = try ctx.allocator.create(MutableString);
-            zip_file_buffer.* = try MutableString.init(ctx.allocator, @maximum(version.size, 1024));
+            zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(
-                ctx.allocator,
-                .GET,
-                URL.parse(version.zip_url),
-                .{},
-                "",
-                zip_file_buffer,
-                "",
-                timeout,
-            );
+            async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, zip_url, .{}, "", zip_file_buffer, "", timeout, http_proxy);
             async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             const response = try async_http.sendSync(true);
@@ -511,11 +496,12 @@ pub const UpgradeCommand = struct {
             const version_name = version.name().?;
 
             var save_dir_ = filesystem.tmpdir();
-            var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
+            var save_dir_it = save_dir_.makeOpenPathIterable(version_name, .{}) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
                 Global.exit(1);
             };
-            var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
+            const save_dir = save_dir_it.dir;
+            var tmpdir_path = bun.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
                 Global.exit(1);
             };
@@ -619,7 +605,7 @@ pub const UpgradeCommand = struct {
                         Output.prettyErrorln(
                             "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
-                                version_string[0..@minimum(version_string.len, 512)],
+                                version_string[0..@min(version_string.len, 512)],
                                 version_name,
                             },
                         );
@@ -637,11 +623,12 @@ pub const UpgradeCommand = struct {
             // safe because the slash will no longer be in use
             current_executable_buf[target_dir_.len] = 0;
             var target_dirname = current_executable_buf[0..target_dir_.len :0];
-            var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
+            var target_dir_it = std.fs.openIterableDirAbsoluteZ(target_dirname, .{}) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
+            var target_dir = target_dir_it.dir;
 
             if (use_canary) {
 

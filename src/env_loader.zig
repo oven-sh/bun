@@ -1,6 +1,6 @@
 const std = @import("std");
-const logger = @import("./logger.zig");
-const bun = @import("./global.zig");
+const logger = @import("bun").logger;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,6 +14,7 @@ const C = bun.C;
 const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const Fs = @import("./fs.zig");
+const URL = @import("./url.zig").URL;
 const Api = @import("./api/schema.zig").Api;
 const which = @import("./which.zig").which;
 const Variable = struct {
@@ -51,7 +52,7 @@ pub const Lexer = struct {
     pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i;
+        this.current = this.cursor.i + @as(usize, @boolToInt(ended));
     }
 
     pub fn eatNestedValue(
@@ -94,7 +95,7 @@ pub const Lexer = struct {
                     last_flush = i;
                     const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
-                    if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
+                    if (@call(.always_inline, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
                             try writer.writeAll(new_value);
                         }
@@ -164,7 +165,7 @@ pub const Lexer = struct {
                 -1 => {
                     lexer.end = lexer.current;
 
-                    return lexer.source.contents[start..if (any_spaces) @minimum(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
+                    return lexer.source.contents[start..if (any_spaces) @min(last_non_space, lexer.source.contents.len) else lexer.source.contents.len];
                 },
                 '$' => {
                     lexer.has_nested_value = true;
@@ -182,13 +183,13 @@ pub const Lexer = struct {
                         '\'' => {
                             lexer.end = lexer.current;
                             lexer.step();
-                            return lexer.source.contents[start..@minimum(lexer.end, lexer.source.contents.len)];
+                            return lexer.source.contents[start..@min(lexer.end, lexer.source.contents.len)];
                         },
                         implicitQuoteCharacter => {
                             lexer.end = lexer.current;
                             lexer.step();
 
-                            return lexer.source.contents[start..@minimum(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
+                            return lexer.source.contents[start..@min(if (any_spaces) last_non_space + 1 else lexer.end, lexer.end)];
                         },
                         '"' => {
                             // We keep going
@@ -201,7 +202,7 @@ pub const Lexer = struct {
                     lexer.step();
 
                     lexer.was_quoted = was_quoted;
-                    return lexer.source.contents[start..@minimum(
+                    return lexer.source.contents[start..@min(
                         lexer.end,
                         lexer.source.contents.len,
                     )];
@@ -293,7 +294,7 @@ pub const Lexer = struct {
                             0, -1 => {
                                 this.end = this.current;
                                 return if (last_non_space > this.start)
-                                    Variable{ .key = this.source.contents[this.start..@minimum(last_non_space + 1, this.source.contents.len)], .value = "" }
+                                    Variable{ .key = this.source.contents[this.start..@min(last_non_space + 1, this.source.contents.len)], .value = "" }
                                 else
                                     null;
                             },
@@ -431,13 +432,57 @@ pub const Loader = struct {
             this.map.get("bamboo.buildKey")) != null;
     }
 
-    pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem) !void {
+    pub fn getHttpProxy(this: *Loader, url: URL) ?URL {
+        // TODO: When Web Worker support is added, make sure to intern these strings
+        var http_proxy: ?URL = null;
+
+        if (url.isHTTP()) {
+            if (this.map.get("http_proxy") orelse this.map.get("HTTP_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+            }
+        } else {
+            if (this.map.get("https_proxy") orelse this.map.get("HTTPS_PROXY")) |proxy| {
+                if (proxy.len > 0) http_proxy = URL.parse(proxy);
+            }
+        }
+
+        //NO_PROXY filter
+        if (http_proxy != null) {
+            if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
+                if (no_proxy_text.len == 0) return http_proxy;
+
+                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
+                var next = no_proxy_list.next();
+                while (next != null) {
+                    var host = next.?;
+                    if (strings.eql(host, "*")) {
+                        return null;
+                    }
+                    //strips .
+                    if (host[0] == '.') {
+                        host = host[1.. :0];
+                    }
+                    //hostname ends with suffix
+                    if (strings.endsWith(url.hostname, host)) {
+                        return null;
+                    }
+                    next = no_proxy_list.next();
+                }
+            }
+        }
+        return http_proxy;
+    }
+    pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem, override_node: []const u8) !bool {
         var buf: Fs.PathBuffer = undefined;
 
-        var node = this.getNodePath(fs, &buf) orelse return;
-        var cloned = try fs.dirname_store.append([]const u8, std.mem.span(node));
-        try this.map.put("NODE", cloned);
-        try this.map.put("npm_node_execpath", cloned);
+        var node_path_to_use = override_node;
+        if (node_path_to_use.len == 0) {
+            var node = this.getNodePath(fs, &buf) orelse return false;
+            node_path_to_use = try fs.dirname_store.append([]const u8, std.mem.span(node));
+        }
+        try this.map.put("NODE", node_path_to_use);
+        try this.map.put("npm_node_execpath", node_path_to_use);
+        return true;
     }
 
     pub fn get(this: *const Loader, key: string) ?string {
@@ -521,7 +566,7 @@ pub const Loader = struct {
             if (key_buf_len > 0) {
                 iter.reset();
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
-                const js_ast = @import("./js_ast.zig");
+                const js_ast = bun.JSAst;
 
                 var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
@@ -543,30 +588,6 @@ pub const Loader = struct {
                                     &[_]u8{},
                             };
                             var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
-
-                            if (e_strings[0].eqlComptime("undefined")) {
-                                expr_data = .{ .e_undefined = .{} };
-                            }
-
-                            if (e_strings[0].eqlComptime("null")) {
-                                expr_data = .{ .e_null = .{} };
-                            }
-
-                            if (e_strings[0].eqlComptime("false")) {
-                                expr_data = .{ .e_boolean = .{ .value = false } };
-                            }
-
-                            if (e_strings[0].eqlComptime("true")) {
-                                expr_data = .{ .e_boolean = .{ .value = true } };
-                            }
-
-                            if (e_strings[0].eqlComptime("0")) {
-                                expr_data = .{ .e_number = .{ .value = 0.0 } };
-                            }
-
-                            if (e_strings[0].eqlComptime("1")) {
-                                expr_data = .{ .e_number = .{ .value = 1.0 } };
-                            }
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
@@ -591,30 +612,6 @@ pub const Loader = struct {
                                 };
 
                                 var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
-
-                                if (e_strings[0].eqlComptime("undefined")) {
-                                    expr_data = .{ .e_undefined = .{} };
-                                }
-
-                                if (e_strings[0].eqlComptime("null")) {
-                                    expr_data = .{ .e_null = .{} };
-                                }
-
-                                if (e_strings[0].eqlComptime("false")) {
-                                    expr_data = .{ .e_boolean = .{ .value = false } };
-                                }
-
-                                if (e_strings[0].eqlComptime("true")) {
-                                    expr_data = .{ .e_boolean = .{ .value = true } };
-                                }
-
-                                if (e_strings[0].eqlComptime("0")) {
-                                    expr_data = .{ .e_number = .{ .value = 0.0 } };
-                                }
-
-                                if (e_strings[0].eqlComptime("1")) {
-                                    expr_data = .{ .e_number = .{ .value = 1.0 } };
-                                }
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
@@ -642,30 +639,6 @@ pub const Loader = struct {
 
                         var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
-                        if (e_strings[0].eqlComptime("undefined")) {
-                            expr_data = .{ .e_undefined = .{} };
-                        }
-
-                        if (e_strings[0].eqlComptime("null")) {
-                            expr_data = .{ .e_null = .{} };
-                        }
-
-                        if (e_strings[0].eqlComptime("false")) {
-                            expr_data = .{ .e_boolean = .{ .value = false } };
-                        }
-
-                        if (e_strings[0].eqlComptime("true")) {
-                            expr_data = .{ .e_boolean = .{ .value = true } };
-                        }
-
-                        if (e_strings[0].eqlComptime("0")) {
-                            expr_data = .{ .e_number = .{ .value = 0.0 } };
-                        }
-
-                        if (e_strings[0].eqlComptime("1")) {
-                            expr_data = .{ .e_number = .{ .value = 1.0 } };
-                        }
-
                         _ = try to_string.getOrPutValue(
                             key,
                             .{
@@ -684,89 +657,6 @@ pub const Loader = struct {
             var value = framework_defaults.values[i];
 
             if (!to_string.contains(key) and !to_json.contains(key)) {
-                // is this an escaped string?
-                // if so, we start with the quotes instead of the escape
-                if (value.len > 2 and
-                    value[0] == '\\' and
-                    (value[1] == '"' or value[1] == '\'') and
-                    value[value.len - 1] == '\\' and
-                    (value[value.len - 2] == '"' or
-                    value[value.len - 2] == '\''))
-                {
-                    value = value[1 .. value.len - 1];
-                }
-
-                if (strings.eqlComptime(value, "undefined")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .value = .{ .e_undefined = .{} },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "null")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_null = .{} },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "false")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_boolean = .{ .value = false } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "true")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_boolean = .{ .value = true } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "0")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_number = .{ .value = 0.0 } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "1")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_number = .{ .value = 1.0 } },
-                        },
-                    );
-                    continue;
-                }
-
                 _ = try to_json.getOrPutValue(key, value);
             }
         }
@@ -786,8 +676,10 @@ pub const Loader = struct {
 
         // This is a little weird because it's evidently stored line-by-line
         var source = logger.Source.initPathString("process.env", "");
+
+        this.map.map.ensureTotalCapacity(std.os.environ.len) catch unreachable;
         for (std.os.environ) |env| {
-            source.contents = std.mem.span(env);
+            source.contents = bun.span(env);
             Parser.parse(&source, this.allocator, this.map, true, true);
         }
         this.did_load_process = true;
@@ -1000,7 +892,7 @@ pub const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTable = std.StringArrayHashMap(string);
+    const HashTable = bun.StringArrayHashMap(string);
 
     map: HashTable,
 
@@ -1222,7 +1114,7 @@ test "DotEnv Process" {
     var loader = Loader.init(&map, default_allocator);
     loader.loadProcess();
 
-    try expectString(loader.map.get("TMPDIR").?, std.os.getenvZ("TMPDIR").?);
+    try expectString(loader.map.get("TMPDIR").?, bun.getenvZ("TMPDIR").?);
     try expect(loader.map.get("TMPDIR").?.len > 0);
 
     try expectString(loader.map.get("USER").?, process.get("USER").?);
@@ -1232,7 +1124,7 @@ test "DotEnv Process" {
 }
 
 test "DotEnv Loader - copyForDefine" {
-    const UserDefine = std.StringArrayHashMap(string);
+    const UserDefine = bun.StringArrayHashMap(string);
     const UserDefinesArray = @import("./defines.zig").UserDefinesArray;
     var map = Map.init(default_allocator);
     var loader = Loader.init(&map, default_allocator);

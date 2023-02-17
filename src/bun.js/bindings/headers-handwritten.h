@@ -207,6 +207,7 @@ enum SyntheticModuleType : uint64_t {
     StringDecoder = 1027,
     Module = 1028,
     TTY = 1029,
+    NodeUtilTypes = 1030,
 };
 
 extern "C" const char* Bun__userAgent;
@@ -229,12 +230,15 @@ extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
     JSC::JSGlobalObject* global,
     ZigString* specifier);
 
-extern "C" bool Bun__transpileFile(
+extern "C" void* Bun__transpileFile(
     void* bunVM,
     JSC::JSGlobalObject* global,
     ZigString* specifier,
     ZigString* referrer,
-    ErrorableResolvedSource* result);
+    ErrorableResolvedSource* result, bool allowPromise);
+
+extern "C" JSC::EncodedJSValue CallbackJob__onResolve(JSC::JSGlobalObject*, JSC::CallFrame*);
+extern "C" JSC::EncodedJSValue CallbackJob__onReject(JSC::JSGlobalObject*, JSC::CallFrame*);
 
 extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
@@ -247,15 +251,20 @@ extern "C" bool Bun__fetchBuiltinModule(
 extern "C" const char* Bun__version;
 
 // Used in process.versions
-extern "C" const char* Bun__versions_webkit;
-extern "C" const char* Bun__versions_mimalloc;
-extern "C" const char* Bun__versions_libarchive;
-extern "C" const char* Bun__versions_picohttpparser;
 extern "C" const char* Bun__versions_boringssl;
-extern "C" const char* Bun__versions_zlib;
-extern "C" const char* Bun__version_sha;
-
+extern "C" const char* Bun__versions_libarchive;
+extern "C" const char* Bun__versions_mimalloc;
+extern "C" const char* Bun__versions_picohttpparser;
+extern "C" const char* Bun__versions_uws;
+extern "C" const char* Bun__versions_webkit;
 extern "C" const char* Bun__versions_zig;
+extern "C" const char* Bun__versions_zlib;
+extern "C" const char* Bun__versions_tinycc;
+extern "C" const char* Bun__versions_lolhtml;
+extern "C" const char* Bun__versions_c_ares;
+extern "C" const char* Bun__versions_usockets;
+
+extern "C" const char* Bun__version_sha;
 
 extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);
 
@@ -267,5 +276,14 @@ extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, E
 
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
+
+template<bool isStrict>
+bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);
+
+namespace Inspector {
+class ScriptArguments;
+}
+
+using ScriptArguments = Inspector::ScriptArguments;
 
 #endif

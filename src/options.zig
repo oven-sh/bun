@@ -1,7 +1,7 @@
 /// This file is mostly the API schema but with all the options normalized.
 /// Normalization is necessary because most fields in the API schema are optional
 const std = @import("std");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const Fs = @import("fs.zig");
 
 const resolver = @import("./resolver/resolver.zig");
@@ -12,19 +12,19 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 const URL = @import("./url.zig").URL;
 const ConditionsMap = @import("./resolver/package_json.zig").ESModule.ConditionsMap;
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const FileDescriptorType = bun.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptor;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
@@ -79,9 +79,9 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
 }
 
 pub const ExternalModules = struct {
-    node_modules: std.BufSet,
-    abs_paths: std.BufSet,
-    patterns: []const WildcardPattern,
+    node_modules: std.BufSet = undefined,
+    abs_paths: std.BufSet = undefined,
+    patterns: []const WildcardPattern = undefined,
     pub const WildcardPattern = struct {
         prefix: string,
         suffix: string,
@@ -169,7 +169,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice();
+        result.patterns = patterns.toOwnedSlice() catch @panic("TODO");
 
         return result;
     }
@@ -355,7 +355,7 @@ pub const BundlePackage = enum {
     always,
     never,
 
-    pub const Map = std.StringArrayHashMapUnmanaged(BundlePackage);
+    pub const Map = bun.StringArrayHashMapUnmanaged(BundlePackage);
 };
 
 pub const ModuleType = enum {
@@ -478,8 +478,8 @@ pub const Platform = enum {
         };
     };
 
-    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) std.StringHashMap(string) {
-        var exts = std.StringHashMap(string).init(allocator);
+    pub fn outExtensions(platform: Platform, allocator: std.mem.Allocator) bun.StringHashMap(string) {
+        var exts = bun.StringHashMap(string).init(allocator);
 
         const js = Extensions.Out.JavaScript[0];
         const mjs = Extensions.Out.JavaScript[1];
@@ -597,6 +597,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );
@@ -606,6 +607,7 @@ pub const Platform = enum {
                 default_conditions_strings.bun,
                 default_conditions_strings.worker,
                 default_conditions_strings.module,
+                default_conditions_strings.node,
                 default_conditions_strings.browser,
             },
         );
@@ -633,6 +635,13 @@ pub const Loader = enum(u4) {
     toml,
     wasm,
     napi,
+
+    pub fn canBeRunByBun(this: Loader) bool {
+        return switch (this) {
+            .jsx, .js, .ts, .tsx, .json, .wasm => true,
+            else => false,
+        };
+    }
 
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
@@ -667,7 +676,7 @@ pub const Loader = enum(u4) {
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
-            JSC.throwInvalidArguments("invalid loader – must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
+            JSC.throwInvalidArguments("invalid loader - must be js, jsx, tsx, ts, css, file, toml, wasm, or json", .{}, global, exception);
             return null;
         };
     }
@@ -702,6 +711,21 @@ pub const Loader = enum(u4) {
     }
 
     pub fn toAPI(loader: Loader) Api.Loader {
+        return switch (loader) {
+            .jsx => .jsx,
+            .js => .js,
+            .ts => .ts,
+            .tsx => .tsx,
+            .css => .css,
+            .json => .json,
+            .toml => .toml,
+            .wasm => .wasm,
+            .napi => .napi,
+            else => .file,
+        };
+    }
+
+    pub fn fromAPI(loader: Api.Loader) Loader {
         return switch (loader) {
             .jsx => .jsx,
             .js => .js,
@@ -825,7 +849,7 @@ pub const JSX = struct {
         use_embedded_refresh_runtime: bool = false,
 
         jsx: string = Defaults.JSXFunctionDev,
-        jsx_static: string = Defaults.JSXStaticFunction,
+        // jsx_static: string = Defaults.JSXStaticFunction,
 
         development: bool = true,
         parse: bool = true,
@@ -1055,7 +1079,20 @@ pub fn definesFromTransformOptions(
     );
 }
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !std.StringHashMap(Loader) {
+const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext = [_]string{
+    ".jsx",  ".json",
+    ".js",   ".mjs",
+    ".cjs",  ".css",
+
+    // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
+    ".ts",   ".tsx",
+    ".mts",  ".cts",
+
+    ".toml", ".wasm",
+};
+
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !bun.StringArrayHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
@@ -1095,36 +1132,19 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     }
 
     var loaders = try stringHashMapFromArrays(
-        std.StringHashMap(Loader),
+        bun.StringArrayHashMap(Loader),
         allocator,
         input_loaders.extensions,
         loader_values,
     );
-    const default_loader_ext = comptime [_]string{
-        ".jsx",  ".json",
-        ".js",   ".mjs",
-        ".cjs",  ".css",
-
-        // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-        ".ts",   ".tsx",
-        ".mts",  ".cts",
-
-        ".toml", ".wasm",
-    };
-
-    const default_loader_ext_bun = [_]string{".node"};
 
     inline for (default_loader_ext) |ext| {
-        if (!loaders.contains(ext)) {
-            try loaders.put(ext, defaultLoaders.get(ext).?);
-        }
+        _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
     }
 
     if (platform.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
-            if (!loaders.contains(ext)) {
-                try loaders.put(ext, defaultLoaders.get(ext).?);
-            }
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
 
@@ -1149,7 +1169,7 @@ pub const SourceMapOption = enum {
     pub fn toAPI(source_map: ?SourceMapOption) Api.SourceMapMode {
         return switch (source_map orelse .none) {
             .external => .external,
-            .@"inline" => .@"inline_into_file",
+            .@"inline" => .inline_into_file,
             else => ._none,
         };
     }
@@ -1157,7 +1177,7 @@ pub const SourceMapOption = enum {
     pub const map = ComptimeStringMap(SourceMapOption, .{
         .{ "none", .none },
         .{ "inline", .@"inline" },
-        .{ "external", .@"external" },
+        .{ "external", .external },
     });
 };
 
@@ -1167,7 +1187,7 @@ pub const BundleOptions = struct {
     footer: string = "",
     banner: string = "",
     define: *defines.Define,
-    loaders: std.StringHashMap(Loader),
+    loaders: bun.StringArrayHashMap(Loader),
     resolve_dir: string = "/",
     jsx: JSX.Pragma = JSX.Pragma{},
     auto_import_jsx: bool = true,
@@ -1206,7 +1226,7 @@ pub const BundleOptions = struct {
     entry_points: []const string,
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
-    out_extensions: std.StringHashMap(string),
+    out_extensions: bun.StringHashMap(string),
     import_path_format: ImportPathFormat = ImportPathFormat.relative,
     framework: ?Framework = null,
     routes: RouteConfig = RouteConfig.zero(),
@@ -1224,6 +1244,14 @@ pub const BundleOptions = struct {
     sourcemap: SourceMapOption = SourceMapOption.none,
 
     disable_transpilation: bool = false,
+
+    global_cache: GlobalCache = .disable,
+    prefer_offline_install: bool = false,
+    prefer_latest_install: bool = false,
+    install: ?*Api.BunInstall = null,
+
+    inlining: bool = false,
+    minify_whitespace: bool = false,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -1382,6 +1410,10 @@ pub const BundleOptions = struct {
                 // If we're not doing SSR, we want all the import paths to be absolute
                 opts.import_path_format = if (opts.import_path_format == .absolute_url) .absolute_url else .absolute_path;
                 opts.env.behavior = .load_all;
+                if (transform.extension_order.len == 0) {
+                    // we must also support require'ing .node files
+                    opts.extension_order = Defaults.ExtensionOrder ++ &[_][]const u8{".node"};
+                }
             },
             else => {},
         }
@@ -1393,7 +1425,7 @@ pub const BundleOptions = struct {
                 opts.node_modules_bundle = node_mods;
                 const pretty_path = fs.relativeTo(transform.node_modules_bundle_path.?);
                 opts.node_modules_bundle_url = try std.fmt.allocPrint(allocator, "{s}{s}", .{
-                    opts.origin,
+                    opts.origin.href,
                     pretty_path,
                 });
             } else if (transform.node_modules_bundle_path) |bundle_path| {
@@ -1524,7 +1556,7 @@ pub const BundleOptions = struct {
             if (!disabled_static) {
                 var _dirs = [_]string{chosen_dir};
                 opts.routes.static_dir = try fs.absAlloc(allocator, &_dirs);
-                opts.routes.static_dir_handle = std.fs.openDirAbsolute(opts.routes.static_dir, .{ .iterate = true }) catch |err| brk: {
+                const static_dir = std.fs.openIterableDirAbsolute(opts.routes.static_dir, .{}) catch |err| brk: {
                     switch (err) {
                         error.FileNotFound => {
                             opts.routes.static_dir_enabled = false;
@@ -1547,6 +1579,9 @@ pub const BundleOptions = struct {
 
                     break :brk null;
                 };
+                if (static_dir) |handle| {
+                    opts.routes.static_dir_handle = handle.dir;
+                }
                 opts.routes.static_dir_enabled = opts.routes.static_dir_handle != null;
             }
 
@@ -1619,6 +1654,7 @@ pub const BundleOptions = struct {
         }
 
         opts.tree_shaking = opts.serve or opts.platform.isBun() or opts.production or is_generating_bundle;
+        opts.inlining = opts.tree_shaking;
 
         if (opts.origin.isAbsolute()) {
             opts.import_path_format = ImportPathFormat.absolute_url;
@@ -1645,13 +1681,13 @@ pub const BundleOptions = struct {
 };
 
 pub fn openOutputDir(output_dir: string) !std.fs.Dir {
-    return std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch brk: {
+    return std.fs.cwd().openDir(output_dir, .{}) catch brk: {
         std.fs.cwd().makeDir(output_dir) catch |err| {
             Output.printErrorln("error: Unable to mkdir \"{s}\": \"{s}\"", .{ output_dir, @errorName(err) });
             Global.crash();
         };
 
-        var handle = std.fs.cwd().openDir(output_dir, std.fs.Dir.OpenDirOptions{ .iterate = true }) catch |err2| {
+        var handle = std.fs.cwd().openDir(output_dir, .{}) catch |err2| {
             Output.printErrorln("error: Unable to open \"{s}\": \"{s}\"", .{ output_dir, @errorName(err2) });
             Global.crash();
         };
@@ -1662,7 +1698,7 @@ pub fn openOutputDir(output_dir: string) !std.fs.Dir {
 pub const TransformOptions = struct {
     footer: string = "",
     banner: string = "",
-    define: std.StringHashMap(string),
+    define: bun.StringHashMap(string),
     loader: Loader = Loader.js,
     resolve_dir: string = "/",
     jsx: ?JSX.Pragma,
@@ -1690,7 +1726,7 @@ pub const TransformOptions = struct {
             cwd = try std.process.getCwdAlloc(allocator);
         }
 
-        var define = std.StringHashMap(string).init(allocator);
+        var define = bun.StringHashMap(string).init(allocator);
         try define.ensureTotalCapacity(1);
 
         define.putAssumeCapacity("process.env.NODE_ENV", "development");
@@ -1818,42 +1854,7 @@ pub const OutputFile = struct {
             }
         }
 
-        const os = std.os;
-
-        if (comptime @import("builtin").target.isDarwin()) {
-            const rc = os.system.fcopyfile(fd_in, fd_out, null, os.system.COPYFILE_DATA);
-            if (rc == 0) {
-                return;
-            }
-        }
-
-        if (@import("builtin").target.os.tag == .linux) {
-            // Try copy_file_range first as that works at the FS level and is the
-            // most efficient method (if available).
-            var offset: u64 = 0;
-            cfr_loop: while (true) {
-                const math = std.math;
-                // The kernel checks the u64 value `offset+count` for overflow, use
-                // a 32 bit value so that the syscall won't return EINVAL except for
-                // impossibly large files (> 2^64-1 - 2^32-1).
-                const amt = try os.copy_file_range(fd_in, offset, fd_out, offset, math.maxInt(u32), 0);
-                // Terminate when no data was copied
-                if (amt == 0) break :cfr_loop;
-                offset += amt;
-            }
-            return;
-        }
-
-        // Sendfile is a zero-copy mechanism iff the OS supports it, otherwise the
-        // fallback code will copy the contents chunk by chunk.
-        const empty_iovec = [0]os.iovec_const{};
-        var offset: u64 = 0;
-        sendfile_loop: while (true) {
-            const amt = try os.sendfile(fd_out, fd_in, offset, 0, &empty_iovec, &empty_iovec, 0);
-            // Terminate when no data was copied
-            if (amt == 0) break :sendfile_loop;
-            offset += amt;
-        }
+        try bun.copyFile(fd_in, fd_out);
     }
 };
 
@@ -1886,8 +1887,8 @@ pub const TransformResult = struct {
         return TransformResult{
             .outbase = outbase,
             .output_files = output_files,
-            .errors = errors.toOwnedSlice(),
-            .warnings = warnings.toOwnedSlice(),
+            .errors = try errors.toOwnedSlice(),
+            .warnings = try warnings.toOwnedSlice(),
         };
     }
 };
@@ -2091,7 +2092,7 @@ pub const Framework = struct {
     from_bundle: bool = false,
 
     resolved_dir: string = "",
-    override_modules: Api.StringMap = Api.StringMap{},
+    override_modules: Api.StringMap,
     override_modules_hashes: []u64 = &[_]u64{},
 
     client_css_in_js: Api.CssInJsBehavior = .auto_onimportcss,
@@ -2210,7 +2211,7 @@ pub const RouteConfig = struct {
     // I think it's fine to hardcode as .json for now, but if I personally were writing a framework
     // I would consider using a custom binary format to minimize request size
     // maybe like CBOR
-    extensions: []const string = &[_][]const string{},
+    extensions: []const string = &[_]string{},
     routes_enabled: bool = false,
 
     static_dir: string = "",
@@ -2316,3 +2317,5 @@ pub const RouteConfig = struct {
         return router;
     }
 };
+
+pub const GlobalCache = @import("./resolver/resolver.zig").GlobalCache;

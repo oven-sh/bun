@@ -6,7 +6,7 @@ env:
 
 on:
   push:
-    branches: [main, bun-actions]
+    branches: [main]
     paths:
       - "src/**/*"
       - "test/**/*"
@@ -27,12 +27,11 @@ on:
 jobs:
   macos-object-files:
     name: macOS Object
-    runs-on: zig-object
-    concurrency: macos
+    runs-on: med-ubuntu
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
           # - cpu: haswell
@@ -43,8 +42,8 @@ jobs:
           #   tag: bun-obj-darwin-aarch64
     steps:
       - uses: actions/checkout@v3
-      - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+        with:
+          submodules: recursive
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -60,19 +59,38 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
+        if: runner.arch == 'X64'
         with:
           context: .
           push: false
-          tags: ghcr.io/oven-sh/bun-obj:${{github.sha}}-${{matrix.cpu}}-${{matrix.arch}}-macos-baseline
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=min
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
+            BUILD_MACHINE_ARCH=x86_64
             CPU_TARGET=${{ matrix.cpu }}
             TRIPLET=${{matrix.arch}}-macos-none
             GIT_SHA=${{github.sha}}
           platforms: linux/amd64
+          target: build_release_obj
+          outputs: type=local,dest=${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        if: runner.arch == 'ARM64'
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=arm64
+            BUILD_MACHINE_ARCH=aarch64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-macos-none
+            GIT_SHA=${{github.sha}}
+          platforms: linux/arm64
           target: build_release_obj
           outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3
@@ -86,13 +104,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: haswell
@@ -101,16 +119,16 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: haswell
@@ -119,7 +137,7 @@ jobs:
           #   obj: bun-obj-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: false
           #   compile_obj: true
           # - cpu: native
@@ -127,7 +145,7 @@ jobs:
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
           #   dependencies: true
           #   compile_obj: true
@@ -147,10 +165,23 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          echo "export PATH=$(brew --prefix ccache)/bin:\$PATH" >> $GITHUB_ENV
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
-          brew link --overwrite llvm@13
+          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          brew link --overwrite llvm@15
+      - name: ccache (dependencies)
+        uses: hendrikmuhs/ccache-action@v1.2
+        if: matrix.dependencies
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-dependencies
+      - name: ccache (c++)
+        uses: hendrikmuhs/ccache-action@v1.2
+        if: matrix.compile_obj
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-obj
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-obj
       - name: Download WebKit
         if: matrix.compile_obj
         env:
@@ -204,7 +235,6 @@ jobs:
         with:
           name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
-
   macOS:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
@@ -213,14 +243,14 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: westmere
+          - cpu: nehalem
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             package: bun-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: haswell
           #   arch: x86_64
           #   tag: bun-darwin-x64
@@ -228,14 +258,14 @@ jobs:
           #   package: bun-darwin-x64
           #   runner: macos-11
           #   artifact: bun-obj-darwin-x64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: native
           #   arch: aarch64
           #   tag: bun-darwin-aarch64
           #   obj: bun-obj-darwin-aarch64
           #   package: bun-darwin-aarch64
           #   artifact: bun-obj-darwin-aarch64
-          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-macos-amd64-lto.tar.gz"
+          #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-macos-amd64-lto.tar.gz"
           #   runner: macos-arm64
     steps:
       - uses: actions/checkout@v3
@@ -253,10 +283,15 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
-          brew install rust llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+          brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
-          echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
-          brew link --overwrite llvm@13
+          echo "export PATH=$(brew --prefix llvm@15)/bin:\$PATH" >> $GITHUB_ENV
+          brew link --overwrite llvm@15
+      - name: ccache (link)
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
+          restore-keys: ${{ runner.os }}-ccache-${{ matrix.tag }}-link
       - name: Download WebKit
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -338,14 +373,18 @@ jobs:
           path: ${{runner.temp}}/release/${{matrix.tag}}.zip
       - name: Release
         id: release
-        uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main'
+        uses: ncipollo/release-action@v1
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
         with:
           prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+          token: ${{ secrets.GITHUB_TOKEN }}
           name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/${{matrix.tag}}.zip
-            ${{runner.temp}}/release/${{matrix.tag}}-profile.zip
+          tag: "canary"
+          artifacts: "${{runner.temp}}/release/${{matrix.tag}}.zip,${{runner.temp}}/release/${{matrix.tag}}-profile.zip"

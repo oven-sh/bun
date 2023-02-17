@@ -121,7 +121,7 @@ import { SPACING } from "../helpers/styles";
       evt.preventDefault();
 
       Router.pushRoute(
-        `/sign-up/verify?${qs.stringify({ email: this.state.email })}`
+        `/sign-up/verify?${qs.stringify({ email: this.state.email })}`,
       );
     };
 
@@ -439,6 +439,6 @@ import { SPACING } from "../helpers/styles";
   }
 
   const HomepageWithStore = withRedux(initStore, null, (dispatch) =>
-    bindActionCreators({ updateEntities, setCurrentUser }, dispatch)
+    bindActionCreators({ updateEntities, setCurrentUser }, dispatch),
   )(LoginGate(Homepage));
 })();

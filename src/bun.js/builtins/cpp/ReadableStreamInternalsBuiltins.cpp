@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -336,7 +335,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartC
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3326;
+const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3229;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode =
     "(function (\n" \
@@ -385,13 +384,8 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "  pipeState.pendingWritePromise = @Promise.@resolve();\n" \
     "\n" \
     "  if (signal !== @undefined) {\n" \
-    "    const algorithm = () => {\n" \
+    "    const algorithm = (reason) => {\n" \
     "      if (pipeState.finalized) return;\n" \
-    "\n" \
-    "      const error = @makeDOMException(\n" \
-    "        \"AbortError\",\n" \
-    "        \"abort pipeTo from signal\"\n" \
-    "      );\n" \
     "\n" \
     "      @pipeToShutdownWithAction(\n" \
     "        pipeState,\n" \
@@ -401,7 +395,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "            @getByIdDirectPrivate(pipeState.destination, \"state\") ===\n" \
     "              \"writable\";\n" \
     "          const promiseDestination = shouldAbortDestination\n" \
-    "            ? @writableStreamAbort(pipeState.destination, error)\n" \
+    "            ? @writableStreamAbort(pipeState.destination, reason)\n" \
     "            : @Promise.@resolve();\n" \
     "\n" \
     "          const shouldAbortSource =\n" \
@@ -409,7 +403,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "            @getByIdDirectPrivate(pipeState.source, \"state\") ===\n" \
     "              @streamReadable;\n" \
     "          const promiseSource = shouldAbortSource\n" \
-    "            ? @readableStreamCancel(pipeState.source, error)\n" \
+    "            ? @readableStreamCancel(pipeState.source, reason)\n" \
     "            : @Promise.@resolve();\n" \
     "\n" \
     "          let promiseCapability = @newPromiseCapability(@Promise);\n" \
@@ -431,7 +425,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "          promiseSource.@then(handleResolvedPromise, handleRejectedPromise);\n" \
     "          return promiseCapability.@promise;\n" \
     "        },\n" \
-    "        error\n" \
+    "        reason\n" \
     "      );\n" \
     "    };\n" \
     "    if (@whenSignalAborted(signal, algorithm))\n" \
@@ -986,7 +980,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1582;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1583;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -994,10 +988,6 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  \n" \
     "  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
     "  @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
-    "\n" \
-    "\n" \
-    "  var capturedStream = stream;\n" \
-    "  var reader;\n" \
     "\n" \
     "  function close(stream, reason) {\n" \
     "    if (reason && underlyingSource?.cancel) {\n" \
@@ -1019,7 +1009,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "      } else {\n" \
     "        @putByIdDirectPrivate(stream, \"state\", @streamClosed);\n" \
     "      }\n" \
-    "      \n" \
+    "       stream = @undefined;\n" \
     "    }\n" \
     "  }\n" \
     "\n" \
@@ -1041,11 +1031,9 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  @putByIdDirectPrivate(stream, \"readableStreamController\", sink);\n" \
     "  const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
     "\n" \
-    "  if (highWaterMark) {\n" \
-    "    sink.start({\n" \
-    "      highWaterMark,\n" \
-    "    });\n" \
-    "  }\n" \
+    "  sink.start({\n" \
+    "    highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,\n" \
+    "  });\n" \
     "\n" \
     "  @startDirectStream.@call(sink, stream, underlyingSource.pull, close);\n" \
     "  @putByIdDirectPrivate(stream, \"reader\", {});\n" \
@@ -1055,6 +1043,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  if (maybePromise && @isPromise(maybePromise)) {\n" \
     "    return maybePromise.@then(() => {});\n" \
     "  }\n" \
+    "\n" \
     "\n" \
     "})\n" \
 ;
@@ -1093,7 +1082,7 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadStreamIntoSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadStreamIntoSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadStreamIntoSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2868;
+const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2869;
 static const JSC::Intrinsic s_readableStreamInternalsReadStreamIntoSinkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "(async function (stream, sink, isNative) {\n" \
@@ -1115,7 +1104,7 @@ const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "    const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
     "    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));\n" \
     "\n" \
-    "    if (highWaterMark) sink.start({ highWaterMark });\n" \
+    "    sink.start({ highWaterMark: highWaterMark || 0 });\n" \
     "    \n" \
     "\n" \
     "    for (\n" \
@@ -2273,7 +2262,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2614;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3983;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2283,7 +2272,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "  var nativePtr = @getByIdDirectPrivate(stream, \"bunNativePtr\");\n" \
     "  var Prototype = @lazyStreamPrototypeMap.@get(nativeType);\n" \
     "  if (Prototype === @undefined) {\n" \
-    "    var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);\n" \
+    "    var [pull, start, cancel, setClose, deinit,  setRefOrUnref, drain] = @lazyLoad(nativeType);\n" \
     "    var closer = [false];\n" \
     "    var handleResult;\n" \
     "    function handleNativeReadableStreamPromiseResult(val) {\n" \
@@ -2294,10 +2283,16 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      handleResult(val, c, v);\n" \
     "    }\n" \
     "\n" \
+    "    function callClose(controller) {\n" \
+    "      try {\n" \
+    "        controller.close();\n" \
+    "      } catch(e) {\n" \
+    "        globalThis.reportError(e);\n" \
+    "      }\n" \
+    "    }\n" \
+    "\n" \
     "    handleResult = function handleResult(result, controller, view) {\n" \
     "      \"use strict\";\n" \
-    "\n" \
-    "      \n" \
     "      if (result && @isPromise(result)) {\n" \
     "        return result.then(\n" \
     "          handleNativeReadableStreamPromiseResult.bind({\n" \
@@ -2307,7 +2302,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "          (err) => controller.error(err)\n" \
     "        );\n" \
     "      } else if (typeof result === 'number') {\n" \
-    "        if (view && view.byteLength === result) {\n" \
+    "        if (view && view.byteLength === result && view.buffer === controller.byobRequest?.view?.buffer) {\n" \
     "          controller.byobRequest.respondWithNewView(view);\n" \
     "        } else {\n" \
     "          controller.byobRequest.respond(result);\n" \
@@ -2317,60 +2312,110 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "      }\n" \
     "\n" \
     "      if (closer[0] || result === false) {\n" \
-    "        @enqueueJob(() => controller.close());\n" \
+    "        @enqueueJob(callClose, controller);\n" \
     "        closer[0] = false;\n" \
     "      }\n" \
     "    };\n" \
     "\n" \
-    "    Prototype = class NativeReadableStreamSource {\n" \
-    "      constructor(tag, autoAllocateChunkSize) {\n" \
-    "        this.pull = this.pull_.bind(tag);\n" \
-    "        this.cancel = this.cancel_.bind(tag);\n" \
-    "        this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
+    "    function createResult(tag, controller, view, closer) {\n" \
+    "      closer[0] = false;\n" \
+    "\n" \
+    "      var result;\n" \
+    "      try {\n" \
+    "        result = pull(tag, view, closer);\n" \
+    "      } catch (err) {\n" \
+    "        return controller.error(err);\n" \
     "      }\n" \
     "\n" \
-    "      pull;\n" \
-    "      cancel;\n" \
+    "      return handleResult(result, controller, view);\n" \
+    "    }\n" \
     "\n" \
-    "      type = \"bytes\";\n" \
-    "      autoAllocateChunkSize = 0;\n" \
+    "    const registry = deinit ? new FinalizationRegistry(deinit) : null;\n" \
+    "    Prototype = class NativeReadableStreamSource {\n" \
+    "      constructor(tag, autoAllocateChunkSize, drainValue) {\n" \
+    "        this.#tag = tag;\n" \
+    "        this.#cancellationToken = {};\n" \
+    "        this.pull = this.#pull.bind(this);\n" \
+    "        this.cancel = this.#cancel.bind(this);\n" \
+    "        this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
     "\n" \
-    "      static startSync = start;\n" \
-    "\n" \
-    "      pull_(controller) {\n" \
-    "        closer[0] = false;\n" \
-    "\n" \
-    "        var result;\n" \
-    "\n" \
-    "        const view = controller.byobRequest.view;\n" \
-    "        try {\n" \
-    "          result = pull(this, view, closer);\n" \
-    "        } catch (err) {\n" \
-    "          return controller.error(err);\n" \
+    "        if (drainValue !== @undefined) {\n" \
+    "          this.start = (controller) => {\n" \
+    "            controller.enqueue(drainValue);\n" \
+    "          };\n" \
     "        }\n" \
     "\n" \
-    "        return handleResult(result, controller, view);\n" \
+    "        if (registry) {\n" \
+    "          registry.register(this, tag, this.#cancellationToken);\n" \
+    "        }\n" \
     "      }\n" \
     "\n" \
-    "      cancel_(reason) {\n" \
-    "        cancel(this, reason);\n" \
+    "      #cancellationToken;\n" \
+    "      pull;\n" \
+    "      cancel;\n" \
+    "      start;\n" \
+    "\n" \
+    "      #tag;\n" \
+    "      type = \"bytes\";\n" \
+    "      autoAllocateChunkSize = 0;\n" \
+    "      \n" \
+    "      static startSync = start;\n" \
+    "      \n" \
+    "    \n" \
+    "      #pull(controller) {\n" \
+    "        var tag = this.#tag;\n" \
+    "\n" \
+    "        if (!tag) {\n" \
+    "          controller.close();\n" \
+    "          return;\n" \
+    "        }\n" \
+    "\n" \
+    "        createResult(tag, controller, controller.byobRequest.view, closer);\n" \
+    "      }\n" \
+    "\n" \
+    "      #cancel(reason) {\n" \
+    "        var tag = this.#tag;\n" \
+    "\n" \
+    "        registry && registry.unregister(this.#cancellationToken);\n" \
+    "        setRefOrUnref && setRefOrUnref(tag, false);\n" \
+    "        cancel(tag, reason);\n" \
     "      }\n" \
     "      static deinit = deinit;\n" \
-    "      static registry = new FinalizationRegistry(deinit);\n" \
+    "      static drain = drain;\n" \
     "    };\n" \
     "    @lazyStreamPrototypeMap.@set(nativeType, Prototype);\n" \
     "  }\n" \
     "\n" \
     "  const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n" \
+    "  var drainValue;\n" \
+    "  const {drain: drainFn, deinit: deinitFn} = Prototype;\n" \
+    "  if (drainFn) {\n" \
+    "    drainValue = drainFn(nativePtr);\n" \
+    "  }\n" \
     "\n" \
     "  //\n" \
     "  if (chunkSize === 0) {\n" \
-    "    @readableStreamClose(stream);\n" \
-    "    return null;\n" \
+    "    deinit && nativePtr && @enqueueJob(deinit, nativePtr);\n" \
+    "\n" \
+    "    if ((drainValue?.byteLength ?? 0) > 0) {\n" \
+    "      return {\n" \
+    "        start(controller) {\n" \
+    "          controller.enqueue(drainValue);\n" \
+    "          controller.close();\n" \
+    "        },\n" \
+    "        type: \"bytes\",\n" \
+    "      };\n" \
+    "    }\n" \
+    "\n" \
+    "    return {\n" \
+    "      start(controller) {\n" \
+    "        controller.close();\n" \
+    "      },\n" \
+    "      type: \"bytes\",\n" \
+    "    };\n" \
     "  }\n" \
-    "  var instance = new Prototype(nativePtr, chunkSize);\n" \
-    "  Prototype.registry.register(instance, nativePtr);\n" \
-    "  return instance;\n" \
+    "\n" \
+    "  return new Prototype(nativePtr, chunkSize, drainValue);\n" \
     "})\n" \
 ;
 
@@ -2575,7 +2620,7 @@ const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1651;
+const int s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeLength = 1478;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefineLazyIteratorsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode =
     "(function (prototype) {\n" \
@@ -2586,39 +2631,35 @@ const char* const s_readableStreamInternalsReadableStreamDefineLazyIteratorsCode
     "    var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {\n" \
     "        var reader = stream.getReader();\n" \
     "        var deferredError;\n" \
-    "          try {\n" \
-    "              while (true) {\n" \
-    "                  var done, value;\n" \
-    "                  const firstResult = reader.readMany();\n" \
-    "                  if (@isPromise(firstResult)) {\n" \
-    "                      const result = await firstResult;\n" \
-    "                      done = result.done;\n" \
-    "                      value = result.value;\n" \
-    "                  } else {\n" \
-    "                      done = firstResult.done;\n" \
-    "                      value = firstResult.value;\n" \
-    "                  }\n" \
+    "        try {\n" \
+    "            while (true) {\n" \
+    "                var done, value;\n" \
+    "                const firstResult = reader.readMany();\n" \
+    "                if (@isPromise(firstResult)) {\n" \
+    "                    ({done, value} = await firstResult);\n" \
+    "                } else {\n" \
+    "                    ({done, value} = firstResult);\n" \
+    "                }\n" \
     "\n" \
-    "                  if (done) {\n" \
-    "                      return;\n" \
-    "                  }\n" \
-    "                  yield* value;\n" \
-    "              }\n" \
-    "          } catch(e) {\n" \
-    "            deferredError = e;\n" \
-    "          } finally {\n" \
-    "            reader.releaseLock();\n" \
-    "\n" \
-    "            if (!preventCancel) {\n" \
-    "                stream.cancel(deferredError);\n" \
+    "                if (done) {\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "                yield* value;\n" \
     "            }\n" \
+    "        } catch(e) {\n" \
+    "          deferredError = e;\n" \
+    "        } finally {\n" \
+    "          reader.releaseLock();\n" \
     "\n" \
-    "            if (deferredError) {\n" \
+    "          if (!preventCancel) {\n" \
+    "              stream.cancel(deferredError);\n" \
+    "          }\n" \
+    "\n" \
+    "          if (deferredError) {\n" \
     "            throw deferredError;\n" \
     "          }\n" \
-    "          }\n" \
+    "        }\n" \
     "    };\n" \
-    "\n" \
     "    var createAsyncIterator = function asyncIterator() {\n" \
     "        return ReadableStreamAsyncIterator(this, false);\n" \
     "    };\n" \

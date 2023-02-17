@@ -996,36 +996,36 @@ bool isCrossOriginSafeRequestHeader(HTTPHeaderName name, const String& value)
     if (value.length() > 128)
         return false;
 
-    switch (name) {
-    case HTTPHeaderName::Accept:
-        if (!isValidAcceptHeaderValue(value))
-            return false;
-        break;
-    case HTTPHeaderName::AcceptLanguage:
-    case HTTPHeaderName::ContentLanguage:
-        if (!isValidLanguageHeaderValue(value))
-            return false;
-        break;
-    case HTTPHeaderName::ContentType: {
-        // Preflight is required for MIME types that can not be sent via form submission.
-        if (containsCORSUnsafeRequestHeaderBytes(value))
-            return false;
-        auto parsedContentType = ParsedContentType::create(value);
-        if (!parsedContentType)
-            return false;
-        String mimeType = parsedContentType->mimeType();
-        if (!(equalLettersIgnoringASCIICase(mimeType, "application/x-www-form-urlencoded"_s) || equalLettersIgnoringASCIICase(mimeType, "multipart/form-data"_s) || equalLettersIgnoringASCIICase(mimeType, "text/plain"_s)))
-            return false;
-        break;
-    }
-    case HTTPHeaderName::Range:
-        if (!isSimpleRangeHeaderValue(value))
-            return false;
-        break;
-    default:
-        // FIXME: Should we also make safe other headers (DPR, Downlink, Save-Data...)? That would require validating their values.
-        return false;
-    }
+    // switch (name) {
+    // case HTTPHeaderName::Accept:
+    //     if (!isValidAcceptHeaderValue(value))
+    //         return false;
+    //     break;
+    // case HTTPHeaderName::AcceptLanguage:
+    // case HTTPHeaderName::ContentLanguage:
+    //     if (!isValidLanguageHeaderValue(value))
+    //         return false;
+    //     break;
+    // case HTTPHeaderName::ContentType: {
+    //     // Preflight is required for MIME types that can not be sent via form submission.
+    //     if (containsCORSUnsafeRequestHeaderBytes(value))
+    //         return false;
+    //     auto parsedContentType = ParsedContentType::create(value);
+    //     if (!parsedContentType)
+    //         return false;
+    //     String mimeType = parsedContentType->mimeType();
+    //     if (!(equalLettersIgnoringASCIICase(mimeType, "application/x-www-form-urlencoded"_s) || equalLettersIgnoringASCIICase(mimeType, "multipart/form-data"_s) || equalLettersIgnoringASCIICase(mimeType, "text/plain"_s)))
+    //         return false;
+    //     break;
+    // }
+    // case HTTPHeaderName::Range:
+    //     if (!isSimpleRangeHeaderValue(value))
+    //         return false;
+    //     break;
+    // default:
+    //     // FIXME: Should we also make safe other headers (DPR, Downlink, Save-Data...)? That would require validating their values.
+    //     return false;
+    // }
     return true;
 }
 

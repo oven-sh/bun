@@ -7,7 +7,7 @@ const Router = @This();
 
 const Api = @import("./api/schema.zig").Api;
 const std = @import("std");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -54,7 +54,7 @@ pub fn init(
         .routes = Routes{
             .config = config,
             .allocator = allocator,
-            .static = std.StringHashMap(*Route).init(allocator),
+            .static = bun.StringHashMap(*Route).init(allocator),
         },
         .fs = fs,
         .allocator = allocator,
@@ -108,7 +108,7 @@ pub const Routes = struct {
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    static: std.StringHashMap(*Route),
+    static: bun.StringHashMap(*Route),
 
     /// Corresponds to "index.js" on the filesystem
     index: ?*Route = null,
@@ -121,7 +121,7 @@ pub const Routes = struct {
     // We put this here to avoid loading the FrameworkConfig for the client, on the server.
     client_framework_enabled: bool = false,
 
-    pub fn matchPage(this: *Routes, _: string, url_path: URLPath, params: *Param.List) ?Match {
+    pub fn matchPageWithAllocator(this: *Routes, _: string, url_path: URLPath, params: *Param.List, allocator: std.mem.Allocator) ?Match {
         // Trim trailing slash
         var path = url_path.path;
         var redirect = false;
@@ -181,7 +181,7 @@ pub const Routes = struct {
         var matcher = MatchContextType{ .params = params.* };
         defer params.* = matcher.params;
 
-        if (this.match(this.allocator, path, *MatchContextType, &matcher)) |route| {
+        if (this.match(allocator, path, *MatchContextType, &matcher)) |route| {
             return Match{
                 .params = params,
                 .name = route.name,
@@ -196,6 +196,10 @@ pub const Routes = struct {
         }
 
         return null;
+    }
+
+    pub fn matchPage(this: *Routes, _: string, url_path: URLPath, params: *Param.List) ?Match {
+        return this.matchPageWithAllocator("", url_path, params, this.allocator);
     }
 
     fn matchDynamic(this: *Routes, allocator: std.mem.Allocator, path: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
@@ -233,7 +237,7 @@ const RouteLoader = struct {
     dedupe_dynamic: std.AutoArrayHashMap(u32, string),
     log: *Logger.Log,
     index: ?*Route = null,
-    static_list: std.StringHashMap(*Route),
+    static_list: bun.StringHashMap(*Route),
     all_routes: std.ArrayListUnmanaged(*Route),
 
     pub fn appendRoute(this: *RouteLoader, route: Route) void {
@@ -318,19 +322,34 @@ const RouteLoader = struct {
         }
     }
 
-    pub fn loadAll(allocator: std.mem.Allocator, config: Options.RouteConfig, log: *Logger.Log, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) Routes {
+    pub fn loadAll(
+        allocator: std.mem.Allocator,
+        config: Options.RouteConfig,
+        log: *Logger.Log,
+        comptime ResolverType: type,
+        resolver: *ResolverType,
+        root_dir_info: *const DirInfo,
+        base_dir: []const u8,
+    ) Routes {
+        var route_dirname_len: u16 = 0;
+
+        const relative_dir = FileSystem.instance.relative(base_dir, config.dir);
+        if (!strings.hasPrefixComptime(relative_dir, "..")) {
+            route_dirname_len = @truncate(u16, relative_dir.len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep)));
+        }
+
         var this = RouteLoader{
             .allocator = allocator,
             .log = log,
             .fs = resolver.fs,
             .config = config,
-            .static_list = std.StringHashMap(*Route).init(allocator),
+            .static_list = bun.StringHashMap(*Route).init(allocator),
             .dedupe_dynamic = std.AutoArrayHashMap(u32, string).init(allocator),
             .all_routes = .{},
-            .route_dirname_len = @truncate(u16, FileSystem.instance.relative(resolver.fs.top_level_dir, config.dir).len + @as(usize, @boolToInt(config.dir[config.dir.len - 1] != std.fs.path.sep))),
+            .route_dirname_len = route_dirname_len,
         };
         defer this.dedupe_dynamic.deinit();
-        this.load(ResolverType, resolver, root_dir_info);
+        this.load(ResolverType, resolver, root_dir_info, base_dir);
         if (this.all_routes.items.len == 0) return Routes{
             .static = this.static_list,
             .config = config,
@@ -395,7 +414,13 @@ const RouteLoader = struct {
         };
     }
 
-    pub fn load(this: *RouteLoader, comptime ResolverType: type, resolver: *ResolverType, root_dir_info: *const DirInfo) void {
+    pub fn load(
+        this: *RouteLoader,
+        comptime ResolverType: type,
+        resolver: *ResolverType,
+        root_dir_info: *const DirInfo,
+        base_dir: []const u8,
+    ) void {
         var fs = this.fs;
 
         if (root_dir_info.getEntriesConst()) |entries| {
@@ -422,6 +447,7 @@ const RouteLoader = struct {
                                 ResolverType,
                                 resolver,
                                 dir_info,
+                                base_dir,
                             );
                         }
                     },
@@ -436,10 +462,10 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(entry.dir.ptr[fs.top_level_dir.len - 1] == '/');
+                                    std.debug.assert(entry.dir.ptr[base_dir.len - 1] == '/');
                                 }
 
-                                const public_dir = entry.dir.ptr[fs.top_level_dir.len - 1 .. entry.dir.len];
+                                const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
 
                                 if (Route.parse(
                                     entry.base(),
@@ -470,9 +496,10 @@ pub fn loadRoutes(
     root_dir_info: *const DirInfo,
     comptime ResolverType: type,
     resolver: *ResolverType,
+    base_dir: []const u8,
 ) anyerror!void {
     if (this.loaded_routes) return;
-    this.routes = RouteLoader.loadAll(this.allocator, this.config, log, ResolverType, resolver, root_dir_info);
+    this.routes = RouteLoader.loadAll(this.allocator, this.config, log, ResolverType, resolver, root_dir_info, base_dir);
     this.loaded_routes = true;
 }
 
@@ -500,8 +527,8 @@ pub const TinyPtr = packed struct {
             std.debug.assert(end < right);
         }
 
-        const length = @maximum(end, right) - right;
-        const offset = @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
+        const length = @max(end, right) - right;
+        const offset = @max(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr);
         return TinyPtr{ .offset = @truncate(u16, offset), .len = @truncate(u16, length) };
     }
 };
@@ -558,7 +585,7 @@ pub const Route = struct {
         pub fn sortByNameString(_: @This(), lhs: string, rhs: string) bool {
             const math = std.math;
 
-            const n = @minimum(lhs.len, rhs.len);
+            const n = @min(lhs.len, rhs.len);
             var i: usize = 0;
             while (i < n) : (i += 1) {
                 switch (math.order(sort_table[lhs[i]], sort_table[rhs[i]])) {
@@ -582,7 +609,7 @@ pub const Route = struct {
                 .eq => switch (a.kind) {
                     // static + dynamic are sorted alphabetically
                     .static, .dynamic => @call(
-                        .{ .modifier = .always_inline },
+                        .always_inline,
                         sortByNameString,
                         .{
                             ctx,
@@ -593,7 +620,7 @@ pub const Route = struct {
                     // catch all and optional catch all must appear below dynamic
                     .catch_all, .optional_catch_all => switch (std.math.order(a.param_count, b.param_count)) {
                         .eq => @call(
-                            .{ .modifier = .always_inline },
+                            .always_inline,
                             sortByNameString,
                             .{
                                 ctx,
@@ -636,15 +663,17 @@ pub const Route = struct {
         // the name we actually store will often be this one
         var public_path: string = brk: {
             if (base.len == 0) break :brk public_dir;
-            route_file_buf[0] = '/';
+            var buf: []u8 = &route_file_buf;
 
-            var buf: []u8 = route_file_buf[1..];
-
-            std.mem.copy(
-                u8,
-                buf,
-                public_dir,
-            );
+            if (public_dir.len > 0) {
+                route_file_buf[0] = '/';
+                buf = buf[1..];
+                std.mem.copy(
+                    u8,
+                    buf,
+                    public_dir,
+                );
+            }
             buf[public_dir.len] = '/';
             buf = buf[public_dir.len + 1 ..];
             std.mem.copy(u8, buf, base);
@@ -728,7 +757,7 @@ pub const Route = struct {
                 if (!needs_close) entry.cache.fd = file.handle;
             }
 
-            var _abs = std.os.getFdPath(file.handle, &route_file_buf) catch |err| {
+            var _abs = bun.getFdPath(file.handle, &route_file_buf) catch |err| {
                 log.addErrorFmt(null, Logger.Loc.Empty, allocator, "{s} resolving route: {s}", .{ @errorName(err), abs_path_str }) catch unreachable;
                 return null;
             };
@@ -755,6 +784,7 @@ pub const Route = struct {
 };
 
 threadlocal var params_list: Param.List = undefined;
+
 pub fn match(app: *Router, comptime Server: type, server: Server, comptime RequestContextType: type, ctx: *RequestContextType) !void {
     ctx.matched_route = null;
 
@@ -880,14 +910,14 @@ pub const MockServer = struct {
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
     std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
-    const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{ .iterate = true });
+    const bun_tests_dir = try std.fs.cwd().makeOpenPathIterable("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
-    const cwd = try bun_tests_dir.makeOpenPath(cwd_path, .{ .iterate = true });
+    const cwd = try bun_tests_dir.makeOpenPathIterable(cwd_path, .{});
     try cwd.setAsCwd();
 
     const Data = @TypeOf(data);
-    const fields: []const std.builtin.TypeInfo.StructField = comptime std.meta.fields(Data);
+    const fields: []const std.builtin.Type.StructField = comptime std.meta.fields(Data);
     inline for (fields) |field| {
         @setEvalBranchQuota(9999);
         const value = @field(data, field.name);
@@ -905,13 +935,13 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("./logger.zig");
+const Logger = @import("bun").logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
         Output.initTest();
         try makeTest(testName, data);
-        const JSAst = @import("./js_ast.zig");
+        const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         var fs = try FileSystem.init1(default_allocator, null);
@@ -942,7 +972,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
@@ -968,7 +998,7 @@ pub const Test = struct {
     pub fn make(comptime testName: string, data: anytype) !Router {
         std.testing.refAllDecls(@import("./bun.js/bindings/exports.zig"));
         try makeTest(testName, data);
-        const JSAst = @import("./js_ast.zig");
+        const JSAst = bun.JSAst;
         JSAst.Expr.Data.Store.create(default_allocator);
         JSAst.Stmt.Data.Store.create(default_allocator);
         var fs = try FileSystem.init1WithForce(default_allocator, null, true);
@@ -999,7 +1029,7 @@ pub const Test = struct {
             .log = &logger,
             .routes = router.config,
             .entry_points = &.{},
-            .out_extensions = std.StringHashMap(string).init(default_allocator),
+            .out_extensions = bun.StringHashMap(string).init(default_allocator),
             .transform_options = std.mem.zeroes(Api.TransformOptions),
             .external = Options.ExternalModules.init(
                 default_allocator,
@@ -1014,7 +1044,13 @@ pub const Test = struct {
         var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
 
         var root_dir = (try resolver.readDirInfo(pages_dir)).?;
-        try router.loadRoutes(&logger, root_dir, Resolver, &resolver);
+        try router.loadRoutes(
+            &logger,
+            root_dir,
+            Resolver,
+            &resolver,
+            FileSystem.instance.top_level_dir,
+        );
         var entry_points = try router.getEntryPoints();
 
         try expectEqual(std.meta.fieldNames(@TypeOf(data)).len, entry_points.len);
@@ -1214,7 +1250,7 @@ const Pattern = struct {
                 return null;
             };
             offset = pattern.len;
-            kind = @maximum(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
+            kind = @max(@enumToInt(@as(Pattern.Tag, pattern.value)), kind);
             count += @intCast(u16, @boolToInt(@enumToInt(@as(Pattern.Tag, pattern.value)) > @enumToInt(Pattern.Tag.static)));
         }
 
@@ -1259,7 +1295,7 @@ const Pattern = struct {
 
         if (input.len == 0 or input.len <= @as(usize, offset)) return Pattern{
             .value = .{ .static = HashedString.empty },
-            .len = @truncate(RoutePathInt, @minimum(input.len, @as(usize, offset))),
+            .len = @truncate(RoutePathInt, @min(input.len, @as(usize, offset))),
         };
 
         var i: RoutePathInt = offset;
@@ -1272,7 +1308,7 @@ const Pattern = struct {
         while (i <= end) : (i += 1) {
             switch (input[i]) {
                 '/' => {
-                    return Pattern{ .len = @minimum(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
+                    return Pattern{ .len = @min(i + 1, end), .value = .{ .static = initHashedString(input[offset..i]) } };
                 },
                 '[' => {
                     if (i > offset) {
@@ -1300,7 +1336,7 @@ const Pattern = struct {
 
                             i += 1;
 
-                            if (!strings.eqlComptimeIgnoreLen(input[i..][0..3], "...")) return error.InvalidOptionalCatchAllRoute;
+                            if (!strings.hasPrefixComptime(input[i..], "...")) return error.InvalidOptionalCatchAllRoute;
                             i += 3;
                             param.offset = i;
                         },
@@ -1312,7 +1348,7 @@ const Pattern = struct {
                                 return error.InvalidCatchAllRoute;
                             }
 
-                            if (!strings.eqlComptimeIgnoreLen(input[i..][0..2], "..")) return error.InvalidCatchAllRoute;
+                            if (!strings.hasPrefixComptime(input[i..], "..")) return error.InvalidCatchAllRoute;
                             i += 2;
 
                             param.offset = i;
@@ -1339,7 +1375,7 @@ const Pattern = struct {
                     if (@enumToInt(tag) > @enumToInt(Tag.dynamic) and i <= end) return error.CatchAllMustBeAtTheEnd;
 
                     return Pattern{
-                        .len = @minimum(i + 1, end),
+                        .len = @min(i + 1, end),
                         .value = switch (tag) {
                             .dynamic => .{
                                 .dynamic = param,

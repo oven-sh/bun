@@ -11,7 +11,7 @@
 #include "JSDOMAttribute.h"
 #include "headers.h"
 #include "JSDOMConvertEnumeration.h"
-
+#include "JavaScriptCore/StrongInlines.h"
 namespace WebCore {
 using namespace JSC;
 
@@ -56,20 +56,28 @@ static bool callRead(JSValue stream, JSFunction* read, JSC::MarkedArgumentBuffer
     return !ret.isUndefinedOrNull();
 }
 
-static JSC_DECLARE_HOST_FUNCTION(jsReadable_maybeReadMore_);
-JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
-        auto read
-        = stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
+        auto clientData
+        = WebCore::clientData(vm);
+    auto readIdentifier = clientData->builtinNames().readPublicName();
+    auto read = stream->get(lexicalGlobalObject, readIdentifier);
+
     auto callData = JSC::getCallData(read);
     if (callData.type == CallData::Type::None) {
         throwException(lexicalGlobalObject, throwScope, createNotAFunctionError(lexicalGlobalObject, read));
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode({});
     }
 
-    auto& emitter = jsDynamicCast<JSEventEmitter*>(stream)->wrapped();
+    auto* jsEmitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (UNLIKELY(!jsEmitter)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+        return JSValue::encode(JSValue {});
+    }
+    auto& emitter = jsEmitter->wrapped();
 
     while (
         !state->getBool(JSReadableState::reading) && !state->getBool(JSReadableState::ended) && (state->m_length < state->m_highWaterMark || (state->m_flowing > 0 && state->m_length == 0))) {
@@ -85,24 +93,14 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlo
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        // make this static?
-        JSFunction* maybeReadMore_
-        = JSC::JSFunction::create(vm, lexicalGlobalObject, 0, "maybeReadMore_"_s, jsReadable_maybeReadMore_, ImplementationVisibility::Public);
-
-    lexicalGlobalObject->queueMicrotask(maybeReadMore_, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
 void flow(JSGlobalObject* lexicalGlobalObject, JSObject* streamObj, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto read = streamObj->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
+    auto clientData = WebCore::clientData(vm);
+    auto readIdentifier = clientData->builtinNames().readPublicName();
+    auto read = streamObj->get(lexicalGlobalObject, readIdentifier);
 
     auto callData = JSC::getCallData(read);
     if (callData.type == CallData::Type::None) {
@@ -110,40 +108,45 @@ void flow(JSGlobalObject* lexicalGlobalObject, JSObject* streamObj, JSReadableSt
         return;
     }
 
-    while (state->m_flowing > 0) {
+    if (state->m_flowing > 0) {
+        WebCore::EventEmitter& emitter = jsEventEmitterCastFast(vm, lexicalGlobalObject, streamObj)->wrapped();
 
-        if (!callRead(streamObj, jsCast<JSFunction*>(read), MarkedArgumentBuffer(), vm, lexicalGlobalObject, jsCast<JSEventEmitter*>(streamObj)->wrapped())) {
-            break;
+        while (state->m_flowing > 0) {
+
+            if (!callRead(streamObj, jsCast<JSFunction*>(read), MarkedArgumentBuffer(), vm, lexicalGlobalObject, emitter)) {
+                break;
+            }
         }
     }
 }
 
-static JSC_DECLARE_HOST_FUNCTION(jsReadable_resume_);
-JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
         auto* jsEmitterWrap
-        = jsDynamicCast<JSEventEmitter*>(stream);
+        = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
 
-    if (!jsEmitterWrap) {
-        throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-        return JSValue::encode(jsUndefined());
+    if (UNLIKELY(!jsEmitterWrap)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+        return JSValue::encode(JSValue {});
     }
 
     auto& emitter = jsEmitterWrap->wrapped();
+    auto clientData = WebCore::clientData(vm);
+    auto readIdentifier = clientData->builtinNames().readPublicName();
 
     if (!state->getBool(JSReadableState::reading)) {
         // stream.read(0)
         MarkedArgumentBuffer args;
         args.append(jsNumber(0));
 
-        callRead(stream, jsCast<JSFunction*>(stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s))), WTFMove(args), vm, lexicalGlobalObject, emitter);
+        callRead(stream, jsCast<JSFunction*>(stream->get(lexicalGlobalObject, readIdentifier)), WTFMove(args), vm, lexicalGlobalObject, emitter);
     }
 
     state->setBool(JSReadableState::resumeScheduled, true);
     // stream.emit('resume')
-    auto eventType = Identifier::fromString(vm, "resume"_s);
+    auto eventType = clientData->builtinNames().resumePublicName();
     MarkedArgumentBuffer args;
 
     emitter.emitForBindings(eventType, args);
@@ -152,7 +155,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
 
     if (state->m_flowing > 0 && !state->getBool(JSReadableState::reading)) {
         // stream.read(0)
-        auto read = stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
+        auto read = stream->get(lexicalGlobalObject, readIdentifier);
         auto callData = JSC::getCallData(read);
         if (callData.type == CallData::Type::None) {
             throwException(lexicalGlobalObject, throwScope, createNotAFunctionError(lexicalGlobalObject, read));
@@ -165,36 +168,22 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    JSReadableHelper_EXTRACT_STREAM_STATE
-
-        if (!state->getBool(JSReadableState::resumeScheduled))
-    {
-        state->setBool(JSReadableState::resumeScheduled, true);
-        // make this static?
-        JSFunction* resume_ = JSC::JSFunction::create(
-            vm, lexicalGlobalObject, 0, "resume_"_s, jsReadable_resume_, ImplementationVisibility::Public);
-
-        lexicalGlobalObject->queueMicrotask(resume_, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
-    }
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
 EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
     JSValue errored = state->m_errored.get();
     if (!state->getBool(JSReadableState::destroyed) && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->getBool(JSReadableState::ended))) {
         // stream.emit('readable')
-        auto eventType = Identifier::fromString(vm, "readable"_s);
+        auto clientData = WebCore::clientData(vm);
+
+        auto eventType = clientData->builtinNames().readablePublicName();
         MarkedArgumentBuffer args;
-        auto emitter = jsDynamicCast<JSEventEmitter*>(stream);
-        if (!emitter) {
-            throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-            return JSValue::encode(jsUndefined());
+        auto* emitter
+            = jsEventEmitterCastFast(vm, lexicalGlobalObject, stream);
+        if (UNLIKELY(!emitter)) {
+            throwTypeError(lexicalGlobalObject, throwScope, "Stream must be an EventEmitter"_s);
+            return JSValue::encode(JSValue {});
         }
         emitter->wrapped().emitForBindings(eventType, args);
 
@@ -206,7 +195,6 @@ EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stre
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable_);
 JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
@@ -223,11 +211,8 @@ EncodedJSValue emitReadable(JSGlobalObject* lexicalGlobalObject, JSObject* strea
     state->setBool(JSReadableState::needReadable, false);
     if (!state->getBool(JSReadableState::emittedReadable)) {
         state->setBool(JSReadableState::emittedReadable, true);
-        // make this static?
-        JSFunction* emitReadable_ = JSC::JSFunction::create(
-            vm, lexicalGlobalObject, 0, "emitReadable_"_s, jsReadable_emitReadable_, ImplementationVisibility::Public);
-
-        lexicalGlobalObject->queueMicrotask(emitReadable_, JSValue(stream), JSValue(state), JSValue {}, JSValue {});
+        Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+        globalObject->queueMicrotask(JSValue(globalObject->emitReadableNextTickFunction()), JSValue(stream), JSValue(state), JSValue {}, JSValue {});
     }
     return JSValue::encode(jsUndefined());
 }

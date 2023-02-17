@@ -4,15 +4,16 @@ pub const VLQ_BASE_MASK: u32 = VLQ_BASE - 1;
 pub const VLQ_CONTINUATION_BIT: u32 = VLQ_BASE;
 pub const VLQ_CONTINUATION_MASK: u32 = 1 << VLQ_CONTINUATION_BIT;
 const std = @import("std");
-const JSAst = @import("../js_ast.zig");
+const bun = @import("bun");
+const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
-const Logger = @import("../logger.zig");
-const strings = @import("../string_immutable.zig");
-const MutableString = @import("../string_mutable.zig").MutableString;
+const Logger = @import("bun").logger;
+const strings = bun.strings;
+const MutableString = bun.MutableString;
 const Joiner = @import("../string_joiner.zig");
-const JSPrinter = @import("../js_printer.zig");
-const URL = @import("../url.zig").URL;
-const FileSystem = @import("../fs.zig").FileSystem;
+const JSPrinter = bun.js_printer;
+const URL = bun.URL;
+const FileSystem = bun.fs.FileSystem;
 
 const SourceMap = @This();
 
@@ -118,8 +119,8 @@ pub const Mapping = struct {
             if (remain[0] == ';') {
                 generated.columns = 0;
 
-                while (remain.len > @sizeOf(usize) / 2 and strings.eqlComptimeIgnoreLen(
-                    remain[0 .. @sizeOf(usize) / 2],
+                while (strings.hasPrefixComptime(
+                    remain,
                     comptime [_]u8{';'} ** (@sizeOf(usize) / 2),
                 )) {
                     generated.lines += (@sizeOf(usize) / 2);
@@ -210,7 +211,7 @@ pub const Mapping = struct {
             remain = remain[source_index_delta.start..];
 
             // // "AAAA" is extremely common
-            // if (remain.len > 5 and remain[4] == ';' and strings.eqlComptimeIgnoreLen(remain[0..4], "AAAA")) {
+            // if (strings.hasPrefixComptime(remain, "AAAA;")) {
 
             // }
 
@@ -542,7 +543,7 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
     var vlq: u32 = 0;
 
     // hint to the compiler what the maximum value is
-    const encoded_ = encoded[start..][0..@minimum(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
+    const encoded_ = encoded[start..][0..@min(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
 
     // inlining helps for the 1 or 2 byte case, hurts a little for larger
     comptime var i: usize = 0;
@@ -569,7 +570,6 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
 }
 
 pub const LineOffsetTable = struct {
-
     /// The source map specification is very loose and does not specify what
     /// column numbers actually mean. The popular "source-map" library from Mozilla
     /// appears to interpret them as counts of UTF-16 code units, so we generate
@@ -617,7 +617,7 @@ pub const LineOffsetTable = struct {
     pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_line_count: i32) List {
         var list = List{};
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensureUnusedCapacity(allocator, @intCast(usize, @maximum(approximate_line_count, 1))) catch unreachable;
+        list.ensureUnusedCapacity(allocator, @intCast(usize, @max(approximate_line_count, 1))) catch unreachable;
         var column: i32 = 0;
         var byte_offset_to_first_non_ascii: u32 = 0;
         var column_byte_offset: u32 = 0;
@@ -676,7 +676,7 @@ pub const LineOffsetTable = struct {
                 }
             } else {
                 switch (c) {
-                    (@maximum('\r', '\n') + 1)...127 => {
+                    (@max('\r', '\n') + 1)...127 => {
                         // skip ahead to the next newline or non-ascii character
                         if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
                             column += @intCast(i32, j);
@@ -702,7 +702,7 @@ pub const LineOffsetTable = struct {
                         continue;
                     }
 
-                    var owned = columns_for_non_ascii.toOwnedSlice();
+                    var owned = columns_for_non_ascii.toOwnedSlice() catch unreachable;
                     if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
                         owned = allocator.dupe(i32, owned) catch unreachable;
                     }
@@ -745,7 +745,7 @@ pub const LineOffsetTable = struct {
             }
         }
         {
-            var owned = columns_for_non_ascii.toOwnedSlice();
+            var owned = columns_for_non_ascii.toOwnedSlice() catch unreachable;
             if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
                 owned = allocator.dupe(i32, owned) catch unreachable;
             }
@@ -1094,7 +1094,7 @@ pub const Chunk = struct {
                 b.prev_loc = loc;
                 const list = b.line_offset_tables;
                 const original_line = LineOffsetTable.findLine(list, loc);
-                const line = list.get(@intCast(usize, @maximum(original_line, 0)));
+                const line = list.get(@intCast(usize, @max(original_line, 0)));
 
                 // Use the line to compute the column
                 var original_column = loc.start - @intCast(i32, line.byte_offset_to_start_of_line);

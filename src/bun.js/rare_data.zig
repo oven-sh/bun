@@ -1,13 +1,13 @@
 const EditorContext = @import("../open.zig").EditorContext;
-const Blob = @import("./webcore/response.zig").Blob;
-const default_allocator = @import("../global.zig").default_allocator;
-const Output = @import("../global.zig").Output;
+const Blob = JSC.WebCore.Blob;
+const default_allocator = @import("bun").default_allocator;
+const Output = @import("bun").Output;
 const RareData = @This();
 const Syscall = @import("./node/syscall.zig");
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const std = @import("std");
-const BoringSSL = @import("boringssl");
-const bun = @import("../global.zig");
+const BoringSSL = @import("bun").BoringSSL;
+const bun = @import("bun");
 const WebSocketClientMask = @import("../http/websocket_http_client.zig").Mask;
 
 boring_ssl_engine: ?*BoringSSL.ENGINE = null,
@@ -22,6 +22,18 @@ entropy_cache: ?*EntropyCache = null,
 // This does not handle ShadowRealm correctly!
 tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
+
+file_polls_: ?*JSC.FilePoll.HiveArray = null,
+
+global_dns_data: ?*JSC.DNS.GlobalData = null,
+
+pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
+    return this.file_polls_ orelse {
+        this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;
+        this.file_polls_.?.* = JSC.FilePoll.HiveArray.init(vm.allocator);
+        return this.file_polls_.?;
+    };
+}
 
 pub fn nextUUID(this: *RareData) [16]u8 {
     if (this.entropy_cache == null) {
@@ -107,7 +119,7 @@ pub const CleanupHook = struct {
         };
     }
 
-    pub const Function = fn (?*anyopaque) callconv(.C) void;
+    pub const Function = *const fn (?*anyopaque) callconv(.C) void;
 };
 
 pub fn pushCleanupHook(
@@ -116,7 +128,7 @@ pub fn pushCleanupHook(
     ctx: ?*anyopaque,
     func: CleanupHook.Function,
 ) void {
-    var hook = JSC.VirtualMachine.vm.allocator.create(CleanupHook) catch unreachable;
+    var hook = JSC.VirtualMachine.get().allocator.create(CleanupHook) catch unreachable;
     hook.* = CleanupHook.from(globalThis, ctx, func);
     if (this.cleanup_hook == null) {
         this.cleanup_hook = hook;
@@ -157,6 +169,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
                 },
             },
         };
+
         rare.stderr_store = store;
         break :brk store;
     };
@@ -216,4 +229,12 @@ pub fn stdin(rare: *RareData) *Blob.Store {
         rare.stdin_store = store;
         break :brk store;
     };
+}
+
+pub fn globalDNSResolver(rare: *RareData, vm: *JSC.VirtualMachine) *JSC.DNS.DNSResolver {
+    if (rare.global_dns_data == null) {
+        rare.global_dns_data = JSC.DNS.GlobalData.init(vm.allocator, vm);
+    }
+
+    return &rare.global_dns_data.?.resolver;
 }

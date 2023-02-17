@@ -1,4 +1,4 @@
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
@@ -11,10 +11,10 @@ const FeatureFlags = bun.FeatureFlags;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const js_ast = @import("./js_ast.zig");
-const logger = @import("./logger.zig");
-const js_parser = @import("./js_parser.zig");
-const json_parser = @import("./json_parser.zig");
+const js_ast = bun.JSAst;
+const logger = @import("bun").logger;
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
 const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;
 const std = @import("std");
@@ -70,6 +70,19 @@ pub const Fs = struct {
             &this.shared_buffer
         else
             &this.macro_shared_buffer;
+    }
+
+    /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
+    /// switch out the shared buffer so that it is not in use
+    /// The caller must
+    pub fn resetSharedBuffer(this: *Fs, buffer: *MutableString) void {
+        if (buffer == &this.shared_buffer) {
+            this.shared_buffer = MutableString.initEmpty(bun.default_allocator);
+        } else if (buffer == &this.macro_shared_buffer) {
+            this.macro_shared_buffer = MutableString.initEmpty(bun.default_allocator);
+        } else {
+            bun.unreachablePanic("resetSharedBuffer: invalid buffer", .{});
+        }
     }
 
     pub fn deinit(c: *Fs) void {
@@ -150,7 +163,7 @@ pub const Fs = struct {
                     }
                 };
             } else {
-                file_handle = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+                file_handle = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
             }
         }
 

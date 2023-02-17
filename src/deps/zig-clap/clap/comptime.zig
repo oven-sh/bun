@@ -76,12 +76,12 @@ pub fn ComptimeClap(
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
-                        const bun = @import("../../../global.zig");
+                        const bun = @import("bun");
                         if (comptime bun.Environment.isWindows) @compileError(
                             "TODO: implement stop_after_positional_at on windows",
                         );
 
-                        var remaining_ = std.os.argv[@minimum(std.os.argv.len, stream.iter.args.inner.index)..];
+                        var remaining_ = std.os.argv[@min(std.os.argv.len, stream.iter.args.inner.index)..];
                         const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
                         if (first.len > 0 and std.mem.eql(u8, first, "--")) {
                             remaining_ = remaining_[1..];
@@ -110,9 +110,9 @@ pub fn ComptimeClap(
             }
 
             for (multis) |*multi, i|
-                res.multi_options[i] = multi.toOwnedSlice();
-            res.pos = pos.toOwnedSlice();
-            res.passthrough_positionals = passthrough_positionals.toOwnedSlice();
+                res.multi_options[i] = try multi.toOwnedSlice();
+            res.pos = try pos.toOwnedSlice();
+            res.passthrough_positionals = try passthrough_positionals.toOwnedSlice();
             return res;
         }
 

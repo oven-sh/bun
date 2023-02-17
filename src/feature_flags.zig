@@ -104,4 +104,12 @@ pub const disable_lolhtml = false;
 /// on macOS that specifically impacts localhost and not
 /// other ipv4 hosts. This is a workaround for that.
 /// "localhost" fails to connect.
-pub const hardcode_localhost_to_127_0_0_1 = env.isMac;
+pub const hardcode_localhost_to_127_0_0_1 = true;
+
+/// React doesn't do anything with jsxs
+/// If the "jsxs" import is development, "jsxs" isn't supported
+/// But it's very easy to end up importing it accidentally, causing an error at runtime
+/// so we just disable it
+pub const support_jsxs_in_jsx_transform = false;
+
+pub const use_simdutf = !@import("bun").JSC.is_bindgen;

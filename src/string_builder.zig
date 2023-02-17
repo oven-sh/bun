@@ -3,7 +3,7 @@ const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
 const Env = @import("./env.zig");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const StringBuilder = @This();
 const DebugHashTable = if (Env.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
@@ -76,4 +76,11 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
 
 pub fn fmtCount(this: *StringBuilder, comptime str: string, args: anytype) void {
     this.cap += std.fmt.count(str, args);
+}
+
+pub fn allocatedSlice(this: *StringBuilder) []u8 {
+    var ptr = this.ptr orelse return &[_]u8{};
+    std.debug.assert(this.cap > 0);
+    std.debug.assert(this.len > 0);
+    return ptr[0..this.cap];
 }

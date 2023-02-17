@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -52,48 +51,78 @@ namespace WebCore {
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferConstructorFromCodeLength = 1033;
+const int s_jsBufferConstructorFromCodeLength = 1762;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
     "  \"use strict\";\n" \
     "\n" \
-    "  if (!@isConstructor(this))\n" \
-    "        @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
+    "  if (@isUndefinedOrNull(items)) {\n" \
+    "    @throwTypeError(\n" \
+    "      \"The first argument must be one of type string, Buffer, ArrayBuffer, Array, or Array-like Object.\",\n" \
+    "    );\n" \
+    "  }\n" \
+    "    \n" \
     "\n" \
+    "  //\n" \
+    "  if (\n" \
+    "    typeof items === \"string\" ||\n" \
+    "    (typeof items === \"object\" &&\n" \
+    "      (@isTypedArrayView(items) ||\n" \
+    "        items instanceof ArrayBuffer ||\n" \
+    "        items instanceof SharedArrayBuffer ||\n" \
+    "        items instanceof @String))\n" \
+    "  ) {\n" \
+    "    switch (@argumentCount()) {\n" \
+    "      case 1: {\n" \
+    "        return new @Buffer(items);\n" \
+    "      }\n" \
+    "      case 2: {\n" \
+    "        return new @Buffer(items, @argument(1));\n" \
+    "      }\n" \
+    "      default: {\n" \
+    "        return new @Buffer(items, @argument(1), @argument(2));\n" \
+    "      }\n" \
+    "    }\n" \
+    "  }\n" \
     "\n" \
-    "    //\n" \
-    "    if (typeof items === 'string' || (typeof items === 'object' && items && (items instanceof ArrayBuffer || items instanceof SharedArrayBuffer))) {\n" \
+    "  var arrayLike = @toObject(\n" \
+    "    items,\n" \
+    "    \"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\",\n" \
+    "  );\n" \
+    "\n" \
+    "  if (!@isJSArray(arrayLike)) {\n" \
+    "    const toPrimitive = @tryGetByIdWithWellKnownSymbol(items, \"toPrimitive\");\n" \
+    "\n" \
+    "    if (toPrimitive) {\n" \
+    "      const primitive = toPrimitive.@call(items, \"string\");\n" \
+    "\n" \
+    "      if (typeof primitive === \"string\") {\n" \
     "        switch (@argumentCount()) {\n" \
-    "            case 1: {\n" \
-    "                return new this(items);\n" \
-    "            }\n" \
-    "            case 2: {\n" \
-    "                return new this(items, @argument(1));\n" \
-    "            }\n" \
-    "            default: {\n" \
-    "                return new this(items, @argument(1), @argument(2));\n" \
-    "            }\n" \
+    "          case 1: {\n" \
+    "            return new @Buffer(primitive);\n" \
+    "          }\n" \
+    "          case 2: {\n" \
+    "            return new @Buffer(primitive, @argument(1));\n" \
+    "          }\n" \
+    "          default: {\n" \
+    "            return new @Buffer(primitive, @argument(1), @argument(2));\n" \
+    "          }\n" \
     "        }\n" \
+    "      }\n" \
     "    }\n" \
     "\n" \
+    "    if (!(\"length\" in arrayLike) || @isCallable(arrayLike)) {\n" \
+    "      @throwTypeError(\n" \
+    "        \"The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object.\",\n" \
+    "      );\n" \
+    "    }\n" \
+    "  }\n" \
     "\n" \
-    "    var arrayLike = @toObject(items, \"Buffer.from requires an array-like object - not null or undefined\");\n" \
-    "\n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
-    "    if (@isTypedArrayView(arrayLike)) {\n" \
-    "        var length = @typedArrayLength(arrayLike);\n" \
-    "        var result = this.allocUnsafe(length);\n" \
-    "        result.set(arrayLike);\n" \
-    "        return result;\n" \
-    "    } \n" \
-    "\n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
-    "    return this.toBuffer(@Uint8Array.from(arrayLike));\n" \
+    "  //\n" \
+    "  //\n" \
+    "  //\n" \
+    "  return new @Buffer(@Uint8Array.from(arrayLike).buffer);\n" \
     "})\n" \
 ;
 

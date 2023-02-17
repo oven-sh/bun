@@ -171,9 +171,9 @@ JSC::GCClient::IsoSubspace* JSCountQueuingStrategy::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); });
 }
 
 }

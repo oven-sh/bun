@@ -1,12 +1,14 @@
 const std = @import("std");
 const expect = std.testing.expect;
 
-const strings = @import("string_immutable.zig");
-const js_lexer = @import("js_lexer.zig");
+const bun = @import("bun");
 
-const string = @import("string_types.zig").string;
-const stringZ = @import("string_types.zig").stringZ;
-const CodePoint = @import("string_types.zig").CodePoint;
+const strings = bun.strings;
+const js_lexer = bun.js_lexer;
+
+const string = bun.string;
+const stringZ = bun.stringZ;
+const CodePoint = bun.CodePoint;
 
 pub const MutableString = struct {
     allocator: std.mem.Allocator,
@@ -28,6 +30,10 @@ pub const MutableString = struct {
             str.list.expandToCapacity();
             str.list.clearAndFree(str.allocator);
         }
+    }
+
+    pub fn owns(this: *const MutableString, slice: []const u8) bool {
+        return @import("bun").isSliceInBuffer(slice, this.list.items.ptr[0..this.list.capacity]);
     }
 
     pub fn growIfNeeded(self: *MutableString, amount: usize) !void {
@@ -128,7 +134,7 @@ pub const MutableString = struct {
                 has_needed_gap = true;
             }
 
-            return mutable.list.toOwnedSlice(allocator);
+            return try mutable.list.toOwnedSlice(allocator);
         }
 
         return str;
@@ -154,6 +160,15 @@ pub const MutableString = struct {
 
     pub inline fn appendSlice(self: *MutableString, slice: []const u8) !void {
         try self.list.appendSlice(self.allocator, slice);
+    }
+
+    pub inline fn appendSliceExact(self: *MutableString, slice: []const u8) !void {
+        if (slice.len == 0) return;
+
+        try self.list.ensureTotalCapacityPrecise(self.allocator, self.list.items.len + slice.len);
+        var end = self.list.items.ptr + self.list.items.len;
+        self.list.items.len += slice.len;
+        @memcpy(end, slice.ptr, slice.len);
     }
 
     pub inline fn reset(
@@ -185,7 +200,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator);
+        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -205,7 +220,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator);
+        return self.list.toOwnedSlice(self.allocator) catch @panic("TODO");
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -236,11 +251,14 @@ pub const MutableString = struct {
         return std.mem.eql(u8, self.list.items, other);
     }
 
-    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.x.os.Buffer {
-        var buffers: [count]std.x.os.Buffer = undefined;
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
+        var buffers: [count]std.os.iovec_const = undefined;
         comptime var i: usize = 0;
         inline while (i < count) : (i += 1) {
-            buffers[i] = std.x.os.Buffer.from(self.list.items[ranges[i][0]..ranges[i][1]]);
+            buffers[i] = .{
+                .iov_base = self.list.items[ranges[i][0]..ranges[i][1]].ptr,
+                .iov_len = self.list.items[ranges[i][0]..ranges[i][1]].len,
+            };
         }
         return buffers;
     }
@@ -283,7 +301,7 @@ pub const MutableString = struct {
             return pending.len;
         }
 
-        const E = @import("./js_ast.zig").E;
+        const E = bun.JSAst.E;
 
         /// Write a E.String to the buffer.
         /// This automatically encodes UTF-16 into UTF-8 using

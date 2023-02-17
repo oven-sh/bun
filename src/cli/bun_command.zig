@@ -1,6 +1,6 @@
 const std = @import("std");
 const Command = @import("../cli.zig").Command;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,21 +11,21 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const lex = bun.js_lexer;
+const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const json_parser = @import("../json_parser.zig");
-const js_printer = @import("../js_printer.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const json_parser = bun.JSON;
+const js_printer = bun.js_printer;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const GenerateNodeModuleBundle = @import("../bundler/generate_node_modules_bundle.zig");
 const DotEnv = @import("../env_loader.zig");
@@ -44,7 +44,7 @@ const ServerBundleGeneratorThread = struct {
         server_conf: Api.LoadedFramework,
         route_conf_: ?Api.LoadedRouteConfig,
         router: ?Router,
-    ) !void {
+    ) anyerror!void {
         var server_bundler = try bundler.Bundler.init(
             allocator_,
             logs,
@@ -194,7 +194,7 @@ pub const BunCommand = struct {
                 if (log.errors > 0) {
                     try log.printForLogLevel(Output.errorWriter());
                 } else {
-                    var elapsed = @divTrunc(std.time.nanoTimestamp() - ctx.start_time, @as(i128, std.time.ns_per_ms));
+                    var elapsed = @divTrunc(@truncate(i64, std.time.nanoTimestamp() - ctx.start_time), @as(i64, std.time.ns_per_ms));
                     const print_summary = !(ctx.args.no_summary orelse false);
                     if (print_summary) {
                         var bundle = NodeModuleBundle.init(node_modules, allocator);
@@ -211,7 +211,7 @@ pub const BunCommand = struct {
                             }
                         },
                         else => {
-                            const formatted_loc: f32 = @floatCast(f32, @intToFloat(f128, estimated_input_lines_of_code) / 1000);
+                            const formatted_loc: f32 = @floatCast(f32, @intToFloat(f64, estimated_input_lines_of_code) / 1000);
                             if (generated_server) {
                                 Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed x2", .{formatted_loc});
                             } else {

@@ -2,12 +2,14 @@ const std = @import("std");
 const Environment = @import("./env.zig");
 
 const Output = @import("output.zig");
-const use_mimalloc = @import("./global.zig").use_mimalloc;
+const use_mimalloc = @import("bun").use_mimalloc;
 const StringTypes = @import("./string_types.zig");
+const Mimalloc = @import("bun").Mimalloc;
+const bun = @import("bun");
 
-const BASE_VERSION = "0.2";
+const BASE_VERSION = "0.5";
 
-pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
+pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("./build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
     std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug", .{build_id})
 else
@@ -16,9 +18,9 @@ else
 pub const package_json_version_with_sha = if (Environment.git_sha.len == 0)
     package_json_version
 else if (Environment.isDebug)
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] })
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d}_debug ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] })
 else
-    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({s})", .{ build_id, Environment.git_sha[0..@minimum(Environment.git_sha.len, 8)] });
+    std.fmt.comptimePrint(BASE_VERSION ++ ".{d} ({s})", .{ build_id, Environment.git_sha[0..@min(Environment.git_sha.len, 8)] });
 
 pub const os_name = if (Environment.isWindows)
     "win32"
@@ -42,12 +44,12 @@ else
 
 pub inline fn getStartTime() i128 {
     if (Environment.isTest) return 0;
-    return @import("root").start_time;
+    return @import("bun").start_time;
 }
 
 pub const version: @import("./install/semver.zig").Version = .{
     .major = 0,
-    .minor = 2,
+    .minor = 5,
     .patch = build_id,
 };
 
@@ -68,8 +70,6 @@ pub const AllocatorConfiguration = struct {
     verbose: bool = false,
     long_running: bool = false,
 };
-
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
 pub inline fn mimalloc_cleanup(force: bool) void {
     if (comptime use_mimalloc) {
@@ -135,7 +135,7 @@ pub fn crash() noreturn {
 }
 
 const Global = @This();
-const string = @import("./global.zig").string;
+const string = @import("bun").string;
 
 pub const BunInfo = struct {
     bun_version: string,
@@ -144,8 +144,8 @@ pub const BunInfo = struct {
     framework_version: string = "",
 
     const Analytics = @import("./analytics/analytics_thread.zig");
-    const JSON = @import("./json_parser.zig");
-    const JSAst = @import("./js_ast.zig");
+    const JSON = bun.JSON;
+    const JSAst = bun.JSAst;
     pub fn generate(comptime Bundler: type, bundler: Bundler, allocator: std.mem.Allocator) !JSAst.Expr {
         var info = BunInfo{
             .bun_version = Global.package_json_version,

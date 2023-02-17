@@ -2,6 +2,8 @@ import { it, expect } from "bun:test";
 import { basename, dirname, join } from "path";
 import * as fs from "fs";
 import { readableStreamToText, spawnSync } from "bun";
+import { bunExe } from "bunExe";
+import { bunEnv } from "bunEnv";
 
 it("should not log .env when quiet", async () => {
   writeDirectoryTree("/tmp/log-test-silent", {
@@ -10,11 +12,12 @@ it("should not log .env when quiet", async () => {
     "index.ts": "export default console.log('Here');",
   });
   const { stderr } = spawnSync({
-    cmd: ["bun", "index.ts"],
+    cmd: [bunExe(), "index.ts"],
     cwd: "/tmp/log-test-silent",
+    env: bunEnv,
   });
 
-  expect(stderr.toString()).toBe("");
+  expect(stderr!.toString()).toBe("");
 });
 
 it("should log .env by default", async () => {
@@ -25,11 +28,12 @@ it("should log .env by default", async () => {
   });
 
   const { stderr } = spawnSync({
-    cmd: ["bun", "index.ts"],
+    cmd: [bunExe(), "index.ts"],
     cwd: "/tmp/log-test-silent",
+    env: bunEnv,
   });
 
-  expect(stderr.toString().includes(".env")).toBe(true);
+  expect(stderr?.toString().includes(".env")).toBe(true);
 });
 
 function writeDirectoryTree(base, paths) {
@@ -38,11 +42,11 @@ function writeDirectoryTree(base, paths) {
     const joined = join(base, path);
 
     try {
-      fs.unlinkSync(joined);
+      fs.mkdirSync(join(base, dirname(path)), { recursive: true });
     } catch (e) {}
 
     try {
-      fs.mkdirSync(join(base, dirname(path)), { recursive: true });
+      fs.unlinkSync(joined);
     } catch (e) {}
 
     fs.writeFileSync(joined, content);

@@ -7,9 +7,74 @@ const Environment = @import("./env.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = std.debug.assert;
+const bun = @import("bun");
+
+pub const GlobalArena = struct {
+    arena: Arena,
+    fallback_allocator: std.mem.Allocator,
+
+    pub fn initWithCapacity(capacity: usize, fallback: std.mem.Allocator) error{OutOfMemory}!GlobalArena {
+        const arena = try Arena.initWithCapacity(capacity);
+
+        return GlobalArena{
+            .arena = arena,
+            .fallback_allocator = fallback,
+        };
+    }
+
+    pub fn allocator(this: *GlobalArena) Allocator {
+        return .{
+            .ptr = this,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(
+        self: *GlobalArena,
+        len: usize,
+        ptr_align: u29,
+        len_align: u29,
+        return_address: usize,
+    ) error{OutOfMemory}![]u8 {
+        return self.arena.alloc(len, ptr_align, len_align, return_address) catch
+            return self.fallback_allocator.rawAlloc(len, ptr_align, return_address) orelse return error.OutOfMemory;
+    }
+
+    fn resize(
+        self: *GlobalArena,
+        buf: []u8,
+        buf_align: u29,
+        new_len: usize,
+        len_align: u29,
+        return_address: usize,
+    ) ?usize {
+        if (self.arena.ownsPtr(buf.ptr)) {
+            return self.arena.resize(buf, buf_align, new_len, len_align, return_address);
+        } else {
+            return self.fallback_allocator.rawResize(buf, buf_align, new_len, len_align, return_address);
+        }
+    }
+
+    fn free(
+        self: *GlobalArena,
+        buf: []u8,
+        buf_align: u29,
+        return_address: usize,
+    ) void {
+        if (self.arena.ownsPtr(buf.ptr)) {
+            return self.arena.free(buf, buf_align, return_address);
+        } else {
+            return self.fallback_allocator.rawFree(buf, buf_align, return_address);
+        }
+    }
+};
 
 pub const Arena = struct {
-    heap: ?*mimalloc.mi_heap_t = null,
+    heap: ?*mimalloc.Heap = null,
 
     /// Internally, mimalloc calls mi_heap_get_default()
     /// to get the default heap.
@@ -30,13 +95,31 @@ pub const Arena = struct {
     }
 
     pub fn deinit(this: *Arena) void {
-        mimalloc.mi_heap_destroy(this.heap);
+        mimalloc.mi_heap_destroy(this.heap.?);
 
         this.heap = null;
     }
 
     pub fn dumpThreadStats(_: *Arena) void {
-        mimalloc.mi_thread_stats_print_out(null, null);
+        const dump_fn = struct {
+            pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+                const text = bun.span(textZ);
+                bun.Output.errorWriter().writeAll(text) catch {};
+            }
+        }.dump;
+        mimalloc.mi_thread_stats_print_out(dump_fn, null);
+        bun.Output.flush();
+    }
+
+    pub fn dumpStats(_: *Arena) void {
+        const dump_fn = struct {
+            pub fn dump(textZ: [*:0]const u8, _: ?*anyopaque) callconv(.C) void {
+                const text = bun.span(textZ);
+                bun.Output.errorWriter().writeAll(text) catch {};
+            }
+        }.dump;
+        mimalloc.mi_stats_print_out(dump_fn, null);
+        bun.Output.flush();
     }
 
     pub fn reset(this: *Arena) void {
@@ -49,92 +132,80 @@ pub const Arena = struct {
     }
 
     pub fn gc(this: Arena, force: bool) void {
-        mimalloc.mi_heap_collect(this.heap, force);
+        mimalloc.mi_heap_collect(this.heap orelse return, force);
     }
 
-    // Copied from rust
-    const MI_MAX_ALIGN_SIZE = 16;
-    inline fn mi_malloc_satisfies_alignment(alignment: usize, size: usize) bool {
-        return (alignment == @sizeOf(*anyopaque) or
-            (alignment == MI_MAX_ALIGN_SIZE and size > (MI_MAX_ALIGN_SIZE / 2)));
+    pub fn ownsPtr(this: Arena, ptr: *const anyopaque) bool {
+        return mimalloc.mi_heap_check_owned(this.heap.?, ptr);
     }
+    pub const supports_posix_memalign = true;
 
-    fn alignedAlloc(heap: *mimalloc.mi_heap_t, len: usize, alignment: usize) ?[*]u8 {
+    fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
         if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
 
-        // this is the logic that posix_memalign does
-        var ptr = if (mi_malloc_satisfies_alignment(alignment, len))
-            mimalloc.mi_heap_malloc(heap, len)
+        var ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
+            mimalloc.mi_heap_malloc_aligned(heap, len, alignment)
         else
-            mimalloc.mi_heap_malloc_aligned(heap, len, alignment);
+            mimalloc.mi_heap_malloc(heap, len);
 
-        return @ptrCast([*]u8, ptr orelse null);
-    }
-
-    fn alloc(
-        arena: *anyopaque,
-        len: usize,
-        alignment: u29,
-        len_align: u29,
-        return_address: usize,
-    ) error{OutOfMemory}![]u8 {
-        _ = return_address;
-        assert(len > 0);
-        assert(std.math.isPowerOfTwo(alignment));
-
-        var ptr = alignedAlloc(@ptrCast(*mimalloc.mi_heap_t, arena), len, alignment) orelse return error.OutOfMemory;
-        if (len_align == 0) {
-            return ptr[0..len];
-        }
-
-        // std.mem.Allocator asserts this, we do it here so we can see the metadata
         if (comptime Environment.allow_assert) {
-            const size = mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align);
-
-            assert(size >= len);
-            return ptr[0..size];
-        } else {
-            return ptr[0..mem.alignBackwardAnyAlign(mimalloc.mi_usable_size(ptr), len_align)];
+            const usable = mimalloc.mi_malloc_usable_size(ptr);
+            if (usable < len) {
+                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+            }
         }
+
+        return if (ptr) |p|
+            @ptrCast([*]u8, p)
+        else
+            null;
     }
 
-    fn resize(
-        _: *anyopaque,
-        buf: []u8,
-        buf_align: u29,
-        new_len: usize,
-        len_align: u29,
-        return_address: usize,
-    ) ?usize {
-        _ = buf_align;
-        _ = return_address;
+    fn alignedAllocSize(ptr: [*]u8) usize {
+        return mimalloc.mi_malloc_usable_size(ptr);
+    }
 
+    fn alloc(arena: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
+        var this = bun.cast(*mimalloc.Heap, arena);
+        return alignedAlloc(this, len, ptr_align);
+    }
+
+    fn resize(_: *anyopaque, buf: []u8, _: u8, new_len: usize, _: usize) bool {
         if (new_len <= buf.len) {
-            return mem.alignAllocLen(buf.len, new_len, len_align);
+            return true;
         }
 
-        const full_len = mimalloc.mi_usable_size(buf.ptr);
+        const full_len = alignedAllocSize(buf.ptr);
         if (new_len <= full_len) {
-            return mem.alignAllocLen(full_len, new_len, len_align);
+            return true;
         }
 
-        return null;
+        return false;
     }
 
     fn free(
         _: *anyopaque,
         buf: []u8,
-        buf_align: u29,
-        return_address: usize,
+        buf_align: u8,
+        _: usize,
     ) void {
-        _ = buf_align;
-        _ = return_address;
-        mimalloc.mi_free(buf.ptr);
+        // mi_free_size internally just asserts the size
+        // so it's faster if we don't pass that value through
+        // but its good to have that assertion
+        if (comptime Environment.allow_assert) {
+            assert(mimalloc.mi_is_in_heap_region(buf.ptr));
+            if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
+                mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
+            else
+                mimalloc.mi_free_size(buf.ptr, buf.len);
+        } else {
+            mimalloc.mi_free(buf.ptr);
+        }
     }
 };
 
 const c_allocator_vtable = Allocator.VTable{
-    .alloc = Arena.alloc,
-    .resize = Arena.resize,
-    .free = Arena.free,
+    .alloc = &Arena.alloc,
+    .resize = &Arena.resize,
+    .free = &Arena.free,
 };

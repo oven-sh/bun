@@ -1,7 +1,7 @@
 import { expect, it, describe } from "bun:test";
-import { gc as gcTrace } from "./gc";
+import { gc as gcTrace, withoutAggressiveGC } from "./gc";
 
-const getByteLength = (str) => {
+const getByteLength = str => {
   // returns the byte length of an utf8 string
   var s = str.length;
   for (var i = str.length - 1; i >= 0; i--) {
@@ -27,19 +27,32 @@ describe("TextEncoder", () => {
     expect(out.read).toBe(text.length);
 
     expect(encoded instanceof Uint8Array).toBe(true);
-    const result = [
-      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
-      108, 100, 33,
-    ];
+    const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
       expect(into[i]).toBe(result[i]);
     }
     expect(encoded.length).toBe(result.length);
     expect(out.written).toBe(result.length);
+
+    const repeatCOunt = 16;
+    text = "H©ell©o Wor©ld!".repeat(repeatCOunt);
+    const byteLength = getByteLength(text);
+    const encoded2 = encoder.encode(text);
+    expect(encoded2.length).toBe(byteLength);
+    const into2 = new Uint8Array(byteLength);
+    const out2 = encoder.encodeInto(text, into2);
+    expect(out2.read).toBe(text.length);
+    expect(out2.written).toBe(byteLength);
+    expect(into2).toEqual(encoded2);
+    const repeatedResult = new Uint8Array(byteLength);
+    for (let i = 0; i < repeatCOunt; i++) {
+      repeatedResult.set(result, i * result.length);
+    }
+    expect(into2).toEqual(repeatedResult);
   });
 
-  it("should encode latin1 text", () => {
+  it("should encode latin1 text", async () => {
     gcTrace(true);
     const text = "Hello World!";
     const encoder = new TextEncoder();
@@ -53,6 +66,68 @@ describe("TextEncoder", () => {
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(result[i]);
     }
+
+    let t = [
+      {
+        str: "\u009c\u0097",
+        expected: [194, 156, 194, 151],
+      },
+      {
+        str: "世",
+        expected: [228, 184, 150],
+      },
+      // Less than 0, out of range.
+      {
+        str: -1,
+        expected: [45, 49],
+      },
+      // Greater than 0x10FFFF, out of range.
+      {
+        str: 0x110000,
+        expected: [49, 49, 49, 52, 49, 49, 50],
+      },
+      // The Unicode replacement character.
+      {
+        str: "\uFFFD",
+        expected: [239, 191, 189],
+      },
+    ];
+    for (let { str, expected } of t) {
+      let utf8 = new TextEncoder().encode(str);
+      expect([...utf8]).toEqual(expected);
+    }
+
+    expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
+
+    const fixture = new Uint8Array(await Bun.file("utf8-encoding-fixture.bin").arrayBuffer());
+    const length = 0x110000;
+    let textEncoder = new TextEncoder();
+    let textDecoder = new TextDecoder();
+    let encodeOut = new Uint8Array(length * 4);
+    let encodeIntoOut = new Uint8Array(length * 4);
+    let encodeIntoBuffer = new Uint8Array(4);
+    let encodeDecodedOut = new Uint8Array(length * 4);
+    for (let i = 0, offset = 0; i < length; i++, offset += 4) {
+      const s = String.fromCodePoint(i);
+      const u = textEncoder.encode(s);
+      encodeOut.set(u, offset);
+
+      textEncoder.encodeInto(s, encodeIntoBuffer);
+      encodeIntoOut.set(encodeIntoBuffer, offset);
+
+      const decoded = textDecoder.decode(encodeIntoBuffer);
+      const encoded = textEncoder.encode(decoded);
+      encodeDecodedOut.set(encoded, offset);
+    }
+
+    expect(encodeOut).toEqual(fixture);
+    expect(encodeIntoOut).toEqual(fixture);
+    expect(encodeOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(encodeOut);
+    expect(encodeDecodedOut).toEqual(encodeIntoOut);
+    expect(encodeDecodedOut).toEqual(fixture);
+
+    expect(() => textEncoder.encode(String.fromCodePoint(length + 1))).toThrow();
   });
 
   it("should encode long latin1 text", async () => {
@@ -67,7 +142,7 @@ describe("TextEncoder", () => {
     const decoded = new TextDecoder().decode(encoded);
     expect(decoded).toBe(text);
     gcTrace();
-    await new Promise((resolve) => setTimeout(resolve, 1));
+    await new Promise(resolve => setTimeout(resolve, 1));
     gcTrace();
     expect(decoded).toBe(text);
   });
@@ -86,7 +161,6 @@ describe("TextEncoder", () => {
     gcTrace(true);
     expect(out.read).toBe(text.length);
     expect(out.written).toBe(encoded.length);
-
     expect(encoded instanceof Uint8Array).toBe(true);
     const result = [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 33];
     for (let i = 0; i < result.length; i++) {
@@ -111,10 +185,7 @@ describe("TextEncoder", () => {
     expect(out.read).toBe(text.length);
 
     expect(encoded instanceof Uint8Array).toBe(true);
-    const result = [
-      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
-      108, 100, 33,
-    ];
+    const result = [72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169, 108, 100, 33];
 
     for (let i = 0; i < result.length; i++) {
       expect(encoded[i]).toBe(into[i]);
@@ -122,6 +193,12 @@ describe("TextEncoder", () => {
     }
     expect(encoded.length).toBe(result.length);
     expect(out.written).toBe(encoded.length);
+
+    withoutAggressiveGC(() => {
+      for (let i = 0; i < 10_000; i++) {
+        expect(encoder.encodeInto(text, into)).toEqual(out);
+      }
+    });
   });
 
   it("should encode utf-16 text", () => {
@@ -174,14 +251,8 @@ describe("TextEncoder", () => {
     bad.forEach(function (t) {
       it(t.encoding + " - " + t.name, () => {
         gcTrace(true);
-        expect(
-          new TextDecoder(t.encoding).decode(new Uint8Array(t.input))
-        ).toBe(t.expected);
-        expect(
-          new TextDecoder(t.encoding).decode(
-            new Uint16Array(new Uint8Array(t.input).buffer)
-          )
-        ).toBe(t.expected);
+        expect(new TextDecoder(t.encoding).decode(new Uint8Array(t.input))).toBe(t.expected);
+        expect(new TextDecoder(t.encoding).decode(new Uint16Array(new Uint8Array(t.input).buffer))).toBe(t.expected);
         gcTrace(true);
       });
       //   test(function () {

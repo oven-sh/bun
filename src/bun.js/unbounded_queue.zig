@@ -19,8 +19,7 @@ pub const cache_line_length = switch (@import("builtin").target.cpu.arch) {
 };
 
 pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) type {
-    const next = meta.fieldInfo(T, next_field).name;
-
+    const next_name = meta.fieldInfo(T, next_field).name;
     return struct {
         const Self = @This();
 
@@ -31,7 +30,7 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
                 pub fn next(self: *Self.Batch.Iterator) ?*T {
                     if (self.batch.count == 0) return null;
                     const front = self.batch.front orelse unreachable;
-                    self.batch.front = @field(front, next);
+                    self.batch.front = @field(front, next_name);
                     self.batch.count -= 1;
                     return front;
                 }
@@ -45,6 +44,7 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
                 return .{ .batch = self };
             }
         };
+        const next = next_name;
 
         pub const queue_padding_length = cache_line_length / 2;
 

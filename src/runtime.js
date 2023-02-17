@@ -45,10 +45,10 @@ export var __toModule = (module) => {
         "default",
         module && module.__esModule && "default" in module
           ? { get: () => module.default, enumerable: true, configurable: true }
-          : { value: module, enumerable: true, configurable: true }
-      )
+          : { value: module, enumerable: true, configurable: true },
+      ),
     ),
-    module
+    module,
   );
 };
 
@@ -83,12 +83,12 @@ export var __commonJS = (cb, name) => {
           Object.setPrototypeOf(mod_exports, __getProtoOf(origExports));
           Object.defineProperties(
             mod_exports,
-            Object.getOwnPropertyDescriptors(origExports)
+            Object.getOwnPropertyDescriptors(origExports),
           );
         } else {
           mod_exports = __create(
             __getProtoOf(mod_exports),
-            Object.getOwnPropertyDescriptors(mod_exports)
+            Object.getOwnPropertyDescriptors(mod_exports),
           );
         }
       }
@@ -235,3 +235,17 @@ export var __merge = (props, defaultProps) => {
     ? defaultProps
     : mergeDefaultProps(props, defaultProps);
 };
+
+export var __decorateClass = (decorators, target, key, kind) => {
+  var result =
+    kind > 1 ? void 0 : kind ? __getOwnPropDesc(target, key) : target;
+  for (var i = decorators.length - 1, decorator; i >= 0; i--)
+    if ((decorator = decorators[i]))
+      result =
+        (kind ? decorator(target, key, result) : decorator(result)) || result;
+  if (kind && result) __defProp(target, key, result);
+  return result;
+};
+
+export var __decorateParam = (index, decorator) => (target, key) =>
+  decorator(target, key, index);

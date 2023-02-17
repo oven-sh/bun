@@ -1,5 +1,5 @@
 
-# This builds the specifc version of Zig used by bun
+# This builds the specific version of Zig used by bun
 # It outputs a zig.zip file
 FROM ubuntu:18.04
 

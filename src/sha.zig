@@ -1,4 +1,4 @@
-const BoringSSL = @import("boringssl");
+const BoringSSL = @import("bun").BoringSSL;
 const std = @import("std");
 
 fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, comptime Full: anytype, comptime Init: anytype, comptime Update: anytype, comptime Final: anytype) type {
@@ -18,14 +18,17 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
         }
 
         pub fn hash(bytes: []const u8, out: *Digest) void {
+            @setRuntimeSafety(false);
             _ = Full(bytes.ptr, bytes.len, out);
         }
 
         pub fn update(this: *@This(), data: []const u8) void {
+            @setRuntimeSafety(false);
             std.debug.assert(Update(&this.hasher, data.ptr, data.len) == 1);
         }
 
         pub fn final(this: *@This(), out: *Digest) void {
+            @setRuntimeSafety(false);
             std.debug.assert(Final(out, &this.hasher) == 1);
         }
     };
@@ -36,13 +39,13 @@ fn NewEVP(
     comptime MDName: []const u8,
 ) type {
     return struct {
-        ctx: BoringSSL.EVP_MD_CTX,
+        ctx: BoringSSL.EVP_MD_CTX = undefined,
 
         pub const Digest = [digest_size]u8;
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
-            const md = @call(.{}, @field(BoringSSL, MDName), .{});
+            const md = @call(.auto, @field(BoringSSL, MDName), .{});
             var this: @This() = .{
                 .ctx = undefined,
             };
@@ -55,7 +58,7 @@ fn NewEVP(
         }
 
         pub fn hash(bytes: []const u8, out: *Digest, engine: *BoringSSL.ENGINE) void {
-            const md = @call(.{}, @field(BoringSSL, MDName), .{});
+            const md = @call(.auto, @field(BoringSSL, MDName), .{});
 
             std.debug.assert(BoringSSL.EVP_Digest(bytes.ptr, bytes.len, out, null, md, engine) == 1);
         }
@@ -136,6 +139,15 @@ pub const Hashers = struct {
         BoringSSL.SHA512_256_Init,
         BoringSSL.SHA512_256_Update,
         BoringSSL.SHA512_256_Final,
+    );
+
+    pub const RIPEMD160 = NewHasher(
+        BoringSSL.RIPEMD160_DIGEST_LENGTH,
+        BoringSSL.RIPEMD160_CTX,
+        BoringSSL.RIPEMD160,
+        BoringSSL.RIPEMD160_Init,
+        BoringSSL.RIPEMD160_Update,
+        BoringSSL.RIPEMD160_Final,
     );
 };
 
@@ -237,3 +249,4 @@ pub fn main() anyerror!void {
 //     std.crypto.hash.sha2.Sha256.hash(value, &hash2, .{});
 //     try std.testing.expectEqual(hash, hash2);
 // }
+

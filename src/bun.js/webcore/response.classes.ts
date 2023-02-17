@@ -8,11 +8,13 @@ export default [
     klass: {},
     JSType: "0b11101110",
     estimatedSize: true,
+    configurable: false,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       body: { getter: "getBody", cache: true },
       arrayBuffer: { fn: "getArrayBuffer" },
+      formData: { fn: "getFormData" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
       cache: {
@@ -60,6 +62,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
+    configurable: false,
     estimatedSize: true,
     klass: {
       json: {
@@ -84,6 +87,7 @@ export default [
       arrayBuffer: { fn: "getArrayBuffer" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
+      formData: { fn: "getFormData" },
 
       type: {
         getter: "getResponseType",
@@ -116,12 +120,14 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     klass: {},
+    configurable: false,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },
       slice: { fn: "getSlice", length: 2 },
       stream: { fn: "getStream", length: 1 },
+      formData: { fn: "getFormData" },
 
       type: {
         getter: "getType",

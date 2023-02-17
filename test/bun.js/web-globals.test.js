@@ -1,4 +1,6 @@
+import { unsafe } from "bun";
 import { expect, it, test } from "bun:test";
+import { withoutAggressiveGC } from "gc";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -16,6 +18,7 @@ test("exists", () => {
   expect(typeof TextEncoder !== "undefined").toBe(true);
   expect(typeof WebSocket !== "undefined").toBe(true);
   expect(typeof Blob !== "undefined").toBe(true);
+  expect(typeof FormData !== "undefined").toBe(true);
 });
 
 test("CloseEvent", () => {
@@ -53,29 +56,64 @@ it("crypto.getRandomValues", () => {
   {
     var array = crypto.getRandomValues(foo);
     expect(array).toBe(foo);
-    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true
-    );
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
   }
 
-  // run it again to check that the fast path works
-  for (var i = 0; i < 9000; i++) {
-    var array = crypto.getRandomValues(foo);
-    expect(array).toBe(foo);
-  }
+  // disable it for this block because it tends to get stuck here running the GC forever
+  withoutAggressiveGC(() => {
+    // run it again to check that the fast path works
+    for (var i = 0; i < 9000; i++) {
+      var array = crypto.getRandomValues(foo);
+      expect(array).toBe(foo);
+    }
+  });
 
   // run it on a large input
-  expect(
-    !!crypto.getRandomValues(new Uint8Array(8096)).find((a) => a > 0)
-  ).toBe(true);
+  expect(!!crypto.getRandomValues(new Uint8Array(8096)).find(a => a > 0)).toBe(true);
 
   {
     // any additional input into getRandomValues() makes it unbuffered
     var array = crypto.getRandomValues(foo, "unbuffered");
     expect(array).toBe(foo);
-    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-      true
-    );
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(true);
+  }
+});
+
+// not actually a web global
+it("crypto.timingSafeEqual", () => {
+  const crypto = import.meta.require("node:crypto");
+  var uuidStr = crypto.randomUUID();
+  expect(uuidStr.length).toBe(36);
+  expect(uuidStr[8]).toBe("-");
+  expect(uuidStr[13]).toBe("-");
+  expect(uuidStr[18]).toBe("-");
+  expect(uuidStr[23]).toBe("-");
+  const uuid = Buffer.from(uuidStr);
+
+  expect(crypto.timingSafeEqual(uuid, uuid)).toBe(true);
+  expect(crypto.timingSafeEqual(uuid, uuid.slice())).toBe(true);
+  try {
+    crypto.timingSafeEqual(uuid, uuid.slice(1));
+    expect(false).toBe(true);
+  } catch (e) {}
+
+  try {
+    crypto.timingSafeEqual(uuid, uuid.slice(0, uuid.length - 2));
+    expect(false).toBe(true);
+  } catch (e) {
+    expect(e.message).toBe("Input buffers must have the same length");
+  }
+
+  try {
+    expect(crypto.timingSafeEqual(uuid, crypto.randomUUID())).toBe(false);
+    expect(false).toBe(true);
+  } catch (e) {
+    expect(e.name).toBe("TypeError");
+  }
+
+  var shorter = uuid.slice(0, 1);
+  for (let i = 0; i < 9000; i++) {
+    if (!crypto.timingSafeEqual(shorter, shorter)) throw new Error("fail");
   }
 });
 
@@ -87,15 +125,17 @@ it("crypto.randomUUID", () => {
   expect(uuid[18]).toBe("-");
   expect(uuid[23]).toBe("-");
 
-  // check that the fast path works
-  for (let i = 0; i < 9000; i++) {
-    var uuid2 = crypto.randomUUID();
-    expect(uuid2.length).toBe(36);
-    expect(uuid2[8]).toBe("-");
-    expect(uuid2[13]).toBe("-");
-    expect(uuid2[18]).toBe("-");
-    expect(uuid2[23]).toBe("-");
-  }
+  withoutAggressiveGC(() => {
+    // check that the fast path works
+    for (let i = 0; i < 9000; i++) {
+      var uuid2 = crypto.randomUUID();
+      expect(uuid2.length).toBe(36);
+      expect(uuid2[8]).toBe("-");
+      expect(uuid2[13]).toBe("-");
+      expect(uuid2[18]).toBe("-");
+      expect(uuid2[23]).toBe("-");
+    }
+  });
 });
 
 it("URL.prototype.origin", () => {

@@ -1,6 +1,6 @@
 const Server = @import("../http.zig").Server;
 const Command = @import("../cli.zig").Command;
-const Global = @import("../global.zig").Global;
+const Global = @import("bun").Global;
 pub const DevCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         Global.configureAllocator(.{ .long_running = true });

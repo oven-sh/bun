@@ -1,4 +1,4 @@
-const strings = @import("strings");
+const strings = @import("bun").strings;
 const std = @import("std");
 
 pub fn main() anyerror!void {

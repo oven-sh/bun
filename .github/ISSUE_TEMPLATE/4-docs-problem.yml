@@ -18,8 +18,6 @@ body:
         - Documentation is confusing
         - Example code is not working
         - Something else
-      validations:
-        required: true
   - type: textarea
     attributes:
       label: What is the issue?

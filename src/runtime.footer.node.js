@@ -12,6 +12,8 @@ export var __cJS2eSM = BUN_RUNTIME.__cJS2eSM;
 export var regeneratorRuntime = BUN_RUNTIME.regeneratorRuntime;
 export var __exportValue = BUN_RUNTIME.__exportValue;
 export var __exportDefault = BUN_RUNTIME.__exportDefault;
+export var __decorateClass = BUN_RUNTIME.__decorateClass;
+export var __decorateParam = BUN_RUNTIME.__decorateParam;
 export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace =
   BUN_RUNTIME.__internalIsCommonJSNamespace;
@@ -46,7 +48,7 @@ var process =
         target = process = _process;
         return Reflect.has(_process, prop, receiver);
       },
-    }
+    },
   );
 
 var Buffer =
@@ -79,5 +81,5 @@ var Buffer =
         target = Buffer = NewBuffer;
         return Reflect.has(NewBuffer, prop, receiver);
       },
-    }
+    },
   );

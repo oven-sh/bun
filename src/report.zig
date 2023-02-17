@@ -1,7 +1,6 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-const root = @import("root");
-const bun = @import("global.zig");
+const logger = @import("bun").logger;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,8 +13,8 @@ const C = bun.C;
 const CLI = @import("./cli.zig").Cli;
 const Features = @import("./analytics/analytics_thread.zig").Features;
 const Platform = @import("./analytics/analytics_thread.zig").GenerateHeader.GeneratePlatform;
-const HTTP = @import("http").AsyncHTTP;
-const CrashReporter = @import("crash_reporter");
+const HTTP = @import("bun").HTTP.AsyncHTTP;
+const CrashReporter = @import("./crash_reporter.zig");
 
 const Report = @This();
 
@@ -29,7 +28,8 @@ pub const CrashReportWriter = struct {
     pub fn printFrame(_: ?*anyopaque, frame: CrashReporter.StackFrame) void {
         const function_name = if (frame.function_name.len > 0) frame.function_name else "[function ?]";
         const filename = if (frame.filename.len > 0) frame.function_name else "[file ?]";
-        crash_report_writer.print("[0x{X}] - <b>{s}<r> {s}:{d}\n", .{ frame.pc, function_name, filename, frame.line_number });
+        const fmt = bun.fmt.hexIntUpper(frame.pc);
+        crash_report_writer.print("[0x{any}] - <b>{s}<r> {s}:{d}\n", .{ fmt, function_name, filename, frame.line_number });
     }
 
     pub fn dump() void {
@@ -61,15 +61,15 @@ pub const CrashReportWriter = struct {
         if (this.file != null) return;
 
         var base_dir: []const u8 = ".";
-        if (std.os.getenv("BUN_INSTALL")) |install_dir| {
+        if (bun.getenvZ("BUN_INSTALL")) |install_dir| {
             base_dir = std.mem.trimRight(u8, install_dir, std.fs.path.sep_str);
-        } else if (std.os.getenv("HOME")) |home_dir| {
+        } else if (bun.getenvZ("HOME")) |home_dir| {
             base_dir = std.mem.trimRight(u8, home_dir, std.fs.path.sep_str);
         }
         const file_path = std.fmt.bufPrintZ(
             &crash_reporter_path,
             "{s}/.bun-crash/v{s}-{d}.crash",
-            .{ base_dir, Global.package_json_version, @intCast(u64, @maximum(std.time.milliTimestamp(), 0)) },
+            .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
         ) catch return;
 
         std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
@@ -85,7 +85,7 @@ pub const CrashReportWriter = struct {
 
         if (this.file_path.len > 0) {
             var tilda = false;
-            if (std.os.getenv("HOME")) |home_dir| {
+            if (bun.getenvZ("HOME")) |home_dir| {
                 if (strings.hasPrefix(display_path, home_dir)) {
                     display_path = display_path[home_dir.len..];
                     tilda = true;
@@ -192,7 +192,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
         if (msg_) |msg| {
             const msg_ptr = @ptrToInt(msg.ptr);
             if (msg_ptr > 0) {
-                const len = @maximum(@minimum(msg.len, 1024), 0);
+                const len = @max(@min(msg.len, 1024), 0);
 
                 if (len > 0) {
                     if (Output.isEmojiEnabled()) {
@@ -202,7 +202,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
                         );
                     } else {
                         crash_report_writer.print(
-                            "\n<r>an uh-oh: {s}\n\n",
+                            "\n<r>Panic: {s}\n\n",
                             .{msg[0..len]},
                         );
                     }
@@ -230,7 +230,11 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 
         // It only is a real crash report if it's not coming from Zig
 
-        CrashReportWriter.dump();
+        if (comptime !@import("bun").JSC.is_bindgen) {
+            std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+            Bun__crashReportDumpStackTrace(&crash_report_writer);
+        }
+
         crash_report_writer.flush();
 
         crash_report_writer.printPath();
@@ -243,6 +247,13 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
 }
 
 var globalError_ranOnce = false;
+
+export fn Bun__crashReportWrite(ctx: *CrashReportWriter, bytes_ptr: [*]const u8, len: usize) void {
+    if (len > 0)
+        ctx.print("{s}\n", .{bytes_ptr[0..len]});
+}
+
+extern "C" fn Bun__crashReportDumpStackTrace(ctx: *anyopaque) void;
 
 pub noinline fn handleCrash(signal: i32, addr: usize) void {
     const had_printed_fatal = has_printed_fatal;
@@ -260,10 +271,13 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
 
     crash_report_writer.print(
         "\n<r><red>{s}<d> at 0x{any}\n\n",
-        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
+        .{ @errorName(name), bun.fmt.hexIntUpper(addr) },
     );
     printMetadata();
-    CrashReportWriter.dump();
+    if (comptime !@import("bun").JSC.is_bindgen) {
+        std.mem.doNotOptimizeAway(&Bun__crashReportWrite);
+        Bun__crashReportDumpStackTrace(&crash_report_writer);
+    }
 
     if (!had_printed_fatal) {
         crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
@@ -282,7 +296,7 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         }
     }
 
-    std.c._exit(128 + @truncate(u8, @intCast(u8, @maximum(signal, 0))));
+    std.c._exit(128 + @truncate(u8, @intCast(u8, @max(signal, 0))));
 }
 
 pub noinline fn globalError(err: anyerror) noreturn {
@@ -322,7 +336,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
             );
             Global.exit(1);
         },
-        error.InvalidArgument, error.InstallFailed => {
+        error.InvalidArgument, error.InstallFailed, error.InvalidPackageJSON => {
             Global.exit(1);
         },
         error.SystemFdQuotaExceeded => {
@@ -335,7 +349,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>sudo launchctl limit maxfiles 2147483646<r>
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
@@ -354,7 +368,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>sudo echo -e "\nfs.file-max=2147483646\n" >> /etc/sysctl.conf<r>
                     \\  <cyan>sudo sysctl -p<r>
                     \\  <cyan>ulimit -n 2147483646<r>
@@ -365,7 +379,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     },
                 );
 
-                if (std.os.getenv("USER")) |user| {
+                if (bun.getenvZ("USER")) |user| {
                     if (user.len > 0) {
                         Output.prettyError(
                             \\
@@ -396,7 +410,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                     \\You may also need to run:
@@ -416,7 +430,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                     \\That will only work for the current shell. To fix this for the entire system, run:
@@ -430,7 +444,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     },
                 );
 
-                if (std.os.getenv("USER")) |user| {
+                if (bun.getenvZ("USER")) |user| {
                     if (user.len > 0) {
                         Output.prettyError(
                             \\
@@ -460,7 +474,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     \\<d>Current limit: {d}<r>
                     \\
                     \\To fix this, try running:
-                    \\ 
+                    \\
                     \\  <cyan>ulimit -n 2147483646<r>
                     \\
                 ,
@@ -470,7 +484,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 );
 
                 if (Environment.isLinux) {
-                    if (std.os.getenv("USER")) |user| {
+                    if (bun.getenvZ("USER")) |user| {
                         if (user.len > 0) {
                             Output.prettyError(
                                 \\
@@ -517,7 +531,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
                 var trace = @errorReturnTrace() orelse break :print_stacktrace;
                 Output.disableBuffering();
-                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+                std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
             }
 
             Global.exit(1);
@@ -541,7 +555,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
         var debug_info = std.debug.getSelfDebugInfo() catch break :print_stacktrace;
         var trace = @errorReturnTrace() orelse break :print_stacktrace;
         Output.disableBuffering();
-        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
+        std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig(std.io.getStdErr())) catch break :print_stacktrace;
     }
 
     Global.exit(1);

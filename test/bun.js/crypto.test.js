@@ -1,19 +1,55 @@
-import {
-  sha,
-  MD5,
-  MD4,
-  SHA1,
-  SHA256,
-  SHA384,
-  SHA512,
-  SHA512_256,
-  gc,
-} from "bun";
+import { sha, MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256, gc, CryptoHasher } from "bun";
 import { it, expect, describe } from "bun:test";
 import { readFileSync } from "fs";
 
+const HashClasses = [MD5, MD4, SHA1, SHA224, SHA256, SHA384, SHA512, SHA512_256];
+
+describe("CryptoHasher", () => {
+  it("CryptoHasher.algorithms", () => {
+    expect(CryptoHasher.algorithms).toEqual([
+      "blake2b256",
+      "md4",
+      "md5",
+      "ripemd160",
+      "sha1",
+      "sha224",
+      "sha256",
+      "sha384",
+      "sha512",
+      "sha512-256",
+    ]);
+  });
+
+  it("CryptoHasher md5", () => {
+    var hasher = new CryptoHasher("md5");
+    hasher.update("hello world");
+    expect(hasher.digest("hex")).toBe("5eb63bbbe01eeed093cb22bb8f5acdc3");
+    expect(hasher.algorithm).toBe("md5");
+  });
+
+  it("CryptoHasher blake2b256", () => {
+    var hasher = new CryptoHasher("blake2b256");
+    hasher.update("hello world");
+    expect(hasher.algorithm).toBe("blake2b256");
+
+    expect(hasher.digest("hex")).toBe(
+      //  b2sum --length=256
+      "256c83b297114d201b30179f3f0ef0cace9783622da5974326b436178aeef610",
+    );
+  });
+
+  it("CryptoHasher sha512", () => {
+    var hasher = new CryptoHasher("sha512");
+    hasher.update("hello world");
+    expect(hasher.digest("hex")).toBe(
+      "309ecc489c12d6eb4cc40f50c902f2b4d0ed77ee511a7c7a9bcd3ca86d4cd86f989dd35bc5ff499670da34255b45b0cfd830e81f605dcf7dc5542e93ae9cd76f",
+    );
+    expect(hasher.algorithm).toBe("sha512");
+  });
+});
+
 describe("crypto", () => {
-  for (let Hash of [MD5, MD4, SHA1, SHA256, SHA384, SHA512, SHA512_256]) {
+  for (let Hash of HashClasses) {
     for (let [input, label] of [
       ["hello world", '"hello world"'],
       ["hello world".repeat(20).slice(), '"hello world" x 20'],

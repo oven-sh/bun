@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "ESNext"
+    ],
+    "skipLibCheck": false,
+    "strict": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "disableSolutionSearching": true,
+    "noUnusedLocals": true
+  },
+  "exclude": [
+    "dist",
+    "node_modules",
+    "./node_modules",
+    "./node_modules/*",
+    "./node_modules/@types/node/index.d.ts"
+  ]
+}

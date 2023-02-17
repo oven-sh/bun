@@ -1,8 +1,8 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("javascript_core");
+const js = @import("bun").JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,7 +12,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const JSC = @import("javascript_core");
+const JSC = @import("bun").JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 
@@ -63,7 +63,7 @@ pub const Kind = enum(i8) {
     }
 };
 
-pub const Loc = packed struct {
+pub const Loc = packed struct(i32) {
     start: i32 = -1,
 
     pub inline fn toNullable(loc: *Loc) ?Loc {
@@ -73,7 +73,7 @@ pub const Loc = packed struct {
     pub const toUsize = i;
 
     pub inline fn i(self: *const Loc) usize {
-        return @intCast(usize, @maximum(self.start, 0));
+        return @intCast(usize, @max(self.start, 0));
     }
 
     pub const Empty = Loc{ .start = -1 };
@@ -100,7 +100,7 @@ pub const Location = struct {
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
-        if (this.line_text) |text| builder.count(text[0..@minimum(text.len, 690)]);
+        if (this.line_text) |text| builder.count(text[0..@min(text.len, 690)]);
         if (this.suggestion) |text| builder.count(text);
     }
 
@@ -447,6 +447,7 @@ pub const Msg = struct {
         pub const Resolve = struct {
             specifier: BabyString,
             import_kind: ImportKind,
+            err: anyerror = error.ModuleNotFound,
         };
     };
 
@@ -555,7 +556,7 @@ pub const Range = packed struct {
     pub fn in(this: Range, buf: []const u8) []const u8 {
         if (this.loc.start < 0 or this.len <= 0) return "";
         const slice = buf[@intCast(usize, this.loc.start)..];
-        return slice[0..@minimum(@intCast(usize, this.len), buf.len)];
+        return slice[0..@min(@intCast(usize, this.len), buf.len)];
     }
 
     pub fn isEmpty(r: *const Range) bool {
@@ -587,7 +588,7 @@ pub const Log = struct {
         this.errors = 0;
     }
 
-    pub var default_log_level = if (Environment.isDebug) Level.info else Level.warn;
+    pub var default_log_level = Level.warn;
 
     pub fn hasAny(this: *const Log) bool {
         return (this.warnings + this.errors) > 0;
@@ -616,7 +617,7 @@ pub const Log = struct {
         err,
 
         pub fn atLeast(this: Level, other: Level) bool {
-            return @enumToInt(this) >= @enumToInt(other);
+            return @enumToInt(this) <= @enumToInt(other);
         }
 
         pub const label: std.EnumArray(Level, string) = brk: {
@@ -628,6 +629,13 @@ pub const Log = struct {
             map.set(Level.err, "error");
             break :brk map;
         };
+        pub const Map = bun.ComptimeStringMap(Level, .{
+            .{ "verbose", Level.verbose },
+            .{ "debug", Level.debug },
+            .{ "info", Level.info },
+            .{ "warn", Level.warn },
+            .{ "error", Level.err },
+        });
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {
@@ -655,7 +663,7 @@ pub const Log = struct {
         const msgs: []const Msg = this.msgs.items;
         var errors_stack: [256]*anyopaque = undefined;
 
-        const count = @intCast(u16, @minimum(msgs.len, errors_stack.len));
+        const count = @intCast(u16, @min(msgs.len, errors_stack.len));
         switch (count) {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {
@@ -713,12 +721,12 @@ pub const Log = struct {
         self.msgs.deinit();
     }
 
-    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+    pub fn appendToWithRecycled(self: *Log, other: *Log, recycled: bool) !void {
         try other.msgs.appendSlice(self.msgs.items);
         other.warnings += self.warnings;
         other.errors += self.errors;
 
-        if (source.contents_is_recycled) {
+        if (recycled) {
             var string_builder = StringBuilder{};
             var notes_count: usize = 0;
             {
@@ -757,11 +765,15 @@ pub const Log = struct {
             }
         }
 
-        self.msgs.deinit();
+        self.msgs.clearAndFree();
+    }
+
+    pub fn appendToMaybeRecycled(self: *Log, other: *Log, source: *const Source) !void {
+        return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
     pub fn deinit(self: *Log) void {
-        self.msgs.deinit();
+        self.msgs.clearAndFree();
     }
 
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) !void {
@@ -775,7 +787,18 @@ pub const Log = struct {
         });
     }
 
-    inline fn _addResolveErrorWithLevel(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool, comptime is_error: bool) !void {
+    inline fn _addResolveErrorWithLevel(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        comptime is_error: bool,
+        err: anyerror,
+    ) !void {
         const text = try std.fmt.allocPrint(allocator, fmt, args);
         // TODO: fix this. this is stupid, it should be returned in allocPrint.
         const specifier = BabyString.in(text, args.@"0");
@@ -806,18 +829,42 @@ pub const Log = struct {
         const msg = Msg{
             .kind = if (comptime is_error) Kind.err else Kind.warn,
             .data = data,
-            .metadata = .{ .resolve = Msg.Metadata.Resolve{ .specifier = specifier, .import_kind = import_kind } },
+            .metadata = .{ .resolve = Msg.Metadata.Resolve{
+                .specifier = specifier,
+                .import_kind = import_kind,
+                .err = err,
+            } },
         };
 
         try log.addMsg(msg);
     }
 
-    inline fn _addResolveError(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true);
+    inline fn _addResolveError(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        err: anyerror,
+    ) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, true, err);
     }
 
-    inline fn _addResolveWarn(log: *Log, source: *const Source, r: Range, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, import_kind: ImportKind, comptime dupe_text: bool) !void {
-        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false);
+    inline fn _addResolveWarn(
+        log: *Log,
+        source: *const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        import_kind: ImportKind,
+        comptime dupe_text: bool,
+        err: anyerror,
+    ) !void {
+        return _addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, dupe_text, false, err);
     }
 
     pub fn addResolveError(
@@ -828,9 +875,10 @@ pub const Log = struct {
         comptime fmt: string,
         args: anytype,
         import_kind: ImportKind,
+        err: anyerror,
     ) !void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false);
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, false, err);
     }
 
     pub fn addResolveErrorWithTextDupe(
@@ -843,7 +891,7 @@ pub const Log = struct {
         import_kind: ImportKind,
     ) !void {
         @setCold(true);
-        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+        return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
     }
 
     pub fn addResolveErrorWithTextDupeMaybeWarn(
@@ -858,9 +906,9 @@ pub const Log = struct {
     ) !void {
         @setCold(true);
         if (warn) {
-            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true);
+            return try _addResolveError(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
         } else {
-            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true);
+            return try _addResolveWarn(log, source, r, allocator, fmt, args, import_kind, true, error.ModuleNotFound);
         }
     }
 
@@ -1096,6 +1144,13 @@ pub const Source = struct {
     contents: string,
     contents_is_recycled: bool = false,
 
+    pub fn isWebAssembly(this: *const Source) bool {
+        if (this.contents.len < 4) return false;
+
+        const bytes = @bitCast(u32, this.contents[0..4].*);
+        return bytes == 0x6d736100; // "\0asm"
+    }
+
     pub const ErrorPosition = struct {
         line_start: usize,
         line_end: usize,
@@ -1194,7 +1249,7 @@ pub const Source = struct {
 
     pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
         var prev_code_point: i32 = 0;
-        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @maximum(self.contents.len, 1) - 1);
+        var offset: usize = std.math.min(if (_offset.start < 0) 0 else @intCast(usize, _offset.start), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 

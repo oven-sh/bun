@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const constStrToU8 = bun.constStrToU8;
 const Output = bun.Output;
@@ -11,36 +11,36 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 
-const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
+const lex = bun.js_lexer;
+const logger = @import("bun").logger;
 
 const options = @import("../options.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
-const panicky = @import("../panic_handler.zig");
+
 const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
-const bundler = @import("../bundler.zig");
+const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
 const URL = @import("../url.zig").URL;
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
 const Archive = @import("../libarchive/libarchive.zig").Archive;
 const Zlib = @import("../zlib.zig");
-const JSPrinter = @import("../js_printer.zig");
+const JSPrinter = bun.js_printer;
 const DotEnv = @import("../env_loader.zig");
 const NPMClient = @import("../which_npm_client.zig").NPMClient;
 const which = @import("../which.zig").which;
-const clap = @import("clap");
+const clap = @import("bun").clap;
 const Lock = @import("../lock.zig").Lock;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const CopyFile = @import("../copy_file.zig");
 var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
@@ -405,7 +405,7 @@ pub const CreateCommand = struct {
         switch (example_tag) {
             Example.Tag.github_repository, Example.Tag.official => {
                 var tarball_bytes: MutableString = switch (example_tag) {
-                    .official => Example.fetch(ctx, template, &progress, node) catch |err| {
+                    .official => Example.fetch(ctx, &env_loader, template, &progress, node) catch |err| {
                         switch (err) {
                             error.HTTPForbidden, error.ExampleNotFound => {
                                 node.end();
@@ -493,7 +493,7 @@ pub const CreateCommand = struct {
                 var archive_context = Archive.Context{
                     .pluckers = pluckers[0..@intCast(usize, @boolToInt(!create_options.skip_package_json))],
                     .all_files = undefined,
-                    .overwrite_list = std.StringArrayHashMap(void).init(ctx.allocator),
+                    .overwrite_list = bun.StringArrayHashMap(void).init(ctx.allocator),
                 };
 
                 if (!create_options.overwrite) {
@@ -564,7 +564,7 @@ pub const CreateCommand = struct {
                 node.name = "Copying files";
                 progress.refresh();
 
-                const template_dir = std.fs.openDirAbsolute(filesystem.abs(&template_parts), .{ .iterate = true }) catch |err| {
+                const template_dir = std.fs.cwd().openIterableDir(filesystem.abs(&template_parts), .{}) catch |err| {
                     node.end();
                     progress.refresh();
 
@@ -573,7 +573,7 @@ pub const CreateCommand = struct {
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
-                const destination_dir = std.fs.cwd().makeOpenPath(destination, .{ .iterate = true }) catch |err| {
+                const destination_dir__ = std.fs.cwd().makeOpenPathIterable(destination, .{}) catch |err| {
                     node.end();
 
                     progress.refresh();
@@ -581,7 +581,7 @@ pub const CreateCommand = struct {
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
                     Global.exit(1);
                 };
-
+                const destination_dir = destination_dir__.dir;
                 const Walker = @import("../walker_skippable.zig");
                 var walker_ = try Walker.walk(template_dir, ctx.allocator, skip_files, skip_dirs);
                 defer walker_.deinit();
@@ -612,22 +612,16 @@ pub const CreateCommand = struct {
                             defer outfile.close();
                             defer node_.completeOne();
 
-                            var infile = try entry.dir.openFile(entry.basename, .{ .mode = .read_only });
+                            var infile = try entry.dir.dir.openFile(entry.basename, .{ .mode = .read_only });
                             defer infile.close();
 
                             // Assumption: you only really care about making sure something that was executable is still executable
                             const stat = infile.stat() catch continue;
                             _ = C.fchmod(outfile.handle, stat.mode);
 
-                            CopyFile.copy(infile.handle, outfile.handle) catch {
-                                entry.dir.copyFile(entry.basename, destination_dir_, entry.path, .{}) catch |err| {
-                                    node_.end();
-
-                                    progress_.refresh();
-
-                                    Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Global.exit(1);
-                                };
+                            CopyFile.copyFile(infile.handle, outfile.handle) catch |err| {
+                                Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
+                                Global.exit(1);
                             };
                         }
                     }
@@ -1314,7 +1308,7 @@ pub const CreateCommand = struct {
                         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
                         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
                         //     list.insertSlice(head_i + "<head>".len, "<link rel=\"stylesheet\" href=\"/src/index.css\">\n") catch break :inject_css;
-                        //     outfile = list.toOwnedSlice();
+                        //     outfile =try list.toOwnedSlice();
                         // }
 
                         public_index_html_file.pwriteAll(outfile, 0) catch break :bail;
@@ -1671,7 +1665,7 @@ const Commands = .{
     &[_]string{""},
     &[_]string{""},
 };
-const picohttp = @import("picohttp");
+const picohttp = @import("bun").picohttp;
 
 pub const DownloadedExample = struct {
     tarball_bytes: MutableString,
@@ -1716,38 +1710,48 @@ pub const Example = struct {
     }
 
     pub fn fetchAllLocalAndRemote(ctx: Command.Context, node: ?*std.Progress.Node, env_loader: *DotEnv.Loader, filesystem: *fs.FileSystem) !std.ArrayList(Example) {
-        const remote_examples = try Example.fetchAll(ctx, node);
+        const remote_examples = try Example.fetchAll(ctx, env_loader, node);
         if (node) |node_| node_.end();
 
         var examples = std.ArrayList(Example).fromOwnedSlice(ctx.allocator, remote_examples);
         {
-            var folders = [3]std.fs.Dir{ std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 }, std.fs.Dir{ .fd = 0 } };
+            var folders = [3]std.fs.IterableDir{
+                .{
+                    .dir = .{ .fd = 0 },
+                },
+                .{
+                    .dir = .{ .fd = 0 },
+                },
+                .{ .dir = .{ .fd = 0 } },
+            };
             if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
                 var parts = [_]string{home_dir};
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[0] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[0] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             {
                 var parts = [_]string{ filesystem.top_level_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[1] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[1] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             if (env_loader.map.get("HOME")) |home_dir| {
                 var parts = [_]string{ home_dir, BUN_CREATE_DIR };
                 var outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
-                folders[2] = std.fs.openDirAbsolute(outdir_path, .{ .iterate = true }) catch std.fs.Dir{ .fd = 0 };
+                folders[2] = std.fs.cwd().openIterableDir(outdir_path, .{}) catch .{ .dir = .{ .fd = 0 } };
             }
 
             // subfolders with package.json
-            for (folders) |folder_| {
+            for (folders) |folder__| {
+                const folder_ = folder__.dir;
+
                 if (folder_.fd != 0) {
                     const folder: std.fs.Dir = folder_;
-                    var iter = folder.iterate();
+                    var iter = (std.fs.IterableDir{ .dir = folder }).iterate();
 
                     loop: while (iter.next() catch null) |entry_| {
-                        const entry: std.fs.Dir.Entry = entry_;
+                        const entry: std.fs.IterableDir.Entry = entry_;
 
                         switch (entry.kind) {
                             .Directory => {
@@ -1842,21 +1846,13 @@ pub const Example = struct {
             }
         }
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(api_url);
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 8096);
 
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, api_url, header_entries, headers_buf, mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
         const response = try async_http.sendSync(true);
 
@@ -1906,7 +1902,7 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetch(ctx: Command.Context, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
+    pub fn fetch(ctx: Command.Context, env_loader: *DotEnv.Loader, name: string, refresher: *std.Progress, progress: *std.Progress.Node) !MutableString {
         progress.name = "Fetching package.json";
         refresher.refresh();
 
@@ -1916,18 +1912,11 @@ pub const Example = struct {
 
         url = URL.parse(try std.fmt.bufPrint(&url_buf, "https://registry.npmjs.org/@bun-examples/{s}/latest", .{name}));
 
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
+
         // ensure very stable memory address
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
         var response = try async_http.sendSync(true);
 
@@ -1999,16 +1988,11 @@ pub const Example = struct {
         mutable.reset();
 
         // ensure very stable memory address
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            URL.parse(tarball_url),
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        const parsed_tarball_url = URL.parse(tarball_url);
+
+        http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
+
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, parsed_tarball_url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
         async_http.client.progress_node = progress;
 
         refresher.maybeRefresh();
@@ -2029,23 +2013,16 @@ pub const Example = struct {
         return mutable.*;
     }
 
-    pub fn fetchAll(ctx: Command.Context, progress_node: ?*std.Progress.Node) ![]Example {
+    pub fn fetchAll(ctx: Command.Context, env_loader: *DotEnv.Loader, progress_node: ?*std.Progress.Node) ![]Example {
         url = URL.parse(examples_url);
+
+        var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
         var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         var mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            60 * std.time.ns_per_min,
-        );
+        async_http.* = HTTP.AsyncHTTP.initSync(ctx.allocator, .GET, url, .{}, "", mutable, "", 60 * std.time.ns_per_min, http_proxy);
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

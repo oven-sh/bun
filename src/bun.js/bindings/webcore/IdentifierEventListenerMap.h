@@ -36,7 +36,8 @@ private:
     Ref<EventListener> m_callback;
 };
 
-using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 1, CrashOnOverflow, 2>;
+using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 0, CrashOnOverflow, 2>;
+using EntriesVector = Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 0, CrashOnOverflow, 4>;
 
 class IdentifierEventListenerMap {
 public:
@@ -45,6 +46,8 @@ public:
     bool isEmpty() const { return m_entries.isEmpty(); }
     bool contains(const JSC::Identifier& eventType) const { return find(eventType); }
     bool containsActive(const JSC::Identifier& eventType) const;
+
+    const EntriesVector& entries() const { return m_entries; }
 
     void clear();
 
@@ -61,7 +64,7 @@ public:
     Lock& lock() { return m_lock; }
 
 private:
-    Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>> m_entries;
+    EntriesVector m_entries;
     Lock m_lock;
 };
 

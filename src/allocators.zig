@@ -4,8 +4,8 @@ const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const Wyhash = std.hash.Wyhash;
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
-const constStrToU8 = @import("./global.zig").constStrToU8;
-const bun = @import("./global.zig");
+const constStrToU8 = @import("bun").constStrToU8;
+const bun = @import("bun");
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }
@@ -75,7 +75,7 @@ fn OverflowGroup(comptime Block: type) type {
         // ...right?
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
-        const default_allocator = @import("./global.zig").default_allocator;
+        const default_allocator = @import("bun").default_allocator;
         used: UsedSize = 0,
         allocated: UsedSize = 0,
         ptrs: [max]*Block = undefined,
@@ -298,6 +298,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             if (!loaded) {
                 instance = Self{
                     .allocator = allocator,
+                    .backing_buf_used = 0,
                 };
                 loaded = true;
             }
@@ -318,7 +319,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         }
 
         pub fn appendMutable(self: *Self, comptime AppendType: type, _value: AppendType) ![]u8 {
-            const appended = try @call(.{ .modifier = .always_inline }, append, .{ self, AppendType, _value });
+            const appended = try @call(.always_inline, append, .{ self, AppendType, _value });
             return constStrToU8(appended);
         }
 
@@ -451,7 +452,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
     };
 }
 
-pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: bool, estimated_key_length: usize, remove_trailing_slashes: bool) type {
+pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_keys: bool, comptime estimated_key_length: usize, comptime remove_trailing_slashes: bool) type {
     const max_index = count - 1;
     const BSSMapType = struct {
         const Allocator = std.mem.Allocator;
@@ -634,11 +635,11 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, store_keys: boo
             return try self.map.getOrPut(key);
         }
         pub fn get(self: *Self, key: []const u8) ?*ValueType {
-            return @call(.{ .modifier = .always_inline }, BSSMapType.get, .{ self.map, key });
+            return @call(.always_inline, BSSMapType.get, .{ self.map, key });
         }
 
         pub fn atIndex(self: *Self, index: IndexType) ?*ValueType {
-            return @call(.{ .modifier = .always_inline }, BSSMapType.atIndex, .{ self.map, index });
+            return @call(.always_inline, BSSMapType.atIndex, .{ self.map, index });
         }
 
         pub fn keyAtIndex(_: *Self, index: IndexType) ?[]const u8 {

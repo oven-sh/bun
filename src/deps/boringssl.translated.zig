@@ -134,8 +134,24 @@ pub const struct_Netscape_spki_st = extern struct {
     signature: [*c]ASN1_BIT_STRING,
 };
 pub const NETSCAPE_SPKI = struct_Netscape_spki_st;
-pub const struct_RIPEMD160state_st = opaque {};
+
+pub const struct_RIPEMD160state_st = extern struct {
+    h: [5]u32,
+    Nl: u32,
+    Nh: u32,
+    data: [64]u8,
+    num: c_uint,
+};
 pub const RIPEMD160_CTX = struct_RIPEMD160state_st;
+pub const RIPEMD160_CBLOCK = @as(c_int, 64);
+pub const RIPEMD160_LBLOCK = @import("std").zig.c_translation.MacroArithmetic.div(RIPEMD160_CBLOCK, @as(c_int, 4));
+pub const RIPEMD160_DIGEST_LENGTH = @as(c_int, 20);
+pub extern fn RIPEMD160_Init(ctx: [*c]RIPEMD160_CTX) c_int;
+pub extern fn RIPEMD160_Update(ctx: [*c]RIPEMD160_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn RIPEMD160_Final(out: [*c]u8, ctx: [*c]RIPEMD160_CTX) c_int;
+pub extern fn RIPEMD160(data: [*c]const u8, len: usize, out: [*c]u8) [*c]u8;
+pub extern fn RIPEMD160_Transform(ctx: [*c]RIPEMD160_CTX, block: [*c]const u8) void;
+
 pub const struct_X509_POLICY_CACHE_st = opaque {};
 pub const X509_POLICY_CACHE = struct_X509_POLICY_CACHE_st;
 pub const struct_X509_POLICY_LEVEL_st = opaque {};
@@ -160,13 +176,13 @@ pub const struct_openssl_method_common_st = extern struct {
 pub const struct_rsa_meth_st = extern struct {
     common: struct_openssl_method_common_st,
     app_data: ?*anyopaque,
-    init: ?fn (?*RSA) callconv(.C) c_int,
-    finish: ?fn (?*RSA) callconv(.C) c_int,
-    size: ?fn (?*const RSA) callconv(.C) usize,
-    sign: ?fn (c_int, [*c]const u8, c_uint, [*c]u8, [*c]c_uint, ?*const RSA) callconv(.C) c_int,
-    sign_raw: ?fn (?*RSA, [*c]usize, [*c]u8, usize, [*c]const u8, usize, c_int) callconv(.C) c_int,
-    decrypt: ?fn (?*RSA, [*c]usize, [*c]u8, usize, [*c]const u8, usize, c_int) callconv(.C) c_int,
-    private_transform: ?fn (?*RSA, [*c]u8, [*c]const u8, usize) callconv(.C) c_int,
+    init: ?*const fn (?*RSA) callconv(.C) c_int,
+    finish: ?*const fn (?*RSA) callconv(.C) c_int,
+    size: ?*const fn (?*const RSA) callconv(.C) usize,
+    sign: ?*const fn (c_int, [*c]const u8, c_uint, [*c]u8, [*c]c_uint, ?*const RSA) callconv(.C) c_int,
+    sign_raw: ?*const fn (?*RSA, [*c]usize, [*c]u8, usize, [*c]const u8, usize, c_int) callconv(.C) c_int,
+    decrypt: ?*const fn (?*RSA, [*c]usize, [*c]u8, usize, [*c]const u8, usize, c_int) callconv(.C) c_int,
+    private_transform: ?*const fn (?*RSA, [*c]u8, [*c]const u8, usize) callconv(.C) c_int,
     flags: c_int,
 };
 pub const RSA_METHOD = struct_rsa_meth_st;
@@ -260,10 +276,10 @@ pub const struct_evp_cipher_st = extern struct {
     ctx_size: c_uint,
     flags: u32,
     app_data: ?*anyopaque,
-    init: ?fn ([*c]EVP_CIPHER_CTX, [*c]const u8, [*c]const u8, c_int) callconv(.C) c_int,
-    cipher: ?fn ([*c]EVP_CIPHER_CTX, [*c]u8, [*c]const u8, usize) callconv(.C) c_int,
-    cleanup: ?fn ([*c]EVP_CIPHER_CTX) callconv(.C) void,
-    ctrl: ?fn ([*c]EVP_CIPHER_CTX, c_int, c_int, ?*anyopaque) callconv(.C) c_int,
+    init: ?*const fn ([*c]EVP_CIPHER_CTX, [*c]const u8, [*c]const u8, c_int) callconv(.C) c_int,
+    cipher: ?*const fn ([*c]EVP_CIPHER_CTX, [*c]u8, [*c]const u8, usize) callconv(.C) c_int,
+    cleanup: ?*const fn ([*c]EVP_CIPHER_CTX) callconv(.C) void,
+    ctrl: ?*const fn ([*c]EVP_CIPHER_CTX, c_int, c_int, ?*anyopaque) callconv(.C) c_int,
 };
 pub const EVP_CIPHER = struct_evp_cipher_st;
 pub const struct_evp_cipher_info_st = extern struct {
@@ -303,24 +319,24 @@ pub const struct_bignum_ctx = opaque {};
 pub const BN_CTX = struct_bignum_ctx;
 pub const BIO_METHOD = struct_bio_method_st;
 pub const BIO = struct_bio_st;
-pub const bio_info_cb = ?fn ([*c]BIO, c_int, [*c]const u8, c_int, c_long, c_long) callconv(.C) c_long;
+pub const bio_info_cb = ?*const fn ([*c]BIO, c_int, [*c]const u8, c_int, c_long, c_long) callconv(.C) c_long;
 pub const struct_bio_method_st = extern struct {
-    @"type": c_int,
+    type: c_int,
     name: [*c]const u8,
-    bwrite: ?fn ([*c]BIO, [*c]const u8, c_int) callconv(.C) c_int,
-    bread: ?fn ([*c]BIO, [*c]u8, c_int) callconv(.C) c_int,
-    bputs: ?fn ([*c]BIO, [*c]const u8) callconv(.C) c_int,
-    bgets: ?fn ([*c]BIO, [*c]u8, c_int) callconv(.C) c_int,
-    ctrl: ?fn ([*c]BIO, c_int, c_long, ?*anyopaque) callconv(.C) c_long,
-    create: ?fn ([*c]BIO) callconv(.C) c_int,
-    destroy: ?fn ([*c]BIO) callconv(.C) c_int,
-    callback_ctrl: ?fn ([*c]BIO, c_int, bio_info_cb) callconv(.C) c_long,
+    bwrite: ?*const fn ([*c]BIO, [*c]const u8, c_int) callconv(.C) c_int,
+    bread: ?*const fn ([*c]BIO, [*c]u8, c_int) callconv(.C) c_int,
+    bputs: ?*const fn ([*c]BIO, [*c]const u8) callconv(.C) c_int,
+    bgets: ?*const fn ([*c]BIO, [*c]u8, c_int) callconv(.C) c_int,
+    ctrl: ?*const fn ([*c]BIO, c_int, c_long, ?*anyopaque) callconv(.C) c_long,
+    create: ?*const fn ([*c]BIO) callconv(.C) c_int,
+    destroy: ?*const fn ([*c]BIO) callconv(.C) c_int,
+    callback_ctrl: ?*const fn ([*c]BIO, c_int, bio_info_cb) callconv(.C) c_long,
 };
 pub const struct_blake2b_state_st = opaque {};
 pub const BLAKE2B_CTX = struct_blake2b_state_st;
 pub const struct_bn_gencb_st = extern struct {
     arg: ?*anyopaque,
-    callback: ?fn (c_int, c_int, [*c]struct_bn_gencb_st) callconv(.C) c_int,
+    callback: ?*const fn (c_int, c_int, [*c]struct_bn_gencb_st) callconv(.C) c_int,
 };
 pub const BN_GENCB = struct_bn_gencb_st;
 pub const struct_buf_mem_st = extern struct {
@@ -367,10 +383,10 @@ pub const EC_POINT = struct_ec_point_st;
 pub const struct_ecdsa_method_st = extern struct {
     common: struct_openssl_method_common_st,
     app_data: ?*anyopaque,
-    init: ?fn (?*EC_KEY) callconv(.C) c_int,
-    finish: ?fn (?*EC_KEY) callconv(.C) c_int,
-    group_order_size: ?fn (?*const EC_KEY) callconv(.C) usize,
-    sign: ?fn ([*c]const u8, usize, [*c]u8, [*c]c_uint, ?*EC_KEY) callconv(.C) c_int,
+    init: ?*const fn (?*EC_KEY) callconv(.C) c_int,
+    finish: ?*const fn (?*EC_KEY) callconv(.C) c_int,
+    group_order_size: ?*const fn (?*const EC_KEY) callconv(.C) usize,
+    sign: ?*const fn ([*c]const u8, usize, [*c]u8, [*c]c_uint, ?*EC_KEY) callconv(.C) c_int,
     flags: c_int,
 };
 pub const ECDSA_METHOD = struct_ecdsa_method_st;
@@ -516,9 +532,9 @@ pub const ssl_private_key_retry: c_int = 1;
 pub const ssl_private_key_failure: c_int = 2;
 pub const enum_ssl_private_key_result_t = c_uint;
 pub const struct_ssl_private_key_method_st = extern struct {
-    sign: ?fn (?*SSL, [*c]u8, [*c]usize, usize, u16, [*c]const u8, usize) callconv(.C) enum_ssl_private_key_result_t,
-    decrypt: ?fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) enum_ssl_private_key_result_t,
-    complete: ?fn (?*SSL, [*c]u8, [*c]usize, usize) callconv(.C) enum_ssl_private_key_result_t,
+    sign: ?*const fn (?*SSL, [*c]u8, [*c]usize, usize, u16, [*c]const u8, usize) callconv(.C) enum_ssl_private_key_result_t,
+    decrypt: ?*const fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) enum_ssl_private_key_result_t,
+    complete: ?*const fn (?*SSL, [*c]u8, [*c]usize, usize) callconv(.C) enum_ssl_private_key_result_t,
 };
 pub const SSL_PRIVATE_KEY_METHOD = struct_ssl_private_key_method_st;
 pub const ssl_encryption_initial: c_int = 0;
@@ -527,11 +543,11 @@ pub const ssl_encryption_handshake: c_int = 2;
 pub const ssl_encryption_application: c_int = 3;
 pub const enum_ssl_encryption_level_t = c_uint;
 pub const struct_ssl_quic_method_st = extern struct {
-    set_read_secret: ?fn (?*SSL, enum_ssl_encryption_level_t, ?*const SSL_CIPHER, [*c]const u8, usize) callconv(.C) c_int,
-    set_write_secret: ?fn (?*SSL, enum_ssl_encryption_level_t, ?*const SSL_CIPHER, [*c]const u8, usize) callconv(.C) c_int,
-    add_handshake_data: ?fn (?*SSL, enum_ssl_encryption_level_t, [*c]const u8, usize) callconv(.C) c_int,
-    flush_flight: ?fn (?*SSL) callconv(.C) c_int,
-    send_alert: ?fn (?*SSL, enum_ssl_encryption_level_t, u8) callconv(.C) c_int,
+    set_read_secret: ?*const fn (?*SSL, enum_ssl_encryption_level_t, ?*const SSL_CIPHER, [*c]const u8, usize) callconv(.C) c_int,
+    set_write_secret: ?*const fn (?*SSL, enum_ssl_encryption_level_t, ?*const SSL_CIPHER, [*c]const u8, usize) callconv(.C) c_int,
+    add_handshake_data: ?*const fn (?*SSL, enum_ssl_encryption_level_t, [*c]const u8, usize) callconv(.C) c_int,
+    flush_flight: ?*const fn (?*SSL) callconv(.C) c_int,
+    send_alert: ?*const fn (?*SSL, enum_ssl_encryption_level_t, u8) callconv(.C) c_int,
 };
 pub const SSL_QUIC_METHOD = struct_ssl_quic_method_st;
 pub const struct_ssl_session_st = opaque {};
@@ -542,9 +558,9 @@ pub const ssl_ticket_aead_ignore_ticket: c_int = 2;
 pub const ssl_ticket_aead_error: c_int = 3;
 pub const enum_ssl_ticket_aead_result_t = c_uint;
 pub const struct_ssl_ticket_aead_method_st = extern struct {
-    max_overhead: ?fn (?*SSL) callconv(.C) usize,
-    seal: ?fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) c_int,
-    open: ?fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) enum_ssl_ticket_aead_result_t,
+    max_overhead: ?*const fn (?*SSL) callconv(.C) usize,
+    seal: ?*const fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) c_int,
+    open: ?*const fn (?*SSL, [*c]u8, [*c]usize, usize, [*c]const u8, usize) callconv(.C) enum_ssl_ticket_aead_result_t,
 };
 pub const SSL_TICKET_AEAD_METHOD = struct_ssl_ticket_aead_method_st;
 pub const struct_st_ERR_FNS = opaque {};
@@ -589,7 +605,7 @@ pub const X509_STORE = struct_x509_store_st;
 pub const struct_x509_trust_st = extern struct {
     trust: c_int,
     flags: c_int,
-    check_trust: ?fn ([*c]struct_x509_trust_st, ?*X509, c_int) callconv(.C) c_int,
+    check_trust: ?*const fn ([*c]struct_x509_trust_st, ?*X509, c_int) callconv(.C) c_int,
     name: [*c]u8,
     arg1: c_int,
     arg2: ?*anyopaque,
@@ -611,10 +627,10 @@ pub const struct___sFILE = extern struct {
     _bf: struct___sbuf,
     _lbfsize: c_int,
     _cookie: ?*anyopaque,
-    _close: ?fn (?*anyopaque) callconv(.C) c_int,
-    _read: ?fn (?*anyopaque, [*c]u8, c_int) callconv(.C) c_int,
-    _seek: ?fn (?*anyopaque, fpos_t, c_int) callconv(.C) fpos_t,
-    _write: ?fn (?*anyopaque, [*c]const u8, c_int) callconv(.C) c_int,
+    _close: ?*const fn (?*anyopaque) callconv(.C) c_int,
+    _read: ?*const fn (?*anyopaque, [*c]u8, c_int) callconv(.C) c_int,
+    _seek: ?*const fn (?*anyopaque, fpos_t, c_int) callconv(.C) fpos_t,
+    _write: ?*const fn (?*anyopaque, [*c]const u8, c_int) callconv(.C) c_int,
     _ub: struct___sbuf,
     _extra: ?*struct___sFILEX,
     _ur: c_int,
@@ -636,7 +652,7 @@ pub extern fn BUF_MEM_append(buf: [*c]BUF_MEM, in: ?*const anyopaque, len: usize
 pub extern fn BUF_strdup(str: [*c]const u8) [*c]u8;
 pub extern fn BUF_strnlen(str: [*c]const u8, max_len: usize) usize;
 pub extern fn BUF_strndup(str: [*c]const u8, size: usize) [*c]u8;
-pub extern fn BUF_memdup(data: ?*const anyopaque, size: usize) ?*anyopaque;
+pub extern fn BUF_memdup(data: ?[*]const u8, size: usize) ?*anyopaque;
 pub extern fn BUF_strlcpy(dst: [*c]u8, src: [*c]const u8, dst_size: usize) usize;
 pub extern fn BUF_strlcat(dst: [*c]u8, src: [*c]const u8, dst_size: usize) usize;
 pub extern fn ERR_load_BIO_strings() void;
@@ -656,7 +672,7 @@ pub extern fn ERR_peek_last_error_line_data(file: [*c][*c]const u8, line: [*c]c_
 pub extern fn ERR_error_string_n(packed_error: u32, buf: [*c]u8, len: usize) [*c]u8;
 pub extern fn ERR_lib_error_string(packed_error: u32) [*c]const u8;
 pub extern fn ERR_reason_error_string(packed_error: u32) [*c]const u8;
-pub const ERR_print_errors_callback_t = ?fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) c_int;
+pub const ERR_print_errors_callback_t = ?*const fn ([*c]const u8, usize, ?*anyopaque) callconv(.C) c_int;
 pub extern fn ERR_print_errors_cb(callback: ERR_print_errors_callback_t, ctx: ?*anyopaque) void;
 pub extern fn ERR_print_errors_fp(file: [*c]FILE) void;
 pub extern fn ERR_clear_error() void;
@@ -706,9 +722,9 @@ pub extern fn ERR_clear_system_error() void;
 pub extern fn ERR_put_error(library: c_int, unused: c_int, reason: c_int, file: [*c]const u8, line: c_uint) void;
 pub extern fn ERR_add_error_data(count: c_uint, ...) void;
 pub extern fn ERR_add_error_dataf(format: [*c]const u8, ...) void;
-pub const stack_free_func = ?fn (?*anyopaque) callconv(.C) void;
-pub const stack_copy_func = ?fn (?*anyopaque) callconv(.C) ?*anyopaque;
-pub const stack_cmp_func = ?fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int;
+pub const stack_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
+pub const stack_copy_func = ?*const fn (?*anyopaque) callconv(.C) ?*anyopaque;
+pub const stack_cmp_func = ?*const fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int;
 pub const struct_stack_st = extern struct {
     num: usize,
     data: [*c]?*anyopaque,
@@ -724,11 +740,11 @@ pub extern fn sk_zero(sk: [*c]_STACK) void;
 pub extern fn sk_value(sk: [*c]const _STACK, i: usize) ?*anyopaque;
 pub extern fn sk_set(sk: [*c]_STACK, i: usize, p: ?*anyopaque) ?*anyopaque;
 pub extern fn sk_free(sk: [*c]_STACK) void;
-pub extern fn sk_pop_free_ex(sk: [*c]_STACK, call_free_func: ?fn (stack_free_func, ?*anyopaque) callconv(.C) void, free_func: stack_free_func) void;
+pub extern fn sk_pop_free_ex(sk: [*c]_STACK, call_free_func: ?*const fn (stack_free_func, ?*anyopaque) callconv(.C) void, free_func: stack_free_func) void;
 pub extern fn sk_insert(sk: [*c]_STACK, p: ?*anyopaque, where: usize) usize;
 pub extern fn sk_delete(sk: [*c]_STACK, where: usize) ?*anyopaque;
 pub extern fn sk_delete_ptr(sk: [*c]_STACK, p: ?*const anyopaque) ?*anyopaque;
-pub extern fn sk_find(sk: [*c]const _STACK, out_index: [*c]usize, p: ?*const anyopaque, call_cmp_func: ?fn (stack_cmp_func, [*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int) c_int;
+pub extern fn sk_find(sk: [*c]const _STACK, out_index: [*c]usize, p: ?*const anyopaque, call_cmp_func: ?*const fn (stack_cmp_func, [*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int) c_int;
 pub extern fn sk_shift(sk: [*c]_STACK) ?*anyopaque;
 pub extern fn sk_push(sk: [*c]_STACK, p: ?*anyopaque) usize;
 pub extern fn sk_pop(sk: [*c]_STACK) ?*anyopaque;
@@ -736,12 +752,12 @@ pub extern fn sk_dup(sk: [*c]const _STACK) [*c]_STACK;
 pub extern fn sk_sort(sk: [*c]_STACK) void;
 pub extern fn sk_is_sorted(sk: [*c]const _STACK) c_int;
 pub extern fn sk_set_cmp_func(sk: [*c]_STACK, comp: stack_cmp_func) stack_cmp_func;
-pub extern fn sk_deep_copy(sk: [*c]const _STACK, call_copy_func: ?fn (stack_copy_func, ?*anyopaque) callconv(.C) ?*anyopaque, copy_func: stack_copy_func, call_free_func: ?fn (stack_free_func, ?*anyopaque) callconv(.C) void, free_func: stack_free_func) [*c]_STACK;
+pub extern fn sk_deep_copy(sk: [*c]const _STACK, call_copy_func: ?*const fn (stack_copy_func, ?*anyopaque) callconv(.C) ?*anyopaque, copy_func: stack_copy_func, call_free_func: ?*const fn (stack_free_func, ?*anyopaque) callconv(.C) void, free_func: stack_free_func) [*c]_STACK;
 pub extern fn sk_pop_free(sk: [*c]_STACK, free_func: stack_free_func) void;
 pub const OPENSSL_STRING = [*c]u8;
-pub const stack_void_free_func = ?fn (?*anyopaque) callconv(.C) void;
-pub const stack_void_copy_func = ?fn (?*anyopaque) callconv(.C) ?*anyopaque;
-pub const stack_void_cmp_func = ?fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int;
+pub const stack_void_free_func = ?*const fn (?*anyopaque) callconv(.C) void;
+pub const stack_void_copy_func = ?*const fn (?*anyopaque) callconv(.C) ?*anyopaque;
+pub const stack_void_cmp_func = ?*const fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int;
 pub fn sk_void_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -847,16 +863,16 @@ pub fn sk_void_set_cmp_func(arg_sk: ?*struct_stack_st_void, arg_comp: stack_void
     var comp = arg_comp;
     return @ptrCast(stack_void_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_void_deep_copy(arg_sk: ?*const struct_stack_st_void, arg_copy_func: ?fn (?*anyopaque) callconv(.C) ?*anyopaque, arg_free_func: ?fn (?*anyopaque) callconv(.C) void) callconv(.C) ?*struct_stack_st_void {
+pub fn sk_void_deep_copy(arg_sk: ?*const struct_stack_st_void, arg_copy_func: ?*const fn (?*anyopaque) callconv(.C) ?*anyopaque, arg_free_func: ?*const fn (?*anyopaque) callconv(.C) void) callconv(.C) ?*struct_stack_st_void {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_void, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_void_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_void_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 } // /Users/jarred/Code/bun/src/deps/boringssl/include/openssl/type_check.h:75:42: warning: ignoring StaticAssert declaration
 pub const struct_stack_st_OPENSSL_STRING = opaque {};
-pub const stack_OPENSSL_STRING_free_func = ?fn (OPENSSL_STRING) callconv(.C) void;
-pub const stack_OPENSSL_STRING_copy_func = ?fn (OPENSSL_STRING) callconv(.C) OPENSSL_STRING;
-pub const stack_OPENSSL_STRING_cmp_func = ?fn ([*c]const OPENSSL_STRING, [*c]const OPENSSL_STRING) callconv(.C) c_int;
+pub const stack_OPENSSL_STRING_free_func = ?*const fn (OPENSSL_STRING) callconv(.C) void;
+pub const stack_OPENSSL_STRING_copy_func = ?*const fn (OPENSSL_STRING) callconv(.C) OPENSSL_STRING;
+pub const stack_OPENSSL_STRING_cmp_func = ?*const fn ([*c]const OPENSSL_STRING, [*c]const OPENSSL_STRING) callconv(.C) c_int;
 pub fn sk_OPENSSL_STRING_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -960,41 +976,41 @@ pub fn sk_OPENSSL_STRING_set_cmp_func(arg_sk: ?*struct_stack_st_OPENSSL_STRING, 
     var comp = arg_comp;
     return @ptrCast(stack_OPENSSL_STRING_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]const OPENSSL_STRING, [*c]const OPENSSL_STRING) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_OPENSSL_STRING_deep_copy(arg_sk: ?*const struct_stack_st_OPENSSL_STRING, arg_copy_func: ?fn (OPENSSL_STRING) callconv(.C) OPENSSL_STRING, arg_free_func: ?fn (OPENSSL_STRING) callconv(.C) void) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
+pub fn sk_OPENSSL_STRING_deep_copy(arg_sk: ?*const struct_stack_st_OPENSSL_STRING, arg_copy_func: ?*const fn (OPENSSL_STRING) callconv(.C) OPENSSL_STRING, arg_free_func: ?*const fn (OPENSSL_STRING) callconv(.C) void) callconv(.C) ?*struct_stack_st_OPENSSL_STRING {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_OPENSSL_STRING, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_OPENSSL_STRING_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_OPENSSL_STRING_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
-pub const CRYPTO_EX_free = fn (?*anyopaque, ?*anyopaque, [*c]CRYPTO_EX_DATA, c_int, c_long, ?*anyopaque) callconv(.C) void;
+pub const CRYPTO_EX_free = *const fn (?*anyopaque, ?*anyopaque, [*c]CRYPTO_EX_DATA, c_int, c_long, ?*anyopaque) callconv(.C) void;
 pub extern fn CRYPTO_cleanup_all_ex_data() void;
-pub const CRYPTO_EX_dup = fn ([*c]CRYPTO_EX_DATA, [*c]const CRYPTO_EX_DATA, [*c]?*anyopaque, c_int, c_long, ?*anyopaque) callconv(.C) c_int;
+pub const CRYPTO_EX_dup = *const fn ([*c]CRYPTO_EX_DATA, [*c]const CRYPTO_EX_DATA, [*c]?*anyopaque, c_int, c_long, ?*anyopaque) callconv(.C) c_int;
 pub const CRYPTO_EX_unused = c_int;
 pub extern fn CRYPTO_num_locks() c_int;
-pub extern fn CRYPTO_set_locking_callback(func: ?fn (c_int, c_int, [*c]const u8, c_int) callconv(.C) void) void;
-pub extern fn CRYPTO_set_add_lock_callback(func: ?fn ([*c]c_int, c_int, c_int, [*c]const u8, c_int) callconv(.C) c_int) void;
-pub extern fn CRYPTO_get_locking_callback() ?fn (c_int, c_int, [*c]const u8, c_int) callconv(.C) void;
+pub extern fn CRYPTO_set_locking_callback(func: ?*const fn (c_int, c_int, [*c]const u8, c_int) callconv(.C) void) void;
+pub extern fn CRYPTO_set_add_lock_callback(func: ?*const fn ([*c]c_int, c_int, c_int, [*c]const u8, c_int) callconv(.C) c_int) void;
+pub extern fn CRYPTO_get_locking_callback() ?*const fn (c_int, c_int, [*c]const u8, c_int) callconv(.C) void;
 pub extern fn CRYPTO_get_lock_name(lock_num: c_int) [*c]const u8;
-pub extern fn CRYPTO_THREADID_set_callback(threadid_func: ?fn ([*c]CRYPTO_THREADID) callconv(.C) void) c_int;
+pub extern fn CRYPTO_THREADID_set_callback(threadid_func: ?*const fn ([*c]CRYPTO_THREADID) callconv(.C) void) c_int;
 pub extern fn CRYPTO_THREADID_set_numeric(id: [*c]CRYPTO_THREADID, val: c_ulong) void;
 pub extern fn CRYPTO_THREADID_set_pointer(id: [*c]CRYPTO_THREADID, ptr: ?*anyopaque) void;
 pub extern fn CRYPTO_THREADID_current(id: [*c]CRYPTO_THREADID) void;
-pub extern fn CRYPTO_set_id_callback(func: ?fn () callconv(.C) c_ulong) void;
+pub extern fn CRYPTO_set_id_callback(func: ?*const fn () callconv(.C) c_ulong) void;
 pub const struct_CRYPTO_dynlock_value = opaque {};
 pub const CRYPTO_dynlock = extern struct {
     references: c_int,
     data: ?*struct_CRYPTO_dynlock_value,
 };
-pub extern fn CRYPTO_set_dynlock_create_callback(dyn_create_function: ?fn ([*c]const u8, c_int) callconv(.C) ?*struct_CRYPTO_dynlock_value) void;
-pub extern fn CRYPTO_set_dynlock_lock_callback(dyn_lock_function: ?fn (c_int, ?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void) void;
-pub extern fn CRYPTO_set_dynlock_destroy_callback(dyn_destroy_function: ?fn (?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void) void;
-pub extern fn CRYPTO_get_dynlock_create_callback() ?fn ([*c]const u8, c_int) callconv(.C) ?*struct_CRYPTO_dynlock_value;
-pub extern fn CRYPTO_get_dynlock_lock_callback() ?fn (c_int, ?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void;
-pub extern fn CRYPTO_get_dynlock_destroy_callback() ?fn (?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void;
+pub extern fn CRYPTO_set_dynlock_create_callback(dyn_create_function: ?*const fn ([*c]const u8, c_int) callconv(.C) ?*struct_CRYPTO_dynlock_value) void;
+pub extern fn CRYPTO_set_dynlock_lock_callback(dyn_lock_function: ?*const fn (c_int, ?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void) void;
+pub extern fn CRYPTO_set_dynlock_destroy_callback(dyn_destroy_function: ?*const fn (?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void) void;
+pub extern fn CRYPTO_get_dynlock_create_callback() ?*const fn ([*c]const u8, c_int) callconv(.C) ?*struct_CRYPTO_dynlock_value;
+pub extern fn CRYPTO_get_dynlock_lock_callback() ?*const fn (c_int, ?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void;
+pub extern fn CRYPTO_get_dynlock_destroy_callback() ?*const fn (?*struct_CRYPTO_dynlock_value, [*c]const u8, c_int) callconv(.C) void;
 pub const struct_stack_st_BIO = opaque {};
-pub const stack_BIO_free_func = ?fn ([*c]BIO) callconv(.C) void;
-pub const stack_BIO_copy_func = ?fn ([*c]BIO) callconv(.C) [*c]BIO;
-pub const stack_BIO_cmp_func = ?fn ([*c][*c]const BIO, [*c][*c]const BIO) callconv(.C) c_int;
+pub const stack_BIO_free_func = ?*const fn ([*c]BIO) callconv(.C) void;
+pub const stack_BIO_copy_func = ?*const fn ([*c]BIO) callconv(.C) [*c]BIO;
+pub const stack_BIO_cmp_func = ?*const fn ([*c][*c]const BIO, [*c][*c]const BIO) callconv(.C) c_int;
 pub fn sk_BIO_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -1100,7 +1116,7 @@ pub fn sk_BIO_set_cmp_func(arg_sk: ?*struct_stack_st_BIO, arg_comp: stack_BIO_cm
     var comp = arg_comp;
     return @ptrCast(stack_BIO_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const BIO, [*c][*c]const BIO) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_BIO_deep_copy(arg_sk: ?*const struct_stack_st_BIO, arg_copy_func: ?fn ([*c]BIO) callconv(.C) [*c]BIO, arg_free_func: ?fn ([*c]BIO) callconv(.C) void) callconv(.C) ?*struct_stack_st_BIO {
+pub fn sk_BIO_deep_copy(arg_sk: ?*const struct_stack_st_BIO, arg_copy_func: ?*const fn ([*c]BIO) callconv(.C) [*c]BIO, arg_free_func: ?*const fn ([*c]BIO) callconv(.C) void) callconv(.C) ?*struct_stack_st_BIO {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -1112,8 +1128,8 @@ pub extern fn BIO_vfree(bio: *BIO) void;
 pub extern fn BIO_up_ref(bio: *BIO) c_int;
 pub extern fn BIO_read(bio: *BIO, data: ?*anyopaque, len: c_int) c_int;
 pub extern fn BIO_gets(bio: *BIO, buf: [*c]u8, size: c_int) c_int;
-pub extern fn BIO_write(bio: *BIO, data: ?*const anyopaque, len: c_int) c_int;
-pub extern fn BIO_write_all(bio: *BIO, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn BIO_write(bio: *BIO, data: ?[*]const u8, len: c_int) c_int;
+pub extern fn BIO_write_all(bio: *BIO, data: ?[*]const u8, len: usize) c_int;
 pub extern fn BIO_puts(bio: *BIO, buf: [*c]const u8) c_int;
 pub extern fn BIO_flush(bio: *BIO) c_int;
 pub extern fn BIO_ctrl(bio: *BIO, cmd: c_int, larg: c_long, parg: ?*anyopaque) c_long;
@@ -1204,7 +1220,7 @@ pub extern fn BIO_set_retry_special(bio: [*c]BIO) void;
 pub extern fn BIO_set_write_buffer_size(bio: [*c]BIO, buffer_size: c_int) c_int;
 pub extern fn BIO_set_shutdown(bio: [*c]BIO, shutdown: c_int) void;
 pub extern fn BIO_get_shutdown(bio: [*c]BIO) c_int;
-pub extern fn BIO_meth_set_puts(method: *BIO_METHOD, puts: ?fn ([*c]BIO, [*c]const u8) callconv(.C) c_int) c_int;
+pub extern fn BIO_meth_set_puts(method: *BIO_METHOD, puts: ?*const fn ([*c]BIO, [*c]const u8) callconv(.C) c_int) c_int;
 pub extern fn EVP_EncodeBlock(dst: [*c]u8, src: [*c]const u8, src_len: usize) usize;
 pub extern fn EVP_EncodedLength(out_len: [*c]usize, len: usize) c_int;
 pub extern fn EVP_DecodedLength(out_len: [*c]usize, len: usize) c_int;
@@ -1314,19 +1330,32 @@ pub extern fn EVP_blake2b256() *const EVP_MD;
 pub extern fn EVP_md5_sha1() *const EVP_MD;
 pub extern fn EVP_get_digestbynid(nid: c_int) ?*const EVP_MD;
 pub extern fn EVP_get_digestbyobj(obj: ?*const ASN1_OBJECT) ?*const EVP_MD;
-pub extern fn EVP_MD_CTX_init(ctx: [*c]EVP_MD_CTX) void;
-pub extern fn EVP_MD_CTX_new() [*c]EVP_MD_CTX;
-pub extern fn EVP_MD_CTX_cleanup(ctx: [*c]EVP_MD_CTX) c_int;
-pub extern fn EVP_MD_CTX_free(ctx: [*c]EVP_MD_CTX) void;
+pub extern fn EVP_MD_CTX_init(ctx: *EVP_MD_CTX) void;
+pub extern fn EVP_MD_CTX_new() *EVP_MD_CTX;
+pub extern fn EVP_MD_CTX_cleanup(ctx: *EVP_MD_CTX) c_int;
+pub extern fn EVP_MD_CTX_free(ctx: *EVP_MD_CTX) void;
 pub extern fn EVP_MD_CTX_copy_ex(out: [*c]EVP_MD_CTX, in: [*c]const EVP_MD_CTX) c_int;
 pub extern fn EVP_MD_CTX_move(out: [*c]EVP_MD_CTX, in: [*c]EVP_MD_CTX) void;
-pub extern fn EVP_MD_CTX_reset(ctx: [*c]EVP_MD_CTX) c_int;
-pub extern fn EVP_DigestInit_ex(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD, engine: ?*ENGINE) c_int;
-pub extern fn EVP_DigestInit(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
-pub extern fn EVP_DigestUpdate(ctx: [*c]EVP_MD_CTX, data: ?*const anyopaque, len: usize) c_int;
-pub extern fn EVP_DigestFinal_ex(ctx: [*c]EVP_MD_CTX, md_out: [*c]u8, out_size: [*c]c_uint) c_int;
-pub extern fn EVP_DigestFinal(ctx: [*c]EVP_MD_CTX, md_out: [*c]u8, out_size: [*c]c_uint) c_int;
-pub extern fn EVP_Digest(data: ?*const anyopaque, len: usize, md_out: [*c]u8, md_out_size: [*c]c_uint, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
+pub extern fn EVP_MD_CTX_reset(ctx: *EVP_MD_CTX) c_int;
+pub extern fn EVP_DigestInit_ex(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD, engine: ?*ENGINE) c_int;
+pub extern fn EVP_DigestInit(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
+/// EVP_DigestUpdate hashes |len| bytes from |data| into the hashing operation
+/// in |ctx|. It returns one.
+pub extern fn EVP_DigestUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
+/// EVP_DigestFinal_ex finishes the digest in |ctx| and writes the output to
+/// |md_out|. |EVP_MD_CTX_size| bytes are written, which is at most
+/// |EVP_MAX_MD_SIZE|. If |out_size| is not NULL then |*out_size| is set to the
+/// number of bytes written. It returns one. After this call, the hash cannot be
+/// updated or finished again until |EVP_DigestInit_ex| is called to start
+/// another hashing operation.
+pub extern fn EVP_DigestFinal_ex(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?*u32) c_int;
+pub extern fn EVP_DigestFinal(ctx: *EVP_MD_CTX, md_out: [*]u8, out_size: ?*u32) c_int;
+/// EVP_Digest performs a complete hashing operation in one call. It hashes |len|
+/// bytes from |data| and writes the digest to |md_out|. |EVP_MD_CTX_size| bytes
+/// are written, which is at most |EVP_MAX_MD_SIZE|. If |out_size| is not NULL
+/// then |*out_size| is set to the number of bytes written. It returns one on
+/// success and zero otherwise.
+pub extern fn EVP_Digest(data: ?[*]const u8, len: usize, md_out: [*c]u8, md_out_size: [*c]c_uint, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
 pub extern fn EVP_MD_type(md: ?*const EVP_MD) c_int;
 pub extern fn EVP_MD_flags(md: ?*const EVP_MD) u32;
 pub extern fn EVP_MD_size(md: ?*const EVP_MD) usize;
@@ -1341,11 +1370,11 @@ pub extern fn EVP_MD_CTX_copy(out: [*c]EVP_MD_CTX, in: [*c]const EVP_MD_CTX) c_i
 pub extern fn EVP_add_digest(digest: ?*const EVP_MD) c_int;
 pub extern fn EVP_get_digestbyname([*c]const u8) ?*const EVP_MD;
 pub extern fn EVP_dss1() ?*const EVP_MD;
-pub extern fn EVP_MD_CTX_create() [*c]EVP_MD_CTX;
-pub extern fn EVP_MD_CTX_destroy(ctx: [*c]EVP_MD_CTX) void;
-pub extern fn EVP_DigestFinalXOF(ctx: [*c]EVP_MD_CTX, out: [*c]u8, len: usize) c_int;
+pub extern fn EVP_MD_CTX_create() ?*EVP_MD_CTX;
+pub extern fn EVP_MD_CTX_destroy(ctx: *EVP_MD_CTX) void;
+pub extern fn EVP_DigestFinalXOF(ctx: *EVP_MD_CTX, out: [*c]u8, len: usize) c_int;
 pub extern fn EVP_MD_meth_get_flags(md: ?*const EVP_MD) u32;
-pub extern fn EVP_MD_CTX_set_flags(ctx: [*c]EVP_MD_CTX, flags: c_int) void;
+pub extern fn EVP_MD_CTX_set_flags(ctx: *EVP_MD_CTX, flags: c_int) void;
 pub extern fn EVP_MD_nid(md: ?*const EVP_MD) c_int;
 pub extern fn EVP_aead_aes_128_gcm() ?*const EVP_AEAD;
 pub extern fn EVP_aead_aes_192_gcm() ?*const EVP_AEAD;
@@ -1436,28 +1465,55 @@ pub extern fn EVP_PKEY_new_raw_private_key(@"type": c_int, unused: ?*ENGINE, in:
 pub extern fn EVP_PKEY_new_raw_public_key(@"type": c_int, unused: ?*ENGINE, in: [*c]const u8, len: usize) [*c]EVP_PKEY;
 pub extern fn EVP_PKEY_get_raw_private_key(pkey: [*c]const EVP_PKEY, out: [*c]u8, out_len: [*c]usize) c_int;
 pub extern fn EVP_PKEY_get_raw_public_key(pkey: [*c]const EVP_PKEY, out: [*c]u8, out_len: [*c]usize) c_int;
-pub extern fn EVP_DigestSignInit(ctx: [*c]EVP_MD_CTX, pctx: [*c]?*EVP_PKEY_CTX, @"type": ?*const EVP_MD, e: ?*ENGINE, pkey: [*c]EVP_PKEY) c_int;
-pub extern fn EVP_DigestSignUpdate(ctx: [*c]EVP_MD_CTX, data: ?*const anyopaque, len: usize) c_int;
-pub extern fn EVP_DigestSignFinal(ctx: [*c]EVP_MD_CTX, out_sig: [*c]u8, out_sig_len: [*c]usize) c_int;
-pub extern fn EVP_DigestSign(ctx: [*c]EVP_MD_CTX, out_sig: [*c]u8, out_sig_len: [*c]usize, data: [*c]const u8, data_len: usize) c_int;
-pub extern fn EVP_DigestVerifyInit(ctx: [*c]EVP_MD_CTX, pctx: [*c]?*EVP_PKEY_CTX, @"type": ?*const EVP_MD, e: ?*ENGINE, pkey: [*c]EVP_PKEY) c_int;
-pub extern fn EVP_DigestVerifyUpdate(ctx: [*c]EVP_MD_CTX, data: ?*const anyopaque, len: usize) c_int;
-pub extern fn EVP_DigestVerifyFinal(ctx: [*c]EVP_MD_CTX, sig: [*c]const u8, sig_len: usize) c_int;
-pub extern fn EVP_DigestVerify(ctx: [*c]EVP_MD_CTX, sig: [*c]const u8, sig_len: usize, data: [*c]const u8, len: usize) c_int;
-pub extern fn EVP_SignInit_ex(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
-pub extern fn EVP_SignInit(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
-pub extern fn EVP_SignUpdate(ctx: [*c]EVP_MD_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn EVP_DigestSignInit(ctx: *EVP_MD_CTX, pctx: [*c]?*EVP_PKEY_CTX, @"type": ?*const EVP_MD, e: ?*ENGINE, pkey: [*c]EVP_PKEY) c_int;
+pub extern fn EVP_DigestSignUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
+pub extern fn EVP_DigestSignFinal(ctx: *EVP_MD_CTX, out_sig: [*c]u8, out_sig_len: [*c]usize) c_int;
+pub extern fn EVP_DigestSign(ctx: *EVP_MD_CTX, out_sig: [*c]u8, out_sig_len: [*c]usize, data: [*c]const u8, data_len: usize) c_int;
+pub extern fn EVP_DigestVerifyInit(ctx: *EVP_MD_CTX, pctx: [*c]?*EVP_PKEY_CTX, @"type": ?*const EVP_MD, e: ?*ENGINE, pkey: [*c]EVP_PKEY) c_int;
+pub extern fn EVP_DigestVerifyUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
+pub extern fn EVP_DigestVerifyFinal(ctx: *EVP_MD_CTX, sig: [*c]const u8, sig_len: usize) c_int;
+pub extern fn EVP_DigestVerify(ctx: *EVP_MD_CTX, sig: [*c]const u8, sig_len: usize, data: [*c]const u8, len: usize) c_int;
+pub extern fn EVP_SignInit_ex(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
+pub extern fn EVP_SignInit(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
+pub extern fn EVP_SignUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn EVP_SignFinal(ctx: [*c]const EVP_MD_CTX, sig: [*c]u8, out_sig_len: [*c]c_uint, pkey: [*c]EVP_PKEY) c_int;
-pub extern fn EVP_VerifyInit_ex(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
-pub extern fn EVP_VerifyInit(ctx: [*c]EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
-pub extern fn EVP_VerifyUpdate(ctx: [*c]EVP_MD_CTX, data: ?*const anyopaque, len: usize) c_int;
-pub extern fn EVP_VerifyFinal(ctx: [*c]EVP_MD_CTX, sig: [*c]const u8, sig_len: usize, pkey: [*c]EVP_PKEY) c_int;
+pub extern fn EVP_VerifyInit_ex(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD, impl: ?*ENGINE) c_int;
+pub extern fn EVP_VerifyInit(ctx: *EVP_MD_CTX, @"type": ?*const EVP_MD) c_int;
+pub extern fn EVP_VerifyUpdate(ctx: *EVP_MD_CTX, data: ?[*]const u8, len: usize) c_int;
+pub extern fn EVP_VerifyFinal(ctx: *EVP_MD_CTX, sig: [*c]const u8, sig_len: usize, pkey: [*c]EVP_PKEY) c_int;
 pub extern fn EVP_PKEY_print_public(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: [*c]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
-pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
+/// EVP_PBE_scrypt expands |password| into a secret key of length |key_len| using
+/// scrypt, as described in RFC 7914, and writes the result to |out_key|. It
+/// returns one on success and zero on allocation failure, if the memory required
+/// for the operation exceeds |max_mem|, or if any of the parameters are invalid
+/// as described below.
+///
+/// |N|, |r|, and |p| are as described in RFC 7914 section 6. They determine the
+/// cost of the operation. If |max_mem| is zero, a defult limit of 32MiB will be
+/// used.
+///
+/// The parameters are considered invalid under any of the following conditions:
+/// - |r| or |p| are zero
+/// - |p| > (2^30 - 1) / |r|
+/// - |N| is not a power of two
+/// - |N| > 2^32
+/// - |N| > 2^(128 * |r| / 8)
+pub extern fn EVP_PBE_scrypt(
+    password: [*c]const u8,
+    password_len: usize,
+    salt: [*c]const u8,
+    salt_len: usize,
+    N: u64,
+    r: u64,
+    p: u64,
+    max_mem: usize,
+    out_key: [*c]u8,
+    key_len: usize,
+) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_new_id(id: c_int, e: ?*ENGINE) ?*EVP_PKEY_CTX;
 pub extern fn EVP_PKEY_CTX_free(ctx: ?*EVP_PKEY_CTX) void;
@@ -1501,9 +1557,9 @@ pub extern fn OPENSSL_add_all_algorithms_conf() void;
 pub extern fn OpenSSL_add_all_ciphers() void;
 pub extern fn OpenSSL_add_all_digests() void;
 pub extern fn EVP_cleanup() void;
-pub extern fn EVP_CIPHER_do_all_sorted(callback: ?fn ([*c]const EVP_CIPHER, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn EVP_MD_do_all_sorted(callback: ?fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn EVP_MD_do_all(callback: ?fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_CIPHER_do_all_sorted(callback: ?*const fn ([*c]const EVP_CIPHER, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_MD_do_all_sorted(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn EVP_MD_do_all(callback: ?*const fn (?*const EVP_MD, [*c]const u8, [*c]const u8, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
 pub extern fn i2d_PrivateKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
 pub extern fn i2d_PublicKey(key: [*c]const EVP_PKEY, outp: [*c][*c]u8) c_int;
 pub extern fn d2i_PrivateKey(@"type": c_int, out: [*c][*c]EVP_PKEY, inp: [*c][*c]const u8, len: c_long) [*c]EVP_PKEY;
@@ -1666,7 +1722,7 @@ pub extern fn BN_pseudo_rand(rnd: [*c]BIGNUM, bits: c_int, top: c_int, bottom: c
 pub extern fn BN_rand_range(rnd: [*c]BIGNUM, range: [*c]const BIGNUM) c_int;
 pub extern fn BN_rand_range_ex(r: [*c]BIGNUM, min_inclusive: u64, max_exclusive: [*c]const BIGNUM) c_int;
 pub extern fn BN_pseudo_rand_range(rnd: [*c]BIGNUM, range: [*c]const BIGNUM) c_int;
-pub extern fn BN_GENCB_set(callback: [*c]BN_GENCB, f: ?fn (c_int, c_int, [*c]BN_GENCB) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn BN_GENCB_set(callback: [*c]BN_GENCB, f: ?*const fn (c_int, c_int, [*c]BN_GENCB) callconv(.C) c_int, arg: ?*anyopaque) void;
 pub extern fn BN_GENCB_call(callback: [*c]BN_GENCB, event: c_int, n: c_int) c_int;
 pub extern fn BN_generate_prime_ex(ret: [*c]BIGNUM, bits: c_int, safe: c_int, add: [*c]const BIGNUM, rem: [*c]const BIGNUM, cb: [*c]BN_GENCB) c_int;
 pub const bn_probably_prime: c_int = 0;
@@ -1703,8 +1759,8 @@ pub extern fn BN_bn2binpad(in: [*c]const BIGNUM, out: [*c]u8, len: c_int) c_int;
 pub extern fn BN_num_bits_word(l: u64) c_uint;
 pub extern fn ASN1_tag2bit(tag: c_int) c_ulong;
 pub extern fn ASN1_tag2str(tag: c_int) [*c]const u8;
-pub const d2i_of_void = fn ([*c]?*anyopaque, [*c][*c]const u8, c_long) callconv(.C) ?*anyopaque;
-pub const i2d_of_void = fn (?*const anyopaque, [*c][*c]u8) callconv(.C) c_int;
+pub const d2i_of_void = *const fn ([*c]?*anyopaque, [*c][*c]const u8, c_long) callconv(.C) ?*anyopaque;
+pub const i2d_of_void = *const fn (?*const anyopaque, [*c][*c]u8) callconv(.C) c_int;
 pub const ASN1_ITEM_EXP = ASN1_ITEM;
 pub extern fn ASN1_item_new(it: ?*const ASN1_ITEM) ?*ASN1_VALUE;
 pub extern fn ASN1_item_free(val: ?*ASN1_VALUE, it: ?*const ASN1_ITEM) void;
@@ -1732,7 +1788,7 @@ pub extern fn ASN1_STRING_get0_data(str: [*c]const ASN1_STRING) [*c]const u8;
 pub extern fn ASN1_STRING_data(str: [*c]ASN1_STRING) [*c]u8;
 pub extern fn ASN1_STRING_length(str: [*c]const ASN1_STRING) c_int;
 pub extern fn ASN1_STRING_cmp(a: [*c]const ASN1_STRING, b: [*c]const ASN1_STRING) c_int;
-pub extern fn ASN1_STRING_set(str: [*c]ASN1_STRING, data: ?*const anyopaque, len: c_int) c_int;
+pub extern fn ASN1_STRING_set(str: [*c]ASN1_STRING, data: ?[*]const u8, len: c_int) c_int;
 pub extern fn ASN1_STRING_set0(str: [*c]ASN1_STRING, data: ?*anyopaque, len: c_int) void;
 pub extern fn ASN1_BMPSTRING_new() [*c]ASN1_BMPSTRING;
 pub extern fn ASN1_GENERALSTRING_new() [*c]ASN1_GENERALSTRING;
@@ -1810,9 +1866,9 @@ pub extern fn ASN1_BIT_STRING_set_bit(str: [*c]ASN1_BIT_STRING, n: c_int, value:
 pub extern fn ASN1_BIT_STRING_get_bit(str: [*c]const ASN1_BIT_STRING, n: c_int) c_int;
 pub extern fn ASN1_BIT_STRING_check(str: [*c]const ASN1_BIT_STRING, flags: [*c]const u8, flags_len: c_int) c_int;
 pub const struct_stack_st_ASN1_INTEGER = opaque {};
-pub const stack_ASN1_INTEGER_free_func = ?fn ([*c]ASN1_INTEGER) callconv(.C) void;
-pub const stack_ASN1_INTEGER_copy_func = ?fn ([*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER;
-pub const stack_ASN1_INTEGER_cmp_func = ?fn ([*c][*c]const ASN1_INTEGER, [*c][*c]const ASN1_INTEGER) callconv(.C) c_int;
+pub const stack_ASN1_INTEGER_free_func = ?*const fn ([*c]ASN1_INTEGER) callconv(.C) void;
+pub const stack_ASN1_INTEGER_copy_func = ?*const fn ([*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER;
+pub const stack_ASN1_INTEGER_cmp_func = ?*const fn ([*c][*c]const ASN1_INTEGER, [*c][*c]const ASN1_INTEGER) callconv(.C) c_int;
 pub fn sk_ASN1_INTEGER_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -1918,7 +1974,7 @@ pub fn sk_ASN1_INTEGER_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_INTEGER, arg_
     var comp = arg_comp;
     return @ptrCast(stack_ASN1_INTEGER_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const ASN1_INTEGER, [*c][*c]const ASN1_INTEGER) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_ASN1_INTEGER_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_INTEGER, arg_copy_func: ?fn ([*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER, arg_free_func: ?fn ([*c]ASN1_INTEGER) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
+pub fn sk_ASN1_INTEGER_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_INTEGER, arg_copy_func: ?*const fn ([*c]ASN1_INTEGER) callconv(.C) [*c]ASN1_INTEGER, arg_free_func: ?*const fn ([*c]ASN1_INTEGER) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_INTEGER {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -1983,9 +2039,9 @@ pub extern fn d2i_ASN1_NULL(out: [*c]?*ASN1_NULL, inp: [*c][*c]const u8, len: c_
 pub extern fn i2d_ASN1_NULL(in: ?*const ASN1_NULL, outp: [*c][*c]u8) c_int;
 pub extern const ASN1_NULL_it: ASN1_ITEM;
 pub const struct_stack_st_ASN1_OBJECT = opaque {};
-pub const stack_ASN1_OBJECT_free_func = ?fn (?*ASN1_OBJECT) callconv(.C) void;
-pub const stack_ASN1_OBJECT_copy_func = ?fn (?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT;
-pub const stack_ASN1_OBJECT_cmp_func = ?fn ([*c]?*const ASN1_OBJECT, [*c]?*const ASN1_OBJECT) callconv(.C) c_int;
+pub const stack_ASN1_OBJECT_free_func = ?*const fn (?*ASN1_OBJECT) callconv(.C) void;
+pub const stack_ASN1_OBJECT_copy_func = ?*const fn (?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT;
+pub const stack_ASN1_OBJECT_cmp_func = ?*const fn ([*c]?*const ASN1_OBJECT, [*c]?*const ASN1_OBJECT) callconv(.C) c_int;
 pub fn sk_ASN1_OBJECT_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -2091,7 +2147,7 @@ pub fn sk_ASN1_OBJECT_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_OBJECT, arg_co
     var comp = arg_comp;
     return @ptrCast(stack_ASN1_OBJECT_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const ASN1_OBJECT, [*c]?*const ASN1_OBJECT) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_ASN1_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_OBJECT, arg_copy_func: ?fn (?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT, arg_free_func: ?fn (?*ASN1_OBJECT) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
+pub fn sk_ASN1_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_OBJECT, arg_copy_func: ?*const fn (?*ASN1_OBJECT) callconv(.C) ?*ASN1_OBJECT, arg_free_func: ?*const fn (?*ASN1_OBJECT) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_OBJECT {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -2104,9 +2160,9 @@ pub extern fn i2d_ASN1_OBJECT(a: ?*const ASN1_OBJECT, outp: [*c][*c]u8) c_int;
 pub extern fn c2i_ASN1_OBJECT(out: [*c]?*ASN1_OBJECT, inp: [*c][*c]const u8, len: c_long) ?*ASN1_OBJECT;
 pub extern const ASN1_OBJECT_it: ASN1_ITEM;
 pub const struct_stack_st_ASN1_TYPE = opaque {};
-pub const stack_ASN1_TYPE_free_func = ?fn ([*c]ASN1_TYPE) callconv(.C) void;
-pub const stack_ASN1_TYPE_copy_func = ?fn ([*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE;
-pub const stack_ASN1_TYPE_cmp_func = ?fn ([*c][*c]const ASN1_TYPE, [*c][*c]const ASN1_TYPE) callconv(.C) c_int;
+pub const stack_ASN1_TYPE_free_func = ?*const fn ([*c]ASN1_TYPE) callconv(.C) void;
+pub const stack_ASN1_TYPE_copy_func = ?*const fn ([*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE;
+pub const stack_ASN1_TYPE_cmp_func = ?*const fn ([*c][*c]const ASN1_TYPE, [*c][*c]const ASN1_TYPE) callconv(.C) c_int;
 pub fn sk_ASN1_TYPE_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -2212,7 +2268,7 @@ pub fn sk_ASN1_TYPE_set_cmp_func(arg_sk: ?*struct_stack_st_ASN1_TYPE, arg_comp: 
     var comp = arg_comp;
     return @ptrCast(stack_ASN1_TYPE_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const ASN1_TYPE, [*c][*c]const ASN1_TYPE) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_ASN1_TYPE_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_TYPE, arg_copy_func: ?fn ([*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE, arg_free_func: ?fn ([*c]ASN1_TYPE) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_TYPE {
+pub fn sk_ASN1_TYPE_deep_copy(arg_sk: ?*const struct_stack_st_ASN1_TYPE, arg_copy_func: ?*const fn ([*c]ASN1_TYPE) callconv(.C) [*c]ASN1_TYPE, arg_free_func: ?*const fn ([*c]ASN1_TYPE) callconv(.C) void) callconv(.C) ?*struct_stack_st_ASN1_TYPE {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -2283,7 +2339,7 @@ pub extern fn DH_check_pub_key(dh: [*c]const DH, pub_key: [*c]const BIGNUM, out_
 pub extern fn DHparams_dup(dh: [*c]const DH) [*c]DH;
 pub extern fn DH_parse_parameters(cbs: [*c]CBS) [*c]DH;
 pub extern fn DH_marshal_parameters(cbb: [*c]CBB, dh: [*c]const DH) c_int;
-pub extern fn DH_generate_parameters(prime_len: c_int, generator: c_int, callback: ?fn (c_int, c_int, ?*anyopaque) callconv(.C) void, cb_arg: ?*anyopaque) [*c]DH;
+pub extern fn DH_generate_parameters(prime_len: c_int, generator: c_int, callback: ?*const fn (c_int, c_int, ?*anyopaque) callconv(.C) void, cb_arg: ?*anyopaque) [*c]DH;
 pub extern fn d2i_DHparams(ret: [*c][*c]DH, inp: [*c][*c]const u8, len: c_long) [*c]DH;
 pub extern fn i2d_DHparams(in: [*c]const DH, outp: [*c][*c]u8) c_int;
 pub extern fn DH_compute_key(out: [*c]u8, peers_key: [*c]const BIGNUM, dh: [*c]DH) c_int;
@@ -2341,7 +2397,7 @@ pub extern fn d2i_DSAPrivateKey(out: [*c][*c]DSA, inp: [*c][*c]const u8, len: c_
 pub extern fn i2d_DSAPrivateKey(in: [*c]const DSA, outp: [*c][*c]u8) c_int;
 pub extern fn d2i_DSAparams(out: [*c][*c]DSA, inp: [*c][*c]const u8, len: c_long) [*c]DSA;
 pub extern fn i2d_DSAparams(in: [*c]const DSA, outp: [*c][*c]u8) c_int;
-pub extern fn DSA_generate_parameters(bits: c_int, seed: [*c]u8, seed_len: c_int, counter_ret: [*c]c_int, h_ret: [*c]c_ulong, callback: ?fn (c_int, c_int, ?*anyopaque) callconv(.C) void, cb_arg: ?*anyopaque) [*c]DSA;
+pub extern fn DSA_generate_parameters(bits: c_int, seed: [*c]u8, seed_len: c_int, counter_ret: [*c]c_int, h_ret: [*c]c_ulong, callback: ?*const fn (c_int, c_int, ?*anyopaque) callconv(.C) void, cb_arg: ?*anyopaque) [*c]DSA;
 pub const POINT_CONVERSION_COMPRESSED: c_int = 2;
 pub const POINT_CONVERSION_UNCOMPRESSED: c_int = 4;
 pub const POINT_CONVERSION_HYBRID: c_int = 6;
@@ -2434,7 +2490,7 @@ pub extern fn d2i_ECParameters(out_key: [*c]?*EC_KEY, inp: [*c][*c]const u8, len
 pub extern fn i2d_ECParameters(key: ?*const EC_KEY, outp: [*c][*c]u8) c_int;
 pub extern fn o2i_ECPublicKey(out_key: [*c]?*EC_KEY, inp: [*c][*c]const u8, len: c_long) ?*EC_KEY;
 pub extern fn i2o_ECPublicKey(key: ?*const EC_KEY, outp: [*c][*c]u8) c_int;
-pub extern fn ECDH_compute_key(out: ?*anyopaque, outlen: usize, pub_key: ?*const EC_POINT, priv_key: ?*const EC_KEY, kdf: ?fn (?*const anyopaque, usize, ?*anyopaque, [*c]usize) callconv(.C) ?*anyopaque) c_int;
+pub extern fn ECDH_compute_key(out: ?*anyopaque, outlen: usize, pub_key: ?*const EC_POINT, priv_key: ?*const EC_KEY, kdf: ?*const fn (?*const anyopaque, usize, ?*anyopaque, [*c]usize) callconv(.C) ?*anyopaque) c_int;
 pub extern fn ECDH_compute_key_fips(out: [*c]u8, out_len: usize, pub_key: ?*const EC_POINT, priv_key: ?*const EC_KEY) c_int;
 pub extern fn ECDSA_sign(@"type": c_int, digest: [*c]const u8, digest_len: usize, sig: [*c]u8, sig_len: [*c]c_uint, key: ?*const EC_KEY) c_int;
 pub extern fn ECDSA_verify(@"type": c_int, digest: [*c]const u8, digest_len: usize, sig: [*c]const u8, sig_len: usize, key: ?*const EC_KEY) c_int;
@@ -2553,12 +2609,12 @@ pub const struct_obj_name_st = extern struct {
     data: [*c]const u8,
 };
 pub const OBJ_NAME = struct_obj_name_st;
-pub extern fn OBJ_NAME_do_all_sorted(@"type": c_int, callback: ?fn ([*c]const OBJ_NAME, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
-pub extern fn OBJ_NAME_do_all(@"type": c_int, callback: ?fn ([*c]const OBJ_NAME, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn OBJ_NAME_do_all_sorted(@"type": c_int, callback: ?*const fn ([*c]const OBJ_NAME, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
+pub extern fn OBJ_NAME_do_all(@"type": c_int, callback: ?*const fn ([*c]const OBJ_NAME, ?*anyopaque) callconv(.C) void, arg: ?*anyopaque) void;
 pub extern fn OBJ_cleanup() void;
-pub const stack_CRYPTO_BUFFER_free_func = ?fn (?*CRYPTO_BUFFER) callconv(.C) void;
-pub const stack_CRYPTO_BUFFER_copy_func = ?fn (?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER;
-pub const stack_CRYPTO_BUFFER_cmp_func = ?fn ([*c]?*const CRYPTO_BUFFER, [*c]?*const CRYPTO_BUFFER) callconv(.C) c_int;
+pub const stack_CRYPTO_BUFFER_free_func = ?*const fn (?*CRYPTO_BUFFER) callconv(.C) void;
+pub const stack_CRYPTO_BUFFER_copy_func = ?*const fn (?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER;
+pub const stack_CRYPTO_BUFFER_cmp_func = ?*const fn ([*c]?*const CRYPTO_BUFFER, [*c]?*const CRYPTO_BUFFER) callconv(.C) c_int;
 pub fn sk_CRYPTO_BUFFER_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -2664,7 +2720,7 @@ pub fn sk_CRYPTO_BUFFER_set_cmp_func(arg_sk: ?*struct_stack_st_CRYPTO_BUFFER, ar
     var comp = arg_comp;
     return @ptrCast(stack_CRYPTO_BUFFER_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const CRYPTO_BUFFER, [*c]?*const CRYPTO_BUFFER) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_CRYPTO_BUFFER_deep_copy(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER, arg_copy_func: ?fn (?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER, arg_free_func: ?fn (?*CRYPTO_BUFFER) callconv(.C) void) callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
+pub fn sk_CRYPTO_BUFFER_deep_copy(arg_sk: ?*const struct_stack_st_CRYPTO_BUFFER, arg_copy_func: ?*const fn (?*CRYPTO_BUFFER) callconv(.C) ?*CRYPTO_BUFFER, arg_free_func: ?*const fn (?*CRYPTO_BUFFER) callconv(.C) void) callconv(.C) ?*struct_stack_st_CRYPTO_BUFFER {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -2748,42 +2804,43 @@ pub extern fn RSA_padding_add_PKCS1_OAEP(to: [*c]u8, to_len: usize, from: [*c]co
 pub extern fn RSA_print(bio: [*c]BIO, rsa: ?*const RSA, indent: c_int) c_int;
 pub extern fn RSA_get0_pss_params(rsa: ?*const RSA) [*c]const RSA_PSS_PARAMS;
 pub extern fn SHA1_Init(sha: *SHA_CTX) c_int;
-pub extern fn SHA1_Update(sha: *SHA_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA1_Update(sha: *SHA_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA1_Final(out: [*]u8, sha: *SHA_CTX) c_int;
 pub extern fn SHA1(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn SHA1_Transform(sha: *SHA_CTX, block: [*]const u8) void;
 pub extern fn SHA224_Init(sha: *SHA256_CTX) c_int;
-pub extern fn SHA224_Update(sha: *SHA256_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA224_Update(sha: *SHA256_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA224_Final(out: [*]u8, sha: *SHA256_CTX) c_int;
 pub extern fn SHA224(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn SHA256_Init(sha: *SHA256_CTX) c_int;
-pub extern fn SHA256_Update(sha: *SHA256_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA256_Update(sha: *SHA256_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA256_Final(out: [*]u8, sha: *SHA256_CTX) c_int;
 pub extern fn SHA256(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn SHA256_Transform(sha: *SHA256_CTX, block: [*]const u8) void;
 pub extern fn SHA256_TransformBlocks(state: [*c]u32, data: [*]const u8, num_blocks: usize) void;
 pub extern fn SHA384_Init(sha: *SHA512_CTX) c_int;
-pub extern fn SHA384_Update(sha: *SHA512_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA384_Update(sha: *SHA512_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA384_Final(out: [*]u8, sha: *SHA512_CTX) c_int;
 pub extern fn SHA384(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn SHA512_Init(sha: *SHA512_CTX) c_int;
-pub extern fn SHA512_Update(sha: *SHA512_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA512_Update(sha: *SHA512_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA512_Final(out: [*]u8, sha: *SHA512_CTX) c_int;
 pub extern fn SHA512(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn SHA512_Transform(sha: *SHA512_CTX, block: [*]const u8) void;
 pub extern fn SHA512_256_Init(sha: *SHA512_CTX) c_int;
-pub extern fn SHA512_256_Update(sha: *SHA512_CTX, data: ?*const anyopaque, len: usize) c_int;
+pub extern fn SHA512_256_Update(sha: *SHA512_CTX, data: ?[*]const u8, len: usize) c_int;
 pub extern fn SHA512_256_Final(out: [*]u8, sha: *SHA512_CTX) c_int;
 pub extern fn SHA512_256(data: [*]const u8, len: usize, out: [*]u8) [*]u8;
 pub extern fn X509_ALGOR_new() [*c]X509_ALGOR;
 pub extern fn X509_ALGOR_free(a: [*c]X509_ALGOR) void;
 pub extern fn d2i_X509_ALGOR(a: [*c][*c]X509_ALGOR, in: [*c][*c]const u8, len: c_long) [*c]X509_ALGOR;
 pub extern fn i2d_X509_ALGOR(a: [*c]X509_ALGOR, out: [*c][*c]u8) c_int;
+
 pub extern const X509_ALGOR_it: ASN1_ITEM;
 pub const struct_stack_st_X509_ALGOR = opaque {};
-pub const stack_X509_ALGOR_free_func = ?fn ([*c]X509_ALGOR) callconv(.C) void;
-pub const stack_X509_ALGOR_copy_func = ?fn ([*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR;
-pub const stack_X509_ALGOR_cmp_func = ?fn ([*c][*c]const X509_ALGOR, [*c][*c]const X509_ALGOR) callconv(.C) c_int;
+pub const stack_X509_ALGOR_free_func = ?*const fn ([*c]X509_ALGOR) callconv(.C) void;
+pub const stack_X509_ALGOR_copy_func = ?*const fn ([*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR;
+pub const stack_X509_ALGOR_cmp_func = ?*const fn ([*c][*c]const X509_ALGOR, [*c][*c]const X509_ALGOR) callconv(.C) c_int;
 pub fn sk_X509_ALGOR_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -2889,7 +2946,7 @@ pub fn sk_X509_ALGOR_set_cmp_func(arg_sk: ?*struct_stack_st_X509_ALGOR, arg_comp
     var comp = arg_comp;
     return @ptrCast(stack_X509_ALGOR_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const X509_ALGOR, [*c][*c]const X509_ALGOR) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_ALGOR_deep_copy(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_copy_func: ?fn ([*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR, arg_free_func: ?fn ([*c]X509_ALGOR) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_ALGOR {
+pub fn sk_X509_ALGOR_deep_copy(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_copy_func: ?*const fn ([*c]X509_ALGOR) callconv(.C) [*c]X509_ALGOR, arg_free_func: ?*const fn ([*c]X509_ALGOR) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_ALGOR {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -2897,9 +2954,9 @@ pub fn sk_X509_ALGOR_deep_copy(arg_sk: ?*const struct_stack_st_X509_ALGOR, arg_c
 }
 pub const X509_ALGORS = struct_stack_st_X509_ALGOR;
 pub const struct_stack_st_X509_NAME_ENTRY = opaque {};
-pub const stack_X509_NAME_ENTRY_free_func = ?fn (?*X509_NAME_ENTRY) callconv(.C) void;
-pub const stack_X509_NAME_ENTRY_copy_func = ?fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY;
-pub const stack_X509_NAME_ENTRY_cmp_func = ?fn ([*c]?*const X509_NAME_ENTRY, [*c]?*const X509_NAME_ENTRY) callconv(.C) c_int;
+pub const stack_X509_NAME_ENTRY_free_func = ?*const fn (?*X509_NAME_ENTRY) callconv(.C) void;
+pub const stack_X509_NAME_ENTRY_copy_func = ?*const fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY;
+pub const stack_X509_NAME_ENTRY_cmp_func = ?*const fn ([*c]?*const X509_NAME_ENTRY, [*c]?*const X509_NAME_ENTRY) callconv(.C) c_int;
 pub fn sk_X509_NAME_ENTRY_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3005,16 +3062,16 @@ pub fn sk_X509_NAME_ENTRY_set_cmp_func(arg_sk: ?*struct_stack_st_X509_NAME_ENTRY
     var comp = arg_comp;
     return @ptrCast(stack_X509_NAME_ENTRY_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_NAME_ENTRY, [*c]?*const X509_NAME_ENTRY) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_NAME_ENTRY_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_copy_func: ?fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY, arg_free_func: ?fn (?*X509_NAME_ENTRY) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
+pub fn sk_X509_NAME_ENTRY_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME_ENTRY, arg_copy_func: ?*const fn (?*X509_NAME_ENTRY) callconv(.C) ?*X509_NAME_ENTRY, arg_free_func: ?*const fn (?*X509_NAME_ENTRY) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_NAME_ENTRY {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_NAME_ENTRY, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_NAME_ENTRY_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_NAME_ENTRY_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_NAME = opaque {};
-pub const stack_X509_NAME_free_func = ?fn (?*X509_NAME) callconv(.C) void;
-pub const stack_X509_NAME_copy_func = ?fn (?*X509_NAME) callconv(.C) ?*X509_NAME;
-pub const stack_X509_NAME_cmp_func = ?fn ([*c]?*const X509_NAME, [*c]?*const X509_NAME) callconv(.C) c_int;
+pub const stack_X509_NAME_free_func = ?*const fn (?*X509_NAME) callconv(.C) void;
+pub const stack_X509_NAME_copy_func = ?*const fn (?*X509_NAME) callconv(.C) ?*X509_NAME;
+pub const stack_X509_NAME_cmp_func = ?*const fn ([*c]?*const X509_NAME, [*c]?*const X509_NAME) callconv(.C) c_int;
 pub fn sk_X509_NAME_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3120,16 +3177,16 @@ pub fn sk_X509_NAME_set_cmp_func(arg_sk: ?*struct_stack_st_X509_NAME, arg_comp: 
     var comp = arg_comp;
     return @ptrCast(stack_X509_NAME_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_NAME, [*c]?*const X509_NAME) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_NAME_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME, arg_copy_func: ?fn (?*X509_NAME) callconv(.C) ?*X509_NAME, arg_free_func: ?fn (?*X509_NAME) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_NAME {
+pub fn sk_X509_NAME_deep_copy(arg_sk: ?*const struct_stack_st_X509_NAME, arg_copy_func: ?*const fn (?*X509_NAME) callconv(.C) ?*X509_NAME, arg_free_func: ?*const fn (?*X509_NAME) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_NAME {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_NAME, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_NAME_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_NAME_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const X509_EXTENSIONS = struct_stack_st_X509_EXTENSION;
-pub const stack_X509_EXTENSION_free_func = ?fn (?*X509_EXTENSION) callconv(.C) void;
-pub const stack_X509_EXTENSION_copy_func = ?fn (?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION;
-pub const stack_X509_EXTENSION_cmp_func = ?fn ([*c]?*const X509_EXTENSION, [*c]?*const X509_EXTENSION) callconv(.C) c_int;
+pub const stack_X509_EXTENSION_free_func = ?*const fn (?*X509_EXTENSION) callconv(.C) void;
+pub const stack_X509_EXTENSION_copy_func = ?*const fn (?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION;
+pub const stack_X509_EXTENSION_cmp_func = ?*const fn ([*c]?*const X509_EXTENSION, [*c]?*const X509_EXTENSION) callconv(.C) c_int;
 pub fn sk_X509_EXTENSION_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3235,16 +3292,16 @@ pub fn sk_X509_EXTENSION_set_cmp_func(arg_sk: ?*struct_stack_st_X509_EXTENSION, 
     var comp = arg_comp;
     return @ptrCast(stack_X509_EXTENSION_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_EXTENSION, [*c]?*const X509_EXTENSION) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_EXTENSION_deep_copy(arg_sk: ?*const struct_stack_st_X509_EXTENSION, arg_copy_func: ?fn (?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION, arg_free_func: ?fn (?*X509_EXTENSION) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_EXTENSION {
+pub fn sk_X509_EXTENSION_deep_copy(arg_sk: ?*const struct_stack_st_X509_EXTENSION, arg_copy_func: ?*const fn (?*X509_EXTENSION) callconv(.C) ?*X509_EXTENSION, arg_free_func: ?*const fn (?*X509_EXTENSION) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_EXTENSION {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_EXTENSION, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_EXTENSION_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_EXTENSION_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_ATTRIBUTE = opaque {};
-pub const stack_X509_ATTRIBUTE_free_func = ?fn (?*X509_ATTRIBUTE) callconv(.C) void;
-pub const stack_X509_ATTRIBUTE_copy_func = ?fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE;
-pub const stack_X509_ATTRIBUTE_cmp_func = ?fn ([*c]?*const X509_ATTRIBUTE, [*c]?*const X509_ATTRIBUTE) callconv(.C) c_int;
+pub const stack_X509_ATTRIBUTE_free_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.C) void;
+pub const stack_X509_ATTRIBUTE_copy_func = ?*const fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE;
+pub const stack_X509_ATTRIBUTE_cmp_func = ?*const fn ([*c]?*const X509_ATTRIBUTE, [*c]?*const X509_ATTRIBUTE) callconv(.C) c_int;
 pub fn sk_X509_ATTRIBUTE_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3350,16 +3407,16 @@ pub fn sk_X509_ATTRIBUTE_set_cmp_func(arg_sk: ?*struct_stack_st_X509_ATTRIBUTE, 
     var comp = arg_comp;
     return @ptrCast(stack_X509_ATTRIBUTE_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_ATTRIBUTE, [*c]?*const X509_ATTRIBUTE) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_ATTRIBUTE_deep_copy(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE, arg_copy_func: ?fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE, arg_free_func: ?fn (?*X509_ATTRIBUTE) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
+pub fn sk_X509_ATTRIBUTE_deep_copy(arg_sk: ?*const struct_stack_st_X509_ATTRIBUTE, arg_copy_func: ?*const fn (?*X509_ATTRIBUTE) callconv(.C) ?*X509_ATTRIBUTE, arg_free_func: ?*const fn (?*X509_ATTRIBUTE) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_ATTRIBUTE {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_ATTRIBUTE, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_ATTRIBUTE_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_ATTRIBUTE_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_DIST_POINT = opaque {};
-pub const stack_X509_free_func = ?fn (?*X509) callconv(.C) void;
-pub const stack_X509_copy_func = ?fn (?*X509) callconv(.C) ?*X509;
-pub const stack_X509_cmp_func = ?fn ([*c]?*const X509, [*c]?*const X509) callconv(.C) c_int;
+pub const stack_X509_free_func = ?*const fn (?*X509) callconv(.C) void;
+pub const stack_X509_copy_func = ?*const fn (?*X509) callconv(.C) ?*X509;
+pub const stack_X509_cmp_func = ?*const fn ([*c]?*const X509, [*c]?*const X509) callconv(.C) c_int;
 pub fn sk_X509_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3465,16 +3522,16 @@ pub fn sk_X509_set_cmp_func(arg_sk: ?*struct_stack_st_X509, arg_comp: stack_X509
     var comp = arg_comp;
     return @ptrCast(stack_X509_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509, [*c]?*const X509) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_deep_copy(arg_sk: ?*const struct_stack_st_X509, arg_copy_func: ?fn (?*X509) callconv(.C) ?*X509, arg_free_func: ?fn (?*X509) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509 {
+pub fn sk_X509_deep_copy(arg_sk: ?*const struct_stack_st_X509, arg_copy_func: ?*const fn (?*X509) callconv(.C) ?*X509, arg_free_func: ?*const fn (?*X509) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509 {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_TRUST = opaque {};
-pub const stack_X509_TRUST_free_func = ?fn ([*c]X509_TRUST) callconv(.C) void;
-pub const stack_X509_TRUST_copy_func = ?fn ([*c]X509_TRUST) callconv(.C) [*c]X509_TRUST;
-pub const stack_X509_TRUST_cmp_func = ?fn ([*c][*c]const X509_TRUST, [*c][*c]const X509_TRUST) callconv(.C) c_int;
+pub const stack_X509_TRUST_free_func = ?*const fn ([*c]X509_TRUST) callconv(.C) void;
+pub const stack_X509_TRUST_copy_func = ?*const fn ([*c]X509_TRUST) callconv(.C) [*c]X509_TRUST;
+pub const stack_X509_TRUST_cmp_func = ?*const fn ([*c][*c]const X509_TRUST, [*c][*c]const X509_TRUST) callconv(.C) c_int;
 pub fn sk_X509_TRUST_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3580,16 +3637,16 @@ pub fn sk_X509_TRUST_set_cmp_func(arg_sk: ?*struct_stack_st_X509_TRUST, arg_comp
     var comp = arg_comp;
     return @ptrCast(stack_X509_TRUST_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const X509_TRUST, [*c][*c]const X509_TRUST) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_TRUST_deep_copy(arg_sk: ?*const struct_stack_st_X509_TRUST, arg_copy_func: ?fn ([*c]X509_TRUST) callconv(.C) [*c]X509_TRUST, arg_free_func: ?fn ([*c]X509_TRUST) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_TRUST {
+pub fn sk_X509_TRUST_deep_copy(arg_sk: ?*const struct_stack_st_X509_TRUST, arg_copy_func: ?*const fn ([*c]X509_TRUST) callconv(.C) [*c]X509_TRUST, arg_free_func: ?*const fn ([*c]X509_TRUST) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_TRUST {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_TRUST, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_TRUST_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_TRUST_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_REVOKED = opaque {};
-pub const stack_X509_REVOKED_free_func = ?fn ([*c]X509_REVOKED) callconv(.C) void;
-pub const stack_X509_REVOKED_copy_func = ?fn ([*c]X509_REVOKED) callconv(.C) [*c]X509_REVOKED;
-pub const stack_X509_REVOKED_cmp_func = ?fn ([*c][*c]const X509_REVOKED, [*c][*c]const X509_REVOKED) callconv(.C) c_int;
+pub const stack_X509_REVOKED_free_func = ?*const fn ([*c]X509_REVOKED) callconv(.C) void;
+pub const stack_X509_REVOKED_copy_func = ?*const fn ([*c]X509_REVOKED) callconv(.C) [*c]X509_REVOKED;
+pub const stack_X509_REVOKED_cmp_func = ?*const fn ([*c][*c]const X509_REVOKED, [*c][*c]const X509_REVOKED) callconv(.C) c_int;
 pub fn sk_X509_REVOKED_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3695,16 +3752,16 @@ pub fn sk_X509_REVOKED_set_cmp_func(arg_sk: ?*struct_stack_st_X509_REVOKED, arg_
     var comp = arg_comp;
     return @ptrCast(stack_X509_REVOKED_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const X509_REVOKED, [*c][*c]const X509_REVOKED) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, arg_copy_func: ?fn ([*c]X509_REVOKED) callconv(.C) [*c]X509_REVOKED, arg_free_func: ?fn ([*c]X509_REVOKED) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_REVOKED {
+pub fn sk_X509_REVOKED_deep_copy(arg_sk: ?*const struct_stack_st_X509_REVOKED, arg_copy_func: ?*const fn ([*c]X509_REVOKED) callconv(.C) [*c]X509_REVOKED, arg_free_func: ?*const fn ([*c]X509_REVOKED) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_REVOKED {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_REVOKED, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_REVOKED_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_REVOKED_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_GENERAL_NAMES = opaque {};
-pub const stack_X509_CRL_free_func = ?fn (?*X509_CRL) callconv(.C) void;
-pub const stack_X509_CRL_copy_func = ?fn (?*X509_CRL) callconv(.C) ?*X509_CRL;
-pub const stack_X509_CRL_cmp_func = ?fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int;
+pub const stack_X509_CRL_free_func = ?*const fn (?*X509_CRL) callconv(.C) void;
+pub const stack_X509_CRL_copy_func = ?*const fn (?*X509_CRL) callconv(.C) ?*X509_CRL;
+pub const stack_X509_CRL_cmp_func = ?*const fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int;
 pub fn sk_X509_CRL_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3810,16 +3867,16 @@ pub fn sk_X509_CRL_set_cmp_func(arg_sk: ?*struct_stack_st_X509_CRL, arg_comp: st
     var comp = arg_comp;
     return @ptrCast(stack_X509_CRL_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_CRL, [*c]?*const X509_CRL) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_CRL_deep_copy(arg_sk: ?*const struct_stack_st_X509_CRL, arg_copy_func: ?fn (?*X509_CRL) callconv(.C) ?*X509_CRL, arg_free_func: ?fn (?*X509_CRL) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_CRL {
+pub fn sk_X509_CRL_deep_copy(arg_sk: ?*const struct_stack_st_X509_CRL, arg_copy_func: ?*const fn (?*X509_CRL) callconv(.C) ?*X509_CRL, arg_free_func: ?*const fn (?*X509_CRL) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_CRL {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_CRL, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_CRL_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_CRL_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_INFO = opaque {};
-pub const stack_X509_INFO_free_func = ?fn ([*c]X509_INFO) callconv(.C) void;
-pub const stack_X509_INFO_copy_func = ?fn ([*c]X509_INFO) callconv(.C) [*c]X509_INFO;
-pub const stack_X509_INFO_cmp_func = ?fn ([*c][*c]const X509_INFO, [*c][*c]const X509_INFO) callconv(.C) c_int;
+pub const stack_X509_INFO_free_func = ?*const fn ([*c]X509_INFO) callconv(.C) void;
+pub const stack_X509_INFO_copy_func = ?*const fn ([*c]X509_INFO) callconv(.C) [*c]X509_INFO;
+pub const stack_X509_INFO_cmp_func = ?*const fn ([*c][*c]const X509_INFO, [*c][*c]const X509_INFO) callconv(.C) c_int;
 pub fn sk_X509_INFO_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -3925,7 +3982,7 @@ pub fn sk_X509_INFO_set_cmp_func(arg_sk: ?*struct_stack_st_X509_INFO, arg_comp: 
     var comp = arg_comp;
     return @ptrCast(stack_X509_INFO_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const X509_INFO, [*c][*c]const X509_INFO) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_INFO_deep_copy(arg_sk: ?*const struct_stack_st_X509_INFO, arg_copy_func: ?fn ([*c]X509_INFO) callconv(.C) [*c]X509_INFO, arg_free_func: ?fn ([*c]X509_INFO) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_INFO {
+pub fn sk_X509_INFO_deep_copy(arg_sk: ?*const struct_stack_st_X509_INFO, arg_copy_func: ?*const fn ([*c]X509_INFO) callconv(.C) [*c]X509_INFO, arg_free_func: ?*const fn ([*c]X509_INFO) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_INFO {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -3962,7 +4019,7 @@ pub extern fn X509_CRL_get0_extensions(crl: ?*const X509_CRL) ?*const struct_sta
 pub extern fn X509_SIG_get0(sig: ?*const X509_SIG, out_alg: [*c][*c]const X509_ALGOR, out_digest: [*c][*c]const ASN1_OCTET_STRING) void;
 pub extern fn X509_SIG_getm(sig: ?*X509_SIG, out_alg: [*c][*c]X509_ALGOR, out_digest: [*c][*c]ASN1_OCTET_STRING) void;
 pub extern fn X509_CRL_set_default_method(meth: ?*const X509_CRL_METHOD) void;
-pub extern fn X509_CRL_METHOD_new(crl_init: ?fn (?*X509_CRL) callconv(.C) c_int, crl_free: ?fn (?*X509_CRL) callconv(.C) c_int, crl_lookup: ?fn (?*X509_CRL, [*c][*c]X509_REVOKED, [*c]ASN1_INTEGER, ?*X509_NAME) callconv(.C) c_int, crl_verify: ?fn (?*X509_CRL, [*c]EVP_PKEY) callconv(.C) c_int) ?*X509_CRL_METHOD;
+pub extern fn X509_CRL_METHOD_new(crl_init: ?*const fn (?*X509_CRL) callconv(.C) c_int, crl_free: ?*const fn (?*X509_CRL) callconv(.C) c_int, crl_lookup: ?*const fn (?*X509_CRL, [*c][*c]X509_REVOKED, [*c]ASN1_INTEGER, ?*X509_NAME) callconv(.C) c_int, crl_verify: ?*const fn (?*X509_CRL, [*c]EVP_PKEY) callconv(.C) c_int) ?*X509_CRL_METHOD;
 pub extern fn X509_CRL_METHOD_free(m: ?*X509_CRL_METHOD) void;
 pub extern fn X509_CRL_set_meth_data(crl: ?*X509_CRL, dat: ?*anyopaque) void;
 pub extern fn X509_CRL_get_meth_data(crl: ?*X509_CRL) ?*anyopaque;
@@ -4149,7 +4206,7 @@ pub extern fn X509_alias_set1(x: ?*X509, name: [*c]const u8, len: c_int) c_int;
 pub extern fn X509_keyid_set1(x: ?*X509, id: [*c]const u8, len: c_int) c_int;
 pub extern fn X509_alias_get0(x: ?*X509, len: [*c]c_int) [*c]u8;
 pub extern fn X509_keyid_get0(x: ?*X509, len: [*c]c_int) [*c]u8;
-pub extern fn X509_TRUST_set_default(trust: ?fn (c_int, ?*X509, c_int) callconv(.C) c_int) ?fn (c_int, ?*X509, c_int) callconv(.C) c_int;
+pub extern fn X509_TRUST_set_default(trust: ?*const fn (c_int, ?*X509, c_int) callconv(.C) c_int) ?*const fn (c_int, ?*X509, c_int) callconv(.C) c_int;
 pub extern fn X509_TRUST_set(t: [*c]c_int, trust: c_int) c_int;
 pub extern fn X509_add1_trust_object(x: ?*X509, obj: ?*ASN1_OBJECT) c_int;
 pub extern fn X509_add1_reject_object(x: ?*X509, obj: ?*ASN1_OBJECT) c_int;
@@ -4335,11 +4392,11 @@ pub extern fn X509at_add1_attr(x: [*c]?*struct_stack_st_X509_ATTRIBUTE, attr: ?*
 pub extern fn X509at_add1_attr_by_OBJ(x: [*c]?*struct_stack_st_X509_ATTRIBUTE, obj: ?*const ASN1_OBJECT, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*struct_stack_st_X509_ATTRIBUTE;
 pub extern fn X509at_add1_attr_by_NID(x: [*c]?*struct_stack_st_X509_ATTRIBUTE, nid: c_int, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*struct_stack_st_X509_ATTRIBUTE;
 pub extern fn X509at_add1_attr_by_txt(x: [*c]?*struct_stack_st_X509_ATTRIBUTE, attrname: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*struct_stack_st_X509_ATTRIBUTE;
-pub extern fn X509_ATTRIBUTE_create_by_NID(attr: [*c]?*X509_ATTRIBUTE, nid: c_int, attrtype: c_int, data: ?*const anyopaque, len: c_int) ?*X509_ATTRIBUTE;
-pub extern fn X509_ATTRIBUTE_create_by_OBJ(attr: [*c]?*X509_ATTRIBUTE, obj: ?*const ASN1_OBJECT, attrtype: c_int, data: ?*const anyopaque, len: c_int) ?*X509_ATTRIBUTE;
+pub extern fn X509_ATTRIBUTE_create_by_NID(attr: [*c]?*X509_ATTRIBUTE, nid: c_int, attrtype: c_int, data: ?[*]const u8, len: c_int) ?*X509_ATTRIBUTE;
+pub extern fn X509_ATTRIBUTE_create_by_OBJ(attr: [*c]?*X509_ATTRIBUTE, obj: ?*const ASN1_OBJECT, attrtype: c_int, data: ?[*]const u8, len: c_int) ?*X509_ATTRIBUTE;
 pub extern fn X509_ATTRIBUTE_create_by_txt(attr: [*c]?*X509_ATTRIBUTE, attrname: [*c]const u8, @"type": c_int, bytes: [*c]const u8, len: c_int) ?*X509_ATTRIBUTE;
 pub extern fn X509_ATTRIBUTE_set1_object(attr: ?*X509_ATTRIBUTE, obj: ?*const ASN1_OBJECT) c_int;
-pub extern fn X509_ATTRIBUTE_set1_data(attr: ?*X509_ATTRIBUTE, attrtype: c_int, data: ?*const anyopaque, len: c_int) c_int;
+pub extern fn X509_ATTRIBUTE_set1_data(attr: ?*X509_ATTRIBUTE, attrtype: c_int, data: ?[*]const u8, len: c_int) c_int;
 pub extern fn X509_ATTRIBUTE_get0_data(attr: ?*X509_ATTRIBUTE, idx: c_int, attrtype: c_int, unused: ?*anyopaque) ?*anyopaque;
 pub extern fn X509_ATTRIBUTE_count(attr: ?*const X509_ATTRIBUTE) c_int;
 pub extern fn X509_ATTRIBUTE_get0_object(attr: ?*X509_ATTRIBUTE) ?*ASN1_OBJECT;
@@ -4363,7 +4420,7 @@ pub extern fn X509_check_trust(x: ?*X509, id: c_int, flags: c_int) c_int;
 pub extern fn X509_TRUST_get_count() c_int;
 pub extern fn X509_TRUST_get0(idx: c_int) [*c]X509_TRUST;
 pub extern fn X509_TRUST_get_by_id(id: c_int) c_int;
-pub extern fn X509_TRUST_add(id: c_int, flags: c_int, ck: ?fn ([*c]X509_TRUST, ?*X509, c_int) callconv(.C) c_int, name: [*c]u8, arg1: c_int, arg2: ?*anyopaque) c_int;
+pub extern fn X509_TRUST_add(id: c_int, flags: c_int, ck: ?*const fn ([*c]X509_TRUST, ?*X509, c_int) callconv(.C) c_int, name: [*c]u8, arg1: c_int, arg2: ?*anyopaque) c_int;
 pub extern fn X509_TRUST_cleanup() void;
 pub extern fn X509_TRUST_get_flags(xp: [*c]const X509_TRUST) c_int;
 pub extern fn X509_TRUST_get0_name(xp: [*c]const X509_TRUST) [*c]u8;
@@ -4374,9 +4431,9 @@ pub extern fn d2i_RSA_PSS_PARAMS(a: [*c][*c]RSA_PSS_PARAMS, in: [*c][*c]const u8
 pub extern fn i2d_RSA_PSS_PARAMS(a: [*c]RSA_PSS_PARAMS, out: [*c][*c]u8) c_int;
 pub extern const RSA_PSS_PARAMS_it: ASN1_ITEM;
 pub const struct_stack_st_X509_LOOKUP = opaque {};
-pub const stack_X509_LOOKUP_free_func = ?fn (?*X509_LOOKUP) callconv(.C) void;
-pub const stack_X509_LOOKUP_copy_func = ?fn (?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP;
-pub const stack_X509_LOOKUP_cmp_func = ?fn ([*c]?*const X509_LOOKUP, [*c]?*const X509_LOOKUP) callconv(.C) c_int;
+pub const stack_X509_LOOKUP_free_func = ?*const fn (?*X509_LOOKUP) callconv(.C) void;
+pub const stack_X509_LOOKUP_copy_func = ?*const fn (?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP;
+pub const stack_X509_LOOKUP_cmp_func = ?*const fn ([*c]?*const X509_LOOKUP, [*c]?*const X509_LOOKUP) callconv(.C) c_int;
 pub fn sk_X509_LOOKUP_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -4482,16 +4539,16 @@ pub fn sk_X509_LOOKUP_set_cmp_func(arg_sk: ?*struct_stack_st_X509_LOOKUP, arg_co
     var comp = arg_comp;
     return @ptrCast(stack_X509_LOOKUP_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_LOOKUP, [*c]?*const X509_LOOKUP) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_LOOKUP_deep_copy(arg_sk: ?*const struct_stack_st_X509_LOOKUP, arg_copy_func: ?fn (?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP, arg_free_func: ?fn (?*X509_LOOKUP) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_LOOKUP {
+pub fn sk_X509_LOOKUP_deep_copy(arg_sk: ?*const struct_stack_st_X509_LOOKUP, arg_copy_func: ?*const fn (?*X509_LOOKUP) callconv(.C) ?*X509_LOOKUP, arg_free_func: ?*const fn (?*X509_LOOKUP) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_LOOKUP {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_LOOKUP, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_LOOKUP_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_LOOKUP_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_OBJECT = opaque {};
-pub const stack_X509_OBJECT_free_func = ?fn (?*X509_OBJECT) callconv(.C) void;
-pub const stack_X509_OBJECT_copy_func = ?fn (?*X509_OBJECT) callconv(.C) ?*X509_OBJECT;
-pub const stack_X509_OBJECT_cmp_func = ?fn ([*c]?*const X509_OBJECT, [*c]?*const X509_OBJECT) callconv(.C) c_int;
+pub const stack_X509_OBJECT_free_func = ?*const fn (?*X509_OBJECT) callconv(.C) void;
+pub const stack_X509_OBJECT_copy_func = ?*const fn (?*X509_OBJECT) callconv(.C) ?*X509_OBJECT;
+pub const stack_X509_OBJECT_cmp_func = ?*const fn ([*c]?*const X509_OBJECT, [*c]?*const X509_OBJECT) callconv(.C) c_int;
 pub fn sk_X509_OBJECT_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -4597,16 +4654,16 @@ pub fn sk_X509_OBJECT_set_cmp_func(arg_sk: ?*struct_stack_st_X509_OBJECT, arg_co
     var comp = arg_comp;
     return @ptrCast(stack_X509_OBJECT_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_OBJECT, [*c]?*const X509_OBJECT) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_X509_OBJECT, arg_copy_func: ?fn (?*X509_OBJECT) callconv(.C) ?*X509_OBJECT, arg_free_func: ?fn (?*X509_OBJECT) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_OBJECT {
+pub fn sk_X509_OBJECT_deep_copy(arg_sk: ?*const struct_stack_st_X509_OBJECT, arg_copy_func: ?*const fn (?*X509_OBJECT) callconv(.C) ?*X509_OBJECT, arg_free_func: ?*const fn (?*X509_OBJECT) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_OBJECT {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_OBJECT, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_OBJECT_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_OBJECT_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
 pub const struct_stack_st_X509_VERIFY_PARAM = opaque {};
-pub const stack_X509_VERIFY_PARAM_free_func = ?fn (?*X509_VERIFY_PARAM) callconv(.C) void;
-pub const stack_X509_VERIFY_PARAM_copy_func = ?fn (?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM;
-pub const stack_X509_VERIFY_PARAM_cmp_func = ?fn ([*c]?*const X509_VERIFY_PARAM, [*c]?*const X509_VERIFY_PARAM) callconv(.C) c_int;
+pub const stack_X509_VERIFY_PARAM_free_func = ?*const fn (?*X509_VERIFY_PARAM) callconv(.C) void;
+pub const stack_X509_VERIFY_PARAM_copy_func = ?*const fn (?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM;
+pub const stack_X509_VERIFY_PARAM_cmp_func = ?*const fn ([*c]?*const X509_VERIFY_PARAM, [*c]?*const X509_VERIFY_PARAM) callconv(.C) c_int;
 pub fn sk_X509_VERIFY_PARAM_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -4712,24 +4769,24 @@ pub fn sk_X509_VERIFY_PARAM_set_cmp_func(arg_sk: ?*struct_stack_st_X509_VERIFY_P
     var comp = arg_comp;
     return @ptrCast(stack_X509_VERIFY_PARAM_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const X509_VERIFY_PARAM, [*c]?*const X509_VERIFY_PARAM) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM, arg_copy_func: ?fn (?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM, arg_free_func: ?fn (?*X509_VERIFY_PARAM) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
+pub fn sk_X509_VERIFY_PARAM_deep_copy(arg_sk: ?*const struct_stack_st_X509_VERIFY_PARAM, arg_copy_func: ?*const fn (?*X509_VERIFY_PARAM) callconv(.C) ?*X509_VERIFY_PARAM, arg_free_func: ?*const fn (?*X509_VERIFY_PARAM) callconv(.C) void) callconv(.C) ?*struct_stack_st_X509_VERIFY_PARAM {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
     return @ptrCast(?*struct_stack_st_X509_VERIFY_PARAM, sk_deep_copy(@ptrCast([*c]const _STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), sk_X509_VERIFY_PARAM_call_copy_func, @ptrCast(stack_copy_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) ?*anyopaque), copy_func)), sk_X509_VERIFY_PARAM_call_free_func, @ptrCast(stack_free_func, @alignCast(@import("std").meta.alignment(fn (?*anyopaque) callconv(.C) void), free_func))));
 }
-pub const X509_STORE_CTX_verify_cb = ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
-pub const X509_STORE_CTX_verify_fn = ?fn (?*X509_STORE_CTX) callconv(.C) c_int;
-pub const X509_STORE_CTX_get_issuer_fn = ?fn ([*c]?*X509, ?*X509_STORE_CTX, ?*X509) callconv(.C) c_int;
-pub const X509_STORE_CTX_check_issued_fn = ?fn (?*X509_STORE_CTX, ?*X509, ?*X509) callconv(.C) c_int;
-pub const X509_STORE_CTX_check_revocation_fn = ?fn (?*X509_STORE_CTX) callconv(.C) c_int;
-pub const X509_STORE_CTX_get_crl_fn = ?fn (?*X509_STORE_CTX, [*c]?*X509_CRL, ?*X509) callconv(.C) c_int;
-pub const X509_STORE_CTX_check_crl_fn = ?fn (?*X509_STORE_CTX, ?*X509_CRL) callconv(.C) c_int;
-pub const X509_STORE_CTX_cert_crl_fn = ?fn (?*X509_STORE_CTX, ?*X509_CRL, ?*X509) callconv(.C) c_int;
-pub const X509_STORE_CTX_check_policy_fn = ?fn (?*X509_STORE_CTX) callconv(.C) c_int;
-pub const X509_STORE_CTX_lookup_certs_fn = ?fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509;
-pub const X509_STORE_CTX_lookup_crls_fn = ?fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509_CRL;
-pub const X509_STORE_CTX_cleanup_fn = ?fn (?*X509_STORE_CTX) callconv(.C) c_int;
+pub const X509_STORE_CTX_verify_cb = ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
+pub const X509_STORE_CTX_verify_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
+pub const X509_STORE_CTX_get_issuer_fn = ?*const fn ([*c]?*X509, ?*X509_STORE_CTX, ?*X509) callconv(.C) c_int;
+pub const X509_STORE_CTX_check_issued_fn = ?*const fn (?*X509_STORE_CTX, ?*X509, ?*X509) callconv(.C) c_int;
+pub const X509_STORE_CTX_check_revocation_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
+pub const X509_STORE_CTX_get_crl_fn = ?*const fn (?*X509_STORE_CTX, [*c]?*X509_CRL, ?*X509) callconv(.C) c_int;
+pub const X509_STORE_CTX_check_crl_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_CRL) callconv(.C) c_int;
+pub const X509_STORE_CTX_cert_crl_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_CRL, ?*X509) callconv(.C) c_int;
+pub const X509_STORE_CTX_check_policy_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
+pub const X509_STORE_CTX_lookup_certs_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509;
+pub const X509_STORE_CTX_lookup_crls_fn = ?*const fn (?*X509_STORE_CTX, ?*X509_NAME) callconv(.C) ?*struct_stack_st_X509_CRL;
+pub const X509_STORE_CTX_cleanup_fn = ?*const fn (?*X509_STORE_CTX) callconv(.C) c_int;
 pub extern fn X509_STORE_set_depth(store: ?*X509_STORE, depth: c_int) c_int;
 pub extern fn X509_STORE_CTX_set_depth(ctx: ?*X509_STORE_CTX, depth: c_int) void;
 pub extern fn X509_OBJECT_idx_by_subject(h: ?*struct_stack_st_X509_OBJECT, @"type": c_int, name: ?*X509_NAME) c_int;
@@ -4824,7 +4881,7 @@ pub extern fn X509_STORE_CTX_set_trust(ctx: ?*X509_STORE_CTX, trust: c_int) c_in
 pub extern fn X509_STORE_CTX_purpose_inherit(ctx: ?*X509_STORE_CTX, def_purpose: c_int, purpose: c_int, trust: c_int) c_int;
 pub extern fn X509_STORE_CTX_set_flags(ctx: ?*X509_STORE_CTX, flags: c_ulong) void;
 pub extern fn X509_STORE_CTX_set_time(ctx: ?*X509_STORE_CTX, flags: c_ulong, t: time_t) void;
-pub extern fn X509_STORE_CTX_set_verify_cb(ctx: ?*X509_STORE_CTX, verify_cb: ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
+pub extern fn X509_STORE_CTX_set_verify_cb(ctx: ?*X509_STORE_CTX, verify_cb: ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
 pub extern fn X509_STORE_CTX_get0_policy_tree(ctx: ?*X509_STORE_CTX) ?*X509_POLICY_TREE;
 pub extern fn X509_STORE_CTX_get_explicit_policy(ctx: ?*X509_STORE_CTX) c_int;
 pub extern fn X509_STORE_CTX_get0_param(ctx: ?*X509_STORE_CTX) ?*X509_VERIFY_PARAM;
@@ -4887,7 +4944,7 @@ pub extern fn OPENSSL_strncasecmp(a: [*c]const u8, b: [*c]const u8, n: usize) c_
 pub extern fn BIO_snprintf(buf: [*c]u8, n: usize, format: [*c]const u8, ...) c_int;
 pub extern fn BIO_vsnprintf(buf: [*c]u8, n: usize, format: [*c]const u8, args: va_list) c_int;
 pub extern fn OPENSSL_strndup(str: [*c]const u8, size: usize) [*c]u8;
-pub extern fn OPENSSL_memdup(data: ?*const anyopaque, size: usize) ?*anyopaque;
+pub extern fn OPENSSL_memdup(data: ?[*]const u8, size: usize) ?*anyopaque;
 pub extern fn OPENSSL_strlcpy(dst: [*c]u8, src: [*c]const u8, dst_size: usize) usize;
 pub extern fn OPENSSL_strlcat(dst: [*c]u8, src: [*c]const u8, dst_size: usize) usize;
 pub extern fn CRYPTO_malloc(size: usize, file: [*c]const u8, line: c_int) ?*anyopaque;
@@ -4919,7 +4976,7 @@ pub extern fn OPENSSL_load_builtin_modules() void;
 pub extern fn OPENSSL_init_crypto(opts: u64, settings: ?*const OPENSSL_INIT_SETTINGS) c_int;
 pub extern fn OPENSSL_cleanup() void;
 pub extern fn FIPS_mode_set(on: c_int) c_int;
-pub const pem_password_cb = fn ([*c]u8, c_int, c_int, ?*anyopaque) callconv(.C) c_int;
+pub const pem_password_cb = *const fn ([*c]u8, c_int, c_int, ?*anyopaque) callconv(.C) c_int;
 pub extern fn PEM_get_EVP_CIPHER_INFO(header: [*c]u8, cipher: [*c]EVP_CIPHER_INFO) c_int;
 pub extern fn PEM_do_header(cipher: [*c]EVP_CIPHER_INFO, data: [*c]u8, len: [*c]c_long, callback: ?pem_password_cb, u: ?*anyopaque) c_int;
 pub extern fn PEM_read_bio(bp: [*c]BIO, name: [*c][*c]u8, header: [*c][*c]u8, data: [*c][*c]u8, len: [*c]c_long) c_int;
@@ -5118,8 +5175,8 @@ pub extern fn SSL_add1_chain_cert(ssl: ?*SSL, x509: ?*X509) c_int;
 pub extern fn SSL_CTX_clear_chain_certs(ctx: ?*SSL_CTX) c_int;
 pub extern fn SSL_CTX_clear_extra_chain_certs(ctx: ?*SSL_CTX) c_int;
 pub extern fn SSL_clear_chain_certs(ssl: ?*SSL) c_int;
-pub extern fn SSL_CTX_set_cert_cb(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
-pub extern fn SSL_set_cert_cb(ssl: ?*SSL, cb: ?fn (?*SSL, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_CTX_set_cert_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_set_cert_cb(ssl: ?*SSL, cb: ?*const fn (?*SSL, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
 pub extern fn SSL_get0_certificate_types(ssl: ?*const SSL, out_types: [*c][*c]const u8) usize;
 pub extern fn SSL_get0_peer_verify_algorithms(ssl: ?*const SSL, out_sigalgs: [*c][*c]const u16) usize;
 pub extern fn SSL_get0_peer_delegation_algorithms(ssl: ?*const SSL, out_sigalgs: [*c][*c]const u16) usize;
@@ -5169,9 +5226,9 @@ pub extern fn SSL_set_private_key_method(ssl: ?*SSL, key_method: [*c]const SSL_P
 pub extern fn SSL_CTX_set_private_key_method(ctx: ?*SSL_CTX, key_method: [*c]const SSL_PRIVATE_KEY_METHOD) void;
 pub extern fn SSL_can_release_private_key(ssl: ?*const SSL) c_int;
 pub const struct_stack_st_SSL_CIPHER = opaque {};
-pub const stack_SSL_CIPHER_free_func = ?fn (?*const SSL_CIPHER) callconv(.C) void;
-pub const stack_SSL_CIPHER_copy_func = ?fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER;
-pub const stack_SSL_CIPHER_cmp_func = ?fn ([*c]?*const SSL_CIPHER, [*c]?*const SSL_CIPHER) callconv(.C) c_int;
+pub const stack_SSL_CIPHER_free_func = ?*const fn (?*const SSL_CIPHER) callconv(.C) void;
+pub const stack_SSL_CIPHER_copy_func = ?*const fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER;
+pub const stack_SSL_CIPHER_cmp_func = ?*const fn ([*c]?*const SSL_CIPHER, [*c]?*const SSL_CIPHER) callconv(.C) c_int;
 pub fn sk_SSL_CIPHER_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -5277,7 +5334,7 @@ pub fn sk_SSL_CIPHER_set_cmp_func(arg_sk: ?*struct_stack_st_SSL_CIPHER, arg_comp
     var comp = arg_comp;
     return @ptrCast(stack_SSL_CIPHER_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const SSL_CIPHER, [*c]?*const SSL_CIPHER) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_SSL_CIPHER_deep_copy(arg_sk: ?*const struct_stack_st_SSL_CIPHER, arg_copy_func: ?fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER, arg_free_func: ?fn (?*const SSL_CIPHER) callconv(.C) void) callconv(.C) ?*struct_stack_st_SSL_CIPHER {
+pub fn sk_SSL_CIPHER_deep_copy(arg_sk: ?*const struct_stack_st_SSL_CIPHER, arg_copy_func: ?*const fn (?*const SSL_CIPHER) callconv(.C) ?*const SSL_CIPHER, arg_free_func: ?*const fn (?*const SSL_CIPHER) callconv(.C) void) callconv(.C) ?*struct_stack_st_SSL_CIPHER {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -5371,16 +5428,16 @@ pub extern fn SSL_CTX_sess_number(ctx: ?*const SSL_CTX) usize;
 pub extern fn SSL_CTX_add_session(ctx: ?*SSL_CTX, session: ?*SSL_SESSION) c_int;
 pub extern fn SSL_CTX_remove_session(ctx: ?*SSL_CTX, session: ?*SSL_SESSION) c_int;
 pub extern fn SSL_CTX_flush_sessions(ctx: ?*SSL_CTX, time: u64) void;
-pub extern fn SSL_CTX_sess_set_new_cb(ctx: ?*SSL_CTX, new_session_cb: ?fn (?*SSL, ?*SSL_SESSION) callconv(.C) c_int) void;
-pub extern fn SSL_CTX_sess_get_new_cb(ctx: ?*SSL_CTX) ?fn (?*SSL, ?*SSL_SESSION) callconv(.C) c_int;
-pub extern fn SSL_CTX_sess_set_remove_cb(ctx: ?*SSL_CTX, remove_session_cb: ?fn (?*SSL_CTX, ?*SSL_SESSION) callconv(.C) void) void;
-pub extern fn SSL_CTX_sess_get_remove_cb(ctx: ?*SSL_CTX) ?fn (?*SSL_CTX, ?*SSL_SESSION) callconv(.C) void;
-pub extern fn SSL_CTX_sess_set_get_cb(ctx: ?*SSL_CTX, get_session_cb: ?fn (?*SSL, [*c]const u8, c_int, [*c]c_int) callconv(.C) ?*SSL_SESSION) void;
-pub extern fn SSL_CTX_sess_get_get_cb(ctx: ?*SSL_CTX) ?fn (?*SSL, [*c]const u8, c_int, [*c]c_int) callconv(.C) ?*SSL_SESSION;
+pub extern fn SSL_CTX_sess_set_new_cb(ctx: ?*SSL_CTX, new_session_cb: ?*const fn (?*SSL, ?*SSL_SESSION) callconv(.C) c_int) void;
+pub extern fn SSL_CTX_sess_get_new_cb(ctx: ?*SSL_CTX) ?*const fn (?*SSL, ?*SSL_SESSION) callconv(.C) c_int;
+pub extern fn SSL_CTX_sess_set_remove_cb(ctx: ?*SSL_CTX, remove_session_cb: ?*const fn (?*SSL_CTX, ?*SSL_SESSION) callconv(.C) void) void;
+pub extern fn SSL_CTX_sess_get_remove_cb(ctx: ?*SSL_CTX) ?*const fn (?*SSL_CTX, ?*SSL_SESSION) callconv(.C) void;
+pub extern fn SSL_CTX_sess_set_get_cb(ctx: ?*SSL_CTX, get_session_cb: ?*const fn (?*SSL, [*c]const u8, c_int, [*c]c_int) callconv(.C) ?*SSL_SESSION) void;
+pub extern fn SSL_CTX_sess_get_get_cb(ctx: ?*SSL_CTX) ?*const fn (?*SSL, [*c]const u8, c_int, [*c]c_int) callconv(.C) ?*SSL_SESSION;
 pub extern fn SSL_magic_pending_session_ptr() ?*SSL_SESSION;
 pub extern fn SSL_CTX_get_tlsext_ticket_keys(ctx: ?*SSL_CTX, out: ?*anyopaque, len: usize) c_int;
 pub extern fn SSL_CTX_set_tlsext_ticket_keys(ctx: ?*SSL_CTX, in: ?*const anyopaque, len: usize) c_int;
-pub extern fn SSL_CTX_set_tlsext_ticket_key_cb(ctx: ?*SSL_CTX, callback: ?fn (?*SSL, [*c]u8, [*c]u8, [*c]EVP_CIPHER_CTX, [*c]HMAC_CTX, c_int) callconv(.C) c_int) c_int;
+pub extern fn SSL_CTX_set_tlsext_ticket_key_cb(ctx: ?*SSL_CTX, callback: ?*const fn (?*SSL, [*c]u8, [*c]u8, [*c]EVP_CIPHER_CTX, [*c]HMAC_CTX, c_int) callconv(.C) c_int) c_int;
 pub extern fn SSL_CTX_set_ticket_aead_method(ctx: ?*SSL_CTX, aead_method: [*c]const SSL_TICKET_AEAD_METHOD) void;
 pub extern fn SSL_process_tls13_new_session_ticket(ssl: ?*SSL, buf: [*c]const u8, buf_len: usize) ?*SSL_SESSION;
 pub extern fn SSL_CTX_set1_curves(ctx: ?*SSL_CTX, curves: [*c]const c_int, curves_len: usize) c_int;
@@ -5389,8 +5446,8 @@ pub extern fn SSL_CTX_set1_curves_list(ctx: ?*SSL_CTX, curves: [*c]const u8) c_i
 pub extern fn SSL_set1_curves_list(ssl: ?*SSL, curves: [*c]const u8) c_int;
 pub extern fn SSL_get_curve_id(ssl: ?*const SSL) u16;
 pub extern fn SSL_get_curve_name(curve_id: u16) [*c]const u8;
-pub extern fn SSL_CTX_set_verify(ctx: ?*SSL_CTX, mode: c_int, callback: ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
-pub extern fn SSL_set_verify(ssl: ?*SSL, mode: c_int, callback: ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
+pub extern fn SSL_CTX_set_verify(ctx: ?*SSL_CTX, mode: c_int, callback: ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
+pub extern fn SSL_set_verify(ssl: ?*SSL, mode: c_int, callback: ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int) void;
 // pub const ssl_verify_ok: c_int = 0;
 // pub const ssl_verify_invalid: c_int = 1;
 // pub const ssl_verify_retry: c_int = 2;
@@ -5400,14 +5457,14 @@ pub const VerifyResult = enum(c_int) {
     invalid = 1,
     retry = 2,
 };
-pub const VerifyCallback = fn (*SSL, [*c]u8) callconv(.C) VerifyResult;
+pub const VerifyCallback = *const fn (*SSL, [*c]u8) callconv(.C) VerifyResult;
 
 pub extern fn SSL_CTX_set_custom_verify(ctx: ?*SSL_CTX, mode: c_int, callback: ?VerifyCallback) void;
 pub extern fn SSL_set_custom_verify(ssl: ?*SSL, mode: c_int, callback: ?VerifyCallback) void;
 pub extern fn SSL_CTX_get_verify_mode(ctx: ?*const SSL_CTX) c_int;
 pub extern fn SSL_get_verify_mode(ssl: ?*const SSL) c_int;
-pub extern fn SSL_CTX_get_verify_callback(ctx: ?*const SSL_CTX) ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
-pub extern fn SSL_get_verify_callback(ssl: ?*const SSL) ?fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
+pub extern fn SSL_CTX_get_verify_callback(ctx: ?*const SSL_CTX) ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
+pub extern fn SSL_get_verify_callback(ssl: ?*const SSL) ?*const fn (c_int, ?*X509_STORE_CTX) callconv(.C) c_int;
 pub extern fn SSL_CTX_set_verify_depth(ctx: ?*SSL_CTX, depth: c_int) void;
 pub extern fn SSL_set_verify_depth(ssl: ?*SSL, depth: c_int) void;
 pub extern fn SSL_CTX_get_verify_depth(ctx: ?*const SSL_CTX) c_int;
@@ -5427,7 +5484,7 @@ pub extern fn SSL_CTX_load_verify_locations(ctx: ?*SSL_CTX, ca_file: [*c]const u
 pub extern fn SSL_get_verify_result(ssl: ?*const SSL) c_long;
 pub extern fn SSL_alert_from_verify_result(result: c_long) c_int;
 pub extern fn SSL_get_ex_data_X509_STORE_CTX_idx() c_int;
-pub extern fn SSL_CTX_set_cert_verify_callback(ctx: ?*SSL_CTX, callback: ?fn (?*X509_STORE_CTX, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_CTX_set_cert_verify_callback(ctx: ?*SSL_CTX, callback: ?*const fn (?*X509_STORE_CTX, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
 pub extern fn SSL_enable_signed_cert_timestamps(ssl: ?*SSL) void;
 pub extern fn SSL_CTX_enable_signed_cert_timestamps(ctx: ?*SSL_CTX) void;
 pub extern fn SSL_enable_ocsp_stapling(ssl: ?*SSL) void;
@@ -5453,22 +5510,22 @@ pub extern fn SSL_add_file_cert_subjects_to_stack(out: ?*struct_stack_st_X509_NA
 pub extern fn SSL_set_tlsext_host_name(ssl: ?*SSL, name: [*c]const u8) c_int;
 pub extern fn SSL_get_servername(ssl: ?*const SSL, @"type": c_int) [*c]const u8;
 pub extern fn SSL_get_servername_type(ssl: ?*const SSL) c_int;
-pub extern fn SSL_CTX_set_tlsext_servername_callback(ctx: ?*SSL_CTX, callback: ?fn (?*SSL, [*c]c_int, ?*anyopaque) callconv(.C) c_int) c_int;
+pub extern fn SSL_CTX_set_tlsext_servername_callback(ctx: ?*SSL_CTX, callback: ?*const fn (?*SSL, [*c]c_int, ?*anyopaque) callconv(.C) c_int) c_int;
 pub extern fn SSL_CTX_set_tlsext_servername_arg(ctx: ?*SSL_CTX, arg: ?*anyopaque) c_int;
 pub extern fn SSL_set_SSL_CTX(ssl: ?*SSL, ctx: ?*SSL_CTX) ?*SSL_CTX;
 pub extern fn SSL_CTX_set_alpn_protos(ctx: ?*SSL_CTX, protos: [*c]const u8, protos_len: c_uint) c_int;
 pub extern fn SSL_set_alpn_protos(ssl: ?*SSL, protos: [*c]const u8, protos_len: c_uint) c_int;
-pub extern fn SSL_CTX_set_alpn_select_cb(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c][*c]const u8, [*c]u8, [*c]const u8, c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_CTX_set_alpn_select_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c][*c]const u8, [*c]u8, [*c]const u8, c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
 pub extern fn SSL_get0_alpn_selected(ssl: ?*const SSL, out_data: [*c][*c]const u8, out_len: [*c]c_uint) void;
 pub extern fn SSL_CTX_set_allow_unknown_alpn_protos(ctx: ?*SSL_CTX, enabled: c_int) void;
 pub extern fn SSL_add_application_settings(ssl: ?*SSL, proto: [*c]const u8, proto_len: usize, settings: [*c]const u8, settings_len: usize) c_int;
 pub extern fn SSL_get0_peer_application_settings(ssl: ?*const SSL, out_data: [*c][*c]const u8, out_len: [*c]usize) void;
 pub extern fn SSL_has_application_settings(ssl: ?*const SSL) c_int;
-pub const ssl_cert_compression_func_t = ?fn (?*SSL, [*c]CBB, [*c]const u8, usize) callconv(.C) c_int;
-pub const ssl_cert_decompression_func_t = ?fn (?*SSL, [*c]?*CRYPTO_BUFFER, usize, [*c]const u8, usize) callconv(.C) c_int;
+pub const ssl_cert_compression_func_t = ?*const fn (?*SSL, [*c]CBB, [*c]const u8, usize) callconv(.C) c_int;
+pub const ssl_cert_decompression_func_t = ?*const fn (?*SSL, [*c]?*CRYPTO_BUFFER, usize, [*c]const u8, usize) callconv(.C) c_int;
 pub extern fn SSL_CTX_add_cert_compression_alg(ctx: ?*SSL_CTX, alg_id: u16, compress: ssl_cert_compression_func_t, decompress: ssl_cert_decompression_func_t) c_int;
-pub extern fn SSL_CTX_set_next_protos_advertised_cb(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c][*c]const u8, [*c]c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
-pub extern fn SSL_CTX_set_next_proto_select_cb(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c][*c]u8, [*c]u8, [*c]const u8, c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_CTX_set_next_protos_advertised_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c][*c]const u8, [*c]c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
+pub extern fn SSL_CTX_set_next_proto_select_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c][*c]u8, [*c]u8, [*c]const u8, c_uint, ?*anyopaque) callconv(.C) c_int, arg: ?*anyopaque) void;
 pub extern fn SSL_get0_next_proto_negotiated(ssl: ?*const SSL, out_data: [*c][*c]const u8, out_len: [*c]c_uint) void;
 pub extern fn SSL_select_next_proto(out: [*c][*c]u8, out_len: [*c]u8, peer: [*c]const u8, peer_len: c_uint, supported: [*c]const u8, supported_len: c_uint) c_int;
 pub extern fn SSL_CTX_set_tls_channel_id_enabled(ctx: ?*SSL_CTX, enabled: c_int) void;
@@ -5477,9 +5534,9 @@ pub extern fn SSL_CTX_set1_tls_channel_id(ctx: ?*SSL_CTX, private_key: [*c]EVP_P
 pub extern fn SSL_set1_tls_channel_id(ssl: ?*SSL, private_key: [*c]EVP_PKEY) c_int;
 pub extern fn SSL_get_tls_channel_id(ssl: ?*SSL, out: [*c]u8, max_out: usize) usize;
 pub const struct_stack_st_SRTP_PROTECTION_PROFILE = opaque {};
-pub const stack_SRTP_PROTECTION_PROFILE_free_func = ?fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) void;
-pub const stack_SRTP_PROTECTION_PROFILE_copy_func = ?fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE;
-pub const stack_SRTP_PROTECTION_PROFILE_cmp_func = ?fn ([*c][*c]const SRTP_PROTECTION_PROFILE, [*c][*c]const SRTP_PROTECTION_PROFILE) callconv(.C) c_int;
+pub const stack_SRTP_PROTECTION_PROFILE_free_func = ?*const fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) void;
+pub const stack_SRTP_PROTECTION_PROFILE_copy_func = ?*const fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE;
+pub const stack_SRTP_PROTECTION_PROFILE_cmp_func = ?*const fn ([*c][*c]const SRTP_PROTECTION_PROFILE, [*c][*c]const SRTP_PROTECTION_PROFILE) callconv(.C) c_int;
 pub fn sk_SRTP_PROTECTION_PROFILE_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -5585,7 +5642,7 @@ pub fn sk_SRTP_PROTECTION_PROFILE_set_cmp_func(arg_sk: ?*struct_stack_st_SRTP_PR
     var comp = arg_comp;
     return @ptrCast(stack_SRTP_PROTECTION_PROFILE_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const SRTP_PROTECTION_PROFILE, [*c][*c]const SRTP_PROTECTION_PROFILE) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_SRTP_PROTECTION_PROFILE_deep_copy(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE, arg_copy_func: ?fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE, arg_free_func: ?fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) void) callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
+pub fn sk_SRTP_PROTECTION_PROFILE_deep_copy(arg_sk: ?*const struct_stack_st_SRTP_PROTECTION_PROFILE, arg_copy_func: ?*const fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) [*c]const SRTP_PROTECTION_PROFILE, arg_free_func: ?*const fn ([*c]const SRTP_PROTECTION_PROFILE) callconv(.C) void) callconv(.C) ?*struct_stack_st_SRTP_PROTECTION_PROFILE {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -5595,10 +5652,10 @@ pub extern fn SSL_CTX_set_srtp_profiles(ctx: ?*SSL_CTX, profiles: [*c]const u8) 
 pub extern fn SSL_set_srtp_profiles(ssl: ?*SSL, profiles: [*c]const u8) c_int;
 pub extern fn SSL_get_srtp_profiles(ssl: ?*const SSL) ?*const struct_stack_st_SRTP_PROTECTION_PROFILE;
 pub extern fn SSL_get_selected_srtp_profile(ssl: ?*SSL) [*c]const SRTP_PROTECTION_PROFILE;
-pub extern fn SSL_CTX_set_psk_client_callback(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c]const u8, [*c]u8, c_uint, [*c]u8, c_uint) callconv(.C) c_uint) void;
-pub extern fn SSL_set_psk_client_callback(ssl: ?*SSL, cb: ?fn (?*SSL, [*c]const u8, [*c]u8, c_uint, [*c]u8, c_uint) callconv(.C) c_uint) void;
-pub extern fn SSL_CTX_set_psk_server_callback(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c]const u8, [*c]u8, c_uint) callconv(.C) c_uint) void;
-pub extern fn SSL_set_psk_server_callback(ssl: ?*SSL, cb: ?fn (?*SSL, [*c]const u8, [*c]u8, c_uint) callconv(.C) c_uint) void;
+pub extern fn SSL_CTX_set_psk_client_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c]const u8, [*c]u8, c_uint, [*c]u8, c_uint) callconv(.C) c_uint) void;
+pub extern fn SSL_set_psk_client_callback(ssl: ?*SSL, cb: ?*const fn (?*SSL, [*c]const u8, [*c]u8, c_uint, [*c]u8, c_uint) callconv(.C) c_uint) void;
+pub extern fn SSL_CTX_set_psk_server_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c]const u8, [*c]u8, c_uint) callconv(.C) c_uint) void;
+pub extern fn SSL_set_psk_server_callback(ssl: ?*SSL, cb: ?*const fn (?*SSL, [*c]const u8, [*c]u8, c_uint) callconv(.C) c_uint) void;
 pub extern fn SSL_CTX_use_psk_identity_hint(ctx: ?*SSL_CTX, identity_hint: [*c]const u8) c_int;
 pub extern fn SSL_use_psk_identity_hint(ssl: ?*SSL, identity_hint: [*c]const u8) c_int;
 pub extern fn SSL_get_psk_identity_hint(ssl: ?*const SSL) [*c]const u8;
@@ -5677,13 +5734,13 @@ pub extern fn SSL_serialize_capabilities(ssl: ?*const SSL, out: [*c]CBB) c_int;
 pub extern fn SSL_request_handshake_hints(ssl: ?*SSL, client_hello: [*c]const u8, client_hello_len: usize, capabilities: [*c]const u8, capabilities_len: usize) c_int;
 pub extern fn SSL_serialize_handshake_hints(ssl: ?*const SSL, out: [*c]CBB) c_int;
 pub extern fn SSL_set_handshake_hints(ssl: ?*SSL, hints: [*c]const u8, hints_len: usize) c_int;
-pub extern fn SSL_CTX_set_msg_callback(ctx: ?*SSL_CTX, cb: ?fn (c_int, c_int, c_int, ?*const anyopaque, usize, ?*SSL, ?*anyopaque) callconv(.C) void) void;
+pub extern fn SSL_CTX_set_msg_callback(ctx: ?*SSL_CTX, cb: ?*const fn (c_int, c_int, c_int, ?*const anyopaque, usize, ?*SSL, ?*anyopaque) callconv(.C) void) void;
 pub extern fn SSL_CTX_set_msg_callback_arg(ctx: ?*SSL_CTX, arg: ?*anyopaque) void;
-pub extern fn SSL_set_msg_callback(ssl: ?*SSL, cb: ?fn (c_int, c_int, c_int, ?*const anyopaque, usize, ?*SSL, ?*anyopaque) callconv(.C) void) void;
+pub extern fn SSL_set_msg_callback(ssl: ?*SSL, cb: ?*const fn (c_int, c_int, c_int, ?*const anyopaque, usize, ?*SSL, ?*anyopaque) callconv(.C) void) void;
 pub extern fn SSL_set_msg_callback_arg(ssl: ?*SSL, arg: ?*anyopaque) void;
-pub extern fn SSL_CTX_set_keylog_callback(ctx: ?*SSL_CTX, cb: ?fn (?*const SSL, [*c]const u8) callconv(.C) void) void;
-pub extern fn SSL_CTX_get_keylog_callback(ctx: ?*const SSL_CTX) ?fn (?*const SSL, [*c]const u8) callconv(.C) void;
-pub extern fn SSL_CTX_set_current_time_cb(ctx: ?*SSL_CTX, cb: ?fn (?*const SSL, [*c]struct_timeval) callconv(.C) void) void;
+pub extern fn SSL_CTX_set_keylog_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*const SSL, [*c]const u8) callconv(.C) void) void;
+pub extern fn SSL_CTX_get_keylog_callback(ctx: ?*const SSL_CTX) ?*const fn (?*const SSL, [*c]const u8) callconv(.C) void;
+pub extern fn SSL_CTX_set_current_time_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*const SSL, [*c]struct_timeval) callconv(.C) void) void;
 pub extern fn SSL_set_shed_handshake_config(ssl: ?*SSL, enable: c_int) void;
 pub const ssl_renegotiate_never: c_int = 0;
 pub const ssl_renegotiate_once: c_int = 1;
@@ -5706,14 +5763,14 @@ pub const ssl_select_cert_retry: c_int = 0;
 pub const ssl_select_cert_error: c_int = -1;
 pub const enum_ssl_select_cert_result_t = c_int;
 pub extern fn SSL_early_callback_ctx_extension_get(client_hello: [*c]const SSL_CLIENT_HELLO, extension_type: u16, out_data: [*c][*c]const u8, out_len: [*c]usize) c_int;
-pub extern fn SSL_CTX_set_select_certificate_cb(ctx: ?*SSL_CTX, cb: ?fn ([*c]const SSL_CLIENT_HELLO) callconv(.C) enum_ssl_select_cert_result_t) void;
-pub extern fn SSL_CTX_set_dos_protection_cb(ctx: ?*SSL_CTX, cb: ?fn ([*c]const SSL_CLIENT_HELLO) callconv(.C) c_int) void;
+pub extern fn SSL_CTX_set_select_certificate_cb(ctx: ?*SSL_CTX, cb: ?*const fn ([*c]const SSL_CLIENT_HELLO) callconv(.C) enum_ssl_select_cert_result_t) void;
+pub extern fn SSL_CTX_set_dos_protection_cb(ctx: ?*SSL_CTX, cb: ?*const fn ([*c]const SSL_CLIENT_HELLO) callconv(.C) c_int) void;
 pub extern fn SSL_CTX_set_reverify_on_resume(ctx: ?*SSL_CTX, enabled: c_int) void;
 pub extern fn SSL_set_enforce_rsa_key_usage(ssl: ?*SSL, enabled: c_int) void;
-pub extern fn SSL_CTX_set_info_callback(ctx: ?*SSL_CTX, cb: ?fn (?*const SSL, c_int, c_int) callconv(.C) void) void;
-pub extern fn SSL_CTX_get_info_callback(ctx: ?*SSL_CTX) ?fn (?*const SSL, c_int, c_int) callconv(.C) void;
-pub extern fn SSL_set_info_callback(ssl: ?*SSL, cb: ?fn (?*const SSL, c_int, c_int) callconv(.C) void) void;
-pub extern fn SSL_get_info_callback(ssl: ?*const SSL) ?fn (?*const SSL, c_int, c_int) callconv(.C) void;
+pub extern fn SSL_CTX_set_info_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*const SSL, c_int, c_int) callconv(.C) void) void;
+pub extern fn SSL_CTX_get_info_callback(ctx: ?*SSL_CTX) ?*const fn (?*const SSL, c_int, c_int) callconv(.C) void;
+pub extern fn SSL_set_info_callback(ssl: ?*SSL, cb: ?*const fn (?*const SSL, c_int, c_int) callconv(.C) void) void;
+pub extern fn SSL_get_info_callback(ssl: ?*const SSL) ?*const fn (?*const SSL, c_int, c_int) callconv(.C) void;
 pub extern fn SSL_state_string_long(ssl: ?*const SSL) [*c]const u8;
 pub extern fn SSL_get_shutdown(ssl: ?*const SSL) c_int;
 pub extern fn SSL_get_peer_signature_algorithm(ssl: ?*const SSL) u16;
@@ -5770,8 +5827,8 @@ pub extern fn DTLSv1_client_method() ?*const SSL_METHOD;
 pub extern fn DTLSv1_2_server_method() ?*const SSL_METHOD;
 pub extern fn DTLSv1_2_client_method() ?*const SSL_METHOD;
 pub extern fn SSL_clear(ssl: ?*SSL) c_int;
-pub extern fn SSL_CTX_set_tmp_rsa_callback(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, c_int, c_int) callconv(.C) ?*RSA) void;
-pub extern fn SSL_set_tmp_rsa_callback(ssl: ?*SSL, cb: ?fn (?*SSL, c_int, c_int) callconv(.C) ?*RSA) void;
+pub extern fn SSL_CTX_set_tmp_rsa_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, c_int, c_int) callconv(.C) ?*RSA) void;
+pub extern fn SSL_set_tmp_rsa_callback(ssl: ?*SSL, cb: ?*const fn (?*SSL, c_int, c_int) callconv(.C) ?*RSA) void;
 pub extern fn SSL_CTX_sess_connect(ctx: ?*const SSL_CTX) c_int;
 pub extern fn SSL_CTX_sess_connect_good(ctx: ?*const SSL_CTX) c_int;
 pub extern fn SSL_CTX_sess_connect_renegotiate(ctx: ?*const SSL_CTX) c_int;
@@ -5809,15 +5866,15 @@ pub extern fn SSL_get_current_expansion(ssl: ?*SSL) ?*const COMP_METHOD;
 pub extern fn SSL_get_server_tmp_key(ssl: ?*SSL, out_key: [*c][*c]EVP_PKEY) c_int;
 pub extern fn SSL_CTX_set_tmp_dh(ctx: ?*SSL_CTX, dh: [*c]const DH) c_int;
 pub extern fn SSL_set_tmp_dh(ssl: ?*SSL, dh: [*c]const DH) c_int;
-pub extern fn SSL_CTX_set_tmp_dh_callback(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, c_int, c_int) callconv(.C) [*c]DH) void;
-pub extern fn SSL_set_tmp_dh_callback(ssl: ?*SSL, cb: ?fn (?*SSL, c_int, c_int) callconv(.C) [*c]DH) void;
+pub extern fn SSL_CTX_set_tmp_dh_callback(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, c_int, c_int) callconv(.C) [*c]DH) void;
+pub extern fn SSL_set_tmp_dh_callback(ssl: ?*SSL, cb: ?*const fn (?*SSL, c_int, c_int) callconv(.C) [*c]DH) void;
 pub extern fn SSL_CTX_set1_sigalgs(ctx: ?*SSL_CTX, values: [*c]const c_int, num_values: usize) c_int;
 pub extern fn SSL_set1_sigalgs(ssl: ?*SSL, values: [*c]const c_int, num_values: usize) c_int;
 pub extern fn SSL_CTX_set1_sigalgs_list(ctx: ?*SSL_CTX, str: [*c]const u8) c_int;
 pub extern fn SSL_set1_sigalgs_list(ssl: ?*SSL, str: [*c]const u8) c_int;
-pub const stack_SSL_COMP_free_func = ?fn ([*c]SSL_COMP) callconv(.C) void;
-pub const stack_SSL_COMP_copy_func = ?fn ([*c]SSL_COMP) callconv(.C) [*c]SSL_COMP;
-pub const stack_SSL_COMP_cmp_func = ?fn ([*c][*c]const SSL_COMP, [*c][*c]const SSL_COMP) callconv(.C) c_int;
+pub const stack_SSL_COMP_free_func = ?*const fn ([*c]SSL_COMP) callconv(.C) void;
+pub const stack_SSL_COMP_copy_func = ?*const fn ([*c]SSL_COMP) callconv(.C) [*c]SSL_COMP;
+pub const stack_SSL_COMP_cmp_func = ?*const fn ([*c][*c]const SSL_COMP, [*c][*c]const SSL_COMP) callconv(.C) c_int;
 pub fn sk_SSL_COMP_call_free_func(arg_free_func: stack_free_func, arg_ptr: ?*anyopaque) callconv(.C) void {
     var free_func = arg_free_func;
     var ptr = arg_ptr;
@@ -5923,7 +5980,7 @@ pub fn sk_SSL_COMP_set_cmp_func(arg_sk: ?*struct_stack_st_SSL_COMP, arg_comp: st
     var comp = arg_comp;
     return @ptrCast(stack_SSL_COMP_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c][*c]const SSL_COMP, [*c][*c]const SSL_COMP) callconv(.C) c_int), sk_set_cmp_func(@ptrCast([*c]_STACK, @alignCast(@import("std").meta.alignment(_STACK), sk)), @ptrCast(stack_cmp_func, @alignCast(@import("std").meta.alignment(fn ([*c]?*const anyopaque, [*c]?*const anyopaque) callconv(.C) c_int), comp)))));
 }
-pub fn sk_SSL_COMP_deep_copy(arg_sk: ?*const struct_stack_st_SSL_COMP, arg_copy_func: ?fn ([*c]SSL_COMP) callconv(.C) [*c]SSL_COMP, arg_free_func: ?fn ([*c]SSL_COMP) callconv(.C) void) callconv(.C) ?*struct_stack_st_SSL_COMP {
+pub fn sk_SSL_COMP_deep_copy(arg_sk: ?*const struct_stack_st_SSL_COMP, arg_copy_func: ?*const fn ([*c]SSL_COMP) callconv(.C) [*c]SSL_COMP, arg_free_func: ?*const fn ([*c]SSL_COMP) callconv(.C) void) callconv(.C) ?*struct_stack_st_SSL_COMP {
     var sk = arg_sk;
     var copy_func = arg_copy_func;
     var free_func = arg_free_func;
@@ -5933,7 +5990,7 @@ pub extern fn SSL_cache_hit(ssl: ?*SSL) c_int;
 pub extern fn SSL_get_default_timeout(ssl: ?*const SSL) c_long;
 pub extern fn SSL_get_version(ssl: ?*const SSL) [*c]const u8;
 pub extern fn SSL_get_cipher_list(ssl: ?*const SSL, n: c_int) [*c]const u8;
-pub extern fn SSL_CTX_set_client_cert_cb(ctx: ?*SSL_CTX, cb: ?fn (?*SSL, [*c]?*X509, [*c][*c]EVP_PKEY) callconv(.C) c_int) void;
+pub extern fn SSL_CTX_set_client_cert_cb(ctx: ?*SSL_CTX, cb: ?*const fn (?*SSL, [*c]?*X509, [*c][*c]EVP_PKEY) callconv(.C) c_int) void;
 pub extern fn SSL_want(ssl: ?*const SSL) c_int;
 pub extern fn SSL_get_finished(ssl: ?*const SSL, buf: ?*anyopaque, count: usize) usize;
 pub extern fn SSL_get_peer_finished(ssl: ?*const SSL, buf: ?*anyopaque, count: usize) usize;
@@ -5958,7 +6015,7 @@ pub extern fn SSL_set_tlsext_status_type(ssl: ?*SSL, @"type": c_int) c_int;
 pub extern fn SSL_get_tlsext_status_type(ssl: ?*const SSL) c_int;
 pub extern fn SSL_set_tlsext_status_ocsp_resp(ssl: ?*SSL, resp: [*c]u8, resp_len: usize) c_int;
 pub extern fn SSL_get_tlsext_status_ocsp_resp(ssl: ?*const SSL, out: [*c][*c]const u8) usize;
-pub extern fn SSL_CTX_set_tlsext_status_cb(ctx: ?*SSL_CTX, callback: ?fn (?*SSL, ?*anyopaque) callconv(.C) c_int) c_int;
+pub extern fn SSL_CTX_set_tlsext_status_cb(ctx: ?*SSL_CTX, callback: ?*const fn (?*SSL, ?*anyopaque) callconv(.C) c_int) c_int;
 pub extern fn SSL_CTX_set_tlsext_status_arg(ctx: ?*SSL_CTX, arg: ?*anyopaque) c_int;
 pub extern fn SSL_CIPHER_get_value(cipher: ?*const SSL_CIPHER) u16;
 pub const OPENSSL_VERSION_NUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x1010107f, .hexadecimal);
@@ -18739,11 +18796,15 @@ pub const SSL = opaque {
         return SSL_has_pending(ssl) > 0;
     }
 
+    pub inline fn setFD(this: *SSL, fd: c_int) void {
+        _ = SSL_set_fd(this, fd);
+    }
+
     pub inline fn setIsClient(ssl: *SSL, comptime is_client: bool) void {
-        if (comptime !is_client) {
-            SSL_set_accept_state(ssl);
-        } else {
+        if (comptime is_client) {
             SSL_set_connect_state(ssl);
+        } else {
+            SSL_set_accept_state(ssl);
         }
     }
 
@@ -18801,8 +18862,8 @@ pub const SSL = opaque {
         };
     }
 
-    const Output = @import("../global.zig").Output;
-    const Environment = @import("../global.zig").Environment;
+    const Output = @import("bun").Output;
+    const Environment = @import("bun").Environment;
 
     pub fn read(this: *SSL, buf: []u8) Error!usize {
         const rc = SSL_read(this, buf.ptr, @intCast(c_int, buf.len));
@@ -18898,6 +18959,10 @@ pub const SSL_CTX = opaque {
         // SSL_CTX_set_custom_verify(this, 1, cb);
         // SSL_CTX_set_custom_verify(this, 2, cb);
     }
+
+    pub fn deinit(this: *SSL_CTX) void {
+        SSL_CTX_free(this);
+    }
 };
 
 fn noop_custom_verify(_: *SSL, _: [*c]u8) callconv(.C) VerifyResult {
@@ -18907,12 +18972,12 @@ fn noop_custom_verify(_: *SSL, _: [*c]u8) callconv(.C) VerifyResult {
 threadlocal var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null;
 
 pub const BIOMethod = struct {
-    pub const create = fn (*BIO) callconv(.C) c_int;
-    pub const destroy = fn (*BIO) callconv(.C) c_int;
-    pub const write = fn (*BIO, [*c]const u8, c_int) callconv(.C) c_int;
-    pub const read = fn (*BIO, [*c]u8, c_int) callconv(.C) c_int;
-    pub const gets = fn (*BIO, [*c]u8, c_int) callconv(.C) c_int;
-    pub const ctrl = fn (*BIO, c_int, c_long, ?*anyopaque) callconv(.C) c_long;
+    pub const create = *const fn (*BIO) callconv(.C) c_int;
+    pub const destroy = *const fn (*BIO) callconv(.C) c_int;
+    pub const write = *const fn (*BIO, [*c]const u8, c_int) callconv(.C) c_int;
+    pub const read = *const fn (*BIO, [*c]u8, c_int) callconv(.C) c_int;
+    pub const gets = *const fn (*BIO, [*c]u8, c_int) callconv(.C) c_int;
+    pub const ctrl = *const fn (*BIO, c_int, c_long, ?*anyopaque) callconv(.C) c_long;
     pub fn init(
         name: [:0]const u8,
         comptime create__: ?create,

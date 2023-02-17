@@ -1022,7 +1022,7 @@ test "time-copy" {
 test "time-compare" {
     var t1 = try Time.create(8, 30, 0, 0);
     var t2 = try Time.create(9, 30, 0, 0);
-    var t3 = try Time.create(8, 00, 0, 0);
+    var t3 = try Time.create(8, 0, 0, 0);
     var t4 = try Time.create(9, 30, 17, 0);
 
     try testing.expect(t1.lt(t2));

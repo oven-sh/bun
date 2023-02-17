@@ -1,6 +1,6 @@
 // most of this file is copy pasted from other files in misctools
 const std = @import("std");
-const bun = @import("../src/global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -11,16 +11,16 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
-const AsyncIO = @import("io");
+const AsyncIO = @import("bun").AsyncIO;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("http").NetworkThread;
-const HTTP = @import("http");
+const NetworkThread = @import("bun").HTTP.NetworkThread;
+const HTTP = @import("bun").HTTP;
 fn noop_resolver(in: string) !string {
     return in;
 }

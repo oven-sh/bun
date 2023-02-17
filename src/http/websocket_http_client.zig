@@ -3,7 +3,7 @@
 const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,9 +14,9 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const uws = @import("uws");
-const JSC = @import("javascript_core");
-const PicoHTTP = @import("picohttp");
+const uws = @import("bun").uws;
+const JSC = @import("bun").JSC;
+const PicoHTTP = @import("bun").picohttp;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
 const WebsocketDataFrame = @import("./websocket.zig").WebsocketDataFrame;
@@ -24,14 +24,48 @@ const Opcode = @import("./websocket.zig").Opcode;
 
 const log = Output.scoped(.WebSocketClient, false);
 
-fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, host: *const JSC.ZigString, client_protocol: *const JSC.ZigString, client_protocol_hash: *u64) std.mem.Allocator.Error![]u8 {
+const NonUTF8Headers = struct {
+    names: []const JSC.ZigString,
+    values: []const JSC.ZigString,
+
+    pub fn format(self: NonUTF8Headers, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const count = self.names.len;
+        var i: usize = 0;
+        while (i < count) : (i += 1) {
+            try std.fmt.format(writer, "{any}: {any}\r\n", .{ self.names[i], self.values[i] });
+        }
+    }
+
+    pub fn init(names: ?[*]const JSC.ZigString, values: ?[*]const JSC.ZigString, len: usize) NonUTF8Headers {
+        if (len == 0) {
+            return .{
+                .names = &[_]JSC.ZigString{},
+                .values = &[_]JSC.ZigString{},
+            };
+        }
+
+        return .{
+            .names = names.?[0..len],
+            .values = values.?[0..len],
+        };
+    }
+};
+
+fn buildRequestBody(
+    vm: *JSC.VirtualMachine,
+    pathname: *const JSC.ZigString,
+    host: *const JSC.ZigString,
+    client_protocol: *const JSC.ZigString,
+    client_protocol_hash: *u64,
+    extra_headers: NonUTF8Headers,
+) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
     const input_rand_buf = vm.rareData().nextUUID();
     const temp_buf_size = comptime std.base64.standard.Encoder.calcSize(16);
     var encoded_buf: [temp_buf_size]u8 = undefined;
     const accept_key = std.base64.standard.Encoder.encode(&encoded_buf, &input_rand_buf);
 
-    var headers = [_]PicoHTTP.Header{
+    var static_headers = [_]PicoHTTP.Header{
         .{
             .name = "Sec-WebSocket-Key",
             .value = accept_key,
@@ -43,9 +77,10 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
     };
 
     if (client_protocol.len > 0)
-        client_protocol_hash.* = std.hash.Wyhash.hash(0, headers[1].value);
+        client_protocol_hash.* = std.hash.Wyhash.hash(0, static_headers[1].value);
 
-    var headers_: []PicoHTTP.Header = headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+    const headers_ = static_headers[0 .. 1 + @as(usize, @boolToInt(client_protocol.len > 0))];
+
     const pathname_ = pathname.slice();
     const host_ = host.slice();
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
@@ -59,12 +94,9 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
             "{any}" ++
+            "{any}" ++
             "\r\n",
-        .{
-            pathname_,
-            host_,
-            pico_headers,
-        },
+        .{ pathname_, host_, pico_headers, extra_headers },
     );
 }
 
@@ -126,7 +158,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body_buf: ?*BodyBuf = null,
         body_written: usize = 0,
         websocket_protocol: u64 = 0,
-        hostname: [:0]u8 = "",
+        hostname: [:0]const u8 = "",
         poll_ref: JSC.PollRef = .{},
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
@@ -174,11 +206,21 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             port: u16,
             pathname: *const JSC.ZigString,
             client_protocol: *const JSC.ZigString,
+            header_names: ?[*]const JSC.ZigString,
+            header_values: ?[*]const JSC.ZigString,
+            header_count: usize,
         ) callconv(.C) ?*HTTPClient {
             std.debug.assert(global.bunVM().uws_event_loop != null);
 
             var client_protocol_hash: u64 = 0;
-            var body = buildRequestBody(global.bunVM(), pathname, host, client_protocol, &client_protocol_hash) catch return null;
+            var body = buildRequestBody(
+                global.bunVM(),
+                pathname,
+                host,
+                client_protocol,
+                &client_protocol_hash,
+                NonUTF8Headers.init(header_names, header_values, header_count),
+            ) catch return null;
             var client: HTTPClient = HTTPClient{
                 .tcp = undefined,
                 .outgoing_websocket = websocket,
@@ -191,7 +233,20 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
             vm.eventLoop().start_server_on_next_tick = true;
             client.poll_ref.ref(vm);
-            if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
+            const display_host_ = host_.slice();
+            const display_host = if (bun.FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(display_host_, "localhost"))
+                "127.0.0.1"
+            else
+                display_host_;
+
+            if (Socket.connect(
+                display_host,
+                port,
+                @ptrCast(*uws.SocketContext, socket_ctx),
+                HTTPClient,
+                client,
+                "tcp",
+            )) |out| {
                 if (comptime ssl) {
                     if (!strings.isIPAddress(host_.slice())) {
                         out.hostname = bun.default_allocator.dupeZ(u8, host_.slice()) catch "";
@@ -213,7 +268,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
-            this.poll_ref.unref(JSC.VirtualMachine.vm);
+            this.poll_ref.unrefOnNextTick(JSC.VirtualMachine.get());
 
             this.clearInput();
             if (this.body_buf) |buf| {
@@ -291,15 +346,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var body = this.getBody();
             var remain = body[this.body_written..];
             const is_first = this.body_written == 0;
-            if (is_first and data.len >= "HTTP/1.1 101 ".len) {
+            if (is_first) {
                 // fail early if we receive a non-101 status code
-                if (!strings.eqlComptimeIgnoreLen(data[0.."HTTP/1.1 101 ".len], "HTTP/1.1 101 ")) {
+                if (!strings.hasPrefixComptime(data, "HTTP/1.1 101 ")) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
             }
 
-            const to_write = remain[0..@minimum(remain.len, data.len)];
+            const to_write = remain[0..@min(remain.len, data.len)];
             if (data.len > 0 and to_write.len > 0) {
                 @memcpy(remain.ptr, data.ptr, to_write.len);
                 this.body_written += to_write.len;
@@ -399,17 +454,17 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             //     return;
             // }
 
-            if (@minimum(upgrade_header.name.len, upgrade_header.value.len) == 0) {
+            if (@min(upgrade_header.name.len, upgrade_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_upgrade_header);
                 return;
             }
 
-            if (@minimum(connection_header.name.len, connection_header.value.len) == 0) {
+            if (@min(connection_header.name.len, connection_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_connection_header);
                 return;
             }
 
-            if (@minimum(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
+            if (@min(websocket_accept_header.name.len, websocket_accept_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_websocket_accept_header);
                 return;
             }
@@ -462,7 +517,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
             }
-            this.to_send = this.to_send[@minimum(@intCast(usize, wrote), this.to_send.len)..];
+            this.to_send = this.to_send[@min(@intCast(usize, wrote), this.to_send.len)..];
         }
         pub fn handleTimeout(
             this: *HTTPClient,
@@ -626,7 +681,7 @@ fn parseWebSocketHeader(
     // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
     // |                     Payload Data continued ...                |
     // +---------------------------------------------------------------+
-    const header = @bitCast(WebsocketHeader, @byteSwap(u16, @bitCast(u16, bytes)));
+    const header = @bitCast(WebsocketHeader, @byteSwap(@bitCast(u16, bytes)));
     const payload = @as(usize, header.len);
     payload_length.* = payload;
     receiving_type.* = header.opcode;
@@ -726,7 +781,8 @@ const Copy = union(enum) {
                 std.debug.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), encode_into_result.written) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), encode_into_result.written) catch unreachable;
 
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
@@ -736,13 +792,15 @@ const Copy = union(enum) {
                 std.debug.assert(@as(usize, encode_into_result.read) == latin1.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);
                 header.opcode = Opcode.Text;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), encode_into_result.written) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), encode_into_result.written) catch unreachable;
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], to_mask[0..content_byte_len]);
             },
             .bytes => |bytes| {
                 header.len = WebsocketHeader.packLength(bytes.len);
                 header.opcode = Opcode.Binary;
-                header.writeHeader(std.io.fixedBufferStream(buf).writer(), bytes.len) catch unreachable;
+                var fib = std.io.fixedBufferStream(buf);
+                header.writeHeader(fib.writer(), bytes.len) catch unreachable;
                 Mask.fill(globalThis, buf[mask_offset..][0..4], to_mask[0..content_byte_len], bytes);
             },
             .raw => unreachable,
@@ -808,7 +866,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn clearData(this: *WebSocket) void {
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_len = 0;
@@ -928,7 +986,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             @memcpy(writable.ptr, data_.ptr, data_.len);
             this.receive_buffer.update(data_.len);
 
-            if (left_in_fragment > data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
+            if (left_in_fragment >= data_.len and left_in_fragment - data_.len - this.receive_pending_chunk_len == 0) {
                 this.receive_pending_chunk_len = 0;
                 this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                 this.clearReceiveBuffers(false);
@@ -1074,7 +1132,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     },
 
                     .ping => {
-                        const ping_len = @minimum(data.len, @minimum(receive_body_remain, 125));
+                        const ping_len = @min(data.len, @min(receive_body_remain, 125));
                         this.ping_len = @truncate(u8, ping_len);
 
                         if (ping_len > 0) {
@@ -1089,7 +1147,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         if (data.len == 0) break;
                     },
                     .pong => {
-                        const pong_len = @minimum(data.len, @minimum(receive_body_remain, this.ping_frame_bytes.len));
+                        const pong_len = @min(data.len, @min(receive_body_remain, this.ping_frame_bytes.len));
                         data = data[pong_len..];
                         receive_state = .need_header;
                         receiving_type = last_receive_data_type;
@@ -1103,7 +1161,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         }
                         if (data.len == 0) return;
 
-                        const to_consume = @minimum(receive_body_remain, data.len);
+                        const to_consume = @min(receive_body_remain, data.len);
 
                         const consumed = this.consume(data[0..to_consume], receive_body_remain, last_receive_data_type, is_final);
                         if (consumed == 0 and last_receive_data_type == .Text) {
@@ -1241,7 +1299,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             header.mask = to_mask.len > 0;
             header.len = @truncate(u7, this.ping_len);
-            this.ping_frame_bytes[0..2].* = @bitCast(u16, header);
+            this.ping_frame_bytes[0..2].* = @bitCast([2]u8, header);
 
             if (to_mask.len > 0) {
                 Mask.fill(this.globalThis, this.ping_frame_bytes[2..6], to_mask, to_mask);
@@ -1395,7 +1453,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         fn dispatchClose(this: *WebSocket) void {
             var out = this.outgoing_websocket orelse return;
-            this.poll_ref.unref(this.globalThis.bunVM());
+            this.poll_ref.unrefOnNextTick(this.globalThis.bunVM());
             JSC.markBinding(@src());
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }

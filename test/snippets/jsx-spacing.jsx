@@ -13,7 +13,7 @@ line4 no trailing space 'single quote' \t\f\v\uF000 `template string`
 line6 no trailing space
 line7 trailing newline that ${terminates} the string literal
 "
-    ></ReturnDescriptionAsString>
+    ></ReturnDescriptionAsString>,
   );
 
   // convert HTML entities to unicode
@@ -35,8 +35,8 @@ line7 trailing newline that ${terminates} the string literal
         expected: esbuild,
       },
       null,
-      2
-    )}`
+      2,
+    )}`,
   );
 
   testDone(import.meta.url);

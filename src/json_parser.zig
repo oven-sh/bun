@@ -1,12 +1,12 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-const js_lexer = @import("js_lexer.zig");
+const logger = @import("bun").logger;
+const js_lexer = bun.js_lexer;
 const importRecord = @import("import_record.zig");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 const options = @import("options.zig");
 
 const fs = @import("fs.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -84,8 +84,28 @@ const HashMapPool = struct {
     }
 };
 
+fn newExpr(t: anytype, loc: logger.Loc) Expr {
+    const Type = @TypeOf(t);
+    if (comptime @typeInfo(Type) == .Pointer) {
+        @compileError("Unexpected pointer");
+    }
+
+    if (comptime Environment.allow_assert) {
+        if (comptime Type == E.Object) {
+            for (t.properties.slice()) |prop| {
+                // json should never have an initializer set
+                std.debug.assert(prop.initializer == null);
+                std.debug.assert(prop.key != null);
+                std.debug.assert(prop.value != null);
+            }
+        }
+    }
+
+    return Expr.init(Type, t, loc);
+}
+
 // This hack fixes using LLDB
-fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
+fn JSONLikeParser(comptime opts: js_lexer.JSONOptions) type {
     return JSONLikeParser_(
         opts.is_json,
         opts.allow_comments,
@@ -98,13 +118,13 @@ fn JSONLikeParser(opts: js_lexer.JSONOptions) type {
 }
 
 fn JSONLikeParser_(
-    opts_is_json: bool,
-    opts_allow_comments: bool,
-    opts_allow_trailing_commas: bool,
-    opts_ignore_leading_escape_sequences: bool,
-    opts_ignore_trailing_escape_sequences: bool,
-    opts_json_warn_duplicate_keys: bool,
-    opts_was_originally_macro: bool,
+    comptime opts_is_json: bool,
+    comptime opts_allow_comments: bool,
+    comptime opts_allow_trailing_commas: bool,
+    comptime opts_ignore_leading_escape_sequences: bool,
+    comptime opts_ignore_trailing_escape_sequences: bool,
+    comptime opts_json_warn_duplicate_keys: bool,
+    comptime opts_was_originally_macro: bool,
 ) type {
     const opts = js_lexer.JSONOptions{
         .is_json = opts_is_json,
@@ -123,6 +143,9 @@ fn JSONLikeParser_(
         allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator, source_: logger.Source, log: *logger.Log) !Parser {
+            Expr.Data.Store.assert();
+            Stmt.Data.Store.assert();
+
             return Parser{
                 .lexer = try Lexer.init(log, source_, allocator),
                 .allocator = allocator,
@@ -136,33 +159,25 @@ fn JSONLikeParser_(
 
         const Parser = @This();
 
-        pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
-            const Type = @TypeOf(t);
-            if (@typeInfo(Type) == .Pointer) {
-                return Expr.init(std.meta.Child(Type), t.*, loc);
-            } else {
-                return Expr.init(Type, t, loc);
-            }
-        }
         pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, comptime force_utf8: bool) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
                 .t_false => {
                     try p.lexer.next();
-                    return p.e(E.Boolean{
+                    return newExpr(E.Boolean{
                         .value = false,
                     }, loc);
                 },
                 .t_true => {
                     try p.lexer.next();
-                    return p.e(E.Boolean{
+                    return newExpr(E.Boolean{
                         .value = true,
                     }, loc);
                 },
                 .t_null => {
                     try p.lexer.next();
-                    return p.e(E.Null{}, loc);
+                    return newExpr(E.Null{}, loc);
                 },
                 .t_string_literal => {
                     var str: E.String = p.lexer.toEString();
@@ -171,18 +186,18 @@ fn JSONLikeParser_(
                     }
 
                     try p.lexer.next();
-                    return p.e(str, loc);
+                    return newExpr(str, loc);
                 },
                 .t_numeric_literal => {
                     const value = p.lexer.number;
                     try p.lexer.next();
-                    return p.e(E.Number{ .value = value }, loc);
+                    return newExpr(E.Number{ .value = value }, loc);
                 },
                 .t_minus => {
                     try p.lexer.next();
                     const value = p.lexer.number;
                     try p.lexer.expect(.t_numeric_literal);
-                    return p.e(E.Number{ .value = -value }, loc);
+                    return newExpr(E.Number{ .value = -value }, loc);
                 },
                 .t_open_bracket => {
                     try p.lexer.next();
@@ -211,7 +226,7 @@ fn JSONLikeParser_(
                         is_single_line = false;
                     }
                     try p.lexer.expect(.t_close_bracket);
-                    return p.e(E.Array{
+                    return newExpr(E.Array{
                         .items = ExprNodeList.fromList(exprs),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
@@ -261,7 +276,7 @@ fn JSONLikeParser_(
                             p.lexer.toEString();
 
                         const key_range = p.lexer.range();
-                        const key = p.e(str, key_range.loc);
+                        const key = newExpr(str, key_range.loc);
                         try p.lexer.expect(.t_string_literal);
 
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -281,6 +296,7 @@ fn JSONLikeParser_(
                             .key = key,
                             .value = value,
                             .kind = js_ast.G.Property.Kind.normal,
+                            .initializer = null,
                         }) catch unreachable;
                     }
 
@@ -288,7 +304,7 @@ fn JSONLikeParser_(
                         is_single_line = false;
                     }
                     try p.lexer.expect(.t_close_brace);
-                    return p.e(E.Object{
+                    return newExpr(E.Object{
                         .properties = G.Property.List.fromList(properties),
                         .is_single_line = is_single_line,
                         .was_originally_macro = comptime opts.was_originally_macro,
@@ -302,15 +318,6 @@ fn JSONLikeParser_(
                     }
 
                     try p.lexer.unexpected();
-                    if (comptime Environment.isDebug) {
-                        std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
-                            p.lexer.range().loc.start,
-                            p.lexer.range().end(),
-                            p.lexer.range().in(p.lexer.source.contents),
-                        }) catch {};
-
-                        @breakpoint();
-                    }
                     return error.ParserError;
                 },
             }
@@ -375,52 +382,44 @@ pub const PackageJSONVersionChecker = struct {
 
     const Parser = @This();
 
-    pub fn e(_: *Parser, t: anytype, loc: logger.Loc) Expr {
-        const Type = @TypeOf(t);
-        if (@typeInfo(Type) == .Pointer) {
-            return Expr.init(std.meta.Child(Type), t.*, loc);
-        } else {
-            return Expr.init(Type, t, loc);
-        }
-    }
     pub fn parseExpr(p: *Parser) anyerror!Expr {
         const loc = p.lexer.loc();
 
-        if (p.has_found_name and p.has_found_version) return p.e(E.Missing{}, loc);
+        if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
 
         switch (p.lexer.token) {
             .t_false => {
                 try p.lexer.next();
-                return p.e(E.Boolean{
+                return newExpr(E.Boolean{
                     .value = false,
                 }, loc);
             },
             .t_true => {
                 try p.lexer.next();
-                return p.e(E.Boolean{
+                return newExpr(E.Boolean{
                     .value = true,
                 }, loc);
             },
             .t_null => {
                 try p.lexer.next();
-                return p.e(E.Null{}, loc);
+                return newExpr(E.Null{}, loc);
             },
             .t_string_literal => {
                 var str: E.String = p.lexer.toEString();
 
                 try p.lexer.next();
-                return p.e(str, loc);
+                return newExpr(str, loc);
             },
             .t_numeric_literal => {
                 const value = p.lexer.number;
                 try p.lexer.next();
-                return p.e(E.Number{ .value = value }, loc);
+                return newExpr(E.Number{ .value = value }, loc);
             },
             .t_minus => {
                 try p.lexer.next();
                 const value = p.lexer.number;
                 try p.lexer.expect(.t_numeric_literal);
-                return p.e(E.Number{ .value = -value }, loc);
+                return newExpr(E.Number{ .value = -value }, loc);
             },
             .t_open_bracket => {
                 try p.lexer.next();
@@ -438,7 +437,7 @@ pub const PackageJSONVersionChecker = struct {
                 }
 
                 try p.lexer.expect(.t_close_bracket);
-                return p.e(E.Missing{}, loc);
+                return newExpr(E.Missing{}, loc);
             },
             .t_open_brace => {
                 try p.lexer.next();
@@ -456,7 +455,7 @@ pub const PackageJSONVersionChecker = struct {
                     const str = p.lexer.toEString();
                     const key_range = p.lexer.range();
 
-                    const key = p.e(str, key_range.loc);
+                    const key = newExpr(str, key_range.loc);
                     try p.lexer.expect(.t_string_literal);
 
                     try p.lexer.expect(.t_colon);
@@ -467,7 +466,7 @@ pub const PackageJSONVersionChecker = struct {
                         // first one wins
                         if (key.data == .e_string and value.data == .e_string) {
                             if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
-                                const len = @minimum(
+                                const len = @min(
                                     value.data.e_string.data.len,
                                     p.found_name_buf.len,
                                 );
@@ -476,7 +475,7 @@ pub const PackageJSONVersionChecker = struct {
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
-                                const len = @minimum(
+                                const len = @min(
                                     value.data.e_string.data.len,
                                     p.found_version_buf.len,
                                 );
@@ -487,12 +486,12 @@ pub const PackageJSONVersionChecker = struct {
                         }
                     }
 
-                    if (p.has_found_name and p.has_found_version) return p.e(E.Missing{}, loc);
+                    if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
                     has_properties = true;
                 }
 
                 try p.lexer.expect(.t_close_brace);
-                return p.e(E.Missing{}, loc);
+                return newExpr(E.Missing{}, loc);
             },
             else => {
                 try p.lexer.unexpected();
@@ -524,7 +523,7 @@ pub fn toAST(
     comptime Type: type,
     value: Type,
 ) anyerror!js_ast.Expr {
-    const type_info: std.builtin.TypeInfo = @typeInfo(Type);
+    const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
         .Bool => {
@@ -592,13 +591,13 @@ pub fn toAST(
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
         .Struct => |Struct| {
-            const fields: []const std.builtin.TypeInfo.StructField = Struct.fields;
+            const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
             inline for (fields) |field| {
                 properties[property_i] = G.Property{
                     .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
-                    .value = try toAST(allocator, field.field_type, @field(value, field.name)),
+                    .value = try toAST(allocator, field.type, @field(value, field.name)),
                 };
                 property_i += 1;
             }
@@ -644,7 +643,7 @@ pub fn toAST(
                                     .fields = &.{
                                         .{
                                             .name = u_field.name,
-                                            .field_type = @TypeOf(
+                                            .type = @TypeOf(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,
@@ -905,12 +904,12 @@ pub fn ParseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";
 
-const js_printer = @import("js_printer.zig");
+const js_printer = bun.js_printer;
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-const Bundler = @import("./bundler.zig").Bundler;
-const ParseResult = @import("./bundler.zig").ParseResult;
+const Bundler = bun.Bundler;
+const ParseResult = bun.bundler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);

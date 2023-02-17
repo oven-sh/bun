@@ -304,13 +304,8 @@ function readableStreamPipeToWritableStream(
   pipeState.pendingWritePromise = @Promise.@resolve();
 
   if (signal !== @undefined) {
-    const algorithm = () => {
+    const algorithm = (reason) => {
       if (pipeState.finalized) return;
-
-      const error = @makeDOMException(
-        "AbortError",
-        "abort pipeTo from signal"
-      );
 
       @pipeToShutdownWithAction(
         pipeState,
@@ -320,7 +315,7 @@ function readableStreamPipeToWritableStream(
             @getByIdDirectPrivate(pipeState.destination, "state") ===
               "writable";
           const promiseDestination = shouldAbortDestination
-            ? @writableStreamAbort(pipeState.destination, error)
+            ? @writableStreamAbort(pipeState.destination, reason)
             : @Promise.@resolve();
 
           const shouldAbortSource =
@@ -328,7 +323,7 @@ function readableStreamPipeToWritableStream(
             @getByIdDirectPrivate(pipeState.source, "state") ===
               @streamReadable;
           const promiseSource = shouldAbortSource
-            ? @readableStreamCancel(pipeState.source, error)
+            ? @readableStreamCancel(pipeState.source, reason)
             : @Promise.@resolve();
 
           let promiseCapability = @newPromiseCapability(@Promise);
@@ -350,7 +345,7 @@ function readableStreamPipeToWritableStream(
           promiseSource.@then(handleResolvedPromise, handleRejectedPromise);
           return promiseCapability.@promise;
         },
-        error
+        reason
       );
     };
     if (@whenSignalAborted(signal, algorithm))
@@ -795,10 +790,6 @@ function readDirectStream(stream, sink, underlyingSource) {
   @putByIdDirectPrivate(stream, "underlyingSource", @undefined);
   @putByIdDirectPrivate(stream, "start", @undefined);
 
-
-  var capturedStream = stream;
-  var reader;
-
   function close(stream, reason) {
     if (reason && underlyingSource?.cancel) {
       try {
@@ -819,7 +810,7 @@ function readDirectStream(stream, sink, underlyingSource) {
       } else {
         @putByIdDirectPrivate(stream, "state", @streamClosed);
       }
-      
+       stream = @undefined;
     }
   }
 
@@ -841,11 +832,9 @@ function readDirectStream(stream, sink, underlyingSource) {
   @putByIdDirectPrivate(stream, "readableStreamController", sink);
   const highWaterMark = @getByIdDirectPrivate(stream, "highWaterMark");
 
-  if (highWaterMark) {
-    sink.start({
-      highWaterMark,
-    });
-  }
+  sink.start({
+    highWaterMark: !highWaterMark || highWaterMark < 64 ? 64 : highWaterMark,
+  });
 
   @startDirectStream.@call(sink, stream, underlyingSource.pull, close);
   @putByIdDirectPrivate(stream, "reader", {});
@@ -855,6 +844,7 @@ function readDirectStream(stream, sink, underlyingSource) {
   if (maybePromise && @isPromise(maybePromise)) {
     return maybePromise.@then(() => {});
   }
+
 
 }
 
@@ -902,7 +892,7 @@ async function readStreamIntoSink(stream, sink, isNative) {
     const highWaterMark = @getByIdDirectPrivate(stream, "highWaterMark");
     if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));
 
-    if (highWaterMark) sink.start({ highWaterMark });
+    sink.start({ highWaterMark: highWaterMark || 0 });
     
 
     for (
@@ -1860,7 +1850,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
   var nativePtr = @getByIdDirectPrivate(stream, "bunNativePtr");
   var Prototype = @lazyStreamPrototypeMap.@get(nativeType);
   if (Prototype === @undefined) {
-    var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);
+    var [pull, start, cancel, setClose, deinit,  setRefOrUnref, drain] = @lazyLoad(nativeType);
     var closer = [false];
     var handleResult;
     function handleNativeReadableStreamPromiseResult(val) {
@@ -1871,10 +1861,16 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       handleResult(val, c, v);
     }
 
+    function callClose(controller) {
+      try {
+        controller.close();
+      } catch(e) {
+        globalThis.reportError(e);
+      }
+    }
+
     handleResult = function handleResult(result, controller, view) {
       "use strict";
-
-      
       if (result && @isPromise(result)) {
         return result.then(
           handleNativeReadableStreamPromiseResult.bind({
@@ -1884,7 +1880,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
           (err) => controller.error(err)
         );
       } else if (typeof result === 'number') {
-        if (view && view.byteLength === result) {
+        if (view && view.byteLength === result && view.buffer === controller.byobRequest?.view?.buffer) {
           controller.byobRequest.respondWithNewView(view);
         } else {
           controller.byobRequest.respond(result);
@@ -1894,60 +1890,110 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
       }
 
       if (closer[0] || result === false) {
-        @enqueueJob(() => controller.close());
+        @enqueueJob(callClose, controller);
         closer[0] = false;
       }
     };
 
-    Prototype = class NativeReadableStreamSource {
-      constructor(tag, autoAllocateChunkSize) {
-        this.pull = this.pull_.bind(tag);
-        this.cancel = this.cancel_.bind(tag);
-        this.autoAllocateChunkSize = autoAllocateChunkSize;
+    function createResult(tag, controller, view, closer) {
+      closer[0] = false;
+
+      var result;
+      try {
+        result = pull(tag, view, closer);
+      } catch (err) {
+        return controller.error(err);
       }
 
-      pull;
-      cancel;
+      return handleResult(result, controller, view);
+    }
 
-      type = "bytes";
-      autoAllocateChunkSize = 0;
+    const registry = deinit ? new FinalizationRegistry(deinit) : null;
+    Prototype = class NativeReadableStreamSource {
+      constructor(tag, autoAllocateChunkSize, drainValue) {
+        this.#tag = tag;
+        this.#cancellationToken = {};
+        this.pull = this.#pull.bind(this);
+        this.cancel = this.#cancel.bind(this);
+        this.autoAllocateChunkSize = autoAllocateChunkSize;
 
-      static startSync = start;
-
-      pull_(controller) {
-        closer[0] = false;
-
-        var result;
-
-        const view = controller.byobRequest.view;
-        try {
-          result = pull(this, view, closer);
-        } catch (err) {
-          return controller.error(err);
+        if (drainValue !== @undefined) {
+          this.start = (controller) => {
+            controller.enqueue(drainValue);
+          };
         }
 
-        return handleResult(result, controller, view);
+        if (registry) {
+          registry.register(this, tag, this.#cancellationToken);
+        }
       }
 
-      cancel_(reason) {
-        cancel(this, reason);
+      #cancellationToken;
+      pull;
+      cancel;
+      start;
+
+      #tag;
+      type = "bytes";
+      autoAllocateChunkSize = 0;
+      
+      static startSync = start;
+      
+    
+      #pull(controller) {
+        var tag = this.#tag;
+
+        if (!tag) {
+          controller.close();
+          return;
+        }
+
+        createResult(tag, controller, controller.byobRequest.view, closer);
+      }
+
+      #cancel(reason) {
+        var tag = this.#tag;
+
+        registry && registry.unregister(this.#cancellationToken);
+        setRefOrUnref && setRefOrUnref(tag, false);
+        cancel(tag, reason);
       }
       static deinit = deinit;
-      static registry = new FinalizationRegistry(deinit);
+      static drain = drain;
     };
     @lazyStreamPrototypeMap.@set(nativeType, Prototype);
   }
 
   const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
+  var drainValue;
+  const {drain: drainFn, deinit: deinitFn} = Prototype;
+  if (drainFn) {
+    drainValue = drainFn(nativePtr);
+  }
 
   // empty file, no need for native back-and-forth on this
   if (chunkSize === 0) {
-    @readableStreamClose(stream);
-    return null;
+    deinit && nativePtr && @enqueueJob(deinit, nativePtr);
+
+    if ((drainValue?.byteLength ?? 0) > 0) {
+      return {
+        start(controller) {
+          controller.enqueue(drainValue);
+          controller.close();
+        },
+        type: "bytes",
+      };
+    }
+
+    return {
+      start(controller) {
+        controller.close();
+      },
+      type: "bytes",
+    };
   }
-  var instance = new Prototype(nativePtr, chunkSize);
-  Prototype.registry.register(instance, nativePtr);
-  return instance;
+
+  return new Prototype(nativePtr, chunkSize, drainValue);
 }
 
 function readableStreamIntoArray(stream) {
@@ -2122,39 +2168,35 @@ function readableStreamDefineLazyIterators(prototype) {
     var ReadableStreamAsyncIterator = async function* ReadableStreamAsyncIterator(stream, preventCancel) {
         var reader = stream.getReader();
         var deferredError;
-          try {
-              while (true) {
-                  var done, value;
-                  const firstResult = reader.readMany();
-                  if (@isPromise(firstResult)) {
-                      const result = await firstResult;
-                      done = result.done;
-                      value = result.value;
-                  } else {
-                      done = firstResult.done;
-                      value = firstResult.value;
-                  }
+        try {
+            while (true) {
+                var done, value;
+                const firstResult = reader.readMany();
+                if (@isPromise(firstResult)) {
+                    ({done, value} = await firstResult);
+                } else {
+                    ({done, value} = firstResult);
+                }
 
-                  if (done) {
-                      return;
-                  }
-                  yield* value;
-              }
-          } catch(e) {
-            deferredError = e;
-          } finally {
-            reader.releaseLock();
-
-            if (!preventCancel) {
-                stream.cancel(deferredError);
+                if (done) {
+                    return;
+                }
+                yield* value;
             }
+        } catch(e) {
+          deferredError = e;
+        } finally {
+          reader.releaseLock();
 
-            if (deferredError) {
+          if (!preventCancel) {
+              stream.cancel(deferredError);
+          }
+
+          if (deferredError) {
             throw deferredError;
           }
-          }
+        }
     };
-
     var createAsyncIterator = function asyncIterator() {
         return ReadableStreamAsyncIterator(this, false);
     };

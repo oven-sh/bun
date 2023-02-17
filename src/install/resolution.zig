@@ -7,11 +7,11 @@ const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
-const VersionedURL = @import("./versioned_url.zig");
+const VersionedURL = @import("./versioned_url.zig").VersionedURL;
 
 pub const Resolution = extern struct {
-    tag: Tag = Tag.uninitialized,
-    value: Value = Value{ .uninitialized = .{} },
+    tag: Tag = .uninitialized,
+    value: Value = .{ .uninitialized = {} },
 
     pub fn order(
         lhs: *const Resolution,
@@ -26,90 +26,102 @@ pub const Resolution = extern struct {
         return switch (lhs.tag) {
             .npm => lhs.value.npm.order(rhs.value.npm, lhs_buf, rhs_buf),
             .local_tarball => lhs.value.local_tarball.order(&rhs.value.local_tarball, lhs_buf, rhs_buf),
-            .git_ssh => lhs.value.git_ssh.order(&rhs.value.git_ssh, lhs_buf, rhs_buf),
-            .git_http => lhs.value.git_http.order(&rhs.value.git_http, lhs_buf, rhs_buf),
             .folder => lhs.value.folder.order(&rhs.value.folder, lhs_buf, rhs_buf),
             .remote_tarball => lhs.value.remote_tarball.order(&rhs.value.remote_tarball, lhs_buf, rhs_buf),
             .workspace => lhs.value.workspace.order(&rhs.value.workspace, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.order(&rhs.value.symlink, lhs_buf, rhs_buf),
             .single_file_module => lhs.value.single_file_module.order(&rhs.value.single_file_module, lhs_buf, rhs_buf),
+            .git => lhs.value.git.order(&rhs.value.git, lhs_buf, rhs_buf),
             .github => lhs.value.github.order(&rhs.value.github, lhs_buf, rhs_buf),
             .gitlab => lhs.value.gitlab.order(&rhs.value.gitlab, lhs_buf, rhs_buf),
             else => .eq,
         };
     }
 
+    pub fn verify(this: *const Resolution) void {
+        switch (this.tag) {
+            .npm => {
+                this.value.npm.url.assertDefined();
+            },
+            .local_tarball => this.value.local_tarball.assertDefined(),
+            .folder => this.value.folder.assertDefined(),
+            .remote_tarball => this.value.remote_tarball.assertDefined(),
+            .workspace => this.value.workspace.assertDefined(),
+            .symlink => this.value.symlink.assertDefined(),
+            .git => this.value.git.verify(),
+            .github => this.value.github.verify(),
+            .gitlab => this.value.gitlab.verify(),
+            else => {},
+        }
+    }
+
     pub fn count(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) void {
         switch (this.tag) {
             .npm => this.value.npm.count(buf, Builder, builder),
             .local_tarball => builder.count(this.value.local_tarball.slice(buf)),
-            .git_ssh => builder.count(this.value.git_ssh.slice(buf)),
-            .git_http => builder.count(this.value.git_http.slice(buf)),
             .folder => builder.count(this.value.folder.slice(buf)),
             .remote_tarball => builder.count(this.value.remote_tarball.slice(buf)),
             .workspace => builder.count(this.value.workspace.slice(buf)),
             .symlink => builder.count(this.value.symlink.slice(buf)),
             .single_file_module => builder.count(this.value.single_file_module.slice(buf)),
+            .git => this.value.git.count(buf, Builder, builder),
             .github => this.value.github.count(buf, Builder, builder),
             .gitlab => this.value.gitlab.count(buf, Builder, builder),
             else => {},
         }
     }
 
-    pub fn clone(this: Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
+    pub fn clone(this: *const Resolution, buf: []const u8, comptime Builder: type, builder: Builder) Resolution {
         return Resolution{
             .tag = this.tag,
             .value = switch (this.tag) {
-                .npm => Resolution.Value{
+                .npm => .{
                     .npm = this.value.npm.clone(buf, Builder, builder),
                 },
-                .local_tarball => Resolution.Value{
+                .local_tarball => .{
                     .local_tarball = builder.append(String, this.value.local_tarball.slice(buf)),
                 },
-                .git_ssh => Resolution.Value{
-                    .git_ssh = builder.append(String, this.value.git_ssh.slice(buf)),
-                },
-                .git_http => Resolution.Value{
-                    .git_http = builder.append(String, this.value.git_http.slice(buf)),
-                },
-                .folder => Resolution.Value{
+                .folder => .{
                     .folder = builder.append(String, this.value.folder.slice(buf)),
                 },
-                .remote_tarball => Resolution.Value{
+                .remote_tarball => .{
                     .remote_tarball = builder.append(String, this.value.remote_tarball.slice(buf)),
                 },
-                .workspace => Resolution.Value{
+                .workspace => .{
                     .workspace = builder.append(String, this.value.workspace.slice(buf)),
                 },
-                .symlink => Resolution.Value{
+                .symlink => .{
                     .symlink = builder.append(String, this.value.symlink.slice(buf)),
                 },
-                .single_file_module => Resolution.Value{
+                .single_file_module => .{
                     .single_file_module = builder.append(String, this.value.single_file_module.slice(buf)),
                 },
-                .github => Resolution.Value{
+                .git => .{
+                    .git = this.value.git.clone(buf, Builder, builder),
+                },
+                .github => .{
                     .github = this.value.github.clone(buf, Builder, builder),
                 },
-                .gitlab => Resolution.Value{
+                .gitlab => .{
                     .gitlab = this.value.gitlab.clone(buf, Builder, builder),
                 },
-                .root => Resolution.Value{ .root = .{} },
+                .root => .{ .root = {} },
                 else => unreachable,
             },
         };
     }
 
-    pub fn fmt(this: Resolution, buf: []const u8) Formatter {
+    pub fn fmt(this: *const Resolution, buf: []const u8) Formatter {
         return Formatter{ .resolution = this, .buf = buf };
     }
 
-    pub fn fmtURL(this: Resolution, options: *const PackageManager.Options, name: string, buf: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = buf, .package_name = name, .options = options };
+    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, buf: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = buf, .options = options };
     }
 
     pub fn eql(
-        lhs: Resolution,
-        rhs: Resolution,
+        lhs: *const Resolution,
+        rhs: *const Resolution,
         lhs_string_buf: []const u8,
         rhs_string_buf: []const u8,
     ) bool {
@@ -120,16 +132,6 @@ pub const Resolution = extern struct {
             .npm => lhs.value.npm.eql(rhs.value.npm),
             .local_tarball => lhs.value.local_tarball.eql(
                 rhs.value.local_tarball,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .git_ssh => lhs.value.git_ssh.eql(
-                rhs.value.git_ssh,
-                lhs_string_buf,
-                rhs_string_buf,
-            ),
-            .git_http => lhs.value.git_http.eql(
-                rhs.value.git_http,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
@@ -158,13 +160,18 @@ pub const Resolution = extern struct {
                 lhs_string_buf,
                 rhs_string_buf,
             ),
+            .git => lhs.value.git.eql(
+                &rhs.value.git,
+                lhs_string_buf,
+                rhs_string_buf,
+            ),
             .github => lhs.value.github.eql(
-                rhs.value.github,
+                &rhs.value.github,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
             .gitlab => lhs.value.gitlab.eql(
-                rhs.value.gitlab,
+                &rhs.value.gitlab,
                 lhs_string_buf,
                 rhs_string_buf,
             ),
@@ -173,9 +180,8 @@ pub const Resolution = extern struct {
     }
 
     pub const URLFormatter = struct {
-        resolution: Resolution,
+        resolution: *const Resolution,
         options: *const PackageManager.Options,
-        package_name: string,
 
         buf: []const u8,
 
@@ -183,37 +189,35 @@ pub const Resolution = extern struct {
             switch (formatter.resolution.tag) {
                 .npm => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
                 .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }
     };
 
     pub const Formatter = struct {
-        resolution: Resolution,
+        resolution: *const Resolution,
         buf: []const u8,
 
         pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             switch (formatter.resolution.tag) {
                 .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
-                .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
-                .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
                 .folder => try writer.writeAll(formatter.resolution.value.folder.slice(formatter.buf)),
                 .remote_tarball => try writer.writeAll(formatter.resolution.value.remote_tarball.slice(formatter.buf)),
-                .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
-                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
-                .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
+                .git => try formatter.resolution.value.git.formatAs("git+", formatter.buf, layout, opts, writer),
+                .github => try formatter.resolution.value.github.formatAs("github:", formatter.buf, layout, opts, writer),
+                .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab:", formatter.buf, layout, opts, writer),
+                .workspace => try std.fmt.format(writer, "workspace:{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
                 .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
-                .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .single_file_module => try std.fmt.format(writer, "module:{s}", .{formatter.resolution.value.single_file_module.slice(formatter.buf)}),
                 else => {},
             }
         }
@@ -228,14 +232,12 @@ pub const Resolution = extern struct {
         /// File path to a tarball relative to the package root
         local_tarball: String,
 
-        git_ssh: String,
-        git_http: String,
-
         folder: String,
 
         /// URL to a tarball.
         remote_tarball: String,
 
+        git: Repository,
         github: Repository,
         gitlab: Repository,
 
@@ -258,8 +260,7 @@ pub const Resolution = extern struct {
         github = 16,
         gitlab = 24,
 
-        git_ssh = 32,
-        git_http = 33,
+        git = 32,
 
         symlink = 64,
 

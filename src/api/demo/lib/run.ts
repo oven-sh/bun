@@ -27,7 +27,7 @@ const swcOptions = {
 };
 
 export async function transform(contents, file) {
-  var result = {
+  var result: any = {
     timings: {
       esbuild: 0,
       bun: 0,
@@ -59,7 +59,7 @@ export async function transform(contents, file) {
   }
 
   result.timings.swc = performance.now();
-  result.swc = transformSyncSWC(contents, swcOptions);
+  result.swc = transformSyncSWC(contents, swcOptions as any);
   result.timings.swc = performance.now() - result.timings.swc;
 
   console.log("esbuild:", result.timings.esbuild, "ms");

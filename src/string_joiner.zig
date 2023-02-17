@@ -8,7 +8,7 @@ const copy = @import("std").mem.copy;
 const Env = @import("./env.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 
-const default_allocator = @import("./global.zig").default_allocator;
+const default_allocator = @import("bun").default_allocator;
 
 const Joinable = struct {
     offset: u31 = 0,
@@ -40,7 +40,7 @@ pub fn done(this: *Joiner, allocator: std.mem.Allocator) ![]u8 {
         const to_join = join.data.slice[join.data.offset..];
         @memcpy(remaining.ptr, to_join.ptr, to_join.len);
 
-        remaining = remaining[@minimum(remaining.len, to_join.len)..];
+        remaining = remaining[@min(remaining.len, to_join.len)..];
 
         var prev = join;
         el_ = join.next;

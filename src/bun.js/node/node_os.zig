@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;
-const JSC = @import("../../jsc.zig");
+const JSC = @import("bun").JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
@@ -26,13 +26,14 @@ pub const Os = struct {
         module.put(globalObject, JSC.ZigString.static("homedir"), JSC.NewFunction(globalObject, JSC.ZigString.static("homedir"), 0, homedir, true));
         module.put(globalObject, JSC.ZigString.static("hostname"), JSC.NewFunction(globalObject, JSC.ZigString.static("hostname"), 0, hostname, true));
         module.put(globalObject, JSC.ZigString.static("loadavg"), JSC.NewFunction(globalObject, JSC.ZigString.static("loadavg"), 0, loadavg, true));
+        module.put(globalObject, JSC.ZigString.static("machine"), JSC.NewFunction(globalObject, JSC.ZigString.static("machine"), 0, machine, true));
         module.put(globalObject, JSC.ZigString.static("networkInterfaces"), JSC.NewFunction(globalObject, JSC.ZigString.static("networkInterfaces"), 0, networkInterfaces, true));
         module.put(globalObject, JSC.ZigString.static("platform"), JSC.NewFunction(globalObject, JSC.ZigString.static("platform"), 0, platform, true));
         module.put(globalObject, JSC.ZigString.static("release"), JSC.NewFunction(globalObject, JSC.ZigString.static("release"), 0, release, true));
         module.put(globalObject, JSC.ZigString.static("setPriority"), JSC.NewFunction(globalObject, JSC.ZigString.static("setPriority"), 2, setPriority, true));
         module.put(globalObject, JSC.ZigString.static("tmpdir"), JSC.NewFunction(globalObject, JSC.ZigString.static("tmpdir"), 0, tmpdir, true));
         module.put(globalObject, JSC.ZigString.static("totalmem"), JSC.NewFunction(globalObject, JSC.ZigString.static("totalmem"), 0, totalmem, true));
-        module.put(globalObject, JSC.ZigString.static("type"), JSC.NewFunction(globalObject, JSC.ZigString.static("type"), 0, Os.@"type", true));
+        module.put(globalObject, JSC.ZigString.static("type"), JSC.NewFunction(globalObject, JSC.ZigString.static("type"), 0, Os.type, true));
         module.put(globalObject, JSC.ZigString.static("uptime"), JSC.NewFunction(globalObject, JSC.ZigString.static("uptime"), 0, uptime, true));
         module.put(globalObject, JSC.ZigString.static("userInfo"), JSC.NewFunction(globalObject, JSC.ZigString.static("userInfo"), 0, userInfo, true));
         module.put(globalObject, JSC.ZigString.static("version"), JSC.NewFunction(globalObject, JSC.ZigString.static("version"), 0, version, true));
@@ -46,7 +47,7 @@ pub const Os = struct {
         return module;
     }
 
-    pub const EOL = if (Environment.isWindows) "\\r\\n" else "\\n";
+    pub const EOL = if (Environment.isWindows) "\r\n" else "\n";
     pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -55,11 +56,147 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
     }
 
+    const CPU = struct {
+        model: JSC.ZigString = JSC.ZigString.init("unknown"),
+        speed: u64 = 0,
+        times: struct {
+            user: u64 = 0,
+            nice: u64 = 0,
+            sys: u64 = 0,
+            idle: u64 = 0,
+            irq: u64 = 0,
+        } = .{}
+    };
+
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        // TODO:
-        return JSC.JSArray.from(globalThis, &.{});
+        var cpu_buffer: [8192]CPU = undefined;
+        const cpus_or_error = if (comptime Environment.isLinux)
+                                cpusImplLinux(&cpu_buffer)
+                              else
+                                @as(anyerror![]CPU, cpu_buffer[0..0]);  // unsupported platform -> empty array
+
+        if (cpus_or_error) |list| {
+            // Convert the CPU list to a JS Array
+            const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
+            for (list) |cpu, cpu_index| {
+                const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
+
+                const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
+                const times = JSC.JSValue.createEmptyObject(globalThis, 5);
+                inline for (timesFields) |fieldName| {
+                    times.put(globalThis, JSC.ZigString.static(fieldName),
+                                    JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
+                }
+                obj.put(globalThis, JSC.ZigString.static("times"), times);
+                values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
+            }
+            return values;
+
+        } else |zig_err| {
+            const msg = switch (zig_err) {
+                error.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
+                error.eol => "Malformed /proc/stat file",
+                else => "An error occurred while fetching cpu information",
+            };
+            //TODO more suitable error type?
+            const err = JSC.SystemError{
+                .message = JSC.ZigString.init(msg),
+            };
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        }
+    }
+
+    fn cpusImplLinux(cpu_buffer: []CPU) ![]CPU {
+        // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
+        var line_buffer: [1024*8]u8 = undefined;
+        var num_cpus: usize = 0;
+
+        // Read /proc/stat to get number of CPUs and times
+        if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
+            defer file.close();
+            var reader = file.reader();
+
+            // Skip the first line (aggregate of all CPUs)
+            try reader.skipUntilDelimiterOrEof('\n');
+
+            // Read each CPU line
+            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+
+                if (num_cpus >= cpu_buffer.len) return error.too_many_cpus;
+
+                // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
+                var toks = std.mem.tokenize(u8, line, " \t");
+                const cpu_name = toks.next();
+                if (cpu_name == null or !std.mem.startsWith(u8, cpu_name.?, "cpu")) break; // done with CPUs
+
+                // Default initialize the CPU to ensure that we never return uninitialized fields
+                cpu_buffer[num_cpus] = CPU{};
+
+                //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
+                const scale = 10;
+                cpu_buffer[num_cpus].times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.sys  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.idle = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                _ = try (toks.next() orelse error.eol); // skip iowait
+                cpu_buffer[num_cpus].times.irq  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+
+                num_cpus += 1;
+            }
+        } else |_| {
+            return error.cannot_open_proc_stat;
+        }
+
+        const slice = cpu_buffer[0..num_cpus];
+
+        // Read /proc/cpuinfo to get model information (optional)
+        if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
+            defer file.close();
+            var reader = file.reader();
+            const key_processor = "processor\t: ";
+            const key_model_name = "model name\t: ";
+
+            var cpu_index: usize = 0;
+            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+
+                if (std.mem.startsWith(u8, line, key_processor)) {
+                    // If this line starts a new processor, parse the index from the line
+                    const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
+                    cpu_index = try std.fmt.parseInt(usize, digits, 10);
+                    if (cpu_index >= slice.len) return error.too_may_cpus;
+
+                } else if (std.mem.startsWith(u8, line, key_model_name)) {
+                    // If this is the model name, extract it and store on the current cpu
+                    const model_name = line[key_model_name.len..];
+                    slice[cpu_index].model = JSC.ZigString.init(model_name);
+                }
+                //TODO: special handling for ARM64 (no model name)?
+            }
+        } else |_| {
+            // Do nothing: CPU default initializer has set model name to "unknown"
+        }
+
+        // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
+        for (slice) |*cpu, cpu_index| {
+            var path_buf: [128]u8 = undefined;
+            const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
+            if (std.fs.openFileAbsolute(path, .{})) |file| {
+                defer file.close();
+
+                const bytes_read = try file.readAll(&line_buffer);
+                const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
+                cpu.speed = try std.fmt.parseInt(u64, digits, 10) / 1000;
+            } else |_| {
+                // Do nothing: CPU default initializer has set speed to 0
+            }
+        }
+
+        return slice;
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -128,9 +265,9 @@ pub const Os = struct {
 
         var dir: string = "unknown";
         if (comptime Environment.isWindows)
-            dir = std.os.getenv("USERPROFILE") orelse "unknown"
+            dir = bun.getenvZ("USERPROFILE") orelse "unknown"
         else
-            dir = std.os.getenv("HOME") orelse "unknown";
+            dir = bun.getenvZ("HOME") orelse "unknown";
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
@@ -152,6 +289,18 @@ pub const Os = struct {
             JSC.JSValue.jsDoubleNumber(result[1]),
             JSC.JSValue.jsDoubleNumber(result[2]),
         });
+    }
+
+    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+
+        const machine_name = if (comptime Environment.isLinux) b: {
+                                const uts = std.os.uname();
+                                break :b std.mem.span(&uts.machine);
+                             }
+                             else "unknown";
+
+        return JSC.ZigString.init(machine_name).withEncoding().toValueGC(globalThis);
     }
 
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -190,8 +339,8 @@ pub const Os = struct {
             return JSC.JSValue.jsUndefined();
         }
 
-        const pid = if (arguments.len == 2) arguments[0].toInt32() else 0;
-        const priority = if (arguments.len == 2) arguments[1].toInt32() else arguments[0].toInt32();
+        const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
+        const priority = if (arguments.len == 2) arguments[1].coerce(i32, globalThis) else arguments[0].coerce(i32, globalThis);
 
         if (priority < -20 or priority > 19) {
             const err = JSC.toTypeError(
@@ -241,17 +390,17 @@ pub const Os = struct {
 
         var dir: string = "unknown";
         if (comptime Environment.isWindows) {
-            if (std.os.getenv("TEMP") orelse std.os.getenv("TMP")) |tmpdir_| {
+            if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
                 dir = tmpdir_;
             }
 
-            if (std.os.getenv("SYSTEMROOT") orelse std.os.getenv("WINDIR")) |systemdir_| {
+            if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
                 dir = systemdir_ + "\\temp";
             }
 
             dir = "unknown";
         } else {
-            dir = std.os.getenv("TMPDIR") orelse std.os.getenv("TMP") orelse std.os.getenv("TEMP") orelse "/tmp";
+            dir = bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp";
         }
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
@@ -288,15 +437,15 @@ pub const Os = struct {
         result.put(globalThis, JSC.ZigString.static("homedir"), homedir(globalThis, callframe));
 
         if (comptime Environment.isWindows) {
-            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(std.os.getenv("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
             result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("shell"), JSC.JSValue.jsNull());
         } else {
-            const username = std.os.getenv("USER") orelse "unknown";
+            const username = bun.getenvZ("USER") orelse "unknown";
 
             result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
-            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(std.os.getenv("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
 
             if (comptime Environment.isLinux) {
                 result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));

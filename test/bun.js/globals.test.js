@@ -1,17 +1,7 @@
 import { it, describe, expect } from "bun:test";
 
 it("extendable", () => {
-  const classes = [
-    Blob,
-    TextDecoder,
-    TextEncoder,
-    Request,
-    Response,
-    Headers,
-    HTMLRewriter,
-    Bun.Transpiler,
-    Buffer,
-  ];
+  const classes = [Blob, TextDecoder, TextEncoder, Request, Response, Headers, HTMLRewriter, Bun.Transpiler, Buffer];
   // None of these should error
   for (let Class of classes) {
     var Foo = class extends Class {};

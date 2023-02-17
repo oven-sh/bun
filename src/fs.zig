@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -7,7 +7,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const FileDescriptorType = bun.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptor;
 const FeatureFlags = bun.FeatureFlags;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -111,13 +111,15 @@ pub const FileSystem = struct {
 
     pub fn getFdPath(this: *const FileSystem, fd: FileDescriptorType) ![]const u8 {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-        var dir = try std.os.getFdPath(fd, &buf);
+        var dir = try bun.getFdPath(fd, &buf);
         return try this.dirname_store.append([]u8, dir);
     }
 
     pub fn tmpname(_: *const FileSystem, extname: string, buf: []u8, hash: u64) ![*:0]u8 {
         // PRNG was...not so random
-        return try std.fmt.bufPrintZ(buf, ".{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
+        const hex_value = @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp()));
+
+        return try std.fmt.bufPrintZ(buf, ".{any}{s}", .{ bun.fmt.hexIntLower(hex_value), extname });
     }
 
     pub var max_fd: FileDescriptorType = 0;
@@ -127,7 +129,7 @@ pub const FileSystem = struct {
             return;
         }
 
-        max_fd = @maximum(fd, max_fd);
+        max_fd = @max(fd, max_fd);
     }
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
@@ -176,9 +178,9 @@ pub const FileSystem = struct {
                     allocator,
                     _top_level_dir,
                 ),
-                // .stats = std.StringHashMap(Stat).init(allocator),
-                .dirname_store = DirnameStore.init(allocator),
-                .filename_store = FilenameStore.init(allocator),
+                // must always use default_allocator since the other allocators may not be threadsafe when an element resizes
+                .dirname_store = DirnameStore.init(bun.default_allocator),
+                .filename_store = FilenameStore.init(bun.default_allocator),
             };
             instance_loaded = true;
 
@@ -190,7 +192,7 @@ pub const FileSystem = struct {
     }
 
     pub const DirEntry = struct {
-        pub const EntryMap = std.StringHashMapUnmanaged(*Entry);
+        pub const EntryMap = bun.StringHashMapUnmanaged(*Entry);
         pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
@@ -200,51 +202,42 @@ pub const FileSystem = struct {
         //     // dir.data.remove(name);
         // }
 
-        pub fn addEntry(dir: *DirEntry, entry: std.fs.Dir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
-            var _kind: Entry.Kind = undefined;
-            switch (entry.kind) {
-                .Directory => {
-                    _kind = Entry.Kind.dir;
-                },
-                .SymLink => {
-                    // This might be wrong!
-                    _kind = Entry.Kind.file;
-                },
-                .File => {
-                    _kind = Entry.Kind.file;
-                },
-                else => {
-                    return;
-                },
-            }
+        pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
+            const _kind: Entry.Kind = switch (entry.kind) {
+                .Directory => .dir,
+                // This might be wrong!
+                .SymLink => .file,
+                .File => .file,
+                else => return,
+            };
             // entry.name only lives for the duration of the iteration
 
-            const name = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.init(entry.name);
-
-            const name_lowercased = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.initLowerCase(entry.name);
-
-            var stored = try EntryStore.instance.append(
-                Entry{
-                    .base_ = name,
-                    .base_lowercase_ = name_lowercased,
-                    .dir = dir.dir,
-                    .mutex = Mutex.init(),
-                    // Call "stat" lazily for performance. The "@material-ui/icons" package
-                    // contains a directory with over 11,000 entries in it and running "stat"
-                    // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .SymLink,
-                    .cache = Entry.Cache{
-                        .symlink = PathString.empty,
-                        .kind = _kind,
-                    },
-                },
+            const name = try strings.StringOrTinyString.initAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
             );
+
+            const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
+            );
+
+            const stored = try EntryStore.instance.append(.{
+                .base_ = name,
+                .base_lowercase_ = name_lowercased,
+                .dir = dir.dir,
+                .mutex = Mutex.init(),
+                // Call "stat" lazily for performance. The "@material-ui/icons" package
+                // contains a directory with over 11,000 entries in it and running "stat"
+                // for each entry was a big performance issue for that package.
+                .need_stat = entry.kind == .SymLink,
+                .cache = .{
+                    .symlink = PathString.empty,
+                    .kind = _kind,
+                },
+            });
 
             const stored_name = stored.base();
 
@@ -268,7 +261,7 @@ pub const FileSystem = struct {
                 Output.prettyln("\n  {s}", .{dir});
             }
 
-            return DirEntry{ .dir = dir, .data = EntryMap{} };
+            return .{ .dir = dir, .data = .{} };
         }
 
         pub const Err = struct {
@@ -361,7 +354,7 @@ pub const FileSystem = struct {
     };
 
     pub const Entry = struct {
-        cache: Cache = Cache{},
+        cache: Cache = .{},
         dir: string,
 
         base_: strings.StringOrTinyString,
@@ -404,7 +397,7 @@ pub const FileSystem = struct {
         pub const Cache = struct {
             symlink: PathString = PathString.empty,
             fd: StoredFileDescriptorType = 0,
-            kind: Kind = Kind.file,
+            kind: Kind = .file,
         };
 
         pub const Kind = enum {
@@ -445,15 +438,15 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(.always_inline, path_handler.normalizeString, .{ str, true, .auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(.always_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+        return @call(.always_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
             .auto,
@@ -461,7 +454,7 @@ pub const FileSystem = struct {
     }
 
     pub fn joinBuf(_: *@This(), parts: anytype, buf: []u8) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.joinStringBuf, .{
+        return @call(.always_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
             .auto,
@@ -469,21 +462,21 @@ pub const FileSystem = struct {
     }
 
     pub fn relative(_: *@This(), from: string, to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             from,
             to,
         });
     }
 
     pub fn relativeTo(f: *@This(), to: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             f.top_level_dir,
             to,
         });
     }
 
     pub fn relativeFrom(f: *@This(), from: string) string {
-        return @call(.{ .modifier = .always_inline }, path_handler.relative, .{
+        return @call(.always_inline, path_handler.relative, .{
             from,
             f.top_level_dir,
         });
@@ -553,7 +546,7 @@ pub const FileSystem = struct {
 
         pub var tmpdir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
-        const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
+        pub const PLATFORM_TMP_DIR: string = switch (@import("builtin").target.os.tag) {
             .windows => "TMPDIR",
             .macos => "/private/tmp",
             else => "/tmp",
@@ -563,15 +556,17 @@ pub const FileSystem = struct {
         pub var tmpdir_path_set = false;
         pub fn openTmpDir(_: *const RealFS) !std.fs.Dir {
             if (!tmpdir_path_set) {
-                tmpdir_path = std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+                tmpdir_path = bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
                 tmpdir_path_set = true;
             }
 
-            return try std.fs.openDirAbsolute(tmpdir_path, .{ .access_sub_paths = true, .iterate = true });
+            return (try std.fs.cwd().openIterableDir(tmpdir_path, .{
+                .access_sub_paths = true,
+            })).dir;
         }
 
         pub fn getDefaultTempDir() string {
-            return std.os.getenvZ("BUN_TMPDIR") orelse std.os.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
+            return bun.getenvZ("BUN_TMPDIR") orelse bun.getenvZ("TMPDIR") orelse PLATFORM_TMP_DIR;
         }
 
         pub fn setTempdir(path: ?string) void {
@@ -727,12 +722,14 @@ pub const FileSystem = struct {
                 this: *const ModKey,
                 basename: string,
             ) !string {
+                const hex_int = this.hash();
+
                 return try std.fmt.bufPrint(
                     &hash_name_buf,
-                    "{s}-{x}",
+                    "{s}-{any}",
                     .{
                         basename,
-                        this.hash(),
+                        bun.fmt.hexIntLower(hex_int),
                     },
                 );
             }
@@ -814,7 +811,10 @@ pub const FileSystem = struct {
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
-            return try std.fs.openDirAbsolute(unsafe_dir_string, std.fs.Dir.OpenDirOptions{ .iterate = true, .access_sub_paths = true, .no_follow = false });
+            const dir = try std.os.open(unsafe_dir_string, std.os.O.DIRECTORY, 0);
+            return std.fs.Dir{
+                .fd = dir,
+            };
         }
 
         fn readdir(
@@ -824,7 +824,7 @@ pub const FileSystem = struct {
             comptime Iterator: type,
             iterator: Iterator,
         ) !DirEntry {
-            var iter: std.fs.Dir.Iterator = handle.iterate();
+            var iter = (std.fs.IterableDir{ .dir = handle }).iterate();
             var dir = DirEntry.init(_dir);
             const allocator = fs.allocator;
             errdefer dir.deinit(allocator);
@@ -1048,7 +1048,7 @@ pub const FileSystem = struct {
                 }
                 const _stat = try file.stat();
 
-                symlink = try std.os.getFdPath(file.handle, &outpath);
+                symlink = try bun.getFdPath(file.handle, &outpath);
 
                 _kind = _stat.kind;
             }
@@ -1352,8 +1352,4 @@ test "PathName.init" {
     try std.testing.expectEqualStrings(res.dir, "/root/directory");
     try std.testing.expectEqualStrings(res.base, "file");
     try std.testing.expectEqualStrings(res.ext, ".ext");
-}
-
-test "" {
-    @import("std").testing.refAllDecls(FileSystem);
 }

@@ -8,11 +8,7 @@ const snippetsDir = path.resolve(__dirname, "../snippets");
 const serverURL = process.env.TEST_SERVER_URL || "http://localhost:8080";
 const USE_EXISTING_PROCESS = process.env.USE_EXISTING_PROCESS || false;
 const DISABLE_HMR = !!process.env.DISABLE_HMR;
-const bunFlags = [
-  "dev",
-  `--origin=${serverURL}`,
-  DISABLE_HMR && "--disable-hmr",
-].filter(Boolean);
+const bunFlags = ["dev", `--origin=${serverURL}`, DISABLE_HMR && "--disable-hmr"].filter(Boolean);
 const bunExec = process.env.BUN_BIN || "bun";
 
 var bunProcess;
@@ -32,13 +28,13 @@ if (!USE_EXISTING_PROCESS) {
   bunProcess.stderr.pipe(process.stderr);
   bunProcess.stdout.pipe(process.stdout);
   var rejecter;
-  bunProcess.once("error", (err) => {
+  bunProcess.once("error", err => {
     console.error("❌ bun error", err);
     process.exit(1);
   });
   if (!process.env.CI) {
     waitSpawn = new Promise((resolve, reject) => {
-      bunProcess.once("spawn", (code) => {
+      bunProcess.once("spawn", code => {
         console.log("Spawned");
         resolve();
       });
@@ -54,10 +50,7 @@ function writeSnapshot(name, code) {
   let file = path.join(__dirname, "../snapshots", name);
 
   if (!DISABLE_HMR) {
-    file =
-      file.substring(0, file.length - path.extname(file).length) +
-      ".hmr" +
-      path.extname(file);
+    file = file.substring(0, file.length - path.extname(file).length) + ".hmr" + path.extname(file);
   }
 
   if (!fs.existsSync(path.dirname(file))) {
@@ -65,12 +58,8 @@ function writeSnapshot(name, code) {
   }
 
   fs.writeFileSync(
-    isDebug
-      ? file.substring(0, file.length - path.extname(file).length) +
-          ".debug" +
-          path.extname(file)
-      : file,
-    code
+    isDebug ? file.substring(0, file.length - path.extname(file).length) + ".debug" + path.extname(file) : file,
+    code,
   );
 }
 
@@ -92,9 +81,7 @@ const baseOptions = {
 };
 
 async function main() {
-  const launchOptions = USE_EXISTING_PROCESS
-    ? { ...baseOptions, devtools: !process.env.CI }
-    : baseOptions;
+  const launchOptions = USE_EXISTING_PROCESS ? { ...baseOptions, devtools: !process.env.CI } : baseOptions;
   const browser = await puppeteer.launch(launchOptions);
   const promises = [];
   let allTestsPassed = true;
@@ -113,14 +100,12 @@ async function main() {
       }
 
       var shouldClose = true;
-      page.on("console", (obj) =>
-        console.log(`[console.${obj.type()}] ${obj.text()}`)
-      );
-      page.exposeFunction("testFail", (error) => {
+      page.on("console", obj => console.log(`[console.${obj.type()}] ${obj.text()}`));
+      page.exposeFunction("testFail", error => {
         console.log(`❌ ${error}`);
         allTestsPassed = false;
       });
-      let testDone = new Promise((resolve) => {
+      let testDone = new Promise(resolve => {
         page.exposeFunction("testDone", resolve);
       });
       try {
@@ -135,7 +120,7 @@ async function main() {
       } catch (err) {
         if (canRetry) {
           console.log(
-            `❌ ${key} failed once (incase it's still booting on universal binary for the first time). Retrying...`
+            `❌ ${key} failed once (incase it's still booting on universal binary for the first time). Retrying...`,
           );
           canRetry = false;
           return await runPage(key);
@@ -184,8 +169,8 @@ async function main() {
   }
 }
 
-main().catch((error) =>
+main().catch(error =>
   setTimeout(() => {
     throw error;
-  })
+  }),
 );

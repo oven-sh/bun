@@ -7,7 +7,7 @@ if (!version.startsWith("12.2")) {
   console.warn(
     "Possibly incompatible Next.js version: ",
     version,
-    ". Please upgrade to Next.js 12.2.0+.\n"
+    ". Please upgrade to Next.js 12.2.0+.\n",
   );
 }
 
@@ -29,7 +29,7 @@ import(Bun.routesDir + "_document").then(
     } else {
       console.error(err);
     }
-  }
+  },
 );
 
 addEventListener("fetch", async (event: FetchEvent) => {

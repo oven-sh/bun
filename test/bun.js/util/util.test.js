@@ -27,13 +27,11 @@ import assert from "assert";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
-  assert.strictEqual(...args);
-  expect(true).toBe(true);
+  expect(args[0]).toStrictEqual(args[1]);
 };
 
 const deepStrictEqual = (...args) => {
-  assert.deepStrictEqual(...args);
-  expect(true).toBe(true);
+  expect(args[0]).toEqual(args[1]);
 };
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
@@ -112,7 +110,7 @@ describe("util", () => {
       strictEqual(util.isPrimitive(/regexp/), false);
       strictEqual(
         util.isPrimitive(function () {}),
-        false
+        false,
       );
       strictEqual(util.isPrimitive(new Number(1)), false);
       strictEqual(util.isPrimitive(new String("bla")), false);
@@ -210,11 +208,11 @@ describe("util", () => {
     it("all cases", () => {
       strictEqual(
         util.isFunction(() => {}),
-        true
+        true,
       );
       strictEqual(
         util.isFunction(function () {}),
-        true
+        true,
       );
       strictEqual(util.isFunction(), false);
       strictEqual(util.isFunction("string"), false);
@@ -234,10 +232,7 @@ describe("util", () => {
       //     true
       //   );
       strictEqual(util.types.isNativeError({}), false);
-      strictEqual(
-        util.types.isNativeError({ name: "Error", message: "" }),
-        false
-      );
+      strictEqual(util.types.isNativeError({ name: "Error", message: "" }), false);
       strictEqual(util.types.isNativeError([]), false);
       //   strictEqual( // FIXME: failing test
       //     util.types.isNativeError(Object.create(Error.prototype)),
@@ -263,7 +258,7 @@ describe("util", () => {
       expect(util.TextEncoder === globalThis.TextEncoder).toBe(true);
     });
   });
-  
+
   describe("TextDecoder", () => {
     // test/bun.js/text-decoder.test.js covers test cases for TextDecoder
     // here we test only if we use the same via util.TextDecoder

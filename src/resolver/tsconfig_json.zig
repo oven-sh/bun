@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -10,16 +10,16 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const options = @import("../options.zig");
-const logger = @import("../logger.zig");
+const logger = @import("bun").logger;
 const cache = @import("../cache.zig");
-const js_ast = @import("../js_ast.zig");
-const js_lexer = @import("../js_lexer.zig");
+const js_ast = bun.JSAst;
+const js_lexer = bun.js_lexer;
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
-const PathsMap = std.StringArrayHashMap([]string);
+const PathsMap = bun.StringArrayHashMap([]string);
 
 fn FlagSet(comptime Type: type) type {
     return std.EnumSet(std.meta.FieldEnum(Type));

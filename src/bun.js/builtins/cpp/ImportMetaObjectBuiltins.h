@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -58,6 +57,11 @@ extern const int s_importMetaObjectRequireESMCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility;
+extern const char* const s_importMetaObjectInternalRequireCode;
+extern const int s_importMetaObjectInternalRequireCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectInternalRequireCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectInternalRequireCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectInternalRequireCodeImplementationVisibility;
 extern const char* const s_importMetaObjectRequireCode;
 extern const int s_importMetaObjectRequireCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
@@ -67,18 +71,22 @@ extern const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplemen
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
     macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
     macro(requireESM, importMetaObjectRequireESM, 1) \
+    macro(internalRequire, importMetaObjectInternalRequire, 1) \
     macro(require, importMetaObjectRequire, 1) \
 
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADCJS2ESM 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREESM 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_INTERNALREQUIRE 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
     macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
     macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
+    macro(importMetaObjectInternalRequireCode, internalRequire, ASCIILiteral(), s_importMetaObjectInternalRequireCodeLength) \
     macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(internalRequire) \
     macro(loadCJS2ESM) \
     macro(require) \
     macro(requireESM) \

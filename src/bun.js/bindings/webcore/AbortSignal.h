@@ -63,8 +63,9 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    using Algorithm = Function<void()>;
+    using Algorithm = Function<void(JSValue)>;
     void addAlgorithm(Algorithm&& algorithm) { m_algorithms.append(WTFMove(algorithm)); }
+    void addNativeCallback(std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)> callback) { m_native_callbacks.append(callback); }
 
     bool isFollowingSignal() const { return !!m_followingSignal; }
 
@@ -86,6 +87,7 @@ private:
 
     bool m_aborted { false };
     Vector<Algorithm> m_algorithms;
+    Vector<std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>> m_native_callbacks;
     WeakPtr<AbortSignal> m_followingSignal;
     JSValueInWrappedObject m_reason;
     bool m_hasActiveTimeoutTimer { false };

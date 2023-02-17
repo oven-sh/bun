@@ -208,9 +208,9 @@ JSC::GCClient::IsoSubspace* JSReadableStreamSource::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSReadableStreamSource, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamSource.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamSource = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamSource = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForReadableStreamSource.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamSource = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamSource = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

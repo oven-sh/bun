@@ -404,7 +404,7 @@ pub fn compareString(input: []const u8) !void {
     var timer = try std.time.Timer.start();
 
     while (i < 99999999) : (i += 1) {
-        is_eql = @call(.{ .modifier = .never_inline }, TestEnum2.map.has, .{str});
+        is_eql = @call(.never_inline, TestEnum2.map.has, .{str});
     }
     const new = timer.lap();
 
@@ -412,7 +412,7 @@ pub fn compareString(input: []const u8) !void {
 
     i = 0;
     while (i < 99999999) : (i += 1) {
-        is_eql = @call(.{ .modifier = .never_inline }, TestEnum2.official.has, .{str});
+        is_eql = @call(.never_inline, TestEnum2.official.has, .{str});
     }
 
     const _std = timer.lap();

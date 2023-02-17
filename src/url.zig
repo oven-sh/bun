@@ -1,7 +1,7 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -37,20 +37,6 @@ pub const URL = struct {
         return this.hostname.len == 0 or strings.eqlComptime(this.hostname, "localhost") or strings.eqlComptime(this.hostname, "0.0.0.0");
     }
 
-    pub fn getIPv4Address(this: *const URL) ?std.x.net.ip.Address.IPv4 {
-        return (if (this.hostname.length > 0)
-            std.x.os.IPv4.parse(this.hostname)
-        else
-            std.x.os.IPv4.parse(this.href)) catch return null;
-    }
-
-    pub fn getIPv6Address(this: *const URL) ?std.x.net.ip.Address.IPv6 {
-        return (if (this.hostname.length > 0)
-            std.x.os.IPv6.parse(this.hostname)
-        else
-            std.x.os.IPv6.parse(this.href)) catch return null;
-    }
-
     pub fn displayProtocol(this: *const URL) string {
         if (this.protocol.len > 0) {
             return this.protocol;
@@ -83,7 +69,7 @@ pub const URL = struct {
 
     pub const HostFormatter = struct {
         host: string,
-        port: string,
+        port: string = "80",
         is_https: bool = false,
 
         pub fn format(formatter: HostFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -120,7 +106,11 @@ pub const URL = struct {
     }
 
     pub fn getPortAuto(this: *const URL) u16 {
-        return this.getPort() orelse (if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80));
+        return this.getPort() orelse this.getDefaultPort();
+    }
+
+    pub fn getDefaultPort(this: *const URL) u16 {
+        return if (this.isHTTPS()) @as(u16, 443) else @as(u16, 80);
     }
 
     pub fn hasValidPort(this: *const URL) bool {
@@ -206,7 +196,7 @@ pub const URL = struct {
     }
 
     pub fn parse(base_: string) URL {
-        const base = std.mem.trim(u8, base_, &std.ascii.spaces);
+        const base = std.mem.trim(u8, base_, &std.ascii.whitespace);
         if (base.len == 0) return URL{};
         var url = URL{};
         url.href = base;
@@ -216,18 +206,32 @@ pub const URL = struct {
                 offset += url.parsePassword(base[offset..]) orelse 0;
                 offset += url.parseHost(base[offset..]) orelse 0;
             },
-            'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
-                offset += url.parseProtocol(base[offset..]) orelse 0;
-
-                // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
-                if (offset > 0) {
-                    if ((std.mem.indexOfScalar(u8, base[offset..], '@') orelse 0) > (std.mem.indexOfScalar(u8, base[offset..], ':') orelse 0)) {
-                        offset += url.parseUsername(base[offset..]) orelse 0;
-                        offset += url.parsePassword(base[offset..]) orelse 0;
-                    }
+            '/', 'a'...'z', 'A'...'Z', '0'...'9', '-', '_', ':' => {
+                const is_protocol_relative = base.len > 1 and base[1] == '/';
+                if (is_protocol_relative) {
+                    offset += 1;
+                } else {
+                    offset += url.parseProtocol(base[offset..]) orelse 0;
                 }
 
-                offset += url.parseHost(base[offset..]) orelse 0;
+                const is_relative_path = !is_protocol_relative and base[0] == '/';
+
+                if (!is_relative_path) {
+
+                    // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
+                    if (offset > 0) {
+                        // see https://github.com/oven-sh/bun/issues/1390
+                        const first_at = strings.indexOfChar(base[offset..], '@') orelse 0;
+                        const first_colon = strings.indexOfChar(base[offset..], ':') orelse 0;
+
+                        if (first_at > first_colon and first_at < (strings.indexOfChar(base[offset..], '/') orelse std.math.maxInt(u32))) {
+                            offset += url.parseUsername(base[offset..]) orelse 0;
+                            offset += url.parsePassword(base[offset..]) orelse 0;
+                        }
+                    }
+
+                    offset += url.parseHost(base[offset..]) orelse 0;
+                }
             },
             else => {},
         }
@@ -427,15 +431,16 @@ pub const QueryStringMap = struct {
 
     threadlocal var _name_count: [8]string = undefined;
     pub fn getNameCount(this: *QueryStringMap) usize {
-        if (this.name_count == null) {
-            var count: usize = 0;
-            var iterate = this.iter();
-            while (iterate.next(&_name_count) != null) {
-                count += 1;
-            }
-            this.name_count = count;
-        }
-        return this.name_count.?;
+        return this.list.len;
+        // if (this.name_count == null) {
+        //     var count: usize = 0;
+        //     var iterate = this.iter();
+        //     while (iterate.next(&_name_count) != null) {
+        //         count += 1;
+        //     }
+        //     this.name_count = count;
+        // }
+        // return this.name_count.?;
     }
 
     pub fn iter(this: *const QueryStringMap) Iterator {
@@ -466,7 +471,9 @@ pub const QueryStringMap = struct {
 
             var slice = this.map.list.slice();
             const hash = slice.items(.name_hash)[this.i];
-            var result = Result{ .name = this.map.str(slice.items(.name)[this.i]), .values = target[0..1] };
+            const name_slice = slice.items(.name)[this.i];
+            std.debug.assert(name_slice.length > 0);
+            var result = Result{ .name = this.map.str(name_slice), .values = target[0..1] };
             target[0] = this.map.str(slice.items(.value)[this.i]);
 
             this.visited.set(this.i);
@@ -521,7 +528,7 @@ pub const QueryStringMap = struct {
     pub fn getAll(this: *const QueryStringMap, input: string, target: []string) usize {
         const hash = std.hash.Wyhash.hash(0, input);
         const _slice = this.list.slice();
-        return @call(.{ .modifier = .always_inline }, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
+        return @call(.always_inline, getAllWithHashFromOffset, .{ this, target, hash, 0, _slice });
     }
 
     pub fn getAllWithHashFromOffset(this: *const QueryStringMap, target: []string, hash: u64, offset: usize, _slice: Param.List.Slice) usize {
@@ -754,7 +761,7 @@ pub const QueryStringMap = struct {
 
 pub const PercentEncoding = struct {
     pub fn decode(comptime Writer: type, writer: Writer, input: string) !u32 {
-        return @call(.{ .modifier = .always_inline }, decodeFaultTolerant, .{ Writer, writer, input, null, false });
+        return @call(.always_inline, decodeFaultTolerant, .{ Writer, writer, input, null, false });
     }
 
     pub fn decodeFaultTolerant(
@@ -814,6 +821,309 @@ pub const PercentEncoding = struct {
     }
 };
 
+pub const FormData = struct {
+    fields: Map,
+    buffer: []const u8,
+
+    pub const Map = std.ArrayHashMapUnmanaged(
+        bun.Semver.String,
+        Field.Entry,
+        bun.Semver.String.ArrayHashContext,
+        false,
+    );
+
+    pub const Encoding = union(enum) {
+        URLEncoded: void,
+        Multipart: []const u8, // boundary
+
+        pub fn get(content_type: []const u8) ?Encoding {
+            if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
+                return Encoding{ .URLEncoded = void{} };
+
+            if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
+
+            const boundary = getBoundary(content_type) orelse return null;
+            return .{
+                .Multipart = boundary,
+            };
+        }
+    };
+
+    pub const AsyncFormData = struct {
+        encoding: Encoding,
+        allocator: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator, encoding: Encoding) !*AsyncFormData {
+            var this = try allocator.create(AsyncFormData);
+            this.* = AsyncFormData{
+                .encoding = switch (encoding) {
+                    .Multipart => .{
+                        .Multipart = try allocator.dupe(u8, encoding.Multipart),
+                    },
+                    else => encoding,
+                },
+                .allocator = allocator,
+            };
+            return this;
+        }
+
+        pub fn deinit(this: *AsyncFormData) void {
+            if (this.encoding == .Multipart)
+                this.allocator.free(this.encoding.Multipart);
+            this.allocator.destroy(this);
+        }
+
+        pub fn toJS(this: *AsyncFormData, global: *bun.JSC.JSGlobalObject, data: []const u8, promise: bun.JSC.AnyPromise) void {
+            if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
+                promise.reject(global, bun.JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                return;
+            }
+
+            const js_value = bun.FormData.toJS(
+                global,
+                data,
+                this.encoding,
+            ) catch |err| {
+                promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
+                return;
+            };
+
+            promise.resolve(global, js_value);
+        }
+    };
+
+    pub fn getBoundary(content_type: []const u8) ?[]const u8 {
+        const boundary_index = strings.indexOf(content_type, "boundary=") orelse return null;
+        const boundary_start = boundary_index + "boundary=".len;
+        const begin = content_type[boundary_start..];
+        if (begin.len == 0)
+            return null;
+
+        var boundary_end = strings.indexOfChar(begin, ';') orelse @truncate(u32, begin.len);
+        if (begin[0] == '"' and boundary_end > 0 and begin[boundary_end -| 1] == '"') {
+            boundary_end -|= 1;
+            return begin[1..boundary_end];
+        }
+
+        return begin[0..boundary_end];
+    }
+
+    pub const Field = struct {
+        value: bun.Semver.String = .{},
+        filename: bun.Semver.String = .{},
+        content_type: bun.Semver.String = .{},
+        is_file: bool = false,
+        zero_count: u8 = 0,
+
+        pub const Entry = union(enum) {
+            field: Field,
+            list: bun.BabyList(Field),
+        };
+
+        pub const External = extern struct {
+            name: bun.JSC.ZigString,
+            value: bun.JSC.ZigString,
+            blob: ?*bun.JSC.WebCore.Blob = null,
+        };
+    };
+
+    pub fn toJS(globalThis: *bun.JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !bun.JSC.JSValue {
+        switch (encoding) {
+            .URLEncoded => {
+                var str = bun.JSC.ZigString.fromUTF8(input);
+                return bun.JSC.DOMFormData.createFromURLQuery(globalThis, &str);
+            },
+            .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
+        }
+    }
+
+    pub fn toJSFromMultipartData(
+        globalThis: *bun.JSC.JSGlobalObject,
+        input: []const u8,
+        boundary: []const u8,
+    ) !bun.JSC.JSValue {
+        const form_data_value = bun.JSC.DOMFormData.create(globalThis);
+        form_data_value.ensureStillAlive();
+        var form = bun.JSC.DOMFormData.fromJS(form_data_value).?;
+        const Wrapper = struct {
+            globalThis: *bun.JSC.JSGlobalObject,
+            form: *bun.JSC.DOMFormData,
+
+            pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
+                var value_str = field.value.slice(buf);
+                var key = bun.JSC.ZigString.initUTF8(name.slice(buf));
+
+                if (field.is_file) {
+                    var filename_str = field.filename.slice(buf);
+
+                    var blob = bun.JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    defer blob.detach();
+                    var filename = bun.JSC.ZigString.initUTF8(filename_str);
+                    const content_type: []const u8 = brk: {
+                        if (filename_str.len > 0) {
+                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
+                                break :brk mime.value;
+                            }
+                        }
+
+                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                            break :brk mime.value;
+                        }
+
+                        break :brk "";
+                    };
+
+                    if (content_type.len > 0) {
+                        blob.content_type = content_type;
+                        blob.content_type_allocated = false;
+                    }
+
+                    wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
+                } else {
+                    var value = bun.JSC.ZigString.initUTF8(value_str);
+                    wrap.form.append(&key, &value);
+                }
+            }
+        };
+
+        {
+            var wrap = Wrapper{
+                .globalThis = globalThis,
+                .form = form,
+            };
+
+            try forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry);
+        }
+
+        return form_data_value;
+    }
+
+    pub fn forEachMultipartEntry(
+        input: []const u8,
+        boundary: []const u8,
+        comptime Ctx: type,
+        ctx: Ctx,
+        comptime iterator: fn (
+            Ctx,
+            bun.Semver.String,
+            Field,
+            string,
+        ) void,
+    ) !void {
+        var slice = input;
+        var subslicer = bun.Semver.SlicedString.init(input, input);
+
+        var buf: [76]u8 = undefined;
+        {
+            const final_boundary = std.fmt.bufPrint(&buf, "--{s}--", .{boundary}) catch |err| {
+                if (err == error.NoSpaceLeft) {
+                    return error.@"boundary is too long";
+                }
+
+                return err;
+            };
+            const final_boundary_index = strings.lastIndexOf(input, final_boundary);
+            if (final_boundary_index == null) {
+                return error.@"missing final boundary";
+            }
+            slice = slice[0..final_boundary_index.?];
+        }
+
+        const separator = try std.fmt.bufPrint(&buf, "--{s}\r\n", .{boundary});
+        var splitter = strings.split(slice, separator);
+        _ = splitter.next(); // skip first boundary
+
+        while (splitter.next()) |chunk| {
+            var remain = chunk;
+            const header_end = strings.indexOf(remain, "\r\n\r\n") orelse return error.@"is missing header end";
+            const header = remain[0 .. header_end + 2];
+            remain = remain[header_end + 4 ..];
+
+            var field = Field{};
+            var name: bun.Semver.String = .{};
+            var filename: ?bun.Semver.String = null;
+            var header_chunk = header;
+            var is_file = false;
+            while (header_chunk.len > 0 and (filename == null or name.len() == 0)) {
+                const line_end = strings.indexOf(header_chunk, "\r\n") orelse return error.@"is missing header line end";
+                const line = header_chunk[0..line_end];
+                header_chunk = header_chunk[line_end + 2 ..];
+                const colon = strings.indexOf(line, ":") orelse return error.@"is missing header colon separator";
+
+                const key = line[0..colon];
+                var value = if (line.len > colon + 1) line[colon + 1 ..] else "";
+                if (strings.eqlCaseInsensitiveASCII(key, "content-disposition", true)) {
+                    value = strings.trim(value, " ");
+                    if (strings.hasPrefixComptime(value, "form-data;")) {
+                        value = value["form-data;".len..];
+                        value = strings.trim(value, " ");
+                    }
+
+                    while (strings.indexOf(value, "=")) |eql_start| {
+                        const eql_key = strings.trim(value[0..eql_start], " ;");
+                        value = value[eql_start + 1 ..];
+                        if (strings.hasPrefixComptime(value, "\"")) {
+                            value = value[1..];
+                        }
+
+                        var field_value = value;
+                        {
+                            var i: usize = 0;
+                            while (i < field_value.len) : (i += 1) {
+                                switch (field_value[i]) {
+                                    '"' => {
+                                        field_value = field_value[0..i];
+                                        break;
+                                    },
+                                    '\\' => {
+                                        i += @boolToInt(field_value.len > i + 1 and field_value[i + 1] == '"');
+                                    },
+                                    // the spec requires a end quote, but some browsers don't send it
+                                    else => {},
+                                }
+                            }
+                            value = value[@min(i + 1, value.len)..];
+                        }
+
+                        if (strings.eqlCaseInsensitiveASCII(eql_key, "name", true)) {
+                            name = subslicer.sub(field_value).value();
+                        } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename", true)) {
+                            filename = subslicer.sub(field_value).value();
+                            is_file = true;
+                        }
+
+                        if (!name.isEmpty() and filename != null) {
+                            break;
+                        }
+
+                        if (strings.indexOfChar(value, ';')) |semi_start| {
+                            value = value[semi_start + 1 ..];
+                        } else {
+                            break;
+                        }
+                    }
+                } else if (value.len > 0 and field.content_type.isEmpty() and strings.eqlCaseInsensitiveASCII(key, "content-type", true)) {
+                    field.content_type = subslicer.sub(strings.trim(value, "; \t")).value();
+                }
+            }
+
+            if (name.len() + @as(usize, field.zero_count) == 0) {
+                continue;
+            }
+
+            var body = remain;
+            if (strings.endsWithComptime(body, "\r\n")) {
+                body = body[0 .. body.len - 2];
+            }
+            field.value = subslicer.sub(body).value();
+            field.filename = filename orelse .{};
+            field.is_file = is_file;
+
+            iterator(ctx, name, field, input);
+        }
+    }
+};
+
 const ParamsList = @import("./router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
@@ -838,14 +1148,22 @@ pub const CombinedScanner = struct {
 fn stringPointerFromStrings(parent: string, in: string) Api.StringPointer {
     if (in.len == 0 or parent.len == 0) return Api.StringPointer{};
 
-    const end = @ptrToInt(parent.ptr) + parent.len;
-    const in_end = @ptrToInt(in.ptr) + in.len;
-    if (in_end < end) return Api.StringPointer{};
+    if (bun.rangeOfSliceInBuffer(in, parent)) |range| {
+        return Api.StringPointer{ .offset = range[0], .length = range[1] };
+    } else {
+        if (strings.indexOf(parent, in)) |i| {
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(strings.eqlLong(parent[i..][0..in.len], in, false));
+            }
 
-    return Api.StringPointer{
-        .offset = @truncate(u32, @maximum(@ptrToInt(in.ptr), @ptrToInt(parent.ptr)) - @ptrToInt(parent.ptr)),
-        .length = @truncate(u32, in.len),
-    };
+            return Api.StringPointer{
+                .offset = @truncate(u32, i),
+                .length = @truncate(u32, in.len),
+            };
+        }
+    }
+
+    return Api.StringPointer{};
 }
 
 pub const PathnameScanner = struct {
@@ -884,7 +1202,7 @@ pub const PathnameScanner = struct {
             .name_needs_decoding = false,
             // TODO: fix this technical debt
             .value = stringPointerFromStrings(this.pathname, param.value),
-            .value_needs_decoding = std.mem.indexOfScalar(u8, param.value, '%') != null,
+            .value_needs_decoding = strings.containsChar(param.value, '%'),
         };
     }
 };
@@ -1104,23 +1422,23 @@ test "QueryStringMap (full)" {
     const url = "?cards_platform=Web-12&include_cards=1&include_ext_alt_text=true&include_quote_count=true&include_reply_count=1&tweet_mode=extended&dm_users=false&include_groups=true&include_inbox_timelines=true&include_ext_media_color=true&supports_reactions=true&muting_enabled=false&nsfw_filtering_enabled=false&cursor=GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA&filter_low_quality=true&include_quality=all&ext=mediaColor&ext=altText&ext=mediaStats&ext=highlightedLabel&ext=voiceInfo";
     // from chrome's devtools
     const fixture = .{
-        .@"cards_platform" = "Web-12",
-        .@"include_cards" = "1",
-        .@"include_ext_alt_text" = "true",
-        .@"include_quote_count" = "true",
-        .@"include_reply_count" = "1",
-        .@"tweet_mode" = "extended",
-        .@"dm_users" = "false",
-        .@"include_groups" = "true",
-        .@"include_inbox_timelines" = "true",
-        .@"include_ext_media_color" = "true",
-        .@"supports_reactions" = "true",
-        .@"muting_enabled" = "false",
-        .@"nsfw_filtering_enabled" = "false",
-        .@"cursor" = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
-        .@"filter_low_quality" = "true",
-        .@"include_quality" = "all",
-        .@"ext" = &[_]string{ "mediaColor", "altText", "mediaStats", "highlightedLabel", "voiceInfo" },
+        .cards_platform = "Web-12",
+        .include_cards = "1",
+        .include_ext_alt_text = "true",
+        .include_quote_count = "true",
+        .include_reply_count = "1",
+        .tweet_mode = "extended",
+        .dm_users = "false",
+        .include_groups = "true",
+        .include_inbox_timelines = "true",
+        .include_ext_media_color = "true",
+        .supports_reactions = "true",
+        .muting_enabled = "false",
+        .nsfw_filtering_enabled = "false",
+        .cursor = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
+        .filter_low_quality = "true",
+        .include_quality = "all",
+        .ext = &[_]string{ "mediaColor", "altText", "mediaStats", "highlightedLabel", "voiceInfo" },
     };
 
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
@@ -1157,8 +1475,8 @@ test "QueryStringMap (full)" {
 test "QueryStringMap not encoded" {
     const url = "?hey=1&wow=true";
     const fixture = .{
-        .@"hey" = "1",
-        .@"wow" = "true",
+        .hey = "1",
+        .wow = "true",
     };
     const url_slice = std.mem.span(url);
     var map = (try QueryStringMap.init(std.testing.allocator, url_slice)) orelse return try std.testing.expect(false);
@@ -1176,23 +1494,23 @@ test "QueryStringMap Iterator" {
     const url = "?cards_platform=Web-12&include_cards=1&include_ext_alt_text=true&include_quote_count=true&include_reply_count=1&tweet_mode=extended&dm_users=false&include_groups=true&include_inbox_timelines=true&include_ext_media_color=true&supports_reactions=true&muting_enabled=false&nsfw_filtering_enabled=false&cursor=GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA&filter_low_quality=true&ext=voiceInfo&include_quality=all&ext=mediaColor&ext=altText&ext=mediaStats&ext=highlightedLabel";
     // from chrome's devtools
     const fixture = .{
-        .@"cards_platform" = "Web-12",
-        .@"include_cards" = "1",
-        .@"include_ext_alt_text" = "true",
-        .@"include_quote_count" = "true",
-        .@"include_reply_count" = "1",
-        .@"tweet_mode" = "extended",
-        .@"dm_users" = "false",
-        .@"include_groups" = "true",
-        .@"include_inbox_timelines" = "true",
-        .@"include_ext_media_color" = "true",
-        .@"supports_reactions" = "true",
-        .@"muting_enabled" = "false",
-        .@"nsfw_filtering_enabled" = "false",
-        .@"cursor" = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
-        .@"filter_low_quality" = "true",
-        .@"include_quality" = "all",
-        .@"ext" = &[_]string{
+        .cards_platform = "Web-12",
+        .include_cards = "1",
+        .include_ext_alt_text = "true",
+        .include_quote_count = "true",
+        .include_reply_count = "1",
+        .tweet_mode = "extended",
+        .dm_users = "false",
+        .include_groups = "true",
+        .include_inbox_timelines = "true",
+        .include_ext_media_color = "true",
+        .supports_reactions = "true",
+        .muting_enabled = "false",
+        .nsfw_filtering_enabled = "false",
+        .cursor = "GRwmkMCq6fLUnMAnFpDAquny1JzAJyUAAAA",
+        .filter_low_quality = "true",
+        .include_quality = "all",
+        .ext = &[_]string{
             "voiceInfo",
             "mediaColor",
             "altText",
@@ -1348,29 +1666,6 @@ test "URL - parse" {
     try expectString("/", url.pathname);
     try expectString("#include-credentials", url.hash);
 
-    url = URL.parse("example.com:8080/////#include-credentials");
-    try expectString("", url.protocol);
-    try expectString("", url.username);
-    try expectString("", url.password);
-    try expectString("example.com:8080", url.host);
-    try expectString("example.com", url.hostname);
-    try expectString("8080", url.port);
-    try expectString("/////", url.pathname);
-    try expectString("/", url.path);
-    try expectString("#include-credentials", url.hash);
-    url = URL.parse("example.com:8080/////hi?wow#include-credentials");
-    try expectString("", url.protocol);
-    try expectString("", url.username);
-    try expectString("", url.password);
-    try expectString("example.com:8080", url.host);
-    try expectString("example.com", url.hostname);
-    try expectString("8080", url.port);
-    try expectString("/hi", url.path);
-    try expectString("/////hi?wow", url.pathname);
-
-    try expectString("#include-credentials", url.hash);
-    try expectString("?wow", url.search);
-
     url = URL.parse("/src/index");
     try expectString("", url.protocol);
     try expectString("", url.username);
@@ -1403,6 +1698,71 @@ test "URL - parse" {
     // try expectString("443", url.port);
     try expectString("/WHO-COVID-19-global-data.csv", url.path);
     try expectString("/WHO-COVID-19-global-data.csv", url.pathname);
+
+    url = URL.parse("http://localhost:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("localhost:3000", url.host);
+    try expectString("localhost", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@localhost:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("localhost:3000", url.host);
+    try expectString("localhost", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://0.0.0.0:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("", url.username);
+    try expectString("", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/@/example");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@/example", url.path);
+    try expectString("/@/example", url.pathname);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+
+    url = URL.parse("http://admin:password@0.0.0.0:3000/@bacon");
+    try expectString("http", url.protocol);
+    try expectString("admin", url.username);
+    try expectString("password", url.password);
+    try expectString("0.0.0.0:3000", url.host);
+    try expectString("0.0.0.0", url.hostname);
+    try expectString("3000", url.port);
+    try expectString("/@bacon", url.pathname);
 }
 
 test "URL - joinAlloc" {

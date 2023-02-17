@@ -1,10 +1,18 @@
+/// *************************************
+/// **** DO NOT USE THIS ON NEW CODE ****
+/// *************************************
+/// To generate a new class exposed to JavaScript, look at *.classes.ts
+/// Otherwise, use `JSC.JSValue`.
+/// ************************************
+const bun = @import("bun");
+const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
     pub fn value(this: *const @This()) cpp.JSValue {
-        return @bitCast(cpp.JSValue.Type, @ptrToInt(this));
+        return @intToEnum(cpp.JSValue, @bitCast(cpp.JSValue.Type, @ptrToInt(this)));
     }
 
-    pub inline fn bunVM(this: *@This()) *@import("javascript_core").VirtualMachine {
+    pub inline fn bunVM(this: *@This()) *@import("bun").JSC.VirtualMachine {
         return this.ptr().bunVM();
     }
 };
@@ -14,23 +22,93 @@ pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
 pub const JSContextRef = *cpp.JSGlobalObject;
 pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
-pub const struct_OpaqueJSString = generic;
-pub const JSStringRef = ?*struct_OpaqueJSString;
+pub const OpaqueJSString = opaque {
+    pub fn len(this: *OpaqueJSString) usize {
+        return JSStringGetLength(this);
+    }
+
+    pub fn is16Bit(this: *OpaqueJSString) bool {
+        return JSStringEncoding(this) == Encoding.char16;
+    }
+
+    pub fn characters16(this: *OpaqueJSString) UTF16Ptr {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(this.is16Bit());
+
+        return JSStringGetCharactersPtr(this);
+    }
+
+    pub fn characters8(this: *OpaqueJSString) UTF8Ptr {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(!this.is16Bit());
+
+        return JSStringGetCharacters8Ptr(this);
+    }
+
+    pub fn latin1Slice(this: *OpaqueJSString) []const u8 {
+        const _len = this.len();
+        if (_len == 0) return "";
+        return this.characters8()[0.._len];
+    }
+
+    pub fn utf16Slice(this: *OpaqueJSString) []const u16 {
+        const _len = this.len();
+        if (_len == 0) return &[_]u16{};
+        return this.characters16()[0.._len];
+    }
+
+    pub fn toZigString(this: *OpaqueJSString) cpp.ZigString {
+        if (this.is16Bit()) {
+            return cpp.ZigString.init16(this.utf16Slice());
+        } else {
+            return cpp.ZigString.init(this.latin1Slice());
+        }
+    }
+
+    pub fn fromZigString(zig_str: cpp.ZigString, allocator: std.mem.Allocator) *OpaqueJSString {
+        if (zig_str.isEmpty()) {
+            return JSStringCreateWithUTF8CString("");
+        }
+
+        if (zig_str.isUTF8()) {
+            return JSValueToStringCopy(
+                bun.JSC.VirtualMachine.get().global,
+                zig_str.toValueGC(bun.JSC.VirtualMachine.get().global).asObjectRef(),
+                null,
+            );
+        }
+
+        if (zig_str.is16Bit()) {
+            return JSStringCreateWithCharacters(zig_str.utf16SliceAligned().ptr, zig_str.len);
+        }
+
+        // also extremely inefficient
+        var utf8Z = allocator.dupeZ(u8, zig_str.slice()) catch unreachable;
+        const cloned = JSStringCreateWithUTF8CString(utf8Z);
+        allocator.free(utf8Z);
+        return cloned;
+    }
+};
+pub const JSStringRef = *OpaqueJSString;
 pub const struct_OpaqueJSClass = opaque {
     pub const name = "JSClassRef";
     pub const is_pointer = false;
     pub const Type = "JSClassRef";
 };
 pub const JSClassRef = ?*struct_OpaqueJSClass;
-pub const struct_OpaqueJSPropertyNameArray = generic;
-pub const JSPropertyNameArrayRef = ?*struct_OpaqueJSPropertyNameArray;
+pub const JSPropertyNameArray = opaque {
+    pub fn at(this: *@This(), i: usize) JSStringRef {
+        return JSPropertyNameArrayGetNameAtIndex(this, i);
+    }
+};
+pub const JSPropertyNameArrayRef = ?*JSPropertyNameArray;
 pub const struct_OpaqueJSPropertyNameAccumulator = generic;
 pub const JSPropertyNameAccumulatorRef = ?*struct_OpaqueJSPropertyNameAccumulator;
-pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const JSTypedArrayBytesDeallocator = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
-pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: ?*anyopaque, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
+pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: ?*anyopaque, sourceURL: ?JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
 pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) bool;
 pub extern fn JSGarbageCollect(ctx: JSContextRef) void;
 pub const JSType = enum(c_uint) {
@@ -102,13 +180,13 @@ pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: E
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
-const log_protection = @import("../global.zig").Environment.allow_assert and false;
+const log_protection = @import("bun").Environment.allow_assert and false;
 pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
     const Wrapped = struct {
         pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("../global.zig").Output;
+        const Output = @import("bun").Output;
         Output.debug("[unprotect] {d}\n", .{@ptrToInt(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
@@ -120,7 +198,7 @@ pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
         pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
     };
     if (comptime log_protection) {
-        const Output = @import("../global.zig").Output;
+        const Output = @import("bun").Output;
         Output.debug("[protect] {d}\n", .{@ptrToInt(value)});
     }
     // wrapper exists to make it easier to set a breakpoint
@@ -146,15 +224,15 @@ pub const JSClassAttributes = enum(c_uint) {
 
 pub const kJSClassAttributeNone = @enumToInt(JSClassAttributes.kJSClassAttributeNone);
 pub const kJSClassAttributeNoAutomaticPrototype = @enumToInt(JSClassAttributes.kJSClassAttributeNoAutomaticPrototype);
-pub const JSObjectInitializeCallback = ?fn (JSContextRef, JSObjectRef) callconv(.C) void;
-pub const JSObjectFinalizeCallback = ?fn (JSObjectRef) callconv(.C) void;
-pub const JSObjectHasPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
-pub const JSObjectGetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
-pub const JSObjectSetPropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectDeletePropertyCallback = ?fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectGetPropertyNamesCallback = ?fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
+pub const JSObjectInitializeCallback = *const fn (JSContextRef, JSObjectRef) callconv(.C) void;
+pub const JSObjectFinalizeCallback = *const fn (JSObjectRef) callconv(.C) void;
+pub const JSObjectHasPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef) callconv(.C) bool;
+pub const JSObjectGetPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) JSValueRef;
+pub const JSObjectSetPropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectDeletePropertyCallback = *const fn (JSContextRef, JSObjectRef, JSStringRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectGetPropertyNamesCallback = *const fn (JSContextRef, JSObjectRef, JSPropertyNameAccumulatorRef) callconv(.C) void;
 pub const ExceptionRef = [*c]JSValueRef;
-pub const JSObjectCallAsFunctionCallback = ?fn (
+pub const JSObjectCallAsFunctionCallback = *const fn (
     ctx: JSContextRef,
     function: JSObjectRef,
     thisObject: JSObjectRef,
@@ -162,38 +240,38 @@ pub const JSObjectCallAsFunctionCallback = ?fn (
     arguments: [*c]const JSValueRef,
     exception: ExceptionRef,
 ) callconv(.C) JSValueRef;
-pub const JSObjectCallAsConstructorCallback = ?fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
-pub const JSObjectHasInstanceCallback = ?fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
-pub const JSObjectConvertToTypeCallback = ?fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
+pub const JSObjectCallAsConstructorCallback = *const fn (JSContextRef, JSObjectRef, usize, [*c]const JSValueRef, ExceptionRef) callconv(.C) JSObjectRef;
+pub const JSObjectHasInstanceCallback = *const fn (JSContextRef, JSObjectRef, JSValueRef, ExceptionRef) callconv(.C) bool;
+pub const JSObjectConvertToTypeCallback = *const fn (JSContextRef, JSObjectRef, JSType, ExceptionRef) callconv(.C) JSValueRef;
 pub const JSStaticValue = extern struct {
-    name: [*c]const u8,
-    getProperty: JSObjectGetPropertyCallback,
-    setProperty: JSObjectSetPropertyCallback,
-    attributes: JSPropertyAttributes,
+    name: [*c]const u8 = null,
+    getProperty: ?JSObjectGetPropertyCallback = null,
+    setProperty: ?JSObjectSetPropertyCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSStaticFunction = extern struct {
-    name: [*c]const u8,
-    callAsFunction: JSObjectCallAsFunctionCallback,
-    attributes: JSPropertyAttributes,
+    name: [*c]const u8 = null,
+    callAsFunction: ?JSObjectCallAsFunctionCallback = null,
+    attributes: JSPropertyAttributes = .kJSPropertyAttributeNone,
 };
 pub const JSClassDefinition = extern struct {
-    version: c_int,
-    attributes: JSClassAttributes,
-    className: [*c]const u8,
-    parentClass: JSClassRef,
-    staticValues: [*c]const JSStaticValue,
-    staticFunctions: [*c]const JSStaticFunction,
-    initialize: JSObjectInitializeCallback,
-    finalize: JSObjectFinalizeCallback,
-    hasProperty: JSObjectHasPropertyCallback,
-    getProperty: JSObjectGetPropertyCallback,
-    setProperty: JSObjectSetPropertyCallback,
-    deleteProperty: JSObjectDeletePropertyCallback,
-    getPropertyNames: JSObjectGetPropertyNamesCallback,
-    callAsFunction: JSObjectCallAsFunctionCallback,
-    callAsConstructor: JSObjectCallAsConstructorCallback,
-    hasInstance: JSObjectHasInstanceCallback,
-    convertToType: JSObjectConvertToTypeCallback,
+    version: c_int = 0,
+    attributes: JSClassAttributes = .kJSClassAttributeNone,
+    className: [*:0]const u8 = "",
+    parentClass: JSClassRef = null,
+    staticValues: [*c]const JSStaticValue = null,
+    staticFunctions: [*c]const JSStaticFunction = null,
+    initialize: ?JSObjectInitializeCallback = null,
+    finalize: ?JSObjectFinalizeCallback = null,
+    hasProperty: ?JSObjectHasPropertyCallback = null,
+    getProperty: ?JSObjectGetPropertyCallback = null,
+    setProperty: ?JSObjectSetPropertyCallback = null,
+    deleteProperty: ?JSObjectDeletePropertyCallback = null,
+    getPropertyNames: ?JSObjectGetPropertyNamesCallback = null,
+    callAsFunction: ?JSObjectCallAsFunctionCallback = null,
+    callAsConstructor: ?JSObjectCallAsConstructorCallback = null,
+    hasInstance: ?JSObjectHasInstanceCallback = null,
+    convertToType: ?JSObjectConvertToTypeCallback = null,
 };
 pub extern const kJSClassDefinitionEmpty: JSClassDefinition;
 pub extern "c" fn JSClassCreate(definition: [*c]const JSClassDefinition) JSClassRef;
@@ -269,9 +347,7 @@ pub extern fn JSObjectGetArrayBufferBytesPtr(ctx: JSContextRef, object: JSObject
 pub extern fn JSObjectGetArrayBufferByteLength(ctx: JSContextRef, object: JSObjectRef, exception: ExceptionRef) usize;
 pub const OpaqueJSContextGroup = struct_OpaqueJSContextGroup;
 pub const OpaqueJSContext = struct_OpaqueJSContext;
-pub const OpaqueJSString = struct_OpaqueJSString;
 pub const OpaqueJSClass = struct_OpaqueJSClass;
-pub const OpaqueJSPropertyNameArray = struct_OpaqueJSPropertyNameArray;
 pub const OpaqueJSPropertyNameAccumulator = struct_OpaqueJSPropertyNameAccumulator;
 
 // This is a workaround for not receiving a JSException* object
@@ -316,8 +392,8 @@ pub fn isObjectOfClassAndResolveIfNeeded(ctx: JSContextRef, obj: JSObjectRef, cl
     }
 }
 
-pub const UTF8Ptr = [*c]const u8;
-pub const UTF16Ptr = [*c]const u16;
+pub const UTF8Ptr = [*]const u8;
+pub const UTF16Ptr = [*]const u16;
 
 // --- Custom Methods! ----
 pub const Encoding = enum(u8) {
@@ -416,20 +492,19 @@ pub const CellType = enum(u8) {
         };
     }
 };
-pub const ExternalStringFinalizer = fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
+pub const ExternalStringFinalizer = *const fn (finalize_ptr: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
 pub extern fn JSStringCreate(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateStatic(string: UTF8Ptr, length: usize) JSStringRef;
 pub extern fn JSStringCreateExternal(string: UTF8Ptr, length: usize, finalize_ptr: ?*anyopaque, finalizer: ExternalStringFinalizer) JSStringRef;
 pub extern fn JSStringIsEqualToString(a: JSStringRef, string: UTF8Ptr, length: usize) bool;
 pub extern fn JSStringEncoding(string: JSStringRef) Encoding;
 pub extern fn JSStringGetCharacters8Ptr(string: JSStringRef) UTF8Ptr;
-extern fn JSStringIterate(string: JSCellValue, iter: *JSStringIterator_) void;
 pub extern fn JSCellType(cell: JSCellValue) CellType;
 pub extern fn JSStringIsStatic(ref: JSStringRef) bool;
 pub extern fn JSStringIsExternal(ref: JSStringRef) bool;
 
-pub const JStringIteratorAppendCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
-pub const JStringIteratorWriteCallback = fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
+pub const JStringIteratorAppendCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32) callconv(.C) anyopaque;
+pub const JStringIteratorWriteCallback = *const fn (ctx: *JSStringIterator_, ptr: *anyopaque, length: u32, offset: u32) callconv(.C) anyopaque;
 const JSStringIterator_ = extern struct {
     ctx: *anyopaque,
     stop: u8,
@@ -440,129 +515,7 @@ const JSStringIterator_ = extern struct {
     write16: JStringIteratorWriteCallback,
 };
 
-pub const JSString = struct {
-    pub const Callback = fn (finalize_ptr_: ?*anyopaque, ref: JSStringRef, buffer: *anyopaque, byteLength: usize) callconv(.C) void;
-    _ref: JSStringRef = null,
-    backing: Backing = .{ .gc = 0 },
-
-    pub const Backing = union(Ownership) {
-        external: ExternalString,
-        static: []const u8,
-        gc: u0,
-    };
-
-    pub fn deref(this: *JSString) void {
-        if (this._ref == null) return;
-
-        JSStringRetain(this._ref);
-    }
-
-    const ExternalString = struct {
-        callback: Callback,
-        external_callback: *anyopaque,
-        external_ptr: ?*anyopaque = null,
-        slice: []const u8,
-    };
-
-    pub fn External(comptime ExternalType: type, external_type: *ExternalType, str: []const u8, callback: fn (this: *ExternalType, buffer: []const u8) void) JSString {
-        const CallbackFunctionType = @TypeOf(callback);
-
-        const ExternalWrapper = struct {
-            pub fn finalizer_callback(finalize_ptr_: ?*anyopaque, buffer: *anyopaque, byteLength: usize) callconv(.C) void {
-                var finalize_ptr = finalize_ptr_ orelse return;
-
-                var jsstring = @ptrCast(
-                    *JSString,
-                    @alignCast(
-                        @alignOf(
-                            *JSString,
-                        ),
-                        finalize_ptr,
-                    ),
-                );
-
-                var cb = @as(CallbackFunctionType, jsstring.external_callback orelse return);
-                var raw_external_ptr = jsstring.external_ptr orelse return;
-
-                var external_ptr = @ptrCast(
-                    *ExternalType,
-                    @alignCast(
-                        @alignOf(
-                            *ExternalType,
-                        ),
-                        raw_external_ptr,
-                    ),
-                );
-
-                cb(external_ptr, @ptrCast([*]u8, buffer)[0..byteLength]);
-            }
-        };
-
-        return JSString{
-            .backing = .{
-                .external = .{
-                    .slice = str,
-                    .external_callback = callback,
-                    .external_ptr = external_type,
-                    .callback = ExternalWrapper.finalizer_callback,
-                },
-            },
-        };
-    }
-
-    // pub fn Iterator(comptime WriterType: type) type {
-    //     return struct {
-
-    //     };
-    // }
-
-    pub const Ownership = enum { external, static, gc };
-
-    pub fn Static(str: []const u8) JSString {
-        return JSString{ ._ref = null, .backing = .{ .static = str } };
-    }
-
-    pub fn ref(this: *JSString) JSStringRef {
-        if (this._ref == null) {
-            switch (this.backing) {
-                .External => |external| {
-                    this._ref = JSStringCreateExternal(external.slice, external.slice.len, this, this.external_callback.?);
-                },
-                .Static => |slice| {
-                    this._ref = JSStringCreateStatic(slice.ptr, slice.len);
-                },
-                .gc => {
-                    return null;
-                },
-            }
-        }
-
-        JSStringRetain(this._ref);
-
-        return this._ref;
-    }
-
-    pub fn finalize(this: *JSString) void {
-        this.loaded = false;
-    }
-
-    pub fn value(this: *JSString, ctx: JSContextRef) JSValueRef {
-        return JSValueMakeString(ctx, this.ref());
-    }
-
-    pub fn len(this: *const JSString) usize {
-        return JSStringGetLength(this.ref);
-    }
-
-    pub fn encoding(this: *const JSString) Encoding {
-        return JSStringEncoding(this.ref);
-    }
-
-    // pub fn eql(this: *const JSString, str: string)  {
-
-    // }
-
-};
-
 // not official api functions
 pub extern "c" fn JSCInitialize() void;
+
+pub extern "c" fn JSObjectGetProxyTarget(JSObjectRef) JSObjectRef;

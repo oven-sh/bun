@@ -1,3 +1,4 @@
+type AnyFunction = (...args: any[]) => any;
 export function wrap({
   test: test_,
   it: it_,
@@ -6,12 +7,12 @@ export function wrap({
   beforeAll: beforeAll_ = undefined,
   afterEach: afterEach_ = undefined,
   afterAll: afterAll_ = undefined,
-}) {
+}: any) {
   if (it_ === undefined) {
     it_ = test_;
   }
 
-  var describe = (label, cb) => {
+  var describe = (label, cb: AnyFunction) => {
     return describe_(
       label,
       cb instanceof async function () {}.constructor
@@ -34,11 +35,11 @@ export function wrap({
             } finally {
               console.log(`DESCRIBE [Exit] ${label}`);
             }
-          }
+          },
     );
   };
 
-  var it = (label, cb) => {
+  var it = (label, cb: AnyFunction) => {
     console.log("Before", label);
     return it_(
       label,
@@ -62,11 +63,11 @@ export function wrap({
             } finally {
               console.log(`TEST [Exit] ${label}`);
             }
-          }
+          },
     );
   };
 
-  var beforeEach = (cb) => {
+  var beforeEach = (cb: AnyFunction) => {
     return beforeEach_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -88,10 +89,10 @@ export function wrap({
             } finally {
               console.log(`BEFORE EACH [Exit]`);
             }
-          }
+          },
     );
   };
-  var beforeAll = (cb) => {
+  var beforeAll = (cb: AnyFunction) => {
     return beforeAll_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -113,10 +114,10 @@ export function wrap({
             } finally {
               console.log(`BEFORE ALL [Exit]`);
             }
-          }
+          },
     );
   };
-  var afterEach = (cb) => {
+  var afterEach = (cb: AnyFunction) => {
     return afterEach_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -138,10 +139,10 @@ export function wrap({
             } finally {
               console.log(`AFTER EACH [Exit]`);
             }
-          }
+          },
     );
   };
-  var afterAll = (cb) => {
+  var afterAll = (cb: AnyFunction) => {
     return afterAll_(
       cb instanceof async function () {}.constructor
         ? async () => {
@@ -163,7 +164,7 @@ export function wrap({
             } finally {
               console.log(`AFTER ALL [Exit]`);
             }
-          }
+          },
     );
   };
 

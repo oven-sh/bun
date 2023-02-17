@@ -13,7 +13,7 @@ describe("Web Crypto", () => {
         length: 256,
       },
       true,
-      ["encrypt", "decrypt"]
+      ["encrypt", "decrypt"],
     );
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const data = new TextEncoder().encode("Hello World!");
@@ -23,7 +23,7 @@ describe("Web Crypto", () => {
         iv,
       },
       key,
-      data
+      data,
     );
     const decrypted = await crypto.subtle.decrypt(
       {
@@ -31,7 +31,7 @@ describe("Web Crypto", () => {
         iv,
       },
       key,
-      encrypted
+      encrypted,
     );
     expect(new TextDecoder().decode(decrypted)).toBe("Hello World!");
   });
@@ -43,17 +43,13 @@ describe("Web Crypto", () => {
         new TextEncoder().encode(secret),
         { name: "HMAC", hash: "SHA-256" },
         false,
-        ["sign", "verify"]
+        ["sign", "verify"],
       );
     }
 
     async function signResponse(message, secret) {
       const key = await importKey(secret);
-      const signature = await crypto.subtle.sign(
-        "HMAC",
-        key,
-        new TextEncoder().encode(message)
-      );
+      const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
 
       // Convert ArrayBuffer to Base64
       return btoa(String.fromCharCode(...new Uint8Array(signature)));
@@ -63,14 +59,9 @@ describe("Web Crypto", () => {
       const key = await importKey(secret);
 
       // Convert Base64 to Uint8Array
-      const sigBuf = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
+      const sigBuf = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
 
-      return await crypto.subtle.verify(
-        "HMAC",
-        key,
-        sigBuf,
-        new TextEncoder().encode(message)
-      );
+      return await crypto.subtle.verify("HMAC", key, sigBuf, new TextEncoder().encode(message));
     }
 
     const msg = `hello world`;
@@ -79,5 +70,22 @@ describe("Web Crypto", () => {
 
     const isSigValid = await verifySignature(msg, signature, SECRET);
     expect(isSigValid).toBe(true);
+  });
+});
+
+describe("Ed25519", () => {
+  describe("generateKey", () => {
+    it("should return CryptoKeys without namedCurve in algorithm field", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      expect(publicKey.algorithm!.name).toBe("Ed25519");
+      // @ts-ignore
+      expect(publicKey.algorithm!.namedCurve).toBe(undefined);
+      expect(privateKey.algorithm!.name).toBe("Ed25519");
+      // @ts-ignore
+      expect(privateKey.algorithm!.namedCurve).toBe(undefined);
+    });
   });
 });

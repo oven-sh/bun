@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -13,14 +13,14 @@ const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
 const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
-const lex = @import("../js_lexer.zig");
-const logger = @import("../logger.zig");
-const JSPrinter = @import("../js_printer.zig");
+const lex = bun.js_lexer;
+const logger = @import("bun").logger;
+const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
     if (@TypeOf(path) == [:0]const u8 or @TypeOf(path) == [:0]u8) {
@@ -93,7 +93,7 @@ pub const InitCommand = struct {
 
     const PackageJSONFields = struct {
         name: string = "project",
-        @"type": string = "module",
+        type: string = "module",
         object: *js_ast.E.Object = undefined,
         entry_point: string = "",
     };

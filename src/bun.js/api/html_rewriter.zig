@@ -1,17 +1,16 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const FilesystemRouter = @import("../../router.zig");
 const http = @import("../../http.zig");
 const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const string = bun.string;
-const JSC = @import("../../jsc.zig");
+const JSC = @import("bun").JSC;
 const js = JSC.C;
 const WebCore = @import("../webcore/response.zig");
 const Router = @This();
-const Bundler = @import("../../bundler.zig");
+const Bundler = bun.bundler;
 const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
@@ -22,14 +21,14 @@ const JSObject = JSC.JSObject;
 const JSError = Base.JSError;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
-const strings = @import("strings");
+const strings = @import("bun").strings;
 const NewClass = Base.NewClass;
 const To = Base.To;
 const Request = WebCore.Request;
-const d = Base.d;
+
 const FetchEvent = WebCore.FetchEvent;
 const Response = WebCore.Response;
-const LOLHTML = @import("lolhtml");
+const LOLHTML = @import("bun").LOLHTML;
 
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
 pub const LOLHTMLContext = struct {
@@ -308,7 +307,7 @@ pub const HTMLRewriter = struct {
                 doc.ctx = this;
             }
 
-            const chunk_size = @maximum(size_hint orelse 16384, 1024);
+            const chunk_size = @max(size_hint orelse 16384, 1024);
             this.rewriter = builder.build(
                 .UTF8,
                 .{
@@ -418,7 +417,7 @@ pub const HTMLRewriter = struct {
                     .preallocated_parsing_buffer_size = if (input_size == JSC.WebCore.Blob.max_size)
                         1024
                     else
-                        @maximum(input_size, 1024),
+                        @max(input_size, 1024),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -477,7 +476,7 @@ pub const HTMLRewriter = struct {
                     if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
                         sink.response.body.value.Locked.promise == null)
                     {
-                        sink.response.body.value = .{ .Empty = .{} };
+                        sink.response.body.value = .{ .Empty = {} };
                         // is there a pending promise?
                         // we will need to reject it
                     } else if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
@@ -594,7 +593,7 @@ pub const HTMLRewriter = struct {
     //         sink.rewriter = builder.build(
     //             .UTF8,
     //             .{
-    //                 .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
+    //                 .preallocated_parsing_buffer_size = @max(original.body.len(), 1024),
     //                 .max_allowed_memory_usage = std.math.maxInt(u32),
     //             },
     //             false,
@@ -818,10 +817,11 @@ fn HandlerCallback(
 ) (fn (*HandlerType, *LOLHTMLType) bool) {
     return struct {
         pub fn callback(this: *HandlerType, value: *LOLHTMLType) bool {
-            if (comptime JSC.is_bindgen)
-                unreachable;
+            JSC.markBinding(@src());
             var zig_element = bun.default_allocator.create(ZigType) catch unreachable;
             @field(zig_element, field_name) = value;
+            defer @field(zig_element, field_name) = null;
+
             // At the end of this scope, the value is no longer valid
             var args = [1]JSC.C.JSObjectRef{
                 ZigType.Class.make(this.global, zig_element),
@@ -836,33 +836,21 @@ fn HandlerCallback(
                 1,
                 &args,
             );
-            var promise_: ?*JSC.JSInternalPromise = null;
-            while (!result.isUndefinedOrNull()) {
+
+            if (!result.isUndefinedOrNull()) {
                 if (result.isError() or result.isAggregateError(this.global)) {
-                    @field(zig_element, field_name) = null;
                     return true;
                 }
 
-                var promise = promise_ orelse JSC.JSInternalPromise.resolvedPromise(this.global, result);
-                promise_ = promise;
-                JavaScript.VirtualMachine.vm.event_loop.waitForPromise(promise);
-
-                switch (promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => unreachable,
-                    JSC.JSPromise.Status.Rejected => {
-                        JavaScript.VirtualMachine.vm.runErrorHandler(promise.result(this.global.vm()), null);
-                        @field(zig_element, field_name) = null;
-                        return false;
-                    },
-                    JSC.JSPromise.Status.Fulfilled => {
-                        result = promise.result(this.global.vm());
-                        break;
-                    },
+                if (result.asAnyPromise()) |promise| {
+                    this.global.bunVM().waitForPromise(promise);
+                    const fail = promise.status(this.global.vm()) == .Rejected;
+                    if (fail) {
+                        this.global.bunVM().runErrorHandler(promise.result(this.global.vm()), null);
+                    }
+                    return fail;
                 }
-
-                break;
             }
-            @field(zig_element, field_name) = null;
             return false;
         }
     }.callback;
@@ -978,7 +966,7 @@ pub const ContentOptions = struct {
 
 const getterWrap = JSC.getterWrap;
 const setterWrap = JSC.setterWrap;
-const wrap = JSC.wrapAsync;
+const wrap = JSC.wrapSync;
 
 pub fn free_html_writer_string(_: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void {
     var str = LOLHTML.HTMLString{ .ptr = bun.cast([*]const u8, ptr.?), .len = len };
@@ -1090,7 +1078,7 @@ pub const TextChunk = struct {
     pub fn getText(this: *TextChunk, global: *JSGlobalObject) JSValue {
         if (this.text_chunk == null)
             return JSC.JSValue.jsUndefined();
-        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
@@ -1140,7 +1128,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getName().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 
     pub fn systemId(this: *DocType, global: *JSGlobalObject) JSValue {
@@ -1150,7 +1138,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getSystemId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 
     pub fn publicId(this: *DocType, global: *JSGlobalObject) JSValue {
@@ -1160,7 +1148,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getPublicId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValue(global);
+        return ZigString.init(str).toValueGC(global);
     }
 };
 
@@ -1305,7 +1293,7 @@ pub const Comment = struct {
     pub fn getText(this: *Comment, global: *JSGlobalObject) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
-        return ZigString.init(this.comment.?.getText().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.comment.?.getText().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn setText(
@@ -1435,7 +1423,7 @@ pub const EndTag = struct {
         if (this.end_tag == null)
             return JSC.JSValue.jsUndefined();
 
-        return ZigString.init(this.end_tag.?.getName().slice()).withEncoding().toValue(global);
+        return ZigString.init(this.end_tag.?.getName().slice()).withEncoding().toValueGC(global);
     }
 
     pub fn setName(
@@ -1467,13 +1455,13 @@ pub const AttributeIterator = struct {
         \\  }
         \\
         \\  #iterator;
-        \\  
+        \\
         \\  [Symbol.iterator]() {
         \\     return this;
         \\  }
-        \\  
+        \\
         \\  next() {
-        \\     if (this.#iterator === null) 
+        \\     if (this.#iterator === null)
         \\          return {done: true};
         \\     var value = this.#iterator.next();
         \\     if (!value) {
@@ -1649,7 +1637,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsNull();
         if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
-            return ZigString.init("Expected a function").withEncoding().toValue(globalObject);
+            return ZigString.init("Expected a function").withEncoding().toValueGC(globalObject);
         }
 
         var end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch unreachable;
@@ -1861,7 +1849,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsUndefined();
 
-        return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValue(globalObject);
+        return ZigString.init(std.mem.span(this.element.?.namespaceURI())).toValueGC(globalObject);
     }
 
     pub fn getAttributes(this: *Element, globalObject: *JSGlobalObject) JSValue {

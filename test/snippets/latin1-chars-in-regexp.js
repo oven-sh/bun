@@ -15,7 +15,7 @@ export var re_btou = new RegExp(
     "[\xE0-\xEF][\x80-\xBF]{2}",
     "[\xF0-\xF7][\x80-\xBF]{3}",
   ].join("|"),
-  "g"
+  "g",
 );
 
 const encoder = new TextEncoder();
@@ -46,7 +46,7 @@ export function test() {
   ) {
     throw new Error(
       `test failed
-${JSON.stringify({ expected, real }, null, 2)}`
+${JSON.stringify({ expected, real }, null, 2)}`,
     );
   }
 
@@ -57,12 +57,12 @@ ${JSON.stringify({ expected, real }, null, 2)}`
   const decoder = new TextDecoder("utf8");
   if (
     !realLines.every(
-      (line, i) => decoder.decode(Uint8Array.from(expected[i])) === line
+      (line, i) => decoder.decode(Uint8Array.from(expected[i])) === line,
     )
   ) {
     throw new Error(
       `test failed. Lines did not match.
-${JSON.stringify({ expected, real }, null, 2)}`
+${JSON.stringify({ expected, real }, null, 2)}`,
     );
   }
 

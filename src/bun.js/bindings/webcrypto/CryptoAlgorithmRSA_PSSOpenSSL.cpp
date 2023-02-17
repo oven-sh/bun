@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CryptoAlgorithmRSA_PSS.h"
 
-#if ENABLE(WEB_CRYPTO) && HAVE(RSA_PSS)
+#if ENABLE(WEB_CRYPTO)
 
 #include "CryptoAlgorithmRsaPssParams.h"
 #include "CryptoKeyRSA.h"
@@ -36,7 +36,7 @@ namespace WebCore {
 
 ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
 {
-#if defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
+#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { NotSupportedError };
@@ -52,7 +52,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAl
     if (EVP_PKEY_sign_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING ) <= 0)
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) <= 0)
         return Exception { OperationError };
 
     if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)
@@ -81,7 +81,7 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAl
 
 ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
 {
-#if defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
+#if 1 // defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
     const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
     if (!md)
         return Exception { NotSupportedError };
@@ -97,7 +97,7 @@ ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRs
     if (EVP_PKEY_verify_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING ) <= 0)
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) <= 0)
         return Exception { OperationError };
 
     if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)

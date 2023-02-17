@@ -2,14 +2,14 @@ const schema = @import("./api/schema.zig");
 const Api = schema.Api;
 const std = @import("std");
 const Fs = @import("./fs.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
-const FileDescriptorType = bun.FileDescriptorType;
+const FileDescriptorType = bun.FileDescriptor;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
@@ -26,7 +26,7 @@ pub const BundledPackageID = u32;
 
 const PackageIDMap = std.AutoHashMap(BundledPackageHash, BundledPackageID);
 
-const PackageNameMap = std.StringHashMap([]BundledPackageID);
+const PackageNameMap = bun.StringHashMap([]BundledPackageID);
 
 pub const AllocatedString = struct {
     str: string,
@@ -172,11 +172,12 @@ pub const NodeModuleBundle = struct {
         to: *const Api.JavascriptBundledModule,
         allocator: std.mem.Allocator,
     ) !string {
+        const fmt = bun.fmt.hexIntLower(this.bundle.packages[to.package_id].hash);
         return try std.fmt.allocPrint(
             allocator,
-            "{x}/{s}",
+            "{any}/{s}",
             .{
-                this.bundle.packages[to.package_id].hash,
+                fmt,
                 this.str(to.path),
                 123,
             },

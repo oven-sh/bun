@@ -6,7 +6,8 @@ env:
 
 on:
   push:
-    branches: [main, bun-actions]
+    branches:
+      - main
     paths:
       - "src/**/*"
       - "test/**/*"
@@ -14,7 +15,8 @@ on:
       - "Makefile"
       - "Dockerfile"
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "src/**/*"
       - "test/**/*"
@@ -30,34 +32,30 @@ jobs:
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
     strategy:
+      fail-fast: false
       matrix:
         include:
           - cpu: haswell
             tag: linux-x64
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-linux-amd64-lto.tar.gz"
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
-          - cpu: westmere
+            build_machine_arch: x86_64
+          - cpu: nehalem
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
-            runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-linux-amd64-lto.tar.gz"
+            runner: big-ubuntu
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb9/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
-          - cpu: native
-            tag: linux-aarch64
-            arch: aarch64
-            build_arch: arm64
-            runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/oct8/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
+            build_machine_arch: x86_64
 
     steps:
       - uses: actions/checkout@v3
-      - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+        with:
+          submodules: recursive
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -71,16 +69,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          mkdir -p /tmp/.buildx-cache-${{matrix.tag}}
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
           context: .
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/tmp/.buildx-cache-${{matrix.tag}}
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{matrix.tag}}
           build-args: |
             ARCH=${{matrix.arch}}
             BUILDARCH=${{matrix.build_arch}}
+            BUILD_MACHINE_ARCH=${{matrix.build_machine_arch}}
             CPU_TARGET=${{matrix.cpu}}
             WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
@@ -120,19 +121,6 @@ jobs:
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - name: Release
-        id: release
-        uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main'
-        with:
-          prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
-          name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-            ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
       - uses: actions/upload-artifact@v3
         with:
           name: bun-obj-${{matrix.tag}}
@@ -141,3 +129,20 @@ jobs:
         with:
           name: ${{matrix.tag}}-dependencies
           path: ${{runner.temp}}/release/bun-dependencies
+      - name: Release
+        id: release
+        uses: ncipollo/release-action@v1
+        if: |
+          github.repository_owner == 'oven-sh'
+          && github.ref == 'refs/heads/main'
+        with:
+          prerelease: true
+          body: "This canary release of Bun corresponds to the commit [${{ github.sha }}]"
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Canary (${{github.sha}})"
+          tag: "canary"
+          artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"

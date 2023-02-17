@@ -1,8 +1,8 @@
 const std = @import("std");
-const logger = @import("../logger.zig");
-const js_ast = @import("../js_ast.zig");
+const logger = @import("bun").logger;
+const js_ast = bun.JSAst;
 
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -768,7 +768,7 @@ pub const Lexer = struct {
                         } else {
                             try lexer.decodeEscapeSequences(start, text, false, @TypeOf(array_list), &array_list);
                         }
-                        lexer.string_literal_slice = array_list.toOwnedSlice();
+                        lexer.string_literal_slice = try array_list.toOwnedSlice();
                     }
 
                     lexer.token = T.t_string_literal;

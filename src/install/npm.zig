@@ -1,4 +1,5 @@
 const URL = @import("../url.zig").URL;
+const bun = @import("bun");
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;
 const Semver = @import("./semver.zig");
@@ -11,15 +12,15 @@ const ExternalStringMap = @import("./install.zig").ExternalStringMap;
 const ExternalStringList = @import("./install.zig").ExternalStringList;
 const ExternalSlice = @import("./install.zig").ExternalSlice;
 const initializeStore = @import("./install.zig").initializeStore;
-const logger = @import("../logger.zig");
-const Output = @import("../global.zig").Output;
+const logger = @import("bun").logger;
+const Output = @import("bun").Output;
 const Integrity = @import("./integrity.zig").Integrity;
 const Bin = @import("./bin.zig").Bin;
-const Environment = @import("../global.zig").Environment;
+const Environment = @import("bun").Environment;
 const Aligner = @import("./install.zig").Aligner;
-const HTTPClient = @import("http");
-const json_parser = @import("../json_parser.zig");
-const default_allocator = @import("../global.zig").default_allocator;
+const HTTPClient = @import("bun").HTTP;
+const json_parser = bun.JSON;
+const default_allocator = @import("bun").default_allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
 const SlicedString = Semver.SlicedString;
@@ -35,12 +36,7 @@ const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMa
 const Npm = @This();
 
 pub const Registry = struct {
-    url: URL = URL.parse("https://registry.npmjs.org/"),
-    scopes: Map = Map{},
-
-    token: string = "",
-    auth: string = "",
-
+    pub const default_url = "https://registry.npmjs.org/";
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
 
     pub const Scope = struct {
@@ -155,7 +151,7 @@ pub const Registry = struct {
         not_found: void,
     };
 
-    const Pico = @import("picohttp");
+    const Pico = @import("bun").picohttp;
     pub fn getPackageMetadata(
         allocator: std.mem.Allocator,
         response: Pico.Response,
@@ -163,11 +159,12 @@ pub const Registry = struct {
         log: *logger.Log,
         package_name: string,
         loaded_manifest: ?PackageManifest,
+        package_manager: *PackageManager,
     ) !PackageVersionResponse {
         switch (response.status_code) {
             400 => return error.BadRequest,
             429 => return error.TooManyRequests,
-            404 => return PackageVersionResponse{ .not_found = .{} },
+            404 => return PackageVersionResponse{ .not_found = {} },
             500...599 => return error.HTTPInternalServerError,
             304 => return PackageVersionResponse{
                 .cached = loaded_manifest.?,
@@ -193,7 +190,6 @@ pub const Registry = struct {
             }
         }
 
-        initializeStore();
         var new_etag_buf: [64]u8 = undefined;
 
         if (new_etag.len < new_etag_buf.len) {
@@ -208,10 +204,10 @@ pub const Registry = struct {
             package_name,
             newly_last_modified,
             new_etag,
-            @truncate(u32, @intCast(u64, @maximum(0, std.time.timestamp()))) + 300,
+            @truncate(u32, @intCast(u64, @max(0, std.time.timestamp()))) + 300,
         )) |package| {
-            if (PackageManager.instance.options.enable.manifest_cache) {
-                PackageManifest.Serializer.save(&package, PackageManager.instance.getTemporaryDirectory(), PackageManager.instance.getCacheDirectory()) catch {};
+            if (package_manager.options.enable.manifest_cache) {
+                PackageManifest.Serializer.save(&package, package_manager.getTemporaryDirectory(), package_manager.getCacheDirectory()) catch {};
             }
 
             return PackageVersionResponse{ .fresh = package };
@@ -411,6 +407,13 @@ pub const PackageVersion = extern struct {
     os: OperatingSystem = OperatingSystem.all,
     /// `"cpu"` field in package.json
     cpu: Architecture = Architecture.all,
+
+    pub fn verify(this: *const PackageVersion) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        this.man_dir.value.assertDefined();
+    }
 };
 
 pub const NpmPackage = extern struct {
@@ -444,6 +447,23 @@ pub const PackageManifest = struct {
     package_versions: []const PackageVersion = &[_]PackageVersion{},
     extern_strings_bin_entries: []const ExternalString = &[_]ExternalString{},
 
+    pub fn verify(this: *const PackageManifest) void {
+        if (comptime !Environment.allow_assert)
+            return;
+
+        for (this.extern_strings_bin_entries) |*entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.external_strings_for_versions) |entry| {
+            entry.value.assertDefined();
+        }
+
+        for (this.package_versions) |package| {
+            package.tarball_url.value.assertDefined();
+        }
+    }
+
     pub inline fn name(this: *const PackageManifest) string {
         return this.pkg.name.slice(this.string_buf);
     }
@@ -464,9 +484,9 @@ pub const PackageManifest = struct {
             var data: [fields.len]Data = undefined;
             for (fields) |field_info, i| {
                 data[i] = .{
-                    .size = @sizeOf(field_info.field_type),
+                    .size = @sizeOf(field_info.type),
                     .name = field_info.name,
-                    .alignment = if (@sizeOf(field_info.field_type) == 0) 1 else field_info.alignment,
+                    .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
                 };
             }
             const Sort = struct {
@@ -541,8 +561,8 @@ pub const PackageManifest = struct {
             }
         }
 
-        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.Dir) !void {
-            var tmpfile = try tmpdir.createFileZ(tmp_path, .{
+        fn writeFile(this: *const PackageManifest, tmp_path: [:0]const u8, tmpdir: std.fs.IterableDir) !void {
+            var tmpfile = try tmpdir.dir.createFileZ(tmp_path, .{
                 .truncate = true,
             });
             defer tmpfile.close();
@@ -550,25 +570,29 @@ pub const PackageManifest = struct {
             try Serializer.write(this, @TypeOf(writer), writer);
         }
 
-        pub fn save(this: *const PackageManifest, tmpdir: std.fs.Dir, cache_dir: std.fs.Dir) !void {
+        pub fn save(this: *const PackageManifest, tmpdir: std.fs.IterableDir, cache_dir: std.fs.IterableDir) !void {
             const file_id = std.hash.Wyhash.hash(0, this.name());
             var dest_path_buf: [512 + 64]u8 = undefined;
             var out_path_buf: ["-18446744073709551615".len + ".npm".len + 1]u8 = undefined;
             var dest_path_stream = std.io.fixedBufferStream(&dest_path_buf);
             var dest_path_stream_writer = dest_path_stream.writer();
-            try dest_path_stream_writer.print("{x}.npm-{x}", .{ file_id, @maximum(std.time.milliTimestamp(), 0) });
+            const hex_fmt = bun.fmt.hexIntLower(file_id);
+            const hex_timestamp = @intCast(usize, @max(std.time.milliTimestamp(), 0));
+            const hex_timestamp_fmt = bun.fmt.hexIntLower(hex_timestamp);
+            try dest_path_stream_writer.print("{any}.npm-{any}", .{ hex_fmt, hex_timestamp_fmt });
             try dest_path_stream_writer.writeByte(0);
             var tmp_path: [:0]u8 = dest_path_buf[0 .. dest_path_stream.pos - 1 :0];
             try writeFile(this, tmp_path, tmpdir);
-            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{x}.npm", .{file_id}) catch unreachable;
-            try std.os.renameatZ(tmpdir.fd, tmp_path, cache_dir.fd, out_path);
+            var out_path = std.fmt.bufPrintZ(&out_path_buf, "{any}.npm", .{hex_fmt}) catch unreachable;
+            try std.os.renameatZ(tmpdir.dir.fd, tmp_path, cache_dir.dir.fd, out_path);
         }
 
-        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.Dir, package_name: string) !?PackageManifest {
+        pub fn load(allocator: std.mem.Allocator, cache_dir: std.fs.IterableDir, package_name: string) !?PackageManifest {
             const file_id = std.hash.Wyhash.hash(0, package_name);
             var file_path_buf: [512 + 64]u8 = undefined;
-            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{x}.npm", .{file_id});
-            var cache_file = cache_dir.openFileZ(
+            const hex_fmt = bun.fmt.hexIntLower(file_id);
+            var file_path = try std.fmt.bufPrintZ(&file_path_buf, "{any}.npm", .{hex_fmt});
+            var cache_file = cache_dir.dir.openFileZ(
                 file_path,
                 .{ .mode = .read_only },
             ) catch return null;
@@ -577,7 +601,14 @@ pub const PackageManifest = struct {
                 timer = std.time.Timer.start() catch @panic("timer fail");
             }
             defer cache_file.close();
-            var bytes = try cache_file.readToEndAlloc(allocator, std.math.maxInt(u32));
+            var bytes = try cache_file.readToEndAllocOptions(
+                allocator,
+                std.math.maxInt(u32),
+                cache_file.getEndPos() catch null,
+                @alignOf(u8),
+                null,
+            );
+
             errdefer allocator.free(bytes);
             if (bytes.len < header_bytes.len) return null;
             const result = try readAll(bytes);
@@ -610,25 +641,27 @@ pub const PackageManifest = struct {
                 }
             }
 
+            package_manifest.verify();
+
             return package_manifest;
         }
     };
 
-    pub fn str(self: *const PackageManifest, external: ExternalString) string {
+    pub fn str(self: *const PackageManifest, external: *const ExternalString) string {
         return external.slice(self.string_buf);
     }
 
     pub fn reportSize(this: *const PackageManifest) void {
         Output.prettyErrorln(
-            \\ Versions count:            {d} 
-            \\ External Strings count:    {d} 
+            \\ Versions count:            {d}
+            \\ External Strings count:    {d}
             \\ Package Versions count:    {d}
-            \\ 
+            \\
             \\ Bytes:
             \\
-            \\  Versions:   {d} 
-            \\  External:   {d} 
-            \\  Packages:   {d} 
+            \\  Versions:   {d}
+            \\  External:   {d}
+            \\  Packages:   {d}
             \\  Strings:    {d}
             \\  Total:      {d}
         , .{
@@ -936,13 +969,13 @@ pub const PackageManifest = struct {
             string_builder.count(etag);
         }
 
-        var versioned_packages = try allocator.allocAdvanced(PackageVersion, null, release_versions_len + pre_versions_len, .exact);
-        var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
-        var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count + tarball_urls_count, .exact);
-        var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
-        var extern_strings_bin_entries = try allocator.allocAdvanced(ExternalString, null, extern_string_count_bin, .exact);
+        var versioned_packages = try allocator.alloc(PackageVersion, release_versions_len + pre_versions_len);
+        var all_semver_versions = try allocator.alloc(Semver.Version, release_versions_len + pre_versions_len + dist_tags_count);
+        var all_extern_strings = try allocator.alloc(ExternalString, extern_string_count + tarball_urls_count);
+        var version_extern_strings = try allocator.alloc(ExternalString, dependency_sum);
+        var extern_strings_bin_entries = try allocator.alloc(ExternalString, extern_string_count_bin);
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
-        var all_tarball_url_strings = try allocator.allocAdvanced(ExternalString, null, tarball_urls_count, .exact);
+        var all_tarball_url_strings = try allocator.alloc(ExternalString, tarball_urls_count);
         var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {
@@ -1045,8 +1078,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.cpu = Architecture.apply(Architecture.none, str.data);
+                            .e_string => |stri| {
+                                package_version.cpu = Architecture.apply(Architecture.none, stri.data);
                             },
                             else => {},
                         }
@@ -1067,8 +1100,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |str| {
-                                package_version.os = OperatingSystem.apply(OperatingSystem.none, str.data);
+                            .e_string => |stri| {
+                                package_version.os = OperatingSystem.apply(OperatingSystem.none, stri.data);
                             },
                             else => {},
                         }
@@ -1086,8 +1119,8 @@ pub const PackageManifest = struct {
                                             const bin_name = obj.properties.ptr[0].key.?.asString(allocator) orelse break :bin;
                                             const value = obj.properties.ptr[0].value.?.asString(allocator) orelse break :bin;
 
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.named_file,
+                                            package_version.bin = .{
+                                                .tag = .named_file,
                                                 .value = .{
                                                     .named_file = .{
                                                         string_builder.append(String, bin_name),
@@ -1106,12 +1139,30 @@ pub const PackageManifest = struct {
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.key.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
 
                                                 group_slice[group_i] = string_builder.append(ExternalString, bin_prop.value.?.asString(allocator) orelse break :bin);
                                                 if (is_identical) {
                                                     is_identical = group_slice[group_i].hash == prev_extern_bin_group[group_i].hash;
+                                                    if (comptime Environment.allow_assert) {
+                                                        if (is_identical) {
+                                                            const first = group_slice[group_i].slice(string_builder.allocatedSlice());
+                                                            const second = prev_extern_bin_group[group_i].slice(string_builder.allocatedSlice());
+                                                            if (!strings.eqlLong(first, second, true)) {
+                                                                Output.panic("Bin group is not identical: {s} != {s}", .{ first, second });
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                                 group_i += 1;
                                             }
@@ -1123,8 +1174,8 @@ pub const PackageManifest = struct {
                                                 extern_strings_bin_entries = extern_strings_bin_entries[group_slice.len..];
                                             }
 
-                                            package_version.bin = Bin{
-                                                .tag = Bin.Tag.map,
+                                            package_version.bin = .{
+                                                .tag = .map,
                                                 .value = .{ .map = ExternalStringList.init(all_extern_strings_bin_entries, group_slice) },
                                             };
                                         },
@@ -1132,12 +1183,12 @@ pub const PackageManifest = struct {
 
                                     break :bin;
                                 },
-                                .e_string => |str| {
-                                    if (str.data.len > 0) {
-                                        package_version.bin = Bin{
-                                            .tag = Bin.Tag.file,
+                                .e_string => |stri| {
+                                    if (stri.data.len > 0) {
+                                        package_version.bin = .{
+                                            .tag = .file,
                                             .value = .{
-                                                .file = string_builder.append(String, str.data),
+                                                .file = string_builder.append(String, stri.data),
                                             },
                                         };
                                         break :bin;
@@ -1158,8 +1209,8 @@ pub const PackageManifest = struct {
                             if (dirs.expr.asProperty("bin")) |bin_prop| {
                                 if (bin_prop.expr.asString(allocator)) |str_| {
                                     if (str_.len > 0) {
-                                        package_version.bin = Bin{
-                                            .tag = Bin.Tag.dir,
+                                        package_version.bin = .{
+                                            .tag = .dir,
                                             .value = .{
                                                 .dir = string_builder.append(String, str_),
                                             },
@@ -1392,12 +1443,12 @@ pub const PackageManifest = struct {
                     }
 
                     if (!parsed_version.version.tag.hasPre()) {
-                        release_versions[0] = parsed_version.version;
+                        release_versions[0] = parsed_version.version.fill();
                         versioned_package_releases[0] = package_version;
                         release_versions = release_versions[1..];
                         versioned_package_releases = versioned_package_releases[1..];
                     } else {
-                        prerelease_versions[0] = parsed_version.version;
+                        prerelease_versions[0] = parsed_version.version.fill();
                         versioned_package_prereleases[0] = package_version;
                         prerelease_versions = prerelease_versions[1..];
                         versioned_package_prereleases = versioned_package_prereleases[1..];
@@ -1425,7 +1476,7 @@ pub const PackageManifest = struct {
 
                         const sliced_string = dist_tag_value_literal.value.sliced(string_buf);
 
-                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version;
+                        dist_tag_versions[dist_tag_i] = Semver.Version.parse(sliced_string, allocator).version.fill();
                         dist_tag_i += 1;
                     }
                 }

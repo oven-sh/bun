@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -480,12 +479,17 @@ const char* const s_readableStreamPipeThroughCode =
 const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamPipeToCodeLength = 1523;
+const int s_readableStreamPipeToCodeLength = 1522;
 static const JSC::Intrinsic s_readableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamPipeToCode =
     "(function (destination)\n" \
     "{\n" \
     "    \"use strict\";\n" \
+    "    if (!@isReadableStream(this))\n" \
+    "        return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"pipeTo\"));\n" \
+    "\n" \
+    "    if (@isReadableStreamLocked(this))\n" \
+    "        return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n" \
     "\n" \
     "    //\n" \
     "    //\n" \
@@ -516,12 +520,6 @@ const char* const s_readableStreamPipeToCode =
     "    const internalDestination = @getInternalWritableStream(destination);\n" \
     "    if (!@isWritableStream(internalDestination))\n" \
     "        return @Promise.@reject(@makeTypeError(\"ReadableStream pipeTo requires a WritableStream\"));\n" \
-    "\n" \
-    "    if (!@isReadableStream(this))\n" \
-    "        return @Promise.@reject(@makeThisTypeError(\"ReadableStream\", \"pipeTo\"));\n" \
-    "\n" \
-    "    if (@isReadableStreamLocked(this))\n" \
-    "        return @Promise.@reject(@makeTypeError(\"ReadableStream is locked\"));\n" \
     "\n" \
     "    if (@isWritableStreamLocked(internalDestination))\n" \
     "        return @Promise.@reject(@makeTypeError(\"WritableStream is locked\"));\n" \
@@ -567,15 +565,12 @@ const char* const s_readableStreamLockedCode =
 const JSC::ConstructAbility s_readableStreamValuesCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamValuesCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamValuesCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamValuesCodeLength = 249;
+const int s_readableStreamValuesCodeLength = 191;
 static const JSC::Intrinsic s_readableStreamValuesCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamValuesCode =
     "(function (options) {\n" \
     "    \"use strict\";\n" \
-    "    var prototype = this?.constructor?.prototype;\n" \
-    "    if (!prototype) {\n" \
-    "        return @undefined;\n" \
-    "    }\n" \
+    "    var prototype = @ReadableStream.prototype;\n" \
     "    @readableStreamDefineLazyIterators(prototype);\n" \
     "    return prototype.values.@call(this, options);\n" \
     "})\n" \
@@ -584,15 +579,12 @@ const char* const s_readableStreamValuesCode =
 const JSC::ConstructAbility s_readableStreamLazyAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamLazyAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamLazyAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamLazyAsyncIteratorCodeLength = 259;
+const int s_readableStreamLazyAsyncIteratorCodeLength = 201;
 static const JSC::Intrinsic s_readableStreamLazyAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamLazyAsyncIteratorCode =
     "(function () {\n" \
     "    \"use strict\";\n" \
-    "    var prototype = this?.constructor?.prototype;\n" \
-    "    if (!prototype) {\n" \
-    "        return @undefined;\n" \
-    "    }\n" \
+    "    var prototype = @ReadableStream.prototype;\n" \
     "    @readableStreamDefineLazyIterators(prototype);\n" \
     "    return prototype[globalThis.Symbol.asyncIterator].@call(this);\n" \
     "})\n" \

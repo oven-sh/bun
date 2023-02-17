@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("../src/global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -177,7 +177,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -252,8 +252,8 @@ pub fn main() anyerror!void {
                     fail_count += 1;
                 }
 
-                max_duration = @maximum(max_duration, http.elapsed);
-                min_duration = @minimum(min_duration, http.elapsed);
+                max_duration = @max(max_duration, http.elapsed);
+                min_duration = @min(min_duration, http.elapsed);
 
                 switch (resp.status_code) {
                     200, 202, 302 => {

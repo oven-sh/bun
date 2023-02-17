@@ -60,8 +60,8 @@ const z_crc_t = c_uint;
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub const z_alloc_fn = ?fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
-pub const z_free_fn = ?fn (*anyopaque, *anyopaque) callconv(.C) void;
+pub const z_alloc_fn = ?*const fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
+pub const z_free_fn = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
 
 pub const struct_internal_state = extern struct {
     dummy: c_int,
@@ -417,6 +417,7 @@ pub const ZlibReaderArrayList = struct {
 
     input: []const u8,
     list: std.ArrayListUnmanaged(u8),
+    list_allocator: std.mem.Allocator,
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
@@ -459,10 +460,15 @@ pub const ZlibReaderArrayList = struct {
     }
 
     pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibReader {
+        return initWithOptionsAndListAllocator(input, list, allocator, allocator, options);
+    }
+
+    pub fn initWithOptionsAndListAllocator(input: []const u8, list: *std.ArrayListUnmanaged(u8), list_allocator: std.mem.Allocator, allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibReader {
         var zlib_reader = try allocator.create(ZlibReader);
         zlib_reader.* = ZlibReader{
             .input = input,
             .list = list.*,
+            .list_allocator = list_allocator,
             .list_ptr = list,
             .allocator = allocator,
             .zlib = undefined,
@@ -552,7 +558,7 @@ pub const ZlibReaderArrayList = struct {
 
             if (this.zlib.avail_out == 0) {
                 const initial = this.list.items.len;
-                try this.list.ensureUnusedCapacity(this.allocator, 4096);
+                try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
                 this.zlib.next_out = &this.list.items[initial];
                 this.zlib.avail_out = @intCast(u32, this.list.items.len - initial);
@@ -818,6 +824,7 @@ pub const ZlibCompressorArrayList = struct {
 
     input: []const u8,
     list: std.ArrayListUnmanaged(u8),
+    list_allocator: std.mem.Allocator,
     list_ptr: *std.ArrayListUnmanaged(u8),
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
@@ -848,11 +855,16 @@ pub const ZlibCompressorArrayList = struct {
     }
 
     pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibCompressor {
+        return initWithListAllocator(input, list, allocator, allocator, options);
+    }
+
+    pub fn initWithListAllocator(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, list_allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibCompressor {
         var zlib_reader = try allocator.create(ZlibCompressor);
         zlib_reader.* = ZlibCompressor{
             .input = input,
             .list = list.*,
             .list_ptr = list,
+            .list_allocator = list_allocator,
             .allocator = allocator,
             .zlib = undefined,
             .arena = std.heap.ArenaAllocator.init(allocator),
@@ -957,7 +969,7 @@ pub const ZlibCompressorArrayList = struct {
 
             if (this.zlib.avail_out == 0) {
                 const initial = this.list.items.len;
-                try this.list.ensureUnusedCapacity(this.allocator, 4096);
+                try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
                 this.zlib.next_out = &this.list.items[initial];
                 this.zlib.avail_out = @intCast(u32, this.list.items.len - initial);

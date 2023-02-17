@@ -1,5 +1,5 @@
-const JSC = @import("javascript_core");
-const bun = @import("../../../global.zig");
+const JSC = @import("bun").JSC;
+const bun = @import("bun");
 const string = bun.string;
 const std = @import("std");
 
@@ -53,12 +53,10 @@ pub const PosixSpawn = struct {
         pub fn deinit(self: *Attr) void {
             if (comptime bun.Environment.isMac) {
                 // https://github.com/ziglang/zig/issues/12964
-                system.posix_spawnattr_destroy(&self.attr);
+                _ = system.posix_spawnattr_destroy(&self.attr);
             } else {
                 _ = system.posix_spawnattr_destroy(&self.attr);
             }
-
-            self.* = undefined;
         }
 
         pub fn get(self: Attr) !u16 {
@@ -95,7 +93,7 @@ pub const PosixSpawn = struct {
         pub fn deinit(self: *Actions) void {
             if (comptime bun.Environment.isMac) {
                 // https://github.com/ziglang/zig/issues/12964
-                system.posix_spawn_file_actions_destroy(&self.actions);
+                _ = system.posix_spawn_file_actions_destroy(&self.actions);
             } else {
                 _ = system.posix_spawn_file_actions_destroy(&self.actions);
             }
@@ -207,9 +205,22 @@ pub const PosixSpawn = struct {
             argv,
             envp,
         );
+        if (comptime bun.Environment.allow_assert)
+            JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
+                path, rc, pid,
+            });
 
-        if (Maybe(pid_t).errno(rc)) |err| {
-            return err;
+        if (comptime bun.Environment.isLinux) {
+            // rc is negative because it's libc errno
+            if (rc > 0) {
+                if (Maybe(pid_t).errnoSysP(-rc, .posix_spawn, path)) |err| {
+                    return err;
+                }
+            }
+        } else {
+            if (Maybe(pid_t).errnoSysP(rc, .posix_spawn, path)) |err| {
+                return err;
+            }
         }
 
         return Maybe(pid_t){ .result = pid };

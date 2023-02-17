@@ -1,0 +1,8 @@
+{
+  "media": "images",
+  "tsconfig": "./tsconfig.docs.json",
+  "entryPoints": ["./dist/types.d.ts"],
+  "out": "docs",
+  "exclude": ["**/node_modules/**"],
+  "disableSources": true
+}

@@ -67,7 +67,6 @@
 #include <wtf/SortedArrayMap.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -83,7 +82,7 @@ String convertEnumerationToString(SubtleCrypto::KeyFormat enumerationValue)
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Spki) == 1, "SubtleCrypto::KeyFormat::Spki is not 1 as expected");
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Pkcs8) == 2, "SubtleCrypto::KeyFormat::Pkcs8 is not 2 as expected");
     static_assert(static_cast<size_t>(SubtleCrypto::KeyFormat::Jwk) == 3, "SubtleCrypto::KeyFormat::Jwk is not 3 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
@@ -184,8 +183,7 @@ template<> void JSSubtleCryptoDOMConstructor::initializeProperties(VM& vm, JSDOM
 
 /* Hash table for prototype */
 
-static const HashTableValue JSSubtleCryptoPrototypeTableValues[] =
-{
+static const HashTableValue JSSubtleCryptoPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsSubtleCryptoConstructor, 0 } },
     { "encrypt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_encrypt, 3 } },
     { "decrypt"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSubtleCryptoPrototypeFunction_decrypt, 3 } },
@@ -223,7 +221,6 @@ void JSSubtleCrypto::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, SubtleCrypto>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 }
 
 JSObject* JSSubtleCrypto::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -247,7 +244,7 @@ void JSSubtleCrypto::destroy(JSC::JSCell* cell)
     thisObject->JSSubtleCrypto::~JSSubtleCrypto();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -278,7 +275,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.encrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *key, WTFMove(data), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_encryptBody>(*lexicalGlobalObject, *callFrame, "encrypt");
 }
@@ -304,7 +301,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decryptBody(JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.decrypt(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *key, WTFMove(data), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decrypt, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_decryptBody>(*lexicalGlobalObject, *callFrame, "decrypt");
 }
@@ -330,7 +327,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_signBody(JSC::
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.sign(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *key, WTFMove(data), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_sign, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_sign, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_signBody>(*lexicalGlobalObject, *callFrame, "sign");
 }
@@ -359,7 +356,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_verifyBody(JSC
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.verify(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *key, WTFMove(signature), WTFMove(data), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_verify, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_verify, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_verifyBody>(*lexicalGlobalObject, *callFrame, "verify");
 }
@@ -382,7 +379,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.digest(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), WTFMove(data), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_digest, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_digest, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_digestBody>(*lexicalGlobalObject, *callFrame, "digest");
 }
@@ -408,7 +405,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_generateKeyBod
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.generateKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), WTFMove(extractable), WTFMove(keyUsages), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_generateKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_generateKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_generateKeyBody>(*lexicalGlobalObject, *callFrame, "generateKey");
 }
@@ -440,7 +437,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveKeyBody(
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *baseKey, WTFMove(derivedKeyType), WTFMove(extractable), WTFMove(keyUsages), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_deriveKeyBody>(*lexicalGlobalObject, *callFrame, "deriveKey");
 }
@@ -466,7 +463,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), *baseKey, WTFMove(length), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveBits, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_deriveBitsBody>(*lexicalGlobalObject, *callFrame, "deriveBits");
 }
@@ -498,7 +495,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.importKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(format), WTFMove(keyData), WTFMove(algorithm), WTFMove(extractable), WTFMove(keyUsages), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_importKeyBody>(*lexicalGlobalObject, *callFrame, "importKey");
 }
@@ -521,7 +518,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.exportKey(WTFMove(format), *key, WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_exportKeyBody>(*lexicalGlobalObject, *callFrame, "exportKey");
 }
@@ -550,7 +547,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_wrapKeyBody(JS
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.wrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(format), *key, *wrappingKey, WTFMove(wrapAlgorithm), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_wrapKeyBody>(*lexicalGlobalObject, *callFrame, "wrapKey");
 }
@@ -588,19 +585,19 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<CryptoKey>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.unwrapKey(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(format), WTFMove(wrappedKey), *unwrappingKey, WTFMove(unwrapAlgorithm), WTFMove(unwrappedKeyAlgorithm), WTFMove(extractable), WTFMove(keyUsages), WTFMove(promise)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_unwrapKeyBody>(*lexicalGlobalObject, *callFrame, "unwrapKey");
 }
 
 JSC::GCClient::IsoSubspace* JSSubtleCrypto::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForSubtleCrypto.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForSubtleCrypto.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSSubtleCrypto, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForSubtleCrypto.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubtleCrypto = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForSubtleCrypto.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForSubtleCrypto = std::forward<decltype(space)>(space); });
 }
 
 void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -632,10 +629,14 @@ void JSSubtleCryptoOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* conte
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7SubtleCrypto@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7SubtleCrypto@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore12SubtleCryptoE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore12SubtleCryptoE[];
+}
 #endif
 #endif
 

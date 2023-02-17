@@ -29,10 +29,9 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBufferSource.h"
-#include "JSDOMConvertBufferSource+JSBuffer.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNull.h"
-#include "JavaScriptCore/IteratorOperations.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include <variant>
 
 namespace WebCore {
@@ -197,7 +196,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
                 if (returnValue)
                     return;
 
-                using Type = typename WTF::RemoveCVAndReference<decltype(type)>::type::type;
+                using Type = typename std::remove_cvref_t<decltype(type)>::type;
                 using ImplementationType = typename Type::ImplementationType;
                 using RawType = typename Type::RawType;
 
@@ -269,7 +268,7 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
                 if (returnValue)
                     return;
 
-                using Type = typename WTF::RemoveCVAndReference<decltype(type)>::type::type;
+                using Type = typename std::remove_cvref_t<decltype(type)>::type;
                 using ImplementationType = typename Type::ImplementationType;
                 using WrapperType = typename Converter<Type>::WrapperType;
 
@@ -393,7 +392,7 @@ template<typename... T> struct JSConverter<IDLUnion<T...>> {
 
         std::optional<JSC::JSValue> returnValue;
         brigand::for_each<Sequence>([&](auto&& type) {
-            using I = typename WTF::RemoveCVAndReference<decltype(type)>::type::type;
+            using I = typename std::remove_cvref_t<decltype(type)>::type;
             if (I::value == index) {
                 ASSERT(!returnValue);
                 returnValue = toJS<brigand::at<TypeList, I>>(lexicalGlobalObject, globalObject, std::get<I::value>(variant));
@@ -411,6 +410,18 @@ template<> struct Converter<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, I
     static auto convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value) -> decltype(auto)
     {
         return Converter<IDLUnion<IDLAllowSharedAdaptor<IDLArrayBufferView>, IDLAllowSharedAdaptor<IDLArrayBuffer>>>::convert(lexicalGlobalObject, value);
+    }
+};
+
+template<>
+struct JSConverter<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>> {
+    static constexpr bool needsState = true;
+    static constexpr bool needsGlobalObject = true;
+
+    template<typename U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    {
+        return JSConverter<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>::convert(lexicalGlobalObject, globalObject, value);
     }
 };
 

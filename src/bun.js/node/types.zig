@@ -1,10 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("io");
-const JSC = @import("../../jsc.zig");
+const AsyncIO = @import("bun").AsyncIO;
+const JSC = @import("bun").JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -12,7 +12,7 @@ const Syscall = @import("./syscall.zig");
 const os = std.os;
 const Buffer = JSC.MarkedArrayBuffer;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
-const logger = @import("../../logger.zig");
+const logger = @import("bun").logger;
 const Fs = @import("../../fs.zig");
 const URL = @import("../../url.zig").URL;
 const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
@@ -24,8 +24,8 @@ pub const Mode = if (Environment.isLinux) u32 else std.os.mode_t;
 const heap_allocator = bun.default_allocator;
 pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
-    var enumFields: [fieldInfos.len]std.builtin.TypeInfo.EnumField = undefined;
-    var decls = [_]std.builtin.TypeInfo.Declaration{};
+    var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
+    var decls = [_]std.builtin.Type.Declaration{};
     inline for (fieldInfos) |field, i| {
         enumFields[i] = .{
             .name = field.name,
@@ -34,7 +34,6 @@ pub fn DeclEnum(comptime T: type) type {
     }
     return @Type(.{
         .Enum = .{
-            .layout = .Auto,
             .tag_type = std.math.IntFittingRange(0, fieldInfos.len - 1),
             .fields = &enumFields,
             .decls = &decls,
@@ -43,7 +42,6 @@ pub fn DeclEnum(comptime T: type) type {
     });
 }
 
-pub const FileDescriptor = os.fd_t;
 pub const Flavor = enum {
     sync,
     promise,
@@ -157,6 +155,20 @@ pub fn Maybe(comptime ResultType: type) type {
                 else => |err| @This(){
                     // always truncate
                     .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall },
+                },
+            };
+        }
+
+        pub inline fn errnoSysFd(rc: anytype, syscall: Syscall.Tag, fd: anytype) ?@This() {
+            return switch (Syscall.getErrno(rc)) {
+                .SUCCESS => null,
+                else => |err| @This(){
+                    // always truncate
+                    .err = .{
+                        .errno = @truncate(Syscall.Error.Int, @enumToInt(err)),
+                        .syscall = syscall,
+                        .fd = @intCast(i32, fd),
+                    },
                 },
             };
         }
@@ -334,32 +346,58 @@ pub const SliceOrBuffer = union(Tag) {
     }
 
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?SliceOrBuffer {
-        return switch (value.jsType()) {
-            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
-                var zig_str = value.toSlice(global, allocator);
-                return SliceOrBuffer{ .string = zig_str };
-            },
-            .ArrayBuffer,
-            .Int8Array,
-            .Uint8Array,
-            .Uint8ClampedArray,
-            .Int16Array,
-            .Uint16Array,
-            .Int32Array,
-            .Uint32Array,
-            .Float32Array,
-            .Float64Array,
-            .BigInt64Array,
-            .BigUint64Array,
-            .DataView,
-            => SliceOrBuffer{
+        if (!value.isEmpty() and value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,
                 },
-            },
-            else => null,
+            };
+        }
+
+        if (value.isEmpty()) {
+            return null;
+        }
+
+        var str = value.toStringOrNull(global) orelse return null;
+        return SliceOrBuffer{ .string = str.toSlice(global, allocator) };
+    }
+
+    pub fn fromJSWithEncoding(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) ?SliceOrBuffer {
+        if (value.isCell() and value.jsType().isTypedArray()) {
+            return SliceOrBuffer{
+                .buffer = JSC.MarkedArrayBuffer{
+                    .buffer = value.asArrayBuffer(global) orelse return null,
+                    .allocator = null,
+                },
+            };
+        }
+
+        const encoding: Encoding = brk: {
+            if (encoding_value.isEmpty())
+                break :brk .utf8;
+            var encoding_str = encoding_value.toSlice(global, allocator);
+            if (encoding_str.len == 0)
+                break :brk .utf8;
+
+            defer encoding_str.deinit();
+
+            // TODO: better error
+            break :brk Encoding.from(encoding_str.slice()) orelse return null;
         };
+
+        if (encoding == .utf8) {
+            return fromJS(global, allocator, value);
+        }
+
+        var zig_str = value.getZigString(global);
+        if (zig_str.len == 0) {
+            return fromJS(global, allocator, value);
+        }
+
+        const out = zig_str.encode(encoding);
+
+        return .{ .string = JSC.ZigString.Slice.from(out, allocator) };
     }
 };
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
@@ -447,6 +485,36 @@ pub const Encoding = enum(u8) {
             },
         }
     }
+
+    pub fn encodeWithMaxSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, size: usize, comptime max_size: usize, input: []const u8) JSC.JSValue {
+        switch (encoding) {
+            .base64 => {
+                var base64_buf: [std.base64.standard.Encoder.calcSize(max_size)]u8 = undefined;
+                var base64 = base64_buf[0..std.base64.standard.Encoder.calcSize(size)];
+                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(base64, input)).toValueGC(globalThis);
+                return result;
+            },
+            .base64url => {
+                var buf_: [std.base64.url_safe.Encoder.calcSize(max_size) + "data:;base64,".len]u8 = undefined;
+                var buf = buf_[0 .. std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len];
+                var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], input);
+                buf[0.."data:;base64,".len].* = "data:;base64,".*;
+
+                const result = JSC.ZigString.init(buf[0 .. "data:;base64,".len + encoded.len]).toValueGC(globalThis);
+                return result;
+            },
+            .hex => {
+                var buf: [max_size * 4]u8 = undefined;
+                var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
+                const result = JSC.ZigString.init(out).toValueGC(globalThis);
+                return result;
+            },
+            else => {
+                globalThis.throwInvalidArguments("Unexpected encoding", .{});
+                return JSC.JSValue.zero;
+            },
+        }
+    }
 };
 
 const PathOrBuffer = union(Tag) {
@@ -512,7 +580,8 @@ pub const PathLike = union(Tag) {
     pub inline fn sliceZAssume(
         this: PathLike,
     ) [:0]const u8 {
-        return std.meta.assumeSentinel(this.slice(), 0);
+        var sliced = this.slice();
+        return sliced.ptr[0..sliced.len :0];
     }
 
     pub fn toJS(this: PathLike, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
@@ -524,6 +593,9 @@ pub const PathLike = union(Tag) {
     }
 
     pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathLike {
+        return fromJSWithAllocator(ctx, arguments, arguments.arena.allocator(), exception);
+    }
+    pub fn fromJSWithAllocator(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?PathLike {
         const arg = arguments.next() orelse return null;
         switch (arg.jsType()) {
             JSC.JSValue.JSType.Uint8Array,
@@ -551,18 +623,15 @@ pub const PathLike = union(Tag) {
             JSC.JSValue.JSType.StringObject,
             JSC.JSValue.JSType.DerivedStringObject,
             => {
-                var zig_str = JSC.ZigString.init("");
-                arg.toZigString(&zig_str, ctx.ptr());
+                var zig_str = arg.toSlice(ctx, allocator);
 
-                if (!Valid.pathString(zig_str, ctx, exception)) return null;
+                if (!Valid.pathSlice(zig_str, ctx, exception)) {
+                    zig_str.deinit();
+                    return null;
+                }
 
                 arguments.eat();
                 arg.ensureStillAlive();
-
-                if (zig_str.is16Bit()) {
-                    var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
-                    return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
-                }
 
                 return PathLike{ .string = PathString.init(zig_str.slice()) };
             },
@@ -588,13 +657,35 @@ pub const PathLike = union(Tag) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: bun.FileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
             JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
             return false;
         }
 
         return true;
+    }
+
+    pub fn pathSlice(zig_str: JSC.ZigString.Slice, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+        switch (zig_str.len) {
+            0 => {
+                JSC.throwInvalidArguments("Invalid path string: can't be empty", .{}, ctx, exception);
+                return false;
+            },
+            1...bun.MAX_PATH_BYTES => return true,
+            else => {
+                // TODO: should this be an EINVAL?
+                JSC.throwInvalidArguments(
+                    comptime std.fmt.comptimePrint("Invalid path string: path is too long (max: {d})", .{bun.MAX_PATH_BYTES}),
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return false;
+            },
+        }
+
+        unreachable;
     }
 
     pub fn pathString(zig_str: JSC.ZigString, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
@@ -720,14 +811,14 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileDescriptor {
+pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
     if (!value.isNumber() or value.isBigInt()) return null;
     const fd = value.toInt32();
     if (!Valid.fileDescriptor(fd, ctx, exception)) {
         return null;
     }
 
-    return @truncate(FileDescriptor, fd);
+    return @truncate(bun.FileDescriptor, fd);
 }
 
 var _get_time_prop_string: ?JSC.C.JSStringRef = null;
@@ -752,7 +843,7 @@ pub fn timeLikeFromJS(ctx: JSC.C.JSContextRef, value_: JSC.JSValue, exception: J
         return null;
     }
 
-    return @floatToInt(TimeLike, @maximum(@floor(seconds), std.math.minInt(TimeLike)));
+    return @floatToInt(TimeLike, @max(@floor(seconds), std.math.minInt(TimeLike)));
 }
 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
@@ -790,19 +881,19 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.
 
 pub const PathOrFileDescriptor = union(Tag) {
     path: PathLike,
-    fd: FileDescriptor,
+    fd: bun.FileDescriptor,
 
     pub const Tag = enum { fd, path };
 
-    pub fn hash(this: PathOrFileDescriptor) u64 {
+    pub fn hash(this: JSC.Node.PathOrFileDescriptor) u64 {
         return switch (this) {
             .path => std.hash.Wyhash.hash(0, this.path.slice()),
             .fd => std.hash.Wyhash.hash(0, std.mem.asBytes(&this.fd)),
         };
     }
 
-    pub fn format(this: PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        if (fmt.len != 0 and fmt != "s") {
+    pub fn format(this: JSC.Node.PathOrFileDescriptor, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (fmt.len != 0 and fmt[0] != 's') {
             @compileError("Unsupported format argument: '" ++ fmt ++ "'.");
         }
         switch (this) {
@@ -811,20 +902,20 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?PathOrFileDescriptor {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
         if (fileDescriptorFromJS(ctx, first, exception)) |fd| {
             arguments.eat();
-            return PathOrFileDescriptor{ .fd = fd };
+            return JSC.Node.PathOrFileDescriptor{ .fd = fd };
         }
 
         if (exception.* != null) return null;
 
-        return PathOrFileDescriptor{ .path = PathLike.fromJS(ctx, arguments, exception) orelse return null };
+        return JSC.Node.PathOrFileDescriptor{ .path = PathLike.fromJSWithAllocator(ctx, arguments, allocator, exception) orelse return null };
     }
 
-    pub fn toJS(this: PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+    pub fn toJS(this: JSC.Node.PathOrFileDescriptor, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
         return switch (this) {
             .path => this.path.toJS(ctx, exception),
             .fd => JSC.JSValue.jsNumberFromInt32(@intCast(i32, this.fd)).asRef(),
@@ -834,7 +925,7 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    @"a" = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
+    a = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'a' but fails if the path exists.
     // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.
@@ -846,7 +937,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// Open file for reading and appending in synchronous mode. The file is created if it does not exist.
     // @"as+" = std.os.O.APPEND | std.os.O.RDWR,
     /// Open file for reading. An exception occurs if the file does not exist.
-    @"r" = std.os.O.RDONLY,
+    r = std.os.O.RDONLY,
     /// Open file for reading and writing. An exception occurs if the file does not exist.
     // @"r+" = std.os.O.RDWR,
     /// Open file for reading and writing in synchronous mode. Instructs the operating system to bypass the local file system cache.
@@ -854,7 +945,7 @@ pub const FileSystemFlags = enum(Mode) {
     /// This doesn't turn fs.open() or fsPromises.open() into a synchronous blocking call. If synchronous operation is desired, something like fs.openSync() should be used.
     // @"rs+" = std.os.O.RDWR,
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    @"w" = std.os.O.WRONLY | std.os.O.CREAT,
+    w = std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'w' but fails if the path exists.
     // @"wx" = std.os.O.WRONLY | std.os.O.TRUNC,
     // ///  Open file for reading and writing. The file is created (if it does not exist) or truncated (if it exists).
@@ -873,22 +964,13 @@ pub const FileSystemFlags = enum(Mode) {
     const O_SYNC: Mode = 0;
     const O_TRUNC: Mode = std.os.O.TRUNC;
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, default: FileSystemFlags, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isUndefinedOrNull()) {
-            return @intToEnum(FileSystemFlags, O_RDONLY);
+            return default;
         }
 
         if (val.isNumber()) {
             const number = val.toInt32();
-            if (!(number > 0o000 and number < 0o777)) {
-                JSC.throwInvalidArguments(
-                    "Invalid integer mode: must be a number between 0o000 and 0o777",
-                    .{},
-                    ctx,
-                    exception,
-                );
-                return null;
-            }
             return @intToEnum(FileSystemFlags, number);
         }
 
@@ -898,7 +980,7 @@ pub const FileSystemFlags = enum(Mode) {
             val.toZigString(&zig_str, ctx.ptr());
 
             var buf: [4]u8 = .{ 0, 0, 0, 0 };
-            @memcpy(&buf, zig_str.ptr, @minimum(buf.len, zig_str.len));
+            @memcpy(&buf, zig_str.ptr, @min(buf.len, zig_str.len));
             const Matcher = strings.ExactSizeMatcher(4);
 
             // https://github.com/nodejs/node/blob/8c3637cd35cca352794e2c128f3bc5e6b6c41380/lib/internal/fs/utils.js#L565
@@ -954,121 +1036,16 @@ pub const Date = enum(u64) {
     _,
 
     pub fn toJS(this: Date, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-        const seconds = @floatCast(f64, @intToFloat(f128, @enumToInt(this)) * 1000.0);
-        const unix_timestamp = JSC.C.JSValueMakeNumber(ctx, seconds);
-        const array: [1]JSC.C.JSValueRef = .{unix_timestamp};
+        const seconds = @floatCast(f64, @intToFloat(f64, @enumToInt(this)) * 1000.0);
+        const unix_timestamp = JSC.JSValue.jsNumber(seconds);
+        const array: [1]JSC.C.JSValueRef = .{unix_timestamp.asObjectRef()};
         const obj = JSC.C.JSObjectMakeDate(ctx, 1, &array, exception);
         return obj;
     }
 };
 
-fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
+fn StatsDataType(comptime T: type) type {
     return struct {
-        const This = @This();
-
-        pub const Class = JSC.NewClass(
-            This,
-            .{ .name = name },
-            .{
-                .isBlockDevice = .{
-                    .rfn = JSC.wrap(This, "isBlockDevice", false),
-                },
-                .isCharacterDevice = .{
-                    .rfn = JSC.wrap(This, "isCharacterDevice", false),
-                },
-                .isDirectory = .{
-                    .rfn = JSC.wrap(This, "isDirectory", false),
-                },
-                .isFIFO = .{
-                    .rfn = JSC.wrap(This, "isFIFO", false),
-                },
-                .isFile = .{
-                    .rfn = JSC.wrap(This, "isFile", false),
-                },
-                .isSocket = .{
-                    .rfn = JSC.wrap(This, "isSocket", false),
-                },
-                .isSymbolicLink = .{
-                    .rfn = JSC.wrap(This, "isSymbolicLink", false),
-                },
-                .finalize = finalize,
-            },
-            .{
-                .dev = .{
-                    .get = JSC.To.JS.Getter(This, .dev),
-                    .name = "dev",
-                },
-                .ino = .{
-                    .get = JSC.To.JS.Getter(This, .ino),
-                    .name = "ino",
-                },
-                .mode = .{
-                    .get = JSC.To.JS.Getter(This, .mode),
-                    .name = "mode",
-                },
-                .nlink = .{
-                    .get = JSC.To.JS.Getter(This, .nlink),
-                    .name = "nlink",
-                },
-                .uid = .{
-                    .get = JSC.To.JS.Getter(This, .uid),
-                    .name = "uid",
-                },
-                .gid = .{
-                    .get = JSC.To.JS.Getter(This, .gid),
-                    .name = "gid",
-                },
-                .rdev = .{
-                    .get = JSC.To.JS.Getter(This, .rdev),
-                    .name = "rdev",
-                },
-                .size = .{
-                    .get = JSC.To.JS.Getter(This, .size),
-                    .name = "size",
-                },
-                .blksize = .{
-                    .get = JSC.To.JS.Getter(This, .blksize),
-                    .name = "blksize",
-                },
-                .blocks = .{
-                    .get = JSC.To.JS.Getter(This, .blocks),
-                    .name = "blocks",
-                },
-                .atime = .{
-                    .get = JSC.To.JS.Getter(This, .atime),
-                    .name = "atime",
-                },
-                .mtime = .{
-                    .get = JSC.To.JS.Getter(This, .mtime),
-                    .name = "mtime",
-                },
-                .ctime = .{
-                    .get = JSC.To.JS.Getter(This, .ctime),
-                    .name = "ctime",
-                },
-                .birthtime = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime),
-                    .name = "birthtime",
-                },
-                .atime_ms = .{
-                    .get = JSC.To.JS.Getter(This, .atime_ms),
-                    .name = "atimeMs",
-                },
-                .mtime_ms = .{
-                    .get = JSC.To.JS.Getter(This, .mtime_ms),
-                    .name = "mtimeMs",
-                },
-                .ctime_ms = .{
-                    .get = JSC.To.JS.Getter(This, .ctime_ms),
-                    .name = "ctimeMs",
-                },
-                .birthtime_ms = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime_ms),
-                    .name = "birthtimeMs",
-                },
-            },
-        );
-
         dev: T,
         ino: T,
         mode: T,
@@ -1079,10 +1056,12 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         size: T,
         blksize: T,
         blocks: T,
-        atime_ms: T,
-        mtime_ms: T,
-        ctime_ms: T,
+        atime_ms: f64,
+        mtime_ms: f64,
+        ctime_ms: f64,
         birthtime_ms: T,
+
+        // TODO: don't store these 4 fields
         atime: Date,
         mtime: Date,
         ctime: Date,
@@ -1092,6 +1071,7 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             const atime = stat_.atime();
             const mtime = stat_.mtime();
             const ctime = stat_.ctime();
+
             return @This(){
                 .dev = @truncate(T, @intCast(i64, stat_.dev)),
                 .ino = @truncate(T, @intCast(i64, stat_.ino)),
@@ -1103,12 +1083,12 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .size = @truncate(T, @intCast(i64, stat_.size)),
                 .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
                 .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
-                .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .atime = @intToEnum(Date, @intCast(u64, @maximum(atime.tv_sec, 0))),
-                .mtime = @intToEnum(Date, @intCast(u64, @maximum(mtime.tv_sec, 0))),
-                .ctime = @intToEnum(Date, @intCast(u64, @maximum(ctime.tv_sec, 0))),
+                .atime_ms = (@intToFloat(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .mtime_ms = (@intToFloat(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .ctime_ms = (@intToFloat(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .atime = @intToEnum(Date, @intCast(u64, @max(atime.tv_sec, 0))),
+                .mtime = @intToEnum(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
+                .ctime = @intToEnum(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
 
                 // Linux doesn't include this info in stat
                 // maybe it does in statx, but do you really need birthtime? If you do please file an issue.
@@ -1120,57 +1100,154 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .birthtime = if (Environment.isLinux)
                     @intToEnum(Date, 0)
                 else
-                    @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtime().tv_sec, 0))),
+                    @intToEnum(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
             };
-        }
-
-        pub fn isBlockDevice(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isCharacterDevice(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isDirectory(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFIFO(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFile(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isSocket(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.mode)));
-        }
-
-        // Node.js says this method is only valid on the result of lstat()
-        // so it's fine if we just include it on stat() because it would
-        // still just return false.
-        //
-        // See https://nodejs.org/api/fs.html#statsissymboliclink
-        pub fn isSymbolicLink(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            var _this = bun.default_allocator.create(Stats) catch unreachable;
-            _this.* = this;
-            return Class.make(ctx, _this);
-        }
-
-        pub fn finalize(this: *Stats) void {
-            bun.default_allocator.destroy(this);
         }
     };
 }
 
-pub const Stats = StatsLike("Stats", i32);
-pub const BigIntStats = StatsLike("BigIntStats", i64);
+pub const Stats = union(enum) {
+    big: StatsDataType(i64),
+    small: StatsDataType(i32),
+
+    const This = Stats;
+    pub usingnamespace JSC.Codegen.JSStats;
+
+    fn unionGetter(comptime field: std.meta.FieldEnum(StatsDataType(i64))) JSC.To.Cpp.PropertyGetter(This) {
+        return struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                return switch (this.*) {
+                    .big => JSC.toJS(globalThis, @field(this.big, @tagName(field)), null),
+                    .small => JSC.toJS(globalThis, @field(this.small, @tagName(field)), null),
+                };
+            }
+        }.callback;
+    }
+
+    pub const isBlockDevice_ = JSC.wrapInstanceMethod(Stats, "isBlockDevice", false);
+    pub const isCharacterDevice_ = JSC.wrapInstanceMethod(Stats, "isCharacterDevice", false);
+    pub const isDirectory_ = JSC.wrapInstanceMethod(Stats, "isDirectory", false);
+    pub const isFIFO_ = JSC.wrapInstanceMethod(Stats, "isFIFO", false);
+    pub const isFile_ = JSC.wrapInstanceMethod(Stats, "isFile", false);
+    pub const isSocket_ = JSC.wrapInstanceMethod(Stats, "isSocket", false);
+    pub const isSymbolicLink_ = JSC.wrapInstanceMethod(Stats, "isSymbolicLink", false);
+
+    pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
+    pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
+    pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
+    pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
+    pub const isFile_WithoutTypeChecks = domCall(.isFile);
+    pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
+    pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
+
+    const DOMCallFn = fn (
+        *Stats,
+        *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue;
+    fn domCall(comptime decl: std.meta.DeclEnum(Stats)) DOMCallFn {
+        return struct {
+            pub fn run(
+                this: *Stats,
+                _: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue {
+                return @call(.auto, @field(Stats, @tagName(decl)), .{this});
+            }
+        }.run;
+    }
+
+    pub const dev = unionGetter(.dev);
+    pub const ino = unionGetter(.ino);
+    pub const mode = unionGetter(.mode);
+    pub const nlink = unionGetter(.nlink);
+    pub const uid = unionGetter(.uid);
+    pub const gid = unionGetter(.gid);
+    pub const rdev = unionGetter(.rdev);
+    pub const size = unionGetter(.size);
+    pub const blksize = unionGetter(.blksize);
+    pub const blocks = unionGetter(.blocks);
+    pub const atime = unionGetter(.atime);
+    pub const mtime = unionGetter(.mtime);
+    pub const ctime = unionGetter(.ctime);
+    pub const birthtime = unionGetter(.birthtime);
+    pub const atimeMs = unionGetter(.atime_ms);
+    pub const mtimeMs = unionGetter(.mtime_ms);
+    pub const ctimeMs = unionGetter(.ctime_ms);
+    pub const birthtimeMs = unionGetter(.birthtime_ms);
+
+    fn modeInternal(this: *This) i32 {
+        return switch (this.*) {
+            .big => @truncate(i32, this.big.mode),
+            .small => this.small.mode,
+        };
+    }
+
+    pub fn isBlockDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isCharacterDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isDirectory(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFIFO(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFile(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isSocket(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.modeInternal())));
+    }
+
+    // Node.js says this method is only valid on the result of lstat()
+    // so it's fine if we just include it on stat() because it would
+    // still just return false.
+    //
+    // See https://nodejs.org/api/fs.html#statsissymboliclink
+    pub fn isSymbolicLink(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn finalize(this: *This) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn init(stat: std.os.Stat, big: bool) This {
+        if (big) {
+            return .{ .big = StatsDataType(i64).init(stat) };
+        } else {
+            return .{ .small = StatsDataType(i32).init(stat) };
+        }
+    }
+
+    pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat, big: bool) *This {
+        var this = allocator.create(Stats) catch unreachable;
+        this.* = init(stat, big);
+        return this;
+    }
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
+        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
+
+        return null;
+    }
+
+    comptime {
+        _ = isBlockDevice_WithoutTypeChecks;
+        _ = isCharacterDevice_WithoutTypeChecks;
+        _ = isDirectory_WithoutTypeChecks;
+        _ = isFIFO_WithoutTypeChecks;
+        _ = isFile_WithoutTypeChecks;
+        _ = isSocket_WithoutTypeChecks;
+        _ = isSymbolicLink_WithoutTypeChecks;
+    }
+};
 
 /// A class representing a directory stream.
 ///
@@ -1191,121 +1268,74 @@ pub const BigIntStats = StatsLike("BigIntStats", i64);
 /// When using the async iterator, the `fs.Dir` object will be automatically
 /// closed after the iterator exits.
 /// @since v12.12.0
-pub const DirEnt = struct {
+pub const Dirent = struct {
     name: PathString,
     // not publicly exposed
     kind: Kind,
 
     pub const Kind = std.fs.File.Kind;
+    pub usingnamespace JSC.Codegen.JSDirent;
+
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Dirent {
+        globalObject.throw("Dirent is not a constructor", .{});
+        return null;
+    }
+
+    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.ZigString.fromUTF8(this.name.slice()).toValueGC(globalObject);
+    }
 
     pub fn isBlockDevice(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.BlockDevice);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.BlockDevice);
     }
     pub fn isCharacterDevice(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.CharacterDevice);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.CharacterDevice);
     }
     pub fn isDirectory(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.Directory);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.Directory);
     }
     pub fn isFIFO(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.NamedPipe or this.kind == std.fs.File.Kind.EventPort);
     }
     pub fn isFile(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.File);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.File);
     }
     pub fn isSocket(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.UnixDomainSocket);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.UnixDomainSocket);
     }
     pub fn isSymbolicLink(
-        this: *DirEnt,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeBoolean(ctx, this.kind == std.fs.File.Kind.SymLink);
+        this: *Dirent,
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.SymLink);
     }
 
-    pub const Class = JSC.NewClass(DirEnt, .{ .name = "DirEnt" }, .{
-        .isBlockDevice = .{
-            .name = "isBlockDevice",
-            .rfn = isBlockDevice,
-        },
-        .isCharacterDevice = .{
-            .name = "isCharacterDevice",
-            .rfn = isCharacterDevice,
-        },
-        .isDirectory = .{
-            .name = "isDirectory",
-            .rfn = isDirectory,
-        },
-        .isFIFO = .{
-            .name = "isFIFO",
-            .rfn = isFIFO,
-        },
-        .isFile = .{
-            .name = "isFile",
-            .rfn = isFile,
-        },
-        .isSocket = .{
-            .name = "isSocket",
-            .rfn = isSocket,
-        },
-        .isSymbolicLink = .{
-            .name = "isSymbolicLink",
-            .rfn = isSymbolicLink,
-        },
-    }, .{
-        .name = .{
-            .get = JSC.To.JS.Getter(DirEnt, .name),
-            .name = "name",
-        },
-    });
-
-    pub fn finalize(this: *DirEnt) void {
+    pub fn finalize(this: *Dirent) callconv(.C) void {
         bun.default_allocator.free(this.name.slice());
         bun.default_allocator.destroy(this);
     }
@@ -1467,7 +1497,7 @@ pub const Path = struct {
 
         const base_slice = path.slice();
 
-        const out = if (!isWindows)
+        const out = if (isWindows)
             std.fs.path.dirnameWindows(base_slice) orelse "C:\\"
         else
             std.fs.path.dirnamePosix(base_slice) orelse "/";
@@ -1542,6 +1572,7 @@ pub const Path = struct {
             if (name_.isEmpty()) {
                 return JSC.ZigString.Empty.toValue(globalThis);
             }
+
             const out = std.fmt.allocPrint(allocator, "{s}{s}", .{ name_, ext }) catch unreachable;
             defer allocator.free(out);
 
@@ -1609,7 +1640,7 @@ pub const Path = struct {
             if (u16_slice.len > 3)
                 buf[3] = u16_slice[3];
 
-            return std.fs.path.isAbsoluteWindowsWTF16(buf[0..@minimum(u16_slice.len, buf.len)]);
+            return std.fs.path.isAbsoluteWindowsWTF16(buf[0..@min(u16_slice.len, buf.len)]);
         }
 
         return std.fs.path.isAbsoluteWindows(zig_str.slice());
@@ -1675,7 +1706,7 @@ pub const Path = struct {
             PathHandler.normalizeStringNode(str, &buf, .windows);
 
         var out_str = JSC.ZigString.init(out);
-        if (str_slice.allocated) out_str.setOutputEncoding();
+        if (str_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
     pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
@@ -1743,7 +1774,7 @@ pub const Path = struct {
             PathHandler.relativePlatform(from, to, .windows, true);
 
         var out_str = JSC.ZigString.init(out);
-        if (from_slice.allocated or to_slice.allocated) out_str.setOutputEncoding();
+        if (from_slice.isAllocated() or to_slice.isAllocated()) out_str.setOutputEncoding();
         return out_str.toValueGC(globalThis);
     }
 
@@ -1783,16 +1814,16 @@ pub const Path = struct {
     }
 
     pub const Export = shim.exportFunctions(.{
-        .@"basename" = basename,
-        .@"dirname" = dirname,
-        .@"extname" = extname,
-        .@"format" = format,
-        .@"isAbsolute" = isAbsolute,
-        .@"join" = join,
-        .@"normalize" = normalize,
-        .@"parse" = parse,
-        .@"relative" = relative,
-        .@"resolve" = resolve,
+        .basename = basename,
+        .dirname = dirname,
+        .extname = extname,
+        .format = format,
+        .isAbsolute = isAbsolute,
+        .join = join,
+        .normalize = normalize,
+        .parse = parse,
+        .relative = relative,
+        .resolve = resolve,
     });
 
     pub const Extern = [_][]const u8{"create"};
@@ -1834,6 +1865,52 @@ pub const Path = struct {
 };
 
 pub const Process = struct {
+    pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.ZigString.fromUTF8(bun.span(std.os.argv[0])).toValueGC(globalObject);
+    }
+
+    pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var out = std.fs.selfExePath(&buf) catch {
+            // if for any reason we are unable to get the executable path, we just return argv[0]
+            return getArgv0(globalObject);
+        };
+
+        return JSC.ZigString.fromUTF8(out).toValueGC(globalObject);
+    }
+
+    pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        const allocator = globalObject.allocator();
+        var vm = globalObject.bunVM();
+        var args = allocator.alloc(
+            JSC.ZigString,
+            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
+            // argv also omits the script name
+            std.os.argv.len -| 1,
+        ) catch unreachable;
+        defer allocator.free(args);
+        var used: usize = 0;
+        const offset: usize = 1;
+
+        for (std.os.argv[@min(std.os.argv.len, offset)..]) |arg_| {
+            const arg = bun.span(arg_);
+            if (arg.len == 0)
+                continue;
+
+            if (arg[0] != '-')
+                continue;
+
+            if (vm.argv.len > 0 and strings.eqlLong(vm.argv[0], arg, true))
+                break;
+
+            args[used] = JSC.ZigString.fromUTF8(arg);
+
+            used += 1;
+        }
+
+        return JSC.JSValue.createStringArray(globalObject, args.ptr, used, true);
+    }
+
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         var vm = globalObject.bunVM();
 
@@ -1912,14 +1989,14 @@ pub const Process = struct {
                 // When we update the cwd from JS, we have to update the bundler's version as well
                 // However, this might be called many times in a row, so we use a pre-allocated buffer
                 // that way we don't have to worry about garbage collector
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf) catch {
-                    _ = Syscall.chdir(std.meta.assumeSentinel(JSC.VirtualMachine.vm.bundler.fs.top_level_dir, 0));
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir = std.os.getcwd(&JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf) catch {
+                    _ = Syscall.chdir(@ptrCast([:0]const u8, JSC.VirtualMachine.get().bundler.fs.top_level_dir));
                     return JSC.toInvalidArguments("Invalid path", .{}, globalObject.ref());
                 };
 
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len] = std.fs.path.sep;
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1] = 0;
-                JSC.VirtualMachine.vm.bundler.fs.top_level_dir = JSC.VirtualMachine.vm.bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.vm.bundler.fs.top_level_dir.len + 1];
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len] = std.fs.path.sep;
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1] = 0;
+                JSC.VirtualMachine.get().bundler.fs.top_level_dir = JSC.VirtualMachine.get().bundler.fs.top_level_dir_buf[0 .. JSC.VirtualMachine.get().bundler.fs.top_level_dir.len + 1];
 
                 return JSC.JSValue.jsUndefined();
             },
@@ -1927,18 +2004,23 @@ pub const Process = struct {
     }
 
     pub fn exit(_: *JSC.JSGlobalObject, code: i32) callconv(.C) void {
-        std.os.exit(@truncate(u8, @intCast(u32, @maximum(code, 0))));
+        std.os.exit(@truncate(u8, @intCast(u32, @max(code, 0))));
     }
 
-    pub export const Bun__version: [:0]const u8 = "v" ++ bun.Global.package_json_version;
-    pub export const Bun__versions_mimalloc: [:0]const u8 = bun.Global.versions.mimalloc;
-    pub export const Bun__versions_webkit: [:0]const u8 = bun.Global.versions.webkit;
-    pub export const Bun__versions_libarchive: [:0]const u8 = bun.Global.versions.libarchive;
-    pub export const Bun__versions_picohttpparser: [:0]const u8 = bun.Global.versions.picohttpparser;
-    pub export const Bun__versions_boringssl: [:0]const u8 = bun.Global.versions.boringssl;
-    pub export const Bun__versions_zlib: [:0]const u8 = bun.Global.versions.zlib;
-    pub export const Bun__versions_zig: [:0]const u8 = bun.Global.versions.zig;
-    pub export const Bun__version_sha: [:0]const u8 = bun.Environment.git_sha;
+    pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
+    pub export const Bun__versions_boringssl: [*:0]const u8 = bun.Global.versions.boringssl;
+    pub export const Bun__versions_libarchive: [*:0]const u8 = bun.Global.versions.libarchive;
+    pub export const Bun__versions_mimalloc: [*:0]const u8 = bun.Global.versions.mimalloc;
+    pub export const Bun__versions_picohttpparser: [*:0]const u8 = bun.Global.versions.picohttpparser;
+    pub export const Bun__versions_uws: [*:0]const u8 = bun.Global.versions.uws;
+    pub export const Bun__versions_webkit: [*:0]const u8 = bun.Global.versions.webkit;
+    pub export const Bun__versions_zig: [*:0]const u8 = bun.Global.versions.zig;
+    pub export const Bun__versions_zlib: [*:0]const u8 = bun.Global.versions.zlib;
+    pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
+    pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
+    pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
+    pub export const Bun__versions_usockets: [*:0]const u8 = bun.Global.versions.usockets;
+    pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
 };
 
 comptime {

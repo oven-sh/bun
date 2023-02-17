@@ -39,6 +39,16 @@ static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)
     headers.remove(HTTPHeaderName::Range);
 }
 
+static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
+{
+    ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
+    if (!isValidHTTPHeaderValue((value)))
+        return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
+    if (guard == FetchHeaders::Guard::Immutable)
+        return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
+    return true;
+}
+
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     if (!isValidHTTPToken(name))
@@ -48,12 +58,6 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
         return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
-    if (guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
-        return false;
-    if (guard == FetchHeaders::Guard::RequestNoCors && !combinedValue.isEmpty() && !isSimpleHeader(name, combinedValue))
-        return false;
-    if (guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
-        return false;
     return true;
 }
 
@@ -61,6 +65,31 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 {
     String normalizedValue = stripLeadingAndTrailingHTTPSpaces(value);
     String combinedValue = normalizedValue;
+    HTTPHeaderName headerName;
+    if (findHTTPHeaderName(name, headerName)) {
+
+        if (headerName != HTTPHeaderName::SetCookie) {
+            if (headers.contains(headerName)) {
+                combinedValue = makeString(headers.get(headerName), ", ", normalizedValue);
+            }
+        }
+
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, combinedValue, guard);
+
+        if (canWriteResult.hasException())
+            return canWriteResult.releaseException();
+        if (!canWriteResult.releaseReturnValue())
+            return {};
+
+        if (headerName != HTTPHeaderName::SetCookie) {
+            headers.set(headerName, combinedValue);
+        } else {
+            headers.add(headerName, normalizedValue);
+        }
+
+        return {};
+    }
+
     if (headers.contains(name))
         combinedValue = makeString(headers.get(name), ", ", normalizedValue);
     auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
@@ -136,6 +165,16 @@ ExceptionOr<void> FetchHeaders::fill(const Init& headerInit)
 
 ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 {
+    if (this->size() == 0) {
+        HTTPHeaderMap headers;
+        headers.commonHeaders().appendVector(otherHeaders.m_headers.commonHeaders());
+        headers.uncommonHeaders().appendVector(otherHeaders.m_headers.uncommonHeaders());
+        headers.getSetCookieHeaders().appendVector(otherHeaders.m_headers.getSetCookieHeaders());
+        setInternalHeaders(WTFMove(headers));
+        m_updateCounter++;
+        return {};
+    }
+
     for (auto& header : otherHeaders.m_headers) {
         auto result = appendToHeaderMap(header, m_headers, m_guard);
         if (result.hasException())
@@ -147,6 +186,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 {
+    ++m_updateCounter;
     return appendToHeaderMap(name, value, m_headers, m_guard);
 }
 
@@ -164,6 +204,7 @@ ExceptionOr<void> FetchHeaders::remove(const String& name)
     if (m_guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
         return {};
 
+    ++m_updateCounter;
     m_headers.remove(name);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
@@ -195,6 +236,7 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     if (!canWriteResult.releaseReturnValue())
         return {};
 
+    ++m_updateCounter;
     m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
@@ -219,24 +261,42 @@ void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)
     }
 }
 
+static NeverDestroyed<const String> setCookieLowercaseString(MAKE_STATIC_STRING_IMPL("set-cookie"));
+
 std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
 {
+    if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
+        m_keys.resize(0);
+        m_keys.reserveCapacity(m_headers->m_headers.size());
+        for (auto& header : m_headers->m_headers)
+            m_keys.uncheckedAppend(header.asciiLowerCaseName());
+        std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+        m_updateCounter = m_headers->m_updateCounter;
+        m_cookieIndex = 0;
+    }
+
+    auto& setCookieHeaders = m_headers->m_headers.getSetCookieHeaders();
+
     while (m_currentIndex < m_keys.size()) {
         auto key = m_keys[m_currentIndex++];
+
+        if (!setCookieHeaders.isEmpty() && key == setCookieLowercaseString) {
+            auto cookie = setCookieHeaders[m_cookieIndex++];
+            return KeyValuePair<String, String> { WTFMove(key), WTFMove(cookie) };
+        }
+
         auto value = m_headers->m_headers.get(key);
         if (!value.isNull())
             return KeyValuePair<String, String> { WTFMove(key), WTFMove(value) };
     }
+
     return std::nullopt;
 }
 
 FetchHeaders::Iterator::Iterator(FetchHeaders& headers)
     : m_headers(headers)
 {
-    m_keys.reserveInitialCapacity(headers.m_headers.size());
-    for (auto& header : headers.m_headers)
-        m_keys.uncheckedAppend(header.key.convertToASCIILowercase());
-    std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
+    m_cookieIndex = 0;
 }
 
 } // namespace WebCore

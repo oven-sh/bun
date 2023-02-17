@@ -10,7 +10,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { gc } from "./gc";
-import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun";
+import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun.cjs";
 import React from "react";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
@@ -93,18 +93,17 @@ describe("React", () => {
   it("React.createContext works", () => {
     expect(typeof React.createContext).toBe("function");
     const pleaseDontThrow = React.createContext({ foo: true });
-    expect(pleaseDontThrow.$$typeof.description).toBe("react.context");
+    expect((pleaseDontThrow as any).$$typeof.description).toBe("react.context");
 
-    const pleaseDontThrow2 = React.default.createContext({ foo: true });
+    const pleaseDontThrow2 = (React as any).default.createContext({
+      foo: true,
+    });
     expect(pleaseDontThrow2.$$typeof.description).toBe("react.context");
   });
 });
 
 describe("ReactDOM", () => {
-  for (let renderToReadableStream of [
-    renderToReadableStreamBun,
-    renderToReadableStreamBrowser,
-  ]) {
+  for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
     for (let [inputString, reactElement] of fixtures) {
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
         it("Response.text()", async () => {
@@ -117,7 +116,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.log(e.stack);
             throw e;
           }
@@ -159,7 +158,7 @@ describe("ReactDOM", () => {
             gc();
             expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
-          } catch (e) {
+          } catch (e: any) {
             console.error(e.message);
             console.error(e.stack);
             throw e;
@@ -172,7 +171,7 @@ describe("ReactDOM", () => {
           const text =
             renderToReadableStream === renderToReadableStreamBun
               ? array.join("")
-              : new TextDecoder().decode(concatArrayBuffers(array));
+              : new TextDecoder().decode(concatArrayBuffers(array as any[]));
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
@@ -189,7 +188,7 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
@@ -202,13 +201,11 @@ describe("ReactDOM", () => {
         it("for await (chunk of stream) (arrayBuffer)", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
-          const chunks = [];
+          const chunks: any[] = [];
           for await (let chunk of stream) {
             chunks.push(chunk);
           }
-          const text = new TextDecoder().decode(
-            await new Response(chunks).arrayBuffer()
-          );
+          const text = new TextDecoder().decode(await new Response(chunks as any).arrayBuffer());
           gc();
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
@@ -216,73 +213,73 @@ describe("ReactDOM", () => {
       });
     }
   }
-  // for (let renderToReadableStream of [
-  //   renderToReadableStreamBun,
-  //   // renderToReadableStreamBrowser,
-  // ]) {
-  //   // there is an event loop bug that causes deadlocks
-  //   // the bug is with `fetch`, not with the HTTP server
-  //   for (let [inputString, reactElement] of fixtures) {
-  //     describe(`${renderToReadableStream.name}(${inputString})`, () => {
-  //       it("http server, 1 request", async () => {
-  //         var server;
-  //         try {
-  //           server = serve({
-  //             port: port++,
-  //             async fetch(req) {
-  //               return new Response(await renderToReadableStream(reactElement));
-  //             },
-  //           });
-  //           const resp = await fetch("http://localhost:" + server.port + "/");
-  //           expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
-  //             inputString
-  //           );
-  //           gc();
-  //         } catch (e) {
-  //           throw e;
-  //         } finally {
-  //           server?.stop();
-  //           gc();
-  //         }
-  //         // expect(
-  //         //   heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0
-  //         // ).toBe(0);
-  //       });
-  //       // const count = 4;
-  //       // it(`http server, ${count} requests`, async () => {
-  //       //   var server;
-  //       //   try {
-  //       //     server = serve({
-  //       //       port: port++,
-  //       //       async fetch(req) {
-  //       //         return new Response(await renderToReadableStream(reactElement));
-  //       //       },
-  //       //     });
-  //       //     var total = 0;
-  //       //     gc();
-  //       //     while (total++ < count) {
-  //       //       var attempt = total;
-  //       //       const response = await fetch(
-  //       //         "http://localhost:" + server.port + "/"
-  //       //       );
-  //       //       gc();
-  //       //       const result = await response.text();
-  //       //       try {
-  //       //         expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
-  //       //       } catch (e) {
-  //       //         e.message += "\nAttempt: " + attempt;
-  //       //         throw e;
-  //       //       }
+  for (let renderToReadableStream of [renderToReadableStreamBun, renderToReadableStreamBrowser]) {
+    // there is an event loop bug that causes deadlocks
+    // the bug is with `fetch`, not with the HTTP server
+    for (let [inputString, reactElement] of fixtures) {
+      describe(`${renderToReadableStream.name}(${inputString})`, () => {
+        it("http server, 1 request", async () => {
+          await (async function () {
+            var server;
+            try {
+              server = serve({
+                port: port++,
+                async fetch(req) {
+                  return new Response(await renderToReadableStream(reactElement));
+                },
+              });
+              const resp = await fetch("http://localhost:" + server.port + "/");
+              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(inputString);
+              gc();
+            } catch (e) {
+              throw e;
+            } finally {
+              server?.stop();
+              gc();
+            }
+          })();
+          gc();
+          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBe(1);
+        });
+        const count = 4;
+        it(`http server, ${count} requests`, async () => {
+          var remain = count;
+          await (async function () {
+            var server;
+            try {
+              server = serve({
+                port: port++,
+                async fetch(req) {
+                  return new Response(await renderToReadableStream(reactElement));
+                },
+              });
+              gc();
+              while (remain--) {
+                var attempt = remain + 1;
+                const response = await fetch("http://localhost:" + server.port + "/");
+                gc();
+                const result = await response.text();
+                try {
+                  expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+                } catch (e: any) {
+                  e.message += "\nAttempt: " + attempt;
+                  throw e;
+                }
 
-  //       //       gc();
-  //       //     }
-  //       //   } catch (e) {
-  //       //     throw e;
-  //       //   } finally {
-  //       //     server.stop();
-  //       //   }
-  //       // });
-  //     });
-  //   }
-  // }
+                gc();
+              }
+            } catch (e) {
+              throw e;
+            } finally {
+              server.stop();
+            }
+          })();
+
+          const { ReadableHTTPResponseSinkController = 0 } = heapStats().objectTypeCounts;
+          expect(ReadableHTTPResponseSinkController).toBe(1);
+          expect(remain + 1).toBe(0);
+        });
+      });
+    }
+  }
 });

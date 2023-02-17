@@ -1,10 +1,10 @@
 const std = @import("std");
-const logger = @import("logger.zig");
+const logger = @import("bun").logger;
 const tables = @import("js_lexer_tables.zig");
 const build_options = @import("build_options");
-const js_ast = @import("js_ast.zig");
+const js_ast = bun.JSAst;
 
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -280,7 +280,8 @@ fn NewLexer_(
                         // include a <CR> or <CR><LF> sequence.
 
                         // Convert '\r\n' into '\n'
-                        iter.i += @as(u32, @boolToInt(iter.i < text.len and text[iter.i] == '\n'));
+                        const next_i: usize = iter.i + 1;
+                        iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -546,11 +547,11 @@ fn NewLexer_(
                                     try lexer.syntaxError();
                                 }
 
+                                // Make sure Windows CRLF counts as a single newline
+                                const next_i: usize = iter.i + 1;
+                                iter.i += @as(u32, @boolToInt(next_i < text.len and text[next_i] == '\n'));
+
                                 // Ignore line continuations. A line continuation is not an escaped newline.
-                                if (iter.i < text.len and text[iter.i + 1] == '\n') {
-                                    // Make sure Windows CRLF counts as a single newline
-                                    iter.i += 1;
-                                }
                                 continue;
                             },
                             '\n', 0x2028, 0x2029 => {
@@ -623,7 +624,7 @@ fn NewLexer_(
 
                         switch (lexer.code_point) {
                             // 0 cannot be in this list because it may be a legacy octal literal
-                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
+                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', '\\', 0x2028, 0x2029 => {
                                 lexer.step();
 
                                 continue :stringLiteral;
@@ -734,7 +735,7 @@ fn NewLexer_(
 
             // Reset string literal
             const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_slice = lexer.source.contents[base..@minimum(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+            lexer.string_literal_slice = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
             lexer.string_literal_is_ascii = !string_literal_details.needs_slow_path;
             lexer.string_literal_buffer.shrinkRetainingCapacity(0);
             if (string_literal_details.needs_slow_path) {
@@ -967,7 +968,7 @@ fn NewLexer_(
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\" (token: {s})", .{
                         keyword,
                         self.raw(),
-                        self.token,
+                        @tagName(self.token),
                     }, true);
                 } else {
                     self.addError(self.start, "Expected \"{s}\" but found \"{s}\"", .{ keyword, self.raw() }, true);
@@ -1165,7 +1166,7 @@ fn NewLexer_(
                     },
                     ';' => {
                         if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
+                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
                         }
 
                         lexer.step();
@@ -1479,6 +1480,22 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
+                                            // if (comptime Environment.enableSIMD) {
+                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
+                                            // if (lexer.code_point < 128) {
+                                            //     const remainder = lexer.source.contents[lexer.current..];
+                                            //     if (remainder.len >= 4096) {
+                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
+                                            //             lexer.step();
+                                            //             continue;
+                                            //         };
+                                            //         lexer.end = lexer.current -| 1;
+                                            //         lexer.step();
+                                            //         continue;
+                                            //     }
+                                            // }
+                                            // }
+
                                             lexer.step();
                                         },
                                     }
@@ -1899,7 +1916,7 @@ fn NewLexer_(
                                     const flag = max_flag - @intCast(u8, lexer.code_point);
                                     if (flags.isSet(flag)) {
                                         lexer.addError(
-                                            lexer.regex_flags_start.?,
+                                            lexer.current,
                                             "Duplicate flag \"{u}\" in regular expression",
                                             .{@intCast(u21, lexer.code_point)},
                                             false,
@@ -1910,7 +1927,14 @@ fn NewLexer_(
                                     lexer.step();
                                 },
                                 else => {
-                                    try lexer.syntaxError();
+                                    lexer.addError(
+                                        lexer.current,
+                                        "Invalid flag \"{u}\" in regular expression",
+                                        .{@intCast(u21, lexer.code_point)},
+                                        false,
+                                    );
+
+                                    lexer.step();
                                 },
                             }
                         }
@@ -2131,7 +2155,7 @@ fn NewLexer_(
                         // JSX string literals do not support escaping
                         // They're "pre" escaped
                         switch (lexer.code_point) {
-                            'u', 0x0C, 0, '\t', std.ascii.control_code.VT, 0x08 => {
+                            'u', 0x0C, 0, '\t', std.ascii.control_code.vt, 0x08 => {
                                 needs_decode = true;
                             },
                             else => {},
@@ -2761,8 +2785,8 @@ fn NewLexer_(
                     }
                     lexer.number = @intToFloat(f64, number);
                 } else {
-                    // Parse a double-precision floating-point number;
-                    if (std.fmt.parseFloat(f64, text)) |num| {
+                    // Parse a double-precision floating-point number
+                    if (bun.parseDouble(text)) |num| {
                         lexer.number = num;
                     } else |_| {
                         try lexer.addSyntaxError(lexer.start, "Invalid number", .{});
@@ -2994,6 +3018,41 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     return true;
 }
 
+fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
+    var text = text_;
+    const star = @splat(strings.ascii_vector_size, @as(u8, '*'));
+    const carriage = @splat(strings.ascii_vector_size, @as(u8, '\r'));
+    const newline = @splat(strings.ascii_vector_size, @as(u8, '\n'));
+    const V1x16 = strings.AsciiVectorU1;
+
+    const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
+    std.debug.assert(text_end_len % strings.ascii_vector_size == 0);
+    std.debug.assert(text_end_len <= text.len);
+
+    const text_end_ptr = text.ptr + text_end_len;
+
+    while (text_end_ptr != text.ptr) {
+        const vec: strings.AsciiVector = text.ptr[0..strings.ascii_vector_size].*;
+
+        const any_significant =
+            @bitCast(V1x16, vec > strings.max_16_ascii) |
+            @bitCast(V1x16, star == vec) |
+            @bitCast(V1x16, carriage == vec) |
+            @bitCast(V1x16, newline == vec);
+
+        if (@reduce(.Max, any_significant) > 0) {
+            const bitmask = @bitCast(u16, any_significant);
+            const first = @ctz(bitmask);
+            std.debug.assert(first < strings.ascii_vector_size);
+            std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            return @truncate(u32, first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr)));
+        }
+        text.ptr += strings.ascii_vector_size;
+    }
+
+    return @truncate(u32, @ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
+}
+
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {
     var text = text_;
     const quote_ = @splat(strings.ascii_vector_size, @as(u8, quote));
@@ -3010,8 +3069,8 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
             @bitCast(V1x16, backslash == vec);
 
         if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @ptrCast(*const u16, &any_significant).*;
-            const first = @ctz(u16, bitmask);
+            const bitmask = @bitCast(u16, any_significant);
+            const first = @ctz(bitmask);
             std.debug.assert(first < strings.ascii_vector_size);
             return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
         }

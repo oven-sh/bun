@@ -1,13 +1,13 @@
 const Bun = @This();
-const default_allocator = @import("../../global.zig").default_allocator;
-const bun = @import("../../global.zig");
+const default_allocator = @import("bun").default_allocator;
+const bun = @import("bun");
 const Environment = bun.Environment;
-const NetworkThread = @import("http").NetworkThread;
+const NetworkThread = @import("bun").HTTP.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("../../global.zig").Output;
-const MutableString = @import("../../global.zig").MutableString;
+const Output = @import("bun").Output;
+const MutableString = @import("bun").MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../../identity_context.zig").IdentityContext;
@@ -15,72 +15,70 @@ const Fs = @import("../../fs.zig");
 const Resolver = @import("../../resolver/resolver.zig");
 const ast = @import("../../import_record.zig");
 const NodeModuleBundle = @import("../../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../../bundler.zig").MacroEntryPoint;
-const logger = @import("../../logger.zig");
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const logger = @import("bun").logger;
 const Api = @import("../../api/schema.zig").Api;
 const options = @import("../../options.zig");
-const Bundler = @import("../../bundler.zig").Bundler;
-const ServerEntryPoint = @import("../../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../../js_printer.zig");
-const js_parser = @import("../../js_parser.zig");
-const js_ast = @import("../../js_ast.zig");
-const hash_map = @import("../../hash_map.zig");
+const Bundler = bun.Bundler;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../../http.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("javascript_core").ZigString;
+const ZigString = @import("bun").JSC.ZigString;
 const Runtime = @import("../../runtime.zig");
-const Router = @import("./router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../../env_loader.zig");
-const ParseResult = @import("../../bundler.zig").ParseResult;
+const ParseResult = bun.bundler.ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("javascript_core").WebCore;
+const WebCore = @import("bun").JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("javascript_core").C;
-const JSC = @import("javascript_core");
+const js = @import("bun").JSC.C;
+const JSC = @import("bun").JSC;
 const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("javascript_core").JSValue;
+const JSValue = @import("bun").JSC.JSValue;
 const NewClass = @import("../base.zig").NewClass;
-const Microtask = @import("javascript_core").Microtask;
-const JSGlobalObject = @import("javascript_core").JSGlobalObject;
-const ExceptionValueRef = @import("javascript_core").ExceptionValueRef;
-const JSPrivateDataPtr = @import("javascript_core").JSPrivateDataPtr;
-const ZigConsoleClient = @import("javascript_core").ZigConsoleClient;
-const Node = @import("javascript_core").Node;
-const ZigException = @import("javascript_core").ZigException;
-const ZigStackTrace = @import("javascript_core").ZigStackTrace;
-const ErrorableResolvedSource = @import("javascript_core").ErrorableResolvedSource;
-const ResolvedSource = @import("javascript_core").ResolvedSource;
-const JSPromise = @import("javascript_core").JSPromise;
-const JSInternalPromise = @import("javascript_core").JSInternalPromise;
-const JSModuleLoader = @import("javascript_core").JSModuleLoader;
-const JSPromiseRejectionOperation = @import("javascript_core").JSPromiseRejectionOperation;
-const Exception = @import("javascript_core").Exception;
-const ErrorableZigString = @import("javascript_core").ErrorableZigString;
-const ZigGlobalObject = @import("javascript_core").ZigGlobalObject;
-const VM = @import("javascript_core").VM;
-const JSFunction = @import("javascript_core").JSFunction;
+const Microtask = @import("bun").JSC.Microtask;
+const JSGlobalObject = @import("bun").JSC.JSGlobalObject;
+const ExceptionValueRef = @import("bun").JSC.ExceptionValueRef;
+const JSPrivateDataPtr = @import("bun").JSC.JSPrivateDataPtr;
+const ZigConsoleClient = @import("bun").JSC.ZigConsoleClient;
+const Node = @import("bun").JSC.Node;
+const ZigException = @import("bun").JSC.ZigException;
+const ZigStackTrace = @import("bun").JSC.ZigStackTrace;
+const ErrorableResolvedSource = @import("bun").JSC.ErrorableResolvedSource;
+const ResolvedSource = @import("bun").JSC.ResolvedSource;
+const JSPromise = @import("bun").JSC.JSPromise;
+const JSInternalPromise = @import("bun").JSC.JSInternalPromise;
+const JSModuleLoader = @import("bun").JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = @import("bun").JSC.JSPromiseRejectionOperation;
+const Exception = @import("bun").JSC.Exception;
+const ErrorableZigString = @import("bun").JSC.ErrorableZigString;
+const ZigGlobalObject = @import("bun").JSC.ZigGlobalObject;
+const VM = @import("bun").JSC.VM;
+const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
-const VirtualMachine = @import("../javascript.zig").VirtualMachine;
+const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const is_bindgen = JSC.is_bindgen;
-const uws = @import("uws");
+const uws = @import("bun").uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
-const BoringSSL = @import("boringssl");
+const BoringSSL = @import("bun").BoringSSL;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: i32,
@@ -91,7 +89,7 @@ const SendfileContext = struct {
     has_set_on_writable: bool = false,
     auto_close: bool = false,
 };
-const DateTime = @import("datetime");
+const DateTime = bun.DateTime;
 const linux = std.os.linux;
 
 pub const ServerConfig = struct {
@@ -123,6 +121,27 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
+            var ctx_opts: uws.us_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+
+            if (this_) |ssl_config| {
+                if (ssl_config.key_file_name != null)
+                    ctx_opts.key_file_name = ssl_config.key_file_name;
+                if (ssl_config.cert_file_name != null)
+                    ctx_opts.cert_file_name = ssl_config.cert_file_name;
+                if (ssl_config.ca_file_name != null)
+                    ctx_opts.ca_file_name = ssl_config.ca_file_name;
+                if (ssl_config.dh_params_file_name != null)
+                    ctx_opts.dh_params_file_name = ssl_config.dh_params_file_name;
+                if (ssl_config.passphrase != null)
+                    ctx_opts.passphrase = ssl_config.passphrase;
+                ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+            }
+
+            return ctx_opts;
+        }
+
         pub fn deinit(this: *SSLConfig) void {
             const fields = .{
                 "server_name",
@@ -143,7 +162,7 @@ pub const ServerConfig = struct {
             }
         }
 
-        const zero = SSLConfig{};
+        pub const zero = SSLConfig{};
 
         pub fn inJS(global: *JSC.JSGlobalObject, obj: JSC.JSValue, exception: JSC.C.ExceptionRef) ?SSLConfig {
             var result = zero;
@@ -302,7 +321,13 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "port")) |port_| {
-                args.port = @intCast(u16, @minimum(@maximum(0, port_.toInt32()), std.math.maxInt(u16)));
+                args.port = @intCast(
+                    u16,
+                    @min(
+                        @max(0, port_.coerce(i32, global)),
+                        std.math.maxInt(u16),
+                    ),
+                );
             }
 
             if (arg.getTruthy(global, "baseURI")) |baseURI| {
@@ -352,7 +377,7 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @maximum(0, max_request_body_size.toInt64()));
+                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
             }
 
             if (arg.getTruthy(global, "error")) |onError| {
@@ -381,10 +406,6 @@ pub const ServerConfig = struct {
                 }
                 return args;
             }
-        }
-
-        if (args.port == 0) {
-            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global, exception);
         }
 
         if (args.base_uri.len > 0) {
@@ -423,6 +444,7 @@ pub const ServerConfig = struct {
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
+            
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
@@ -465,6 +487,77 @@ pub const ServerConfig = struct {
     }
 };
 
+const HTTPStatusText = struct {
+    pub fn get(code: u16) ?[]const u8 {
+        return switch (code) {
+            100 => "100 Continue",
+            101 => "101 Switching protocols",
+            102 => "102 Processing",
+            103 => "103 Early Hints",
+            200 => "200 OK",
+            201 => "201 Created",
+            202 => "202 Accepted",
+            203 => "203 Non-Authoritative Information",
+            204 => "204 No Content",
+            205 => "205 Reset Content",
+            206 => "206 Partial Content",
+            207 => "207 Multi-Status",
+            208 => "208 Already Reported",
+            226 => "226 IM Used",
+            300 => "300 Multiple Choices",
+            301 => "301 Moved Permanently",
+            302 => "302 Found",
+            303 => "303 See Other",
+            304 => "304 Not Modified",
+            305 => "305 Use Proxy",
+            306 => "306 Switch Proxy",
+            307 => "307 Temporary Redirect",
+            308 => "308 Permanent Redirect",
+            400 => "400 Bad Request",
+            401 => "401 Unauthorized",
+            402 => "402 Payment Required",
+            403 => "403 Forbidden",
+            404 => "404 Not Found",
+            405 => "405 Method Not Allowed",
+            406 => "406 Not Acceptable",
+            407 => "407 Proxy Authentication Required",
+            408 => "408 Request Timeout",
+            409 => "409 Conflict",
+            410 => "410 Gone",
+            411 => "411 Length Required",
+            412 => "412 Precondition Failed",
+            413 => "413 Payload Too Large",
+            414 => "414 URI Too Long",
+            415 => "415 Unsupported Media Type",
+            416 => "416 Range Not Satisfiable",
+            417 => "417 Expectation Failed",
+            418 => "418 I'm a Teapot",
+            421 => "421 Misdirected Request",
+            422 => "422 Unprocessable Entity",
+            423 => "423 Locked",
+            424 => "424 Failed Dependency",
+            425 => "425 Too Early",
+            426 => "426 Upgrade Required",
+            428 => "428 Precondition Required",
+            429 => "429 Too Many Requests",
+            431 => "431 Request Header Fields Too Large",
+            451 => "451 Unavailable For Legal Reasons",
+            500 => "500 Internal Server Error",
+            501 => "501 Not Implemented",
+            502 => "502 Bad Gateway",
+            503 => "503 Service Unavailable",
+            504 => "504 Gateway Timeout",
+            505 => "505 HTTP Version Not Supported",
+            506 => "506 Variant Also Negotiates",
+            507 => "507 Insufficient Storage",
+            508 => "508 Loop Detected",
+            510 => "510 Not Extended",
+            511 => "511 Network Authentication Required",
+            else => null,
+        };
+    }
+};
+
 pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime count: usize) type {
     // Pre-allocate up to 2048 requests
     // use a bitset to track which ones are used
@@ -477,26 +570,33 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
 
         pub fn get(this: *@This()) std.mem.Allocator {
             this.unused = Set.initFull();
-            return std.mem.Allocator.init(this, alloc, resize, free);
+            return .{
+                .ptr = this,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .free = free,
+                },
+            };
         }
 
-        fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
+        fn alloc(self_: *anyopaque, a: usize, b: u8, d: usize) ?[*]u8 {
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             if (self.unused.findFirstSet()) |i| {
                 self.unused.unset(i);
                 return std.mem.asBytes(&self.buf[i]);
             }
 
-            return try self.fallback_allocator.rawAlloc(a, b, c, d);
+            return self.fallback_allocator.rawAlloc(a, b, d);
         }
 
         fn resize(
-            _: *@This(),
+            _: *anyopaque,
             _: []u8,
-            _: u29,
+            _: u8,
             _: usize,
-            _: u29,
             _: usize,
-        ) ?usize {
+        ) bool {
             unreachable;
         }
 
@@ -506,13 +606,12 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
         }
 
         fn free(
-            self: *@This(),
+            self_: *anyopaque,
             buf: []u8,
-            buf_align: u29,
+            buf_align: u8,
             return_address: usize,
         ) void {
-            _ = buf_align;
-            _ = return_address;
+            const self = @ptrCast(*@This(), @alignCast(@alignOf(@This()), self_));
             const bytes = std.mem.asBytes(&self.buf);
             if (sliceContainsSlice(bytes, buf)) {
                 const index = if (bytes[0..buf.len].ptr != buf.ptr)
@@ -570,6 +669,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         has_sendfile_ctx: bool = false,
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
+        needs_content_range: bool = false,
         sendfile: SendfileContext = undefined,
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
@@ -601,14 +701,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
+            result.ensureStillAlive();
+
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
                 return JSValue.jsUndefined();
             }
 
-            if (result.isEmptyOrUndefinedOrNull()) {
-                ctx.renderMissing();
+            if (ctx.didUpgradeWebSocket()) {
+                ctx.finalize();
                 return JSValue.jsUndefined();
             }
 
@@ -617,12 +719,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
-            if (ctx.didUpgradeWebSocket()) {
-                ctx.finalize();
-                return;
-            }
-
-            if (value.isEmptyOrUndefinedOrNull()) {
+            if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
                 ctx.renderMissing();
                 return;
             }
@@ -686,18 +783,41 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderMissing(ctx: *RequestContext) void {
+            ctx.resp.runCorkedWithType(*RequestContext, renderMissingCorked, ctx);
+            ctx.finalize();
+        }
+
+        pub fn renderMissingCorked(ctx: *RequestContext) void {
             if (comptime !debug_mode) {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
                 ctx.has_written_status = true;
-                ctx.resp.endWithoutBody(ctx.shouldCloseConnection());
-                ctx.finalize();
+                ctx.resp.end("", ctx.shouldCloseConnection());
             } else {
+                const is_web_browser_navigation = brk: {
+                    if (ctx.req.header("sec-fetch-dest")) |fetch_dest| {
+                        if (strings.eqlComptime(fetch_dest, "document")) {
+                            break :brk true;
+                        }
+                    }
+
+                    break :brk false;
+                };
+                if (is_web_browser_navigation) {
+                    ctx.resp.writeStatus("200 OK");
+                    ctx.has_written_status = true;
+
+                    ctx.resp.writeHeader("content-type", MimeType.html.value);
+                    ctx.resp.writeHeader("content-encoding", "gzip");
+                    ctx.resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
+                    ctx.resp.end(welcome_page_html_gz, ctx.shouldCloseConnection());
+                    return;
+                }
+
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("200 OK");
                 ctx.has_written_status = true;
                 ctx.resp.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
-                ctx.finalize();
             }
         }
 
@@ -724,7 +844,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
-                .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
+                .cwd = VirtualMachine.get().bundler.fs.top_level_dir,
                 .problems = Api.Problems{
                     .code = @truncate(u16, @errorToInt(err)),
                     .name = @errorName(err),
@@ -805,6 +925,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             resp.end("", this.shouldCloseConnection());
             this.finalize();
             return false;
+        }
+
+        // TODO: should we cork?
+        pub fn onWritableCompleteResponseBufferAndMetadata(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            std.debug.assert(this.resp == resp);
+
+            if (this.aborted) {
+                this.finalizeForAbort();
+                return false;
+            }
+
+            if (!this.has_written_status) {
+                this.renderMetadata();
+            }
+
+            if (this.method == .HEAD) {
+                resp.end("", this.shouldCloseConnection());
+                this.finalize();
+                return false;
+            }
+
+            return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
         }
 
         pub fn onWritableCompleteResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
@@ -895,7 +1037,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (this.promise) |promise| {
                     this.pending_promises_for_abort += 1;
                     this.promise = null;
-                    promise.asPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
+                    promise.asAnyPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
                 }
 
                 if (this.pending_promises_for_abort > 0) {
@@ -948,9 +1090,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.promise) |promise| {
                 this.promise = null;
 
-                if (promise.asInternalPromise()) |prom| {
-                    prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
-                } else if (promise.asPromise()) |prom| {
+                if (promise.asAnyPromise()) |prom| {
                     prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
                 }
                 JSC.C.JSValueUnprotect(this.server.globalThis, promise.asObjectRef());
@@ -1001,15 +1141,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             std.debug.assert(!this.has_written_status);
             this.has_written_status = true;
 
-            if (status == 302) {
-                this.resp.writeStatus("302 Found");
+            if (HTTPStatusText.get(status)) |text| {
+                this.resp.writeStatus(text);
             } else {
                 this.resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{status}) catch unreachable);
             }
         }
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
-            this.resp.setWriteOffset(this.sendfile.offset);
+            this.resp.overrideWriteOffset(this.sendfile.offset);
             this.resp.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
@@ -1029,8 +1169,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
-            // TODO we should not need this int cast; improve the return type of `@minimum`
+            const adjusted_count_temporary = @min(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
+            // TODO we should not need this int cast; improve the return type of `@min`
             const adjusted_count = @intCast(u63, adjusted_count_temporary);
 
             if (Environment.isLinux) {
@@ -1043,7 +1183,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 const errcode = linux.getErrno(val);
 
-                this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
+                this.sendfile.remain -|= @intCast(Blob.SizeType, this.sendfile.offset -| start);
 
                 if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
@@ -1056,7 +1196,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             } else {
                 var sbytes: std.os.off_t = adjusted_count;
                 const signed_offset = @bitCast(i64, @as(u64, this.sendfile.offset));
-
                 const errcode = std.c.getErrno(std.c.sendfile(
                     this.sendfile.fd,
                     this.sendfile.socket_fd,
@@ -1067,8 +1206,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     0,
                 ));
                 const wrote = @intCast(Blob.SizeType, sbytes);
-                this.sendfile.offset += wrote;
-                this.sendfile.remain -= wrote;
+                this.sendfile.offset +|= wrote;
+                this.sendfile.remain -|= wrote;
                 if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
                     if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
@@ -1108,7 +1247,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForBlob(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
@@ -1121,7 +1260,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn sendWritableBytesForCompleteResponseBuffer(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
             std.debug.assert(this.resp == resp);
 
-            var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
+            var bytes = bytes_[@min(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
@@ -1204,19 +1343,39 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.blob.Blob.size = @intCast(Blob.SizeType, stat.size);
+            const original_size = this.blob.Blob.size;
+            const stat_size = @intCast(Blob.SizeType, stat.size);
+            this.blob.Blob.size = if (std.os.S.ISREG(stat.mode))
+                stat_size
+            else
+                @min(original_size, stat_size);
+
             this.needs_content_length = true;
 
             this.sendfile = .{
                 .fd = fd,
-                .remain = this.blob.Blob.size,
+                .remain = this.blob.Blob.offset + original_size,
+                .offset = this.blob.Blob.offset,
                 .auto_close = auto_close,
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
+            // if we are sending only part of a file, include the content-range header
+            // only include content-range automatically when using a file path instead of an fd
+            // this is to better support manually controlling the behavior
+            if (std.os.S.ISREG(stat.mode) and auto_close) {
+                this.needs_content_range = (this.sendfile.remain -| this.sendfile.offset) != stat_size;
+            }
+
+            // we know the bounds when we are sending a regular file
+            if (std.os.S.ISREG(stat.mode)) {
+                this.sendfile.offset = @min(this.sendfile.offset, stat_size);
+                this.sendfile.remain = @min(@max(this.sendfile.remain, this.sendfile.offset), stat_size) -| this.sendfile.offset;
+            }
+
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
 
-            if (this.blob.Blob.size == 0) {
+            if (this.sendfile.remain == 0 or !this.method.hasBody()) {
                 this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
@@ -1263,9 +1422,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
-                this.blob.Blob.size = @truncate(Blob.SizeType, result.result.buf.len);
+                const stat_size = @intCast(Blob.SizeType, result.result.total_size);
+                const original_size = this.blob.Blob.size;
+
+                this.blob.Blob.size = if (original_size == 0 or original_size == Blob.max_size)
+                    stat_size
+                else
+                    @min(original_size, stat_size);
+
+                if (!this.has_written_status)
+                    this.needs_content_range = true;
+
+                // this is used by content-range
+                this.sendfile = .{
+                    .fd = @truncate(i32, bun.invalid_fd),
+                    .remain = @truncate(Blob.SizeType, result.result.buf.len),
+                    .offset = this.blob.Blob.offset,
+                    .auto_close = false,
+                    .socket_fd = -999,
+                };
+
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
-                this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
+                this.renderResponseBufferAndMetadataCorked();
             }
         }
 
@@ -1294,6 +1472,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn doRenderStream(pair: *StreamPair) void {
             var this = pair.this;
             var stream = pair.stream;
+
             // uWS automatically adds the status line if needed
             // we want to batch network calls as much as possible
             if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
@@ -1307,7 +1486,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .sink = .{
                     .res = this.resp,
                     .allocator = this.allocator,
-                    .buffer = bun.ByteList.init(""),
+                    .buffer = bun.ByteList{},
                 },
             };
             var signal = &response_stream.sink.signal;
@@ -1340,14 +1519,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.aborted = this.aborted or response_stream.sink.aborted;
 
-            if (assignment_result.isAnyError(this.server.globalThis)) {
+            if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
                 if (!this.aborted) this.resp.clearAborted();
                 response_stream.detach();
                 this.sink = null;
                 response_stream.sink.destroy();
                 stream.value.unprotect();
-                return this.handleReject(assignment_result);
+                return this.handleReject(err_value);
             }
 
             if (response_stream.sink.done or
@@ -1378,7 +1557,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!assignment_result.isEmptyOrUndefinedOrNull()) {
                 assignment_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
-                if (assignment_result.asPromise()) |promise| {
+                if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
@@ -1423,10 +1602,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             stream.value.ensureStillAlive();
 
-            if (!stream.isLocked(this.server.globalThis)) {
-                streamLog("is not locked", .{});
-                this.renderMissing();
-                return;
+            const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
+                response_stream.sink.buffer.len == 0);
+
+            if (!stream.isLocked(this.server.globalThis) and !is_in_progress) {
+                if (JSC.WebCore.ReadableStream.fromJS(stream.value, this.server.globalThis)) |comparator| {
+                    if (std.meta.activeTag(comparator.ptr) == std.meta.activeTag(stream.ptr)) {
+                        streamLog("is not locked", .{});
+                        this.renderMissing();
+                        return;
+                    }
+                }
             }
 
             this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
@@ -1471,18 +1657,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
-                // cast exception to error instance
-                if (response_value.isException(this.globalThis.vm())) {
-                    const err = response_value.toError(this.globalThis);
-                    if (!err.isUndefinedOrNull()) {
-                        ctx.runErrorHandler(err);
-                        return;
-                    }
-                }
-
-                ctx.runErrorHandler(response_value);
-
+            if (response_value.toError()) |err_value| {
+                ctx.runErrorHandler(err_value);
                 return;
             }
 
@@ -1512,7 +1688,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var wait_for_promise = false;
             var vm = this.vm;
 
-            if (response_value.asPromise()) |promise| {
+            if (response_value.asAnyPromise()) |promise| {
                 // If we immediately have the value available, we can skip the extra event loop tick
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
@@ -1556,21 +1732,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             else => {},
                         }
                         ctx.render(response);
-                        return;
-                    },
-                    .Rejected => {
-                        ctx.handleReject(promise.result(vm.global.vm()));
-                        return;
-                    },
-                }
-                wait_for_promise = true;
-                // I don't think this case should happen
-                // But I'm uncertain
-            } else if (response_value.asInternalPromise()) |promise| {
-                switch (promise.status(vm.global.vm())) {
-                    .Pending => {},
-                    .Fulfilled => {
-                        ctx.handleResolve(promise.result(vm.global.vm()));
                         return;
                     },
                     .Rejected => {
@@ -1687,7 +1848,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            streamLog("onReject({s})", .{wrote_anything});
+            streamLog("onReject({any})", .{wrote_anything});
 
             if (req.aborted) {
                 req.finalizeForAbort();
@@ -1943,7 +2104,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.renderDefaultError(
                     vm.log,
                     error.ExceptionOcurred,
-                    exception_list.toOwnedSlice(),
+                    exception_list.toOwnedSlice() catch @panic("TODO"),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
                     .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
@@ -1968,8 +2129,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
-                    if (result.isError() or result.isAggregateError(this.server.globalThis)) {
-                        this.finishRunningErrorHandler(result, status);
+                    if (result.toError()) |err| {
+                        this.finishRunningErrorHandler(err, status);
                         return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);
@@ -1995,13 +2156,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            const size = this.blob.size();
+            var needs_content_range = this.needs_content_range and this.sendfile.remain < this.blob.size();
+
+            const size = if (needs_content_range)
+                this.sendfile.remain
+            else
+                this.blob.size();
+
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
                 status;
 
-            this.writeStatus(status);
             var needs_content_type = true;
             const content_type: MimeType = brk: {
                 if (response.body.init.headers) |headers_| {
@@ -2022,12 +2188,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             var has_content_disposition = false;
-
             if (response.body.init.headers) |headers_| {
-                this.writeHeaders(headers_);
                 has_content_disposition = headers_.fastHas(.ContentDisposition);
+                needs_content_range = needs_content_range and headers_.fastHas(.ContentRange);
+                if (needs_content_range) {
+                    status = 206;
+                }
+
+                this.writeStatus(status);
+                this.writeHeaders(headers_);
+
                 response.body.init.headers = null;
                 headers_.deref();
+            } else if (needs_content_range) {
+                status = 206;
+                this.writeStatus(status);
+            } else {
+                this.writeStatus(status);
             }
 
             if (needs_content_type and
@@ -2051,7 +2228,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 this.resp.writeHeader(
                                     "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@minimum(basename.len, 1024 - 32)]}) catch "",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
                                 );
                             }
                         }
@@ -2062,6 +2239,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.needs_content_length) {
                 this.resp.writeHeaderInt("content-length", size);
                 this.needs_content_length = false;
+            }
+
+            if (needs_content_range) {
+                var content_range_buf: [1024]u8 = undefined;
+
+                this.resp.writeHeader(
+                    "content-range",
+                    std.fmt.bufPrint(
+                        &content_range_buf,
+                        // we omit the full size of the Blob because it could
+                        // change between requests and this potentially leaks
+                        // PII undesirably
+                        "bytes {d}-{d}/*",
+                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
+                    ) catch "bytes */*",
+                );
+                this.needs_content_range = false;
             }
         }
 
@@ -2109,14 +2303,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (!last) {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary = bun.ByteList.init(chunk),
+                                    .temporary = bun.ByteList.initConst(chunk),
                                 },
                                 bun.default_allocator,
                             );
                         } else {
                             readable.ptr.Bytes.onData(
                                 .{
-                                    .temporary_and_done = bun.ByteList.init(chunk),
+                                    .temporary_and_done = bun.ByteList.initConst(chunk),
                                 },
                                 bun.default_allocator,
                             );
@@ -2169,7 +2363,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_body_buf.capacity == 0) {
-                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @minimum(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, @min(this.request_body_content_len, max_request_body_preallocate_length)) catch @panic("Out of memory while allocating request body buffer");
             }
 
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
@@ -2181,8 +2375,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .aborted = void{},
                 };
             }
-
-            std.debug.assert(!this.resp.hasResponded());
 
             // This means we have received part of the body but not the whole thing
             if (this.request_body_buf.items.len > 0) {
@@ -2217,7 +2409,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
                     }
@@ -2228,7 +2420,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = .{} };
+                        req.body = .{ .Empty = {} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
                     }
@@ -2245,7 +2437,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
-                    req.body = .{ .Empty = .{} };
+                    req.body = .{ .Empty = {} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
                 }
@@ -2316,7 +2508,10 @@ pub const WebSocketServer = struct {
         active_connections: usize = 0,
 
         /// used by publish()
-        ssl: bool = false,
+        flags: packed struct(u2) {
+            ssl: bool = false,
+            publish_to_self: bool = true,
+        } = .{},
 
         pub fn fromJS(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) ?Handler {
             var handler = Handler{ .globalObject = globalObject };
@@ -2509,7 +2704,7 @@ pub const WebSocketServer = struct {
                     globalObject.throwInvalidArguments("websocket expects maxPayloadLength to be an integer", .{});
                     return null;
                 }
-                server.maxPayloadLength = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.maxPayloadLength = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         if (object.get(globalObject, "idleTimeout")) |value| {
@@ -2529,7 +2724,7 @@ pub const WebSocketServer = struct {
                     return null;
                 }
 
-                server.backpressureLimit = @intCast(u32, @truncate(i33, @maximum(value.toInt64(), 0)));
+                server.backpressureLimit = @intCast(u32, @truncate(i33, @max(value.toInt64(), 0)));
             }
         }
         // if (object.get(globalObject, "sendPings")) |value| {
@@ -2551,6 +2746,17 @@ pub const WebSocketServer = struct {
                 }
 
                 server.closeOnBackpressureLimit = value.toBoolean();
+            }
+        }
+
+        if (object.get(globalObject, "publishToSelf")) |value| {
+            if (!value.isUndefinedOrNull()) {
+                if (!value.isBoolean()) {
+                    globalObject.throwInvalidArguments("websocket expects publishToSelf to be a boolean", .{});
+                    return null;
+                }
+
+                server.handler.flags.publish_to_self = value.toBoolean();
             }
         }
 
@@ -2621,22 +2827,23 @@ pub const ServerWebSocket = struct {
         ws.cork(&corker, Corker.run);
         const result = corker.result;
         this.opened = true;
-        if (result.isAnyError(globalObject)) {
+        if (result.toError()) |err_value| {
             log("onOpen exception", .{});
 
             if (!this.closed) {
                 this.closed = true;
-                this.websocket.end(1000, "");
+                // we un-gracefully close the connection if there was an exception
+                // we don't want any event handlers to fire after this for anything other than error()
+                // https://github.com/oven-sh/bun/issues/1480
+                this.websocket.close();
+                handler.active_connections -|= 1;
+                this_value.unprotect();
             }
 
-            _ = ServerWebSocket.dangerouslySetPtr(this_value, null);
-            handler.active_connections -|= 1;
-            this_value.unprotect();
-            bun.default_allocator.destroy(this);
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(result, null);
+                globalObject.bunVM().runErrorHandler(err_value, null);
             } else {
-                const corky = [_]JSValue{corker.result};
+                const corky = [_]JSValue{err_value};
                 corker.args = &corky;
                 corker.callback = error_handler;
                 corker.this_value = .zero;
@@ -2705,11 +2912,11 @@ pub const ServerWebSocket = struct {
 
         if (result.isEmptyOrUndefinedOrNull()) return;
 
-        if (result.isAnyError(globalObject)) {
+        if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(result, null);
+                globalObject.bunVM().runErrorHandler(err_value, null);
             } else {
-                const args = [_]JSValue{result};
+                const args = [_]JSValue{err_value};
                 corker.args = &args;
                 corker.callback = this.handler.onError;
                 corker.this_value = .zero;
@@ -2719,7 +2926,7 @@ pub const ServerWebSocket = struct {
             return;
         }
 
-        if (result.asPromise()) |promise| {
+        if (result.asAnyPromise()) |promise| {
             switch (promise.status(globalObject.vm())) {
                 .Rejected => {
                     _ = promise.result(globalObject.vm());
@@ -2749,11 +2956,11 @@ pub const ServerWebSocket = struct {
             this.websocket.cork(&corker, Corker.run);
             const result = corker.result;
 
-            if (result.isAnyError(globalObject)) {
+            if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    globalObject.bunVM().runErrorHandler(result, null);
+                    globalObject.bunVM().runErrorHandler(err_value, null);
                 } else {
-                    const args = [_]JSValue{result};
+                    const args = [_]JSValue{err_value};
                     corker.args = &args;
                     corker.callback = this.handler.onError;
                     corker.this_value = .zero;
@@ -2772,8 +2979,13 @@ pub const ServerWebSocket = struct {
     pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
         log("onClose", .{});
         var handler = this.handler;
+        const was_closed = this.closed;
         this.closed = true;
-        defer handler.active_connections -|= 1;
+        defer {
+            if (!was_closed) {
+                handler.active_connections -|= 1;
+            }
+        }
 
         if (handler.onClose != .zero) {
             const result = handler.onClose.call(
@@ -2781,9 +2993,9 @@ pub const ServerWebSocket = struct {
                 &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), ZigString.init(message).toValueGC(handler.globalObject) },
             );
 
-            if (result.isAnyError(handler.globalObject)) {
+            if (result.toError()) |err| {
                 log("onClose error", .{});
-                handler.globalObject.bunVM().runErrorHandler(result, null);
+                handler.globalObject.bunVM().runErrorHandler(err, null);
             }
         }
 
@@ -2800,6 +3012,7 @@ pub const ServerWebSocket = struct {
     }
 
     pub fn finalize(this: *ServerWebSocket) callconv(.C) void {
+        log("finalize", .{});
         bun.default_allocator.destroy(this);
     }
 
@@ -2820,7 +3033,9 @@ pub const ServerWebSocket = struct {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
         };
-        const ssl = this.handler.ssl;
+        const flags = this.handler.flags;
+        const ssl = flags.ssl;
+        const publish_to_self = flags.publish_to_self;
 
         const topic_value = args.ptr[0];
         const message_value = args.ptr[1];
@@ -2846,16 +3061,23 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
-        if (message_value.asArrayBuffer(globalThis)) |buffer| {
+        if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
+            const buffer = array_buffer.slice();
+
             if (buffer.len == 0) {
                 globalThis.throw("publish requires a non-empty message", .{});
                 return .zero;
             }
 
+            const result = if (!publish_to_self)
+                this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+            else
+                uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
+
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
             );
         }
 
@@ -2867,10 +3089,16 @@ pub const ServerWebSocket = struct {
             }
 
             const buffer = string_slice.slice();
+
+            const result = if (!publish_to_self)
+                this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+            else
+                uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
+
             return JSValue.jsNumber(
                 // if 0, return 0
                 // else return number of bytes sent
-                @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
             );
         }
 
@@ -2894,7 +3122,9 @@ pub const ServerWebSocket = struct {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
         };
-        const ssl = this.handler.ssl;
+        const flags = this.handler.flags;
+        const ssl = flags.ssl;
+        const publish_to_self = flags.publish_to_self;
 
         const topic_value = args.ptr[0];
         const message_value = args.ptr[1];
@@ -2927,10 +3157,16 @@ pub const ServerWebSocket = struct {
         }
 
         const buffer = string_slice.slice();
+
+        const result = if (!publish_to_self)
+            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+        else
+            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
+
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
         );
     }
 
@@ -2951,7 +3187,9 @@ pub const ServerWebSocket = struct {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
         };
-        const ssl = this.handler.ssl;
+        const flags = this.handler.flags;
+        const ssl = flags.ssl;
+        const publish_to_self = flags.publish_to_self;
         const topic_value = args.ptr[0];
         const message_value = args.ptr[1];
         const compress_value = args.ptr[2];
@@ -2975,19 +3213,25 @@ pub const ServerWebSocket = struct {
             globalThis.throw("publishBinary requires a non-empty message", .{});
             return .zero;
         }
-        const buffer = message_value.asArrayBuffer(globalThis) orelse {
+        const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
             globalThis.throw("publishBinary expects an ArrayBufferView", .{});
             return .zero;
         };
+        const buffer = array_buffer.slice();
 
         if (buffer.len == 0) {
             return JSC.JSValue.jsNumber(0);
         }
 
+        const result = if (!publish_to_self)
+            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+        else
+            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
+
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
         );
     }
 
@@ -2995,13 +3239,15 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         topic_str: *JSC.JSString,
-        buffer: *JSC.JSUint8Array,
+        array: *JSC.JSUint8Array,
     ) callconv(.C) JSC.JSValue {
         var app = this.handler.app orelse {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
         };
-        const ssl = this.handler.ssl;
+        const flags = this.handler.flags;
+        const ssl = flags.ssl;
+        const publish_to_self = flags.publish_to_self;
 
         var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
@@ -3012,30 +3258,20 @@ pub const ServerWebSocket = struct {
 
         const compress = true;
 
-        const slice = buffer.slice();
-        if (slice.len == 0) {
+        const buffer = array.slice();
+        if (buffer.len == 0) {
             return JSC.JSValue.jsNumber(0);
         }
+
+        const result = if (!publish_to_self)
+            this.websocket.publish(topic_slice.slice(), buffer, .binary, compress)
+        else
+            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .binary, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            @as(
-                i32,
-                @boolToInt(
-                    uws.AnyWebSocket.publishWithOptions(
-                        ssl,
-                        app,
-                        topic_slice.slice(),
-                        slice,
-                        .binary,
-                        compress,
-                    ),
-                ),
-            ) * @intCast(
-                i32,
-                @truncate(u31, slice.len),
-            ),
+            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
         );
     }
 
@@ -3049,7 +3285,9 @@ pub const ServerWebSocket = struct {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
         };
-        const ssl = this.handler.ssl;
+        const flags = this.handler.flags;
+        const ssl = flags.ssl;
+        const publish_to_self = flags.publish_to_self;
 
         var topic_slice = topic_str.toSlice(globalThis, bun.default_allocator);
         defer topic_slice.deinit();
@@ -3061,24 +3299,21 @@ pub const ServerWebSocket = struct {
         const compress = true;
 
         const slice = str.toSlice(globalThis, bun.default_allocator);
-        if (slice.len == 0) {
+        defer slice.deinit();
+        const buffer = slice.slice();
+
+        if (buffer.len == 0) {
             return JSC.JSValue.jsNumber(0);
         }
+        const result = if (!publish_to_self)
+            this.websocket.publish(topic_slice.slice(), buffer, .text, compress)
+        else
+            uws.AnyWebSocket.publishWithOptions(ssl, app, topic_slice.slice(), buffer, .text, compress);
 
         return JSValue.jsNumber(
             // if 0, return 0
             // else return number of bytes sent
-            @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(
-                ssl,
-                app,
-                topic_slice.slice(),
-                slice.slice(),
-                .text,
-                compress,
-            ))) * @intCast(
-                i32,
-                @truncate(u31, slice.len),
-            ),
+            if (result) @intCast(i32, @truncate(u31, buffer.len)) else @as(i32, 0),
         );
     }
 
@@ -3115,7 +3350,7 @@ pub const ServerWebSocket = struct {
         if (result.isEmptyOrUndefinedOrNull())
             return JSValue.jsUndefined();
 
-        if (result.isAnyError(globalThis)) {
+        if (result.isAnyError()) {
             globalThis.throwValue(result);
             return JSValue.jsUndefined();
         }
@@ -3607,6 +3842,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub const App = uws.NewApp(ssl_enabled);
 
+        const httplog = Output.scoped(.Server, false);
+
         listener: ?*App.ListenSocket = null,
         thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
@@ -3616,12 +3853,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
-        has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
-
         temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
+
+        flags: packed struct(u3) {
+            deinit_scheduled: bool = false,
+            terminated: bool = false,
+            has_js_deinited: bool = false,
+        } = .{},
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -3641,6 +3882,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
                 .upgrade = .{
                     .rfn = JSC.wrapSync(ThisServer, "onUpgrade"),
+                },
+
+                .publish = .{
+                    .rfn = JSC.wrapSync(ThisServer, "publish"),
                 },
             },
             .{
@@ -3665,6 +3910,63 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             },
         );
 
+        pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
+            if (this.config.websocket == null)
+                return JSValue.jsNumber(0);
+
+            var app = this.app;
+
+            if (topic.len == 0) {
+                httplog("publish() topic invalid", .{});
+                JSC.JSError(this.vm.allocator, "publish requires a topic string", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            var topic_slice = topic.toSlice(bun.default_allocator);
+            defer topic_slice.deinit();
+            if (topic_slice.len == 0) {
+                JSC.JSError(this.vm.allocator, "publish requires a non-empty topic", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            const compress = (compress_value orelse JSValue.jsBoolean(true)).toBoolean();
+
+            if (message_value.isEmptyOrUndefinedOrNull()) {
+                JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
+                return .zero;
+            }
+
+            if (message_value.asArrayBuffer(globalThis)) |buffer| {
+                if (buffer.len == 0) {
+                    JSC.JSError(this.vm.allocator, "publish requires a non-empty message", .{}, globalThis, exception);
+                    return .zero;
+                }
+
+                return JSValue.jsNumber(
+                    // if 0, return 0
+                    // else return number of bytes sent
+                    @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer.slice(), .binary, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                );
+            }
+
+            {
+                var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
+                defer string_slice.deinit();
+                if (string_slice.len == 0) {
+                    return JSValue.jsNumber(0);
+                }
+
+                const buffer = string_slice.slice();
+                return JSValue.jsNumber(
+                    // if 0, return 0
+                    // else return number of bytes sent
+                    @as(i32, @boolToInt(uws.AnyWebSocket.publishWithOptions(ssl_enabled, app, topic_slice.slice(), buffer, .text, compress))) * @intCast(i32, @truncate(u31, buffer.len)),
+                );
+            }
+
+            return .zero;
+        }
+
         pub fn onUpgrade(
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
@@ -3676,6 +3978,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 JSC.throwInvalidArguments("To enable websocket support, set the \"websocket\" object in Bun.serve({})", .{}, globalThis, exception);
                 return JSValue.jsUndefined();
             }
+
+            if (this.flags.terminated) {
+                return JSValue.jsBoolean(false);
+            }
+
             var request = object.as(Request) orelse {
                 JSC.throwInvalidArguments("upgrade requires a Request object", .{}, globalThis, exception);
                 return JSValue.jsUndefined();
@@ -3829,17 +4136,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (exception.* != null) return js.JSValueMakeUndefined(ctx);
 
             // only reload those two
-            if (new_config.onRequest != .zero) {
+            if (this.config.onRequest != new_config.onRequest) {
                 this.config.onRequest.unprotect();
                 this.config.onRequest = new_config.onRequest;
             }
-            if (new_config.onError != .zero) {
+            if (this.config.onError != new_config.onError) {
                 this.config.onError.unprotect();
                 this.config.onError = new_config.onError;
             }
 
             if (new_config.websocket) |*ws| {
-                ws.handler.ssl = ssl_enabled;
+                ws.handler.flags.ssl = ssl_enabled;
                 if (ws.handler.onMessage != .zero or ws.handler.onOpen != .zero) {
                     if (this.config.websocket) |old_ws| {
                         old_ws.unprotect();
@@ -3868,7 +4175,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _: js.ExceptionRef,
         ) js.JSObjectRef {
             var globalThis = ctx.ptr();
-
+            JSC.markBinding(@src());
             if (arguments.len == 0) {
                 const fetch_error = WebCore.Fetch.fetch_error_no_args;
                 return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
@@ -3881,7 +4188,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var url: URL = undefined;
             var first_arg = args.nextEat().?;
-            var body: JSC.WebCore.Body.Value = .{ .Empty = .{} };
+            var body: JSC.WebCore.Body.Value = .{ .Empty = {} };
             var existing_request: ?WebCore.Request = null;
             // TODO: set Host header
             // TODO: set User-Agent header
@@ -3958,7 +4265,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 &args_,
             );
 
-            if (response_value.isAnyError(ctx)) {
+            if (response_value.isAnyError()) {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, response_value).asObjectRef();
             }
 
@@ -3966,7 +4273,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx)).asObjectRef();
             }
 
-            if (response_value.asPromise() != null) {
+            if (response_value.asAnyPromise() != null) {
                 return response_value.asObjectRef();
             }
 
@@ -3977,18 +4284,28 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
         }
 
-        pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
+        pub fn stopFromJS(this: *ThisServer, abruptly: ?JSValue) JSC.JSValue {
             if (this.listener != null) {
+                const abrupt = brk: {
+                    if (abruptly) |val| {
+                        if (val.isBoolean() and val.toBoolean()) {
+                            break :brk true;
+                        }
+                    }
+                    break :brk false;
+                };
+
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
-                this.stop();
+                this.stop(abrupt);
             }
 
             return JSC.JSValue.jsUndefined();
         }
 
         pub fn getPort(this: *ThisServer) JSC.JSValue {
-            return JSC.JSValue.jsNumber(this.config.port);
+            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.port);
+            return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
         pub fn getPendingRequests(this: *ThisServer) JSC.JSValue {
@@ -4018,12 +4335,15 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onRequestComplete(this: *ThisServer) void {
+            this.vm.eventLoop().processGCTimer();
+
             this.pending_requests -= 1;
             this.deinitIfWeCan();
         }
 
         pub fn finalize(this: *ThisServer) void {
-            this.has_js_deinited = true;
+            httplog("finalize", .{});
+            this.flags.has_js_deinited = true;
             this.deinitIfWeCan();
         }
 
@@ -4037,28 +4357,52 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
-            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited and !this.hasActiveWebSockets()) {
+            httplog("deinitIfWeCan", .{});
+            if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
                 }
                 this.unref();
-                this.deinit();
+                this.scheduleDeinit();
             }
         }
 
-        pub fn stopListening(this: *ThisServer) void {
+        pub fn stopListening(this: *ThisServer, abrupt: bool) void {
+            httplog("stopListening", .{});
             var listener = this.listener orelse return;
             this.listener = null;
             this.unref();
-            listener.close();
+            if (!abrupt) {
+                listener.close();
+            } else {
+                this.flags.terminated = true;
+                this.app.close();
+            }
         }
 
-        pub fn stop(this: *ThisServer) void {
-            this.stopListening();
+        pub fn stop(this: *ThisServer, abrupt: bool) void {
+            this.stopListening(abrupt);
             this.deinitIfWeCan();
         }
 
+        pub fn scheduleDeinit(this: *ThisServer) void {
+            if (this.flags.deinit_scheduled)
+                return;
+            this.flags.deinit_scheduled = true;
+            httplog("scheduleDeinit", .{});
+
+            if (!this.flags.terminated) {
+                this.flags.terminated = true;
+                this.app.close();
+            }
+
+            var task = bun.default_allocator.create(JSC.AnyTask) catch unreachable;
+            task.* = JSC.AnyTask.New(ThisServer, deinit).init(this);
+            this.vm.enqueueTask(JSC.Task.init(task));
+        }
+
         pub fn deinit(this: *ThisServer) void {
+            httplog("deinit", .{});
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -4070,9 +4414,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .globalThis = globalThis,
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
-                .vm = JSC.VirtualMachine.vm,
+                .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
             };
+
             if (RequestContext.pool == null) {
                 RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
                 RequestContext.pool.?.* = .{
@@ -4088,6 +4433,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
+            httplog("onListenFailed", .{});
             this.unref();
 
             var zig_str: ZigString = ZigString.init("");
@@ -4142,7 +4488,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 if (written > 0) {
                     var message = output_buf[0..written];
                     zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
-                    zig_str.withEncoding().mark();
+                    var encoded_str = zig_str.withEncoding();
+                    encoded_str.mark();
                 }
             }
 
@@ -4178,7 +4525,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn unref(this: *ThisServer) void {
             if (!this.poll_ref.isActive()) return;
 
-            this.poll_ref.unref(this.vm);
+            this.poll_ref.unrefOnNextTick(this.vm);
             this.vm.eventLoop().start_server_on_next_tick = false;
         }
 
@@ -4197,7 +4544,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             _ = js_printer.printJSON(
                 *js_printer.BufferPrinter,
                 &writer,
-                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.vm.bundler, allocator) catch unreachable,
+                bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
                 &source,
             ) catch unreachable;
 
@@ -4220,8 +4567,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return;
             }
 
-            var ctx = &JSC.VirtualMachine.vm.rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.vm.bundler.env);
+            var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
+            ctx.autoDetectEditor(JSC.VirtualMachine.get().bundler.env);
             var line: ?string = req.header("editor-line");
             var column: ?string = req.header("editor-column");
 
@@ -4250,13 +4597,14 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
+
             request_object.* = .{
                 .url = "",
                 .method = ctx.method,
                 .uws_request = req,
-                .base_url_string_for_joining = this.base_url_string_for_joining,
+                .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
 
@@ -4333,10 +4681,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .url = "",
                 .method = ctx.method,
                 .uws_request = req,
-                .base_url_string_for_joining = this.base_url_string_for_joining,
                 .upgrader = ctx,
+                .https = ssl_enabled,
                 .body = .{
-                    .Empty = .{},
+                    .Empty = {},
                 },
             };
             ctx.upgrade_context = upgrade_ctx;
@@ -4361,6 +4709,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn listen(this: *ThisServer) void {
+            httplog("listen", .{});
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
@@ -4385,7 +4734,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (this.config.websocket) |*websocket| {
                 websocket.globalObject = this.globalThis;
                 websocket.handler.app = this.app;
-                websocket.handler.ssl = ssl_enabled;
+                websocket.handler.flags.ssl = ssl_enabled;
                 this.app.ws(
                     "/*",
                     this,
@@ -4412,6 +4761,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             this.ref();
 
+            // Starting up an HTTP server is a good time to GC
+            if (this.vm.aggressive_garbage_collection == .aggressive) {
+                this.vm.autoGarbageCollect();
+            } else {
+                this.vm.eventLoop().performGC();
+            }
+
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,
@@ -4425,3 +4781,5 @@ pub const Server = NewServer(false, false);
 pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);
+
+const welcome_page_html_gz = @embedFile("welcome-page.html.gz");

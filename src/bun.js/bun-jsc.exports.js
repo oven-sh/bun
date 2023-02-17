@@ -25,6 +25,6 @@ export const setRandomSeed = jsc.setRandomSeed;
 export const startRemoteDebugger = jsc.startRemoteDebugger;
 export const totalCompileTime = jsc.totalCompileTime;
 export const getProtectedObjects = jsc.getProtectedObjects;
-export const generateHeapSnapshotForDebugging =
-  jsc.generateHeapSnapshotForDebugging;
+export const generateHeapSnapshotForDebugging = jsc.generateHeapSnapshotForDebugging;
+export const profile = jsc.profile;
 export default jsc;

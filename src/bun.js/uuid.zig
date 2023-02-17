@@ -3,7 +3,7 @@ const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
 const testing = std.testing;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();

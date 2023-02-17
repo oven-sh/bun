@@ -36,14 +36,7 @@ shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/boringssl"]
 path = src/deps/boringssl
-url = https://github.com/google/boringssl.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
-[submodule "src/deps/libbacktrace"]
-path = src/deps/libbacktrace
-url = https://github.com/ianlancetaylor/libbacktrace
+url = https://github.com/oven-sh/boringssl.git
 ignore = dirty
 depth = 1
 shallow = true
@@ -69,10 +62,6 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-[submodule "src/deps/oniguruma"]
-path = src/deps/oniguruma
-url = https://github.com/kkos/oniguruma
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
+[submodule "src/deps/c-ares"]
+	path = src/deps/c-ares
+	url = https://github.com/c-ares/c-ares.git

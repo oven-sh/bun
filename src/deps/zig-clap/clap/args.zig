@@ -256,7 +256,7 @@ pub const ShellIterator = struct {
         // the rest we have to the list and return that.
         if (list.items.len != 0) {
             try list.appendSlice(res);
-            return list.toOwnedSlice();
+            return try list.toOwnedSlice();
         }
         return res;
     }

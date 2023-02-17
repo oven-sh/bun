@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -52,240 +51,240 @@ namespace WebCore {
 const JSC::ConstructAbility s_jsBufferPrototypeSetBigUint64CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSetBigUint64CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSetBigUint64CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSetBigUint64CodeLength = 107;
+const int s_jsBufferPrototypeSetBigUint64CodeLength = 174;
 static const JSC::Intrinsic s_jsBufferPrototypeSetBigUint64CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSetBigUint64Code =
     "(function (offset, value, le) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.setBigUint64(offset, value, le);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, le);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt8CodeLength = 80;
+const int s_jsBufferPrototypeReadInt8CodeLength = 147;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt8Code =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getInt8(offset);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt8(offset);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt8CodeLength = 81;
+const int s_jsBufferPrototypeReadUInt8CodeLength = 148;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt8Code =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getUint8(offset);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint8(offset);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt16LECodeLength = 87;
+const int s_jsBufferPrototypeReadInt16LECodeLength = 154;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt16LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getInt16(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt16BECodeLength = 88;
+const int s_jsBufferPrototypeReadInt16BECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt16BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getInt16(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt16(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt16LECodeLength = 88;
+const int s_jsBufferPrototypeReadUInt16LECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt16LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getUint16(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt16BECodeLength = 89;
+const int s_jsBufferPrototypeReadUInt16BECodeLength = 156;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt16BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getUint16(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint16(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt32LECodeLength = 87;
+const int s_jsBufferPrototypeReadInt32LECodeLength = 154;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt32LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getInt32(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadInt32BECodeLength = 88;
+const int s_jsBufferPrototypeReadInt32BECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt32BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getInt32(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getInt32(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt32LECodeLength = 88;
+const int s_jsBufferPrototypeReadUInt32LECodeLength = 155;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt32LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getUint32(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadUInt32BECodeLength = 89;
+const int s_jsBufferPrototypeReadUInt32BECodeLength = 156;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt32BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getUint32(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadFloatLECodeLength = 89;
+const int s_jsBufferPrototypeReadFloatLECodeLength = 156;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadFloatLECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getFloat32(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadFloatBECodeLength = 90;
+const int s_jsBufferPrototypeReadFloatBECodeLength = 157;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadFloatBECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getFloat32(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadDoubleLECodeLength = 89;
+const int s_jsBufferPrototypeReadDoubleLECodeLength = 156;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadDoubleLECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getFloat64(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadDoubleBECodeLength = 90;
+const int s_jsBufferPrototypeReadDoubleBECodeLength = 157;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadDoubleBECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getFloat64(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat64(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigInt64LECodeLength = 90;
+const int s_jsBufferPrototypeReadBigInt64LECodeLength = 157;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigInt64LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getBigInt64(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigInt64BECodeLength = 91;
+const int s_jsBufferPrototypeReadBigInt64BECodeLength = 158;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigInt64BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getBigInt64(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigUInt64LECodeLength = 91;
+const int s_jsBufferPrototypeReadBigUInt64LECodeLength = 158;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigUInt64LECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getBigUint64(offset, true);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, true);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeReadBigUInt64BECodeLength = 92;
+const int s_jsBufferPrototypeReadBigUInt64BECodeLength = 159;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigUInt64BECode =
     "(function (offset) {\n" \
     "  \"use strict\";\n" \
-    "  return this.dataView.getBigUint64(offset, false);\n" \
+    "  return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt8CodeLength = 108;
+const int s_jsBufferPrototypeWriteInt8CodeLength = 175;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt8Code =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setInt8(offset, value);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);\n" \
     "  return offset + 1;\n" \
     "})\n" \
 ;
@@ -293,12 +292,12 @@ const char* const s_jsBufferPrototypeWriteInt8Code =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt8CodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt8CodeLength = 109;
+const int s_jsBufferPrototypeWriteUInt8CodeLength = 176;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt8Code =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setUint8(offset, value);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint8(offset, value);\n" \
     "  return offset + 1;\n" \
     "})\n" \
 ;
@@ -306,12 +305,12 @@ const char* const s_jsBufferPrototypeWriteUInt8Code =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt16LECodeLength = 115;
+const int s_jsBufferPrototypeWriteInt16LECodeLength = 182;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt16LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setInt16(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, true);\n" \
     "  return offset + 2;\n" \
     "})\n" \
 ;
@@ -319,12 +318,12 @@ const char* const s_jsBufferPrototypeWriteInt16LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt16BECodeLength = 116;
+const int s_jsBufferPrototypeWriteInt16BECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt16BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setInt16(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt16(offset, value, false);\n" \
     "  return offset + 2;\n" \
     "})\n" \
 ;
@@ -332,12 +331,12 @@ const char* const s_jsBufferPrototypeWriteInt16BECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt16LECodeLength = 116;
+const int s_jsBufferPrototypeWriteUInt16LECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt16LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setUint16(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, true);\n" \
     "  return offset + 2;\n" \
     "})\n" \
 ;
@@ -345,12 +344,12 @@ const char* const s_jsBufferPrototypeWriteUInt16LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt16BECodeLength = 117;
+const int s_jsBufferPrototypeWriteUInt16BECodeLength = 184;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt16BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setUint16(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint16(offset, value, false);\n" \
     "  return offset + 2;\n" \
     "})\n" \
 ;
@@ -358,12 +357,12 @@ const char* const s_jsBufferPrototypeWriteUInt16BECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt32LECodeLength = 115;
+const int s_jsBufferPrototypeWriteInt32LECodeLength = 182;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt32LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setInt32(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, true);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -371,12 +370,12 @@ const char* const s_jsBufferPrototypeWriteInt32LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteInt32BECodeLength = 116;
+const int s_jsBufferPrototypeWriteInt32BECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt32BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setInt32(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt32(offset, value, false);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -384,12 +383,12 @@ const char* const s_jsBufferPrototypeWriteInt32BECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt32LECodeLength = 116;
+const int s_jsBufferPrototypeWriteUInt32LECodeLength = 183;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt32LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setUint32(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, true);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -397,12 +396,12 @@ const char* const s_jsBufferPrototypeWriteUInt32LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteUInt32BECodeLength = 117;
+const int s_jsBufferPrototypeWriteUInt32BECodeLength = 184;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt32BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setUint32(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -410,12 +409,12 @@ const char* const s_jsBufferPrototypeWriteUInt32BECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteFloatLECodeLength = 117;
+const int s_jsBufferPrototypeWriteFloatLECodeLength = 184;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteFloatLECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setFloat32(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, true);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -423,12 +422,12 @@ const char* const s_jsBufferPrototypeWriteFloatLECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteFloatBECodeLength = 118;
+const int s_jsBufferPrototypeWriteFloatBECodeLength = 185;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteFloatBECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setFloat32(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat32(offset, value, false);\n" \
     "  return offset + 4;\n" \
     "})\n" \
 ;
@@ -436,12 +435,12 @@ const char* const s_jsBufferPrototypeWriteFloatBECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteDoubleLECodeLength = 117;
+const int s_jsBufferPrototypeWriteDoubleLECodeLength = 184;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteDoubleLECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setFloat64(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, true);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -449,12 +448,12 @@ const char* const s_jsBufferPrototypeWriteDoubleLECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteDoubleBECodeLength = 118;
+const int s_jsBufferPrototypeWriteDoubleBECodeLength = 185;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteDoubleBECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setFloat64(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setFloat64(offset, value, false);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -462,12 +461,12 @@ const char* const s_jsBufferPrototypeWriteDoubleBECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigInt64LECodeLength = 118;
+const int s_jsBufferPrototypeWriteBigInt64LECodeLength = 185;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigInt64LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setBigInt64(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -475,12 +474,12 @@ const char* const s_jsBufferPrototypeWriteBigInt64LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigInt64BECodeLength = 119;
+const int s_jsBufferPrototypeWriteBigInt64BECodeLength = 186;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigInt64BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setBigInt64(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -488,12 +487,12 @@ const char* const s_jsBufferPrototypeWriteBigInt64BECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigUInt64LECodeLength = 119;
+const int s_jsBufferPrototypeWriteBigUInt64LECodeLength = 186;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigUInt64LECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setBigUint64(offset, value, true);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -501,12 +500,12 @@ const char* const s_jsBufferPrototypeWriteBigUInt64LECode =
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeWriteBigUInt64BECodeLength = 120;
+const int s_jsBufferPrototypeWriteBigUInt64BECodeLength = 187;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigUInt64BECode =
     "(function (value, offset) {\n" \
     "  \"use strict\";\n" \
-    "  this.dataView.setBigUint64(offset, value, false);\n" \
+    "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);\n" \
     "  return offset + 8;\n" \
     "})\n" \
 ;
@@ -717,40 +716,57 @@ const char* const s_jsBufferPrototypeToJSONCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_jsBufferPrototypeSubarrayCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSubarrayCodeLength = 196;
-static const JSC::Intrinsic s_jsBufferPrototypeSubarrayCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSubarrayCode =
-    "(function (start, end) {\n" \
-    "    \"use strict\";\n" \
-    "\n" \
-    "    Buffer[Symbol.species] ??= Buffer;\n" \
-    "    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
-    "})\n" \
-;
-
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 308;
+const int s_jsBufferPrototypeSliceCodeLength = 612;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
     "(function (start, end) {\n" \
     "  \"use strict\";\n" \
-    "  if (start === undefined && end === undefined) {\n" \
-    "    return this;\n" \
+    "  var { buffer, byteOffset, byteLength } = this;\n" \
+    "\n" \
+    "  function adjustOffset(offset, length) {\n" \
+    "    //\n" \
+    "    //\n" \
+    "    offset = @trunc(offset);\n" \
+    "    if (offset === 0 || @isNaN(offset)) {\n" \
+    "      return 0;\n" \
+    "    } else if (offset < 0) {\n" \
+    "      offset += length;\n" \
+    "      return offset > 0 ? offset : 0;\n" \
+    "    } else {\n" \
+    "      return offset < length ? offset : length;\n" \
+    "    }\n" \
     "  }\n" \
     "\n" \
-    "  Buffer[Symbol.species] ||= Buffer;\n" \
-    "\n" \
-    "  start = start || 0;\n" \
-    "  if (end !== 0) {\n" \
-    "      end = end || this.byteLength;\n" \
-    "  }\n" \
-    "\n" \
-    "  return new Buffer(this.buffer, this.byteOffset + start, end - start);\n" \
+    "  var start_ = adjustOffset(start, byteLength);\n" \
+    "  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;\n" \
+    "  return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeParentCodeLength = 57;
+static const JSC::Intrinsic s_jsBufferPrototypeParentCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeParentCode =
+    "(function () {\n" \
+    "  \"use strict\";\n" \
+    "  return this?.buffer;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeOffsetCodeLength = 61;
+static const JSC::Intrinsic s_jsBufferPrototypeOffsetCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeOffsetCode =
+    "(function () {\n" \
+    "  \"use strict\";\n" \
+    "  return this?.byteOffset;\n" \
     "})\n" \
 ;
 

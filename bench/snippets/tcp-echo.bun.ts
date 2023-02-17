@@ -34,16 +34,18 @@ setInterval(() => {
   counter = 0;
 }, 1000);
 
-const server = listen({
-  socket: handlers,
-  hostname: "localhost",
-  port: 8080,
-  data: {
-    isServer: true,
-  },
-});
-const connection = await connect({
-  socket: handlers,
-  hostname: "localhost",
-  port: 8080,
-});
+if (process.env.IS_SERVER)
+  listen({
+    socket: handlers,
+    hostname: "0.0.0.0",
+    port: 8000,
+    data: {
+      isServer: true,
+    },
+  });
+else
+  await connect({
+    socket: handlers,
+    hostname: "localhost",
+    port: 8000,
+  });

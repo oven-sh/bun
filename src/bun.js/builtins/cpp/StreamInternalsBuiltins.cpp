@@ -4,7 +4,6 @@
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -362,16 +361,13 @@ const char* const s_streamInternalsEnqueueValueWithSizeCode =
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsPeekQueueValueCodeLength = 116;
+const int s_streamInternalsPeekQueueValueCodeLength = 81;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPeekQueueValueCode =
     "(function (queue)\n" \
     "{\n" \
     "    \"use strict\";\n" \
-    "\n" \
-    "    @assert(queue.content.isNotEmpty());\n" \
-    "\n" \
-    "    return queue.peek()?.value;\n" \
+    "    return queue.content.peek()?.value;\n" \
     "})\n" \
 ;
 
@@ -395,14 +391,16 @@ const char* const s_streamInternalsResetQueueCode =
 const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractSizeAlgorithmCodeLength = 288;
+const int s_streamInternalsExtractSizeAlgorithmCodeLength = 294;
 static const JSC::Intrinsic s_streamInternalsExtractSizeAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsExtractSizeAlgorithmCode =
     "(function (strategy)\n" \
     "{\n" \
-    "    if (!(\"size\" in strategy))\n" \
+    "    const sizeAlgorithm = strategy.size;\n" \
+    "\n" \
+    "    if (sizeAlgorithm === @undefined)\n" \
     "        return () => 1;\n" \
-    "    const sizeAlgorithm = strategy[\"size\"];\n" \
+    "\n" \
     "    if (typeof sizeAlgorithm !== \"function\")\n" \
     "        @throwTypeError(\"strategy.size must be a function\");\n" \
     "\n" \
@@ -413,14 +411,16 @@ const char* const s_streamInternalsExtractSizeAlgorithmCode =
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_streamInternalsExtractHighWaterMarkCodeLength = 325;
+const int s_streamInternalsExtractHighWaterMarkCodeLength = 322;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsExtractHighWaterMarkCode =
     "(function (strategy, defaultHWM)\n" \
     "{\n" \
-    "    if (!(\"highWaterMark\" in strategy))\n" \
+    "    const highWaterMark = strategy.highWaterMark;\n" \
+    "\n" \
+    "    if (highWaterMark === @undefined)\n" \
     "        return defaultHWM;\n" \
-    "    const highWaterMark = strategy[\"highWaterMark\"];\n" \
+    "\n" \
     "    if (@isNaN(highWaterMark) || highWaterMark < 0)\n" \
     "        @throwRangeError(\"highWaterMark value is negative or not a number\");\n" \
     "\n" \

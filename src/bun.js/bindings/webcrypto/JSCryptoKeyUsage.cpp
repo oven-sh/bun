@@ -29,7 +29,6 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SortedArrayMap.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -53,7 +52,7 @@ String convertEnumerationToString(CryptoKeyUsage enumerationValue)
     static_assert(static_cast<size_t>(CryptoKeyUsage::DeriveBits) == 5, "CryptoKeyUsage::DeriveBits is not 5 as expected");
     static_assert(static_cast<size_t>(CryptoKeyUsage::WrapKey) == 6, "CryptoKeyUsage::WrapKey is not 6 as expected");
     static_assert(static_cast<size_t>(CryptoKeyUsage::UnwrapKey) == 7, "CryptoKeyUsage::UnwrapKey is not 7 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 

@@ -8,7 +8,6 @@ namespace Zig { class GlobalObject; }
  * Copyright (c) 2015 Igalia.
  * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
  * Copyright (c) 2015, 2016, 2017 Canon Inc.
- * Copyright (c) 2016, 2018 -2018 Apple Inc. All rights reserved.
  * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
@@ -45,8 +44,8 @@ namespace Zig { class GlobalObject; }
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/SlotVisitorInlines.h>
-#include <JavaScriptCore/StructureInlines.h>
 
 namespace WebCore {
 
@@ -112,7 +111,7 @@ SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& glo
     WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
 #undef DECLARE_GLOBAL_STATIC
     };
-    globalObject.addStaticGlobals(staticGlobals, WTF_ARRAY_LENGTH(staticGlobals));
+    globalObject.addStaticGlobals(staticGlobals, std::size(staticGlobals));
     UNUSED_PARAM(clientData);
 }
 

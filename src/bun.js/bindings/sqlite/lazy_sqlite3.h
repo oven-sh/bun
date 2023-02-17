@@ -151,6 +151,7 @@ static lazy_sqlite3_stmt_readonly_type lazy_sqlite3_stmt_readonly;
 #define sqlite3_serialize lazy_sqlite3_serialize
 #define sqlite3_deserialize lazy_sqlite3_deserialize
 #define sqlite3_stmt_readonly lazy_sqlite3_stmt_readonly
+#define sqlite3_column_int64 lazy_sqlite3_column_int64
 
 static void* sqlite3_handle = nullptr;
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
@@ -182,6 +183,7 @@ static int lazyLoadSQLite()
     lazy_sqlite3_column_decltype = (lazy_sqlite3_column_decltype_type)dlsym(sqlite3_handle, "sqlite3_column_decltype");
     lazy_sqlite3_column_double = (lazy_sqlite3_column_double_type)dlsym(sqlite3_handle, "sqlite3_column_double");
     lazy_sqlite3_column_int = (lazy_sqlite3_column_int_type)dlsym(sqlite3_handle, "sqlite3_column_int");
+    lazy_sqlite3_column_int64 = (lazy_sqlite3_column_int64_type)dlsym(sqlite3_handle, "sqlite3_column_int64");
     lazy_sqlite3_column_name = (lazy_sqlite3_column_name_type)dlsym(sqlite3_handle, "sqlite3_column_name");
     lazy_sqlite3_column_text = (lazy_sqlite3_column_text_type)dlsym(sqlite3_handle, "sqlite3_column_text");
     lazy_sqlite3_column_type = (lazy_sqlite3_column_type_type)dlsym(sqlite3_handle, "sqlite3_column_type");

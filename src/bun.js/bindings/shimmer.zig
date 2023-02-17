@@ -36,7 +36,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         //         return FromType;
         //     }
 
-        //     var ReturnTypeInfo: std.builtin.TypeInfo = @typeInfo(FromType);
+        //     var ReturnTypeInfo: std.builtin.Type = @typeInfo(FromType);
 
         //     if (ReturnTypeInfo == .Pointer and NewReturnType != *anyopaque) {
         //         NewReturnType = ReturnTypeInfo.Pointer.child;
@@ -110,7 +110,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+                    var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                     if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
@@ -139,7 +139,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                         if (@typeInfo(Function) != .Fn) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                         }
-                        var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+                        var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                         if (Fn.calling_convention != .C) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                         }
@@ -182,17 +182,17 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 unreachable;
             } else {
                 const Fn = comptime @field(headers, symbolName(typeName));
-                if (@typeInfo(@TypeOf(Fn)).Fn.args.len > 0)
+                if (@typeInfo(@TypeOf(Fn)).Fn.params.len > 0)
                     return matchNullable(
                         comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                         comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                        @call(.{}, Fn, @bitCast(std.meta.ArgsTuple(@TypeOf(Fn)), args)),
+                        @call(.auto, Fn, args),
                     );
 
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    @call(.{}, Fn, .{}),
+                    @call(.auto, Fn, .{}),
                 );
             }
         }

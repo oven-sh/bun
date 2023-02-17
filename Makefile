@@ -4,6 +4,10 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
+CMAKE_CXX_COMPILER_LAUNCHER_FLAG :=
+
+
+
 # 'make' command will trigger the help target
 .DEFAULT_GOAL := help
 
@@ -31,11 +35,11 @@ DOCKER_BUILDARCH = amd64
 BREW_PREFIX_PATH = /usr/local
 DEFAULT_MIN_MACOS_VERSION = 10.14
 MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
-NATIVE_OR_OLD_MARCH = -march=westmere
+NATIVE_OR_OLD_MARCH = -march=nehalem
 endif
 
 MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
-BUN_BASE_VERSION = 0.2
+BUN_BASE_VERSION = 0.5
 
 AR=
 
@@ -50,12 +54,12 @@ DEBUG_PACKAGE_DIR = $(PACKAGES_REALPATH)/debug-$(PACKAGE_NAME)
 RELEASE_BUN = $(PACKAGE_DIR)/bun
 DEBUG_BIN = $(DEBUG_PACKAGE_DIR)/
 DEBUG_BUN = $(DEBUG_BIN)/bun-debug
-BUILD_ID = $(shell cat ./build-id)
+BUILD_ID = $(shell cat ./src/build-id)
 PACKAGE_JSON_VERSION = $(BUN_BASE_VERSION).$(BUILD_ID)
 BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
-DSYMUTIL ?= $(shell which dsymutil || which dsymutil-13)
+DSYMUTIL ?= $(shell which dsymutil || which dsymutil-15)
 WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
@@ -70,20 +74,39 @@ ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is
 # This is easier to happen than you'd expect.
 # Using realpath here causes issues because clang uses clang++ as a symlink
 # so if that's resolved, it won't build for C++
-CC = $(shell which clang-13 || which clang)
-CXX = $(shell which clang++-13 || which clang++)
+REAL_CC = $(shell which clang-15 || which clang)
+REAL_CXX = $(shell which clang++-15 || which clang++)
+
+CC = $(REAL_CC)
+CXX = $(REAL_CXX)
+CCACHE_CC_OR_CC := $(REAL_CC)
+
+CCACHE_PATH := $(shell which ccache 2>/dev/null)
+
+CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC)
+
+ifeq (,$(findstring,$(shell which ccache),ccache))
+	CMAKE_CXX_COMPILER_LAUNCHER_FLAG := -DCMAKE_CXX_COMPILER_LAUNCHER=$(CCACHE_PATH) -DCMAKE_C_COMPILER_LAUNCHER=$(CCACHE_PATH)
+	CCACHE_CC_OR_CC := "$(CCACHE_PATH) $(REAL_CC)"
+	export CCACHE_COMPILERTYPE = clang
+	CCACHE_CC_FLAG = CC=$(CCACHE_CC_OR_CC) CCACHE_COMPILER=$(REAL_CC)
+	CCACHE_CXX_FLAG = CXX=$(CCACHE_PATH) CCACHE_COMPILER=$(REAL_CXX)
+endif
+
+CXX_WITH_CCACHE = $(CCACHE_PATH) $(CXX)
+CC_WITH_CCACHE = $(CCACHE_PATH) $(CC)
 
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@13)
+		LLVM_PREFIX = $(shell brew --prefix llvm@15)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 #   This is kinda ugly, but I can't find a better way to error :(
-		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@13' or set LLVM_PREFIX=/path/to/llvm")
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@15' or set LLVM_PREFIX=/path/to/llvm")
 	endif
 
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
@@ -118,7 +141,15 @@ LIBICONV_PATH ?= $(BREW_PREFIX_PATH)/opt/libiconv/lib/libiconv.a
 
 OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 
-CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
+CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
+	-DCMAKE_CXX_COMPILER=$(CXX) \
+	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
+	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
+	-DCMAKE_AR=$(AR) \
+    -DCMAKE_RANLIB=$(which llvm-15-ranlib || which llvm-ranlib)
+	
+	
+
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
 # SQLite3 is dynamically linked on macOS
@@ -127,24 +158,23 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 SQLITE_OBJECT =
 
 
-BITCODE_OR_SECTIONS=
-EMBED_OR_EMIT_BITCODE=
+
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
 AR=$(LLVM_PREFIX)/bin/llvm-ar
-BITCODE_OR_SECTIONS=-fembed-bitcode
+BITCODE_OR_SECTIONS=
 endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
+AR = $(shell which llvm-ar-15 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE)
-CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
-BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
@@ -153,18 +183,26 @@ DEFAULT_USE_BMALLOC := 1
 
 USE_BMALLOC ?= DEFAULT_USE_BMALLOC
 
-JSC_BASE_DIR ?= ${HOME}/webkit-build
+# Set via postinstall
+AUTO_JSX_BASE_DIR ?= $(realpath $(firstword $(wildcard bun-webkit)))
+
+ifeq (,$(AUTO_JSX_BASE_DIR))
+AUTO_JSX_BASE_DIR ?= $(HOME)/webkit-build
+endif
+
+JSC_BASE_DIR ?= $(AUTO_JSX_BASE_DIR)
 
 DEFAULT_JSC_LIB :=
 DEFAULT_JSC_LIB_DEBUG :=
 
-ifeq ($(OS_NAME),linux)
 DEFAULT_JSC_LIB = $(JSC_BASE_DIR)/lib
 DEFAULT_JSC_LIB_DEBUG = $(DEFAULT_JSC_LIB)
+
+ifneq (,$(realpath $(WEBKIT_RELEASE_DIR_LTO)/lib))
+DEFAULT_JSC_LIB = $(WEBKIT_RELEASE_DIR_LTO)/lib
 endif
 
-ifeq ($(OS_NAME),darwin)
-DEFAULT_JSC_LIB = $(WEBKIT_RELEASE_DIR_LTO)/lib
+ifneq (,$(realpath $(WEBKIT_RELEASE_DIR)/lib))
 DEFAULT_JSC_LIB_DEBUG = $(WEBKIT_RELEASE_DIR)/lib
 endif
 
@@ -228,7 +266,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(shell which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
+STRIP=$(shell which llvm-strip || which llvm-strip-15 || which strip || echo "Missing strip")
 endif
 
 
@@ -300,7 +338,7 @@ LINUX_INCLUDE_DIRS := $(ALL_JSC_INCLUDE_DIRS) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi -I$(BUN_DEPS_DIR)/boringssl/include -I$(BUN_DEPS_DIR)/c-ares/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -367,17 +405,17 @@ ifeq ($(OS_NAME), darwin)
 SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts
+		-fno-keep-static-consts -lresolv
 endif
 
 ifeq ($(OS_NAME),linux)
-SYMBOLS=-Wl,--dynamic-list $(realpath src/symbols.dyn)
+SYMBOLS=-Wl,--dynamic-list $(realpath src/symbols.dyn) -Wl,--version-script=$(realpath src/linker.lds)
 endif
 
 SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG) 
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -394,24 +432,38 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-lz \
 	$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 	$(_MIMALLOC_LINK) \
+	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-llolhtml \
-	-lonig \
-	$(BUN_DEPS_OUT_DIR)/libbacktrace.a \
+	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
-		-lbase64 \
 		-ltcc \
 		-lusockets \
+		-lcares \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) 
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO)
 
 STATIC_MUSL_FLAG ?=
 
+WRAP_SYMBOLS_ON_LINUX =
+
 ifeq ($(OS_NAME), linux)
+WRAP_SYMBOLS_ON_LINUX = -Wl,--wrap=fcntl -Wl,--wrap=fcntl64 -Wl,--wrap=stat64 -Wl,--wrap=pow -Wl,--wrap=exp -Wl,--wrap=log -Wl,--wrap=log2 \
+	-Wl,--wrap=lstat \
+	-Wl,--wrap=stat \
+	-Wl,--wrap=fstat \
+	-Wl,--wrap=fstatat \
+	-Wl,--wrap=lstat64 \
+	-Wl,--wrap=stat64 \
+	-Wl,--wrap=fstat64 \
+	-Wl,--wrap=fstatat64 \
+	-Wl,--wrap=mknod \
+	-Wl,--wrap=mknodat \
+	-Wl,--wrap=statx
+
 PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fuse-ld=lld \
 		-Wl,-z,now \
@@ -422,15 +474,15 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-static-libgcc \
 		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
+		-l:libatomic.a \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
 		-rdynamic
-		
 
- 
+
 endif
 
 
@@ -443,9 +495,9 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ) -lwebcrypto
-BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ) -lwebcrypto-debug
-BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ) -lwebcrypto-debug
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX) $(JSC_FILES) $(BINDINGS_OBJ) -lwebcrypto
+BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ) -lwebcrypto-debug
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(WRAP_SYMBOLS_ON_LINUX)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ) -lwebcrypto-debug
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -454,16 +506,15 @@ CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){i
 bun:
 
 npm-install:
-	$(NPM_CLIENT) install
+	$(NPM_CLIENT) install --ignore-scripts --production
+
+print-%  : ; @echo $* = $($*)
+get-%  : ; @echo $($*)
+print-version:
+	@echo $(PACKAGE_JSON_VERSION)
 
 
-.PHONY: base64
-base64:
-	cd src/base64 && \
-		rm -rf src/base64/*.{o,ll,bc} && \
-	   $(CC) $(EMIT_LLVM_FOR_RELEASE) $(BUN_CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c *.c -I$(SRC_DIR)/base64  && \
-	   $(CXX) $(EMIT_LLVM_FOR_RELEASE) $(CXXFLAGS) $(BUN_CFLAGS) -c neonbase64.cc -g -fPIC  && \
-	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.o
+
 
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
 TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
@@ -475,7 +526,7 @@ TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
-		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
+		AR=$(AR) $(CCACHE_CC_FLAG) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CCACHE_CC_OR_CC) --ar=$(AR) --config-predefs=yes  && \
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
@@ -501,14 +552,25 @@ builtins: ## to generate builtins
 .PHONY: generate-builtins
 generate-builtins: builtins
 
-.PHONY: tinycc
-vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc oniguruma webcrypto-debug webcrypto
 
-BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
+
+BUN_TYPES_REPO_PATH ?= $(realpath packages/bun-types)
+
+ifeq ($(DEBUG),true)
+BUN_RELEASE_BIN = bun
+endif
+
+.PHONY: c-ares
+c-ares:
+	rm -rf $(BUN_DEPS_DIR)/c-ares/build && \
+	mkdir $(BUN_DEPS_DIR)/c-ares/build && \
+	cd $(BUN_DEPS_DIR)/c-ares/build && \
+    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS) -flto=full" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_STATIC_PIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
+	ninja && cp lib/libcares.a $(BUN_DEPS_OUT_DIR)/libcares.a
 
 .PHONY: prepare-types
 prepare-types:
-	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
+	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/scripts/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
 	echo "Generated types for $(PACKAGE_JSON_VERSION) in $(BUN_TYPES_REPO_PATH)/dist"
 	cp $(BUN_TYPES_REPO_PATH)/dist/types.d.ts /tmp/bun-types.d.ts
 	cd /tmp && $(PACKAGE_DIR)/../../node_modules/.bin/tsc /tmp/bun-types.d.ts
@@ -516,12 +578,13 @@ prepare-types:
 release-types:
 	# can be removed when/if "bun publish" is implemented
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish
+	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish --dry-run
 
 .PHONY: format
 format: ## to format the code
-	$(PRETTIER) --write test/bun.js/*.js
-	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.js
+	-$(PRETTIER) --write 'test/bun.js/*.{js,jsx,ts,tsx}'
+	-$(PRETTIER) --write 'test/bun.js/solid-dom-fixtures/**/*.{js,jsx,ts,tsx}'
+
 
 .PHONY: lolhtml
 lolhtml:
@@ -530,7 +593,7 @@ lolhtml:
 # no asm is not worth it!!
 .PHONY: boringssl-build
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -GNinja .. && ninja
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -GNinja .. && ninja libcrypto.a libssl.a libdecrepit.a
 
 .PHONY: boringssl-build-debug
 boringssl-build-debug:
@@ -539,6 +602,7 @@ boringssl-build-debug:
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
 	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.a
+	cp $(BUN_DEPS_DIR)/boringssl/build/decrepit/libdecrepit.a $(BUN_DEPS_OUT_DIR)/libdecrepit.a
 
 .PHONY: boringssl
 boringssl: boringssl-build boringssl-copy
@@ -549,21 +613,6 @@ boringssl-debug: boringssl-build-debug boringssl-copy
 compile-ffi-test:
 	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
 
-.PHONY: libbacktrace
-libbacktrace:
-	cd $(BUN_DEPS_DIR)/libbacktrace && \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
-	make -j$(CPUS) && \
-	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
-
-.PHONY: oniguruma
-oniguruma:
-	cd $(BUN_DEPS_DIR)/oniguruma && \
-	autoreconf -vfi && \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure && \
-	make -j${CPUS} && \
-	cp ./src/.libs/libonig.a $(BUN_DEPS_OUT_DIR)/libonig.a
-
 sqlite:
 
 
@@ -573,7 +622,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(CFLAGS)" $(CCACHE_CC_FLAG) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -589,11 +638,8 @@ tgz-debug:
 	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(DEBUG_PACKAGE_DIR)/tgz.o
 
-vendor: require init-submodules vendor-without-check
-
 zlib:
-	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
-	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
+	cd $(BUN_DEPS_DIR)/zlib; make clean; $(CCACHE_CC_FLAG) CFLAGS="$(CFLAGS)" ./configure --static && make -j${CPUS} && cp ./libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 ifeq ($(POSIX_PKG_MANAGER), brew)
 PKGNAME_NINJA := ninja
@@ -604,14 +650,14 @@ endif
 .PHONY: require
 require:
 	@echo "Checking if the required utilities are available..."
-	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
+	@if [ $(CLANG_VERSION) -lt "15" ]; then echo -e "ERROR: clang version >=15 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@15"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
 	@$(NPM_CLIENT) --version >/dev/null 2>&1 || (echo -e "ERROR: NPM client (bun or npm) is required."; exit 1)
 	@go version >/dev/null 2>&1 || (echo -e "ERROR: go is required."; exit 1)
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
-	@which $(PKGNAME_NINJA) > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
+	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
@@ -683,12 +729,12 @@ USOCKETS_SRC_DIR = $(BUN_DEPS_DIR)/uws/uSockets/src/
 
 usockets:
 	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/**/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a $(BUN_DEPS_DIR)/uws/uSockets/*.bc
-	cd $(USOCKETS_DIR) && $(CC) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
-	cd $(USOCKETS_DIR) && $(CXX) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
+	cd $(USOCKETS_DIR) && $(CC_WITH_CCACHE) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
+	cd $(USOCKETS_DIR) && $(CXX_WITH_CCACHE) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
 	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}
 
 uws: usockets
-	$(CXX) $(BITCODE_OR_SECTIONS) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX_WITH_CCACHE) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 .PHONY: sign-macos-x64
 sign-macos-x64:
@@ -847,22 +893,30 @@ jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-bindings
-jsc-bindings: headers bindings
+jsc-bindings: headers bindings webcrypto-debug webcrypto
 
 .PHONY: clone-submodules
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite oniguruma webcrypto-debug webcrypto dev 
+devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets tinycc c-ares runtime_js_dev sqlite webcrypto-debug webcrypto
 
 .PHONY: devcontainer-build
 devcontainer-build:
 	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
 
-.PHONY: devcontainer-open
-devcontainer-open:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer open
+.PHONY: devcontainer-up
+devcontainer-up:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder .
+
+.PHONY: devcontainer-rebuild
+devcontainer-rebuild:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer up --workspace-folder . --remove-existing-container
+
+.PHONY: devcontainer-sh
+devcontainer-sh:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer exec --workspace-folder . zsh
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
@@ -871,7 +925,7 @@ headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
 	$(ZIG) build headers-obj
-	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(DEBUG_IO_FILES) $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
+	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
@@ -884,7 +938,7 @@ MIMALLOC_OVERRIDE_FLAG ?=
 
 
 bump:
-	expr 0.2.0 + 1 > build-id
+	expr 0.4.0 + 1 > build-id
 
 .PHONY: identifier-cache
 identifier-cache:
@@ -1029,7 +1083,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
 
 .PHONY: dev
-dev: mkdir-dev dev-obj bun-link-lld-debug bun-codesign-debug
+dev: mkdir-dev dev-obj bun-link-lld-debug
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
@@ -1192,6 +1246,11 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/OperandsInlines.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/OperandsInlines.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/Operands.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/Operands.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/domjit/DOMJITHeapRange.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DOMJITHeapRange.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GeneratorPrototype.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GeneratorPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GeneratorFunctionPrototype.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GeneratorFunctionPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/AsyncFunctionPrototype.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AsyncFunctionPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SymbolObject.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SymbolObject.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSGenerator.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenerator.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 # This is a workaround for a JSC bug that impacts aarch64
@@ -1220,7 +1279,7 @@ jsc-build-mac-compile:
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$(CFLAGS) $(BITCODE_OR_SECTIONS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) $(BITCODE_OR_SECTIONS)  -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS)  -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
 
 .PHONY: jsc-build-mac-compile-lto
@@ -1322,6 +1381,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/boringssl && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
+	(cd $(BUN_DEPS_DIR)/c-ares && rm -rf build && make clean) || echo "";
 
 .PHONY: release-bindings
 release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES) $(IO_FILES) $(MODULES_OBJ_FILES)
@@ -1334,10 +1394,19 @@ bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
 
+# lInux only
+MIMALLOC_VALGRIND_ENABLED_FLAG =
+
+ifeq ($(OS_NAME),linux)
+	MIMALLOC_VALGRIND_ENABLED_FLAG = -DMI_VALGRIND=ON
+endif
+
+
+.PHONY: mimalloc-debug
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
 	cd $(BUN_DEPS_DIR)/mimalloc; make clean || echo ""; \
-		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) ${MIMALLOC_OVERRIDE_FLAG} \
+		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) ${MIMALLOC_OVERRIDE_FLAG} ${MIMALLOC_VALGRIND_ENABLED_FLAG} \
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DMI_DEBUG_FULL=1 \
 			-DMI_SKIP_COLLECT_ON_EXIT=1 \
@@ -1389,6 +1458,7 @@ bun-link-lld-debug:
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
+	@rm -f $(DEBUG_BIN)/bun-debug.o.o 2> /dev/null # workaround for https://github.com/ziglang/zig/issues/14080
 
 bun-link-lld-debug-no-jsc:
 	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
@@ -1417,6 +1487,7 @@ bun-link-lld-release:
 		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
+	@rm -f $(BUN_RELEASE_BIN).o.o # workaround for https://github.com/ziglang/zig/issues/14080
 
 bun-release-copy-obj:
 	cp $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o
@@ -1458,9 +1529,11 @@ wasm-return1:
 generate-classes:
 	bun src/bun.js/scripts/generate-classes.ts
 	$(ZIG) fmt src/bun.js/bindings/generated_classes.zig
+	clang-format -i src/bun.js/bindings/ZigGeneratedClasses.h src/bun.js/bindings/ZigGeneratedClasses.cpp
 
 generate-sink:
 	bun src/bun.js/scripts/generate-jssink.js
+	clang-format -i  src/bun.js/bindings/JSSink.cpp  src/bun.js/bindings/JSSink.h
 	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h
@@ -1481,7 +1554,7 @@ $(DEBUG_OBJ_DIR):
 	mkdir -p $(DEBUG_OBJ_DIR)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1491,7 +1564,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1501,7 +1574,7 @@ $(OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1511,7 +1584,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1521,7 +1594,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/io/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1531,7 +1604,7 @@ $(OBJ_DIR)/%.o: src/io/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1541,7 +1614,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
 		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1552,89 +1625,103 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
-	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/webcore/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
+.PHONY: src/io/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/io/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
+		-DBUN_DEBUG \
 		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/sqlite/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: $(SRC_DIR)/node_os/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
+.PHONY: src/bun.js/builtins/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
+.PHONY: src/bun.js/modules/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/bun.js/modules/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
 
 
 
 $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1642,7 +1729,10 @@ $(DEBUG_OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM_FOR_DEBUG) \
+		-DBUN_DEBUG \
 		-g3 -c -o $@ $<
+
+
 
 
 .PHONY: webcrypto-debug-obj
@@ -1658,7 +1748,7 @@ webcrypto-debug:
 
 
 $(OBJ_DIR)/webcrypto/%.o: src/bun.js/bindings/webcrypto/%.cpp
-	$(CXX) $(CLANG_FLAGS) \
+	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
@@ -1681,7 +1771,7 @@ webcrypto:
 
 sizegen:
 	mkdir -p $(BUN_TMP_DIR)
-	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
+	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 
@@ -1842,7 +1932,14 @@ copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
-PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-end
+PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
+
+
+.PHONY: vendor-without-check
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws tinycc c-ares
+
+.PHONY: vendor
+vendor: require init-submodules vendor-without-check
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

@@ -1,0 +1,13 @@
+{
+  "private": true,
+  "dependencies": {
+    "@actions/core": "^1.10.0"
+  },
+  "devDependencies": {
+    "bun-types": "canary",
+    "prettier": "^2.8.2"
+  },
+  "scripts": {
+    "test": "bun run src/runner.ts"
+  }
+}

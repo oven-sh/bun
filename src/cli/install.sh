@@ -52,8 +52,8 @@ success() {
 command -v unzip >/dev/null ||
     error 'unzip is required to install bun (see: https://github.com/oven-sh/bun#unzip-is-required)'
 
-if [[ $# -gt 1 ]]; then
-    error 'Too many arguments, only 1 is allowed, which can be a specific tag of bun to install (e.g. "bun-v0.1.4")'
+if [[ $# -gt 2 ]]; then
+    error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
 fi
 
 case $(uname -ms) in
@@ -98,6 +98,14 @@ if [[ $target = linux-x64 ]]; then
     fi
 fi
 
+exe_name=bun
+
+if [[ $# = 2 && $2 = debug-info ]]; then
+    target=$target-profile
+    exe_name=bun-profile
+    info "You requested a debug build of bun. More information will be shown if a crash occurs."
+fi
+
 if [[ $# = 0 ]]; then
     bun_uri=$github_repo/releases/latest/download/bun-$target.zip
 else
@@ -122,7 +130,7 @@ curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
 unzip -oqd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'
 
-mv "$bin_dir/bun-$target/bun" "$exe" ||
+mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
     error 'Failed to move extracted bun to destination'
 
 chmod +x "$exe" ||

@@ -1,6 +1,6 @@
 const Fs = @import("fs.zig");
 const std = @import("std");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -15,7 +15,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
-const logger = @import("./logger.zig");
+const logger = @import("bun").logger;
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
@@ -1023,6 +1023,7 @@ pub fn NewWriter(
                                     "Not Found - \"{s}\"",
                                     .{import.text.utf8},
                                     import_record.ImportKind.at,
+                                    err,
                                 ) catch {};
                             },
                             else => {},
@@ -1247,7 +1248,7 @@ pub fn NewBundler(
             try this.writer.done();
 
             return CodeCount{
-                .written = @intCast(usize, @maximum(this.writer.written - start_count, 0)),
+                .written = @intCast(usize, @max(this.writer.written - start_count, 0)),
                 .approximate_newline_count = lines_of_code,
             };
         }

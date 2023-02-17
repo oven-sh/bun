@@ -1,10 +1,9 @@
+// @ts-nocheck
 import { file, gc, serve, ServeOptions } from "bun";
-import { afterEach, describe, expect, it, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, it, test } from "bun:test";
 import { readFileSync } from "fs";
 
-// afterEach(() => Bun.gc(true));
-
-var port = 4020;
+var port = 4021;
 
 {
   const BodyMixin = [
@@ -15,84 +14,56 @@ var port = 4020;
   ];
   const useRequestObjectValues = [true, false];
 
-  for (let RequestPrototyeMixin of BodyMixin) {
+  for (let RequestPrototypeMixin of BodyMixin) {
     for (let useRequestObject of useRequestObjectValues) {
-      describe(`Request.prototoype.${RequestPrototyeMixin.name}() ${
+      describe(`Request.prototoype.${RequestPrototypeMixin.name}() ${
         useRequestObject ? "fetch(req)" : "fetch(url)"
       }`, () => {
         const inputFixture = [
           [JSON.stringify("Hello World"), JSON.stringify("Hello World")],
+          [JSON.stringify("Hello World 123"), Buffer.from(JSON.stringify("Hello World 123")).buffer],
+          [JSON.stringify("Hello World 456"), Buffer.from(JSON.stringify("Hello World 456"))],
           [
-            JSON.stringify("Hello World 123"),
-            Buffer.from(JSON.stringify("Hello World 123")).buffer,
-          ],
-          [
-            JSON.stringify("Hello World 456"),
-            Buffer.from(JSON.stringify("Hello World 456")),
-          ],
-          [
-            JSON.stringify(
-              "EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
-                100
-              )
+            JSON.stringify("EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
+            Buffer.from(
+              JSON.stringify("EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
             ),
+          ],
+          [
+            JSON.stringify("EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100)),
             Buffer.from(
               JSON.stringify(
-                "EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
-                  100
-                )
-              )
-            ),
-          ],
-          [
-            JSON.stringify(
-              "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
-                100
-              )
-            ),
-            Buffer.from(
-              JSON.stringify(
-                "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
-                  100
-                )
-              )
+                "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(100),
+              ),
             ),
           ],
         ];
+
         for (const [name, input] of inputFixture) {
-          test(`${name.slice(
-            0,
-            Math.min(name.length ?? name.byteLength, 64)
-          )}`, async () => {
+          test(`${name.slice(0, Math.min(name.length ?? name.byteLength, 64))}`, async () => {
             await runInServer(
               {
                 async fetch(req) {
-                  var result = await RequestPrototyeMixin.call(req);
-                  if (RequestPrototyeMixin === Request.prototype.json) {
+                  var result = await RequestPrototypeMixin.call(req);
+                  if (RequestPrototypeMixin === Request.prototype.json) {
                     result = JSON.stringify(result);
                   }
                   if (typeof result === "string") {
                     expect(result.length).toBe(name.length);
                     expect(result).toBe(name);
                   } else if (result && result instanceof Blob) {
-                    expect(result.size).toBe(
-                      new TextEncoder().encode(name).byteLength
-                    );
+                    expect(result.size).toBe(new TextEncoder().encode(name).byteLength);
                     expect(await result.text()).toBe(name);
                   } else {
-                    expect(result.byteLength).toBe(
-                      Buffer.from(input).byteLength
-                    );
-                    expect(Bun.SHA1.hash(result, "base64")).toBe(
-                      Bun.SHA1.hash(input, "base64")
-                    );
+                    expect(result.byteLength).toBe(Buffer.from(input).byteLength);
+                    expect(Bun.SHA1.hash(result, "base64")).toBe(Bun.SHA1.hash(input, "base64"));
                   }
                   return new Response(result, {
                     headers: req.headers,
                   });
                 },
               },
-              async (url) => {
+              async url => {
                 var response;
 
                 // once, then batch of 5
@@ -106,7 +77,7 @@ var port = 4020;
                       headers: {
                         "content-type": "text/plain",
                       },
-                    })
+                    }),
                   );
                 } else {
                   response = await fetch(url, {
@@ -119,9 +90,7 @@ var port = 4020;
                 }
 
                 expect(response.status).toBe(200);
-                expect(response.headers.get("content-length")).toBe(
-                  String(Buffer.from(input).byteLength)
-                );
+                expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
                 expect(response.headers.get("content-type")).toBe("text/plain");
                 expect(await response.text()).toBe(name);
 
@@ -137,7 +106,7 @@ var port = 4020;
                           "content-type": "text/plain",
                           "x-counter": i,
                         },
-                      })
+                      }),
                     );
                   } else {
                     promises[i] = await fetch(url, {
@@ -155,16 +124,12 @@ var port = 4020;
                 for (let i = 0; i < 5; i++) {
                   const response = results[i];
                   expect(response.status).toBe(200);
-                  expect(response.headers.get("content-length")).toBe(
-                    String(Buffer.from(input).byteLength)
-                  );
-                  expect(response.headers.get("content-type")).toBe(
-                    "text/plain"
-                  );
+                  expect(response.headers.get("content-length")).toBe(String(Buffer.from(input).byteLength));
+                  expect(response.headers.get("content-type")).toBe("text/plain");
                   expect(response.headers.get("x-counter")).toBe(String(i));
                   expect(await response.text()).toBe(name);
                 }
-              }
+              },
             );
           });
         }
@@ -173,12 +138,10 @@ var port = 4020;
   }
 }
 
-async function runInServer(
-  opts: ServeOptions,
-  cb: (url: string) => void | Promise<void>
-) {
+var existingServer;
+async function runInServer(opts: ServeOptions, cb: (url: string) => void | Promise<void>) {
   var server;
-  server = Bun.serve({
+  const handler = {
     ...opts,
     port: port++,
     fetch(req) {
@@ -195,19 +158,27 @@ async function runInServer(
       console.log(err.stack);
       throw err;
     },
-  });
+  };
+
+  if (!existingServer) {
+    existingServer = server = Bun.serve(handler);
+  } else {
+    server = existingServer;
+    server.reload(handler);
+  }
+
   try {
     await cb(`http://${server.hostname}:${server.port}`);
   } catch (e) {
     throw e;
   } finally {
-    server && server.stop();
-    server = undefined;
-    if (port > 4200) {
-      port = 4120;
-    }
   }
 }
+
+afterAll(() => {
+  existingServer && existingServer.close();
+  existingServer = null;
+});
 
 function fillRepeating(dstBuffer, start, end) {
   let len = dstBuffer.length,
@@ -232,16 +203,7 @@ describe("reader", function () {
     // - less than the InlineBlob limit
     // - multiple chunks
     // - backpressure
-    for (let inputLength of [
-      0,
-      1,
-      2,
-      12,
-      95,
-      1024,
-      1024 * 1024,
-      1024 * 1024 * 2,
-    ]) {
+    for (let inputLength of [0, 1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
       var bytes = new Uint8Array(inputLength);
       {
         const chunk = Math.min(bytes.length, 256);
@@ -274,10 +236,7 @@ describe("reader", function () {
         new Int32Array(bytes).subarray(1),
         new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
         new Float32Array(bytes).subarray(1),
-        new Float32Array(bytes).subarray(
-          0,
-          new Float32Array(bytes).byteLength - 1
-        ),
+        new Float32Array(bytes).subarray(0, new Float32Array(bytes).byteLength - 1),
         new Int16Array(bytes).subarray(0, 1),
         new Int32Array(bytes).subarray(0, 1),
         new Float32Array(bytes).subarray(0, 1),
@@ -293,13 +252,9 @@ describe("reader", function () {
 
           const expectedHash =
             huge instanceof Blob
-              ? Bun.SHA1.hash(
-                  new Uint8Array(await huge.arrayBuffer()),
-                  "base64"
-                )
+              ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
               : Bun.SHA1.hash(huge, "base64");
-          const expectedSize =
-            huge instanceof Blob ? huge.size : huge.byteLength;
+          const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
 
           const out = await runInServer(
             {
@@ -307,16 +262,12 @@ describe("reader", function () {
                 try {
                   expect(req.headers.get("x-custom")).toBe("hello");
                   expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(
-                    navigator.userAgent
-                  );
+                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
                   gc();
                   expect(req.headers.get("x-custom")).toBe("hello");
                   expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(
-                    navigator.userAgent
-                  );
+                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
                   var reader = req.body.getReader();
                   called = true;
@@ -329,14 +280,10 @@ describe("reader", function () {
                   const out = new Blob(buffers);
                   gc();
                   expect(out.size).toBe(expectedSize);
-                  expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(
-                    expectedHash
-                  );
+                  expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(expectedHash);
                   expect(req.headers.get("x-custom")).toBe("hello");
                   expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(
-                    navigator.userAgent
-                  );
+                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
                   gc();
                   return new Response(out, {
                     headers: req.headers,
@@ -347,7 +294,7 @@ describe("reader", function () {
                 }
               },
             },
-            async (url) => {
+            async url => {
               gc();
               const response = await fetch(url, {
                 body: huge,
@@ -360,9 +307,7 @@ describe("reader", function () {
               });
               huge = undefined;
               expect(response.status).toBe(200);
-              const response_body = new Uint8Array(
-                await response.arrayBuffer()
-              );
+              const response_body = new Uint8Array(await response.arrayBuffer());
 
               expect(response_body.byteLength).toBe(expectedSize);
               expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
@@ -370,7 +315,7 @@ describe("reader", function () {
               gc();
               expect(response.headers.get("content-type")).toBe("text/plain");
               gc();
-            }
+            },
           );
           expect(called).toBe(true);
           gc();
@@ -379,7 +324,7 @@ describe("reader", function () {
 
         for (let isDirectStream of [true, false]) {
           const positions = ["begin", "end"];
-          const inner = (thisArray) => {
+          const inner = thisArray => {
             for (let position of positions) {
               it(`streaming back ${thisArray.constructor.name}(${
                 thisArray.byteLength ?? thisArray.size
@@ -390,13 +335,9 @@ describe("reader", function () {
 
                 const expectedHash =
                   huge instanceof Blob
-                    ? Bun.SHA1.hash(
-                        new Uint8Array(await huge.arrayBuffer()),
-                        "base64"
-                      )
+                    ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
                     : Bun.SHA1.hash(huge, "base64");
-                const expectedSize =
-                  huge instanceof Blob ? huge.size : huge.byteLength;
+                const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
 
                 const out = await runInServer(
                   {
@@ -414,21 +355,13 @@ describe("reader", function () {
                         }
 
                         expect(req.headers.get("x-custom")).toBe("hello");
-                        expect(req.headers.get("content-type")).toBe(
-                          "text/plain"
-                        );
-                        expect(req.headers.get("user-agent")).toBe(
-                          navigator.userAgent
-                        );
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
                         gc();
                         expect(req.headers.get("x-custom")).toBe("hello");
-                        expect(req.headers.get("content-type")).toBe(
-                          "text/plain"
-                        );
-                        expect(req.headers.get("user-agent")).toBe(
-                          navigator.userAgent
-                        );
+                        expect(req.headers.get("content-type")).toBe("text/plain");
+                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
                         const direct = {
                           type: "direct",
@@ -460,19 +393,16 @@ describe("reader", function () {
                           },
                         };
 
-                        return new Response(
-                          new ReadableStream(isDirectStream ? direct : web),
-                          {
-                            headers: req.headers,
-                          }
-                        );
+                        return new Response(new ReadableStream(isDirectStream ? direct : web), {
+                          headers: req.headers,
+                        });
                       } catch (e) {
                         console.error(e);
                         throw e;
                       }
                     },
                   },
-                  async (url) => {
+                  async url => {
                     gc();
                     const response = await fetch(url, {
                       body: huge,
@@ -485,27 +415,19 @@ describe("reader", function () {
                     });
                     huge = undefined;
                     expect(response.status).toBe(200);
-                    const response_body = new Uint8Array(
-                      await response.arrayBuffer()
-                    );
+                    const response_body = new Uint8Array(await response.arrayBuffer());
 
                     expect(response_body.byteLength).toBe(expectedSize);
-                    expect(Bun.SHA1.hash(response_body, "base64")).toBe(
-                      expectedHash
-                    );
+                    expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
 
                     gc();
                     if (!response.headers.has("content-type")) {
-                      console.error(
-                        Object.fromEntries(response.headers.entries())
-                      );
+                      console.error(Object.fromEntries(response.headers.entries()));
                     }
 
-                    expect(response.headers.get("content-type")).toBe(
-                      "text/plain"
-                    );
+                    expect(response.headers.get("content-type")).toBe("text/plain");
                     gc();
-                  }
+                  },
                 );
                 expect(called).toBe(true);
                 gc();

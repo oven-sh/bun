@@ -1,10 +1,10 @@
 const std = @import("std");
-const js_ast = @import("./js_ast.zig");
-const logger = @import("logger.zig");
-const js_lexer = @import("js_lexer.zig");
-const json_parser = @import("json_parser.zig");
+const js_ast = bun.JSAst;
+const logger = @import("bun").logger;
+const js_lexer = bun.js_lexer;
+const json_parser = bun.JSON;
 const fs = @import("fs.zig");
-const bun = @import("global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -33,9 +33,9 @@ const Globals = struct {
 };
 
 const defines_path = fs.Path.initWithNamespace("defines.json", "internal");
-pub const RawDefines = std.StringArrayHashMap(string);
-pub const UserDefines = std.StringHashMap(DefineData);
-pub const UserDefinesArray = std.StringArrayHashMap(DefineData);
+pub const RawDefines = bun.StringArrayHashMap(string);
+pub const UserDefines = bun.StringHashMap(DefineData);
+pub const UserDefinesArray = bun.StringArrayHashMap(DefineData);
 
 const Rewrites = struct {
     pub const global = "global";
@@ -197,8 +197,8 @@ var nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
 var inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
 
 pub const Define = struct {
-    identifiers: std.StringHashMap(IdentifierDefine),
-    dots: std.StringHashMap([]DotDefine),
+    identifiers: bun.StringHashMap(IdentifierDefine),
+    dots: bun.StringHashMap([]DotDefine),
     allocator: std.mem.Allocator,
 
     pub fn insertFromIterator(define: *Define, allocator: std.mem.Allocator, comptime Iterator: type, iter: Iterator) !void {
@@ -245,7 +245,7 @@ pub const Define = struct {
                         // TODO: do we need to allocate this?
                         .parts = parts,
                     });
-                    try define.dots.put(tail, list.toOwnedSlice());
+                    try define.dots.put(tail, try list.toOwnedSlice());
                 }
             } else {
 
@@ -258,8 +258,8 @@ pub const Define = struct {
     pub fn init(allocator: std.mem.Allocator, _user_defines: ?UserDefines, string_defines: ?UserDefinesArray) !*@This() {
         var define = try allocator.create(Define);
         define.allocator = allocator;
-        define.identifiers = std.StringHashMap(IdentifierDefine).init(allocator);
-        define.dots = std.StringHashMap([]DotDefine).init(allocator);
+        define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
+        define.dots = bun.StringHashMap([]DotDefine).init(allocator);
         try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
         try define.dots.ensureTotalCapacity(64);
 
@@ -283,7 +283,7 @@ pub const Define = struct {
                         .data = value_define,
                     });
 
-                    define.dots.putAssumeCapacity(key, list.toOwnedSlice());
+                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
                 } else {
                     var list = try std.ArrayList(DotDefine).initCapacity(allocator, 1);
                     list.appendAssumeCapacity(DotDefine{
@@ -291,7 +291,7 @@ pub const Define = struct {
                         .data = value_define,
                     });
 
-                    define.dots.putAssumeCapacity(key, list.toOwnedSlice());
+                    define.dots.putAssumeCapacity(key, try list.toOwnedSlice());
                 }
             }
         }

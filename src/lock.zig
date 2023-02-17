@@ -24,7 +24,7 @@ pub const Mutex = struct {
     inline fn acquireFast(self: *Mutex, comptime strong: bool) bool {
         // On x86, "lock bts" uses less i-cache & can be faster than "lock cmpxchg" below.
         if (comptime is_x86) {
-            return self.state.bitSet(@ctz(u32, LOCKED), .Acquire) == UNLOCKED;
+            return self.state.bitSet(@ctz(@as(u32, LOCKED)), .Acquire) == UNLOCKED;
         }
 
         const cas_fn = comptime switch (strong) {

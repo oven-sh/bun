@@ -1,7 +1,6 @@
 .DS_Store
 zig-cache
-*.wasm
-
+packages/*/*.wasm
 *.o
 *.a
 profile.json
@@ -104,3 +103,10 @@ src/runtime.version
 *.database
 *.db
 misctools/machbench
+*.big
+.eslintcache
+
+bun-webkit
+
+src/deps/c-ares/build
+src/bun.js/debug-bindings-obj

@@ -101,9 +101,15 @@ typedef void* JSContext;
 
 
 #ifdef IS_CALLBACK
-extern int64_t bun_call(JSContext, void* func,  void* thisValue, size_t len, const EncodedJSValue args[], void* exception);
-JSContext cachedJSContext;
-void* cachedCallbackFunction;
+void* callback_ctx;
+ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+// We wrap 
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
+static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
+  EncodedJSValue return_value;
+  return_value.asZigRepr = FFI_Callback_call(ctx, argCount, args);
+  return return_value;
+}
 #endif
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
@@ -115,10 +121,10 @@ static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_i
 uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
 int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
 
-EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* globalObject, uint64_t val);
-EncodedJSValue INT64_TO_JSVALUE_SLOW(void* globalObject, int64_t val);
-static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) __attribute__((__always_inline__));
-static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) __attribute__((__always_inline__));
+EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* jsGlobalObject, uint64_t val);
+EncodedJSValue INT64_TO_JSVALUE_SLOW(void* jsGlobalObject, int64_t val);
+static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) __attribute__((__always_inline__));
+static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) __attribute__((__always_inline__));
 
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
@@ -240,7 +246,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   return JSVALUE_TO_INT64_SLOW(value);
 }
 
-static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) {
+static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
   if (val < MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
@@ -249,10 +255,10 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
-  return UINT64_TO_JSVALUE_SLOW(globalObject, val);
+  return UINT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
-static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
+static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
   if (val >= -MAX_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
@@ -261,11 +267,11 @@ static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
     return DOUBLE_TO_JSVALUE((double)val);
   }
 
-  return INT64_TO_JSVALUE_SLOW(globalObject, val);
+  return INT64_TO_JSVALUE_SLOW(jsGlobalObject, val);
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame);
+ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 

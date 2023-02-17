@@ -22,26 +22,25 @@ var hmr = new FastHMR(4175696745, "react-context-value-func.tsx", FastRefresh), 
   const ContextProvider = ({ children }) => {
     const [cb, setCB] = React.useState(function() {
     });
-    const foo = true;
     return jsx(Context.Provider, {
       value: cb,
-      children: children(foo)
-    }, undefined, false, undefined, this);
+      children: children(true)
+    });
   };
   const ContextValue = ({}) => jsx(Context.Consumer, {
     children: (foo) => {
       if (foo)
         return jsx("div", {
           children: "Worked!"
-        }, undefined, false, undefined, this);
+        });
       throw `Value "${foo}"" should be true`;
     }
-  }, undefined, false, undefined, this);
+  });
   const TestComponent = () => jsx(ContextProvider, {
-    children: jsx(ContextValue, {}, undefined, false, undefined, this)
-  }, undefined, false, undefined, this);
+    children: jsx(ContextValue, {})
+  });
   function test() {
-    const foo = jsx(TestComponent, {}, undefined, false, undefined, this);
+    const foo = jsx(TestComponent, {});
     return testDone(import.meta.url);
   }
   hmr.exportAll({

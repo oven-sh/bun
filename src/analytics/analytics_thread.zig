@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -12,13 +12,13 @@ const C = bun.C;
 
 const sync = @import("../sync.zig");
 const std = @import("std");
-const HTTP = @import("http");
+const HTTP = @import("bun").HTTP;
 const NetworkThread = HTTP.NetworkThread;
 const URL = @import("../url.zig").URL;
 const Fs = @import("../fs.zig");
 const Analytics = @import("./analytics_schema.zig").analytics;
 const Writer = @import("./analytics_schema.zig").Writer;
-const Headers = @import("http").Headers;
+const Headers = @import("bun").HTTP.Headers;
 const Futex = @import("../futex.zig");
 const Semver = @import("../install/semver.zig");
 
@@ -52,6 +52,7 @@ pub const Features = struct {
     pub var external = false;
     pub var fetch = false;
     pub var bunfig = false;
+    pub var extracted_packages = false;
 
     pub fn formatter() Formatter {
         return Formatter{};
@@ -79,6 +80,7 @@ pub const Features = struct {
                 "external",
                 "fetch",
                 "bunfig",
+                "extracted_packages",
             };
             inline for (fields) |field| {
                 if (@field(Features, field)) {
@@ -291,10 +293,10 @@ pub const GenerateHeader = struct {
             }
             _ = forOS();
             const release = std.mem.span(&linux_os_name.release);
-            var sliced_string = Semver.SlicedString.init(release, release);
-            var result = Semver.Version.parse(sliced_string, bun.default_allocator);
+            const sliced_string = Semver.SlicedString.init(release, release);
+            const result = Semver.Version.parse(sliced_string, bun.default_allocator);
             // we only care about major, minor, patch so we don't care about the string
-            return result.version;
+            return result.version.fill();
         }
 
         pub fn forLinux() Analytics.Platform {
@@ -463,7 +465,7 @@ pub const EventList = struct {
         var in_buffer = &this.in_buffer;
         var buffer_writer = in_buffer.writer();
         var analytics_writer = AnalyticsWriter.init(&buffer_writer);
-        const Root = @import("root");
+        const Root = @import("bun");
         const start_time: i128 = if (@hasDecl(Root, "start_time"))
             Root.start_time
         else

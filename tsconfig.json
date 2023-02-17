@@ -1,11 +1,28 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "esnext",
-    "target": "esnext",
-    "typeRoots": ["./types"],
-    "types": ["bun-types"],
+    "experimentalDecorators": true,
+    "noEmit": true,
+    // "skipLibCheck": true,
     "allowJs": true
   },
-  "exclude": ["src"]
+  "include": [
+    ".",
+    "**/*.d.ts"
+  ],
+  "exclude": [
+    "src/test",
+    "packages",
+    "bench",
+    "examples/react-fast-refresh-test",
+    "examples/macros",
+    "test/bun.js/solid-dom-fixtures",
+    "test/bun.js/bundled",
+    // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
+    "src/bun.js/builtins",
+    "src/api/demo",
+    "test/snapshots",
+    "test/snapshots-no-hmr",
+    "node_modules"
+  ]
 }

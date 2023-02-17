@@ -1,4 +1,4 @@
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -362,7 +362,7 @@ pub const EditorContext = struct {
         var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         try editor_.open(
             path,
-            try std.os.getFdPath(opened.handle, &path_buf),
+            try bun.getFdPath(opened.handle, &path_buf),
             line,
             column,
             default_allocator,

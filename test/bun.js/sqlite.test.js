@@ -1,15 +1,15 @@
 import { expect, it, describe } from "bun:test";
 import { Database, constants } from "bun:sqlite";
-import { existsSync, fstat, writeFileSync } from "fs";
-var encode = (text) => new TextEncoder().encode(text)
+import { existsSync, fstat, realpathSync, rmSync, writeFileSync } from "fs";
+import { spawnSync } from "bun";
+import { bunExe } from "bunExe";
+import { tmpdir } from "os";
+var encode = text => new TextEncoder().encode(text);
 
 it("Database.open", () => {
   // in a folder which doesn't exist
   try {
-    Database.open(
-      "/this/database/does/not/exist.sqlite",
-      constants.SQLITE_OPEN_READWRITE
-    );
+    Database.open("/this/database/does/not/exist.sqlite", constants.SQLITE_OPEN_READWRITE);
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -17,10 +17,7 @@ it("Database.open", () => {
 
   // in a file which doesn't exist
   try {
-    Database.open(
-      `/tmp/database-${Math.random()}.sqlite`,
-      constants.SQLITE_OPEN_READWRITE
-    );
+    Database.open(`/tmp/database-${Math.random()}.sqlite`, constants.SQLITE_OPEN_READWRITE);
     throw new Error("Expected an error to be thrown");
   } catch (error) {
     expect(error.message).toBe("unable to open database file");
@@ -55,36 +52,31 @@ it("Database.open", () => {
   new Database().close();
 });
 
+it("upsert cross-process, see #1366", () => {
+  const dir = realpathSync(tmpdir()) + "/";
+  const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {
+    env: {
+      SQLITE_DIR: dir,
+    },
+    stderr: "inherit",
+  });
+  expect(exitCode).toBe(0);
+
+  const db2 = Database.open(dir + "get-persist.sqlite");
+
+  expect(db2.query(`SELECT id FROM examples`).all()).toEqual([{ id: "hello" }, { id: "world" }]);
+});
+
 it("creates", () => {
   const db = Database.open(":memory:");
   db.exec(
-    "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)"
+    "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER, created TEXT, deci FLOAT, blobby BLOB)",
   );
-  const stmt = db.prepare(
-    "INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)"
-  );
+  const stmt = db.prepare("INSERT INTO test (name, value, deci, created, blobby) VALUES (?, ?, ?, ?, ?)");
 
-  stmt.run([
-    "foo",
-    1,
-    Math.fround(1.111),
-    new Date(1995, 12, 19).toISOString(),
-    encode("Hello World"),
-  ]);
-  stmt.run([
-    "bar",
-    2,
-    Math.fround(2.222),
-    new Date(1995, 12, 19).toISOString(),
-    encode("Hello World"),
-  ]);
-  stmt.run([
-    "baz",
-    3,
-    Math.fround(3.333),
-    new Date(1995, 12, 19).toISOString(),
-    encode("Hello World"),
-  ]);
+  stmt.run(["foo", 1, Math.fround(1.111), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
+  stmt.run(["bar", 2, Math.fround(2.222), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
+  stmt.run(["baz", 3, Math.fround(3.333), new Date(1995, 12, 19).toISOString(), encode("Hello World")]);
 
   stmt.finalize();
 
@@ -97,7 +89,7 @@ it("creates", () => {
       created: new Date(1995, 12, 19).toISOString(),
       deci: Math.fround(1.111),
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   expect(JSON.stringify(stmt2.all())).toBe(
@@ -126,12 +118,19 @@ it("creates", () => {
         deci: Math.fround(3.333),
         blobby: encode("Hello World"),
       },
-    ])
+    ]),
   );
   expect(stmt2.run()).toBe(undefined);
 
   // not necessary to run but it's a good practice
   stmt2.finalize();
+});
+
+it("int52", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, int64 INTEGER)");
+  db.run("INSERT INTO test (int64) VALUES (?)", Number.MAX_SAFE_INTEGER);
+  expect(db.query("SELECT * FROM test").get().int64).toBe(Number.MAX_SAFE_INTEGER);
 });
 
 it("typechecks", () => {
@@ -142,7 +141,7 @@ it("typechecks", () => {
 
   const q = db.prepare("SELECT * FROM test WHERE (name = ?)");
 
-  var expectfail = (val) => {
+  var expectfail = val => {
     try {
       q.run([val]);
       throw new Error("Expected error");
@@ -193,7 +192,7 @@ it("db.query supports TypedArray", () => {
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   const stmt3 = db.prepare("SELECT * FROM test WHERE (blobby = ?)");
@@ -202,20 +201,14 @@ it("db.query supports TypedArray", () => {
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
-  expect(
-    JSON.stringify(
-      db
-        .query("SELECT * FROM test WHERE (blobby = ?)")
-        .get([encode("Hello World")])
-    )
-  ).toBe(
+  expect(JSON.stringify(db.query("SELECT * FROM test WHERE (blobby = ?)").get([encode("Hello World")]))).toBe(
     JSON.stringify({
       id: 1,
       blobby: encode("Hello World"),
-    })
+    }),
   );
 
   expect(stmt3.get([encode("Hello World NOT")])).toBe(null);
@@ -235,7 +228,7 @@ it("supports serialize/deserialize", () => {
     JSON.stringify({
       id: 1,
       name: "Hello",
-    })
+    }),
   );
 
   expect(JSON.stringify(stmt.all())).toBe(
@@ -248,7 +241,7 @@ it("supports serialize/deserialize", () => {
         id: 2,
         name: "World",
       },
-    ])
+    ]),
   );
   db2.exec("insert into test (name) values ('foo')");
   expect(JSON.stringify(stmt.all())).toBe(
@@ -265,7 +258,7 @@ it("supports serialize/deserialize", () => {
         id: 3,
         name: "foo",
       },
-    ])
+    ]),
   );
 
   const db3 = new Database(input, { readonly: true });
@@ -330,20 +323,12 @@ it("db.query()", () => {
   }
 
   // check that it supports multiple arguments
-  expect(
-    JSON.stringify(
-      db
-        .query("SELECT * FROM test where (name = ? OR name = ?)")
-        .all(["Hello", "Fooooo"])
-    )
-  ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
-  expect(
-    JSON.stringify(
-      db
-        .query("SELECT * FROM test where (name = ? OR name = ?)")
-        .all("Hello", "Fooooo")
-    )
-  ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
+  expect(JSON.stringify(db.query("SELECT * FROM test where (name = ? OR name = ?)").all(["Hello", "Fooooo"]))).toBe(
+    JSON.stringify([{ id: 1, name: "Hello" }]),
+  );
+  expect(JSON.stringify(db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello", "Fooooo"))).toBe(
+    JSON.stringify([{ id: 1, name: "Hello" }]),
+  );
 
   // throws if insufficeint arguments
   try {
@@ -355,13 +340,11 @@ it("db.query()", () => {
   // named parameters
   expect(
     JSON.stringify(
-      db
-        .query("SELECT * FROM test where (name = $hello OR name = $goodbye)")
-        .all({
-          $hello: "Hello",
-          $goodbye: "Fooooo",
-        })
-    )
+      db.query("SELECT * FROM test where (name = $hello OR name = $goodbye)").all({
+        $hello: "Hello",
+        $goodbye: "Fooooo",
+      }),
+    ),
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
   db.close();
@@ -385,16 +368,12 @@ it("db.query()", () => {
 it("db.transaction()", () => {
   const db = Database.open(":memory:");
 
-  db.exec(
-    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
-  );
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
 
-  const insert = db.prepare(
-    "INSERT INTO cats (name, age) VALUES (@name, @age)"
-  );
+  const insert = db.prepare("INSERT INTO cats (name, age) VALUES (@name, @age)");
 
   expect(db.inTransaction).toBe(false);
-  const insertMany = db.transaction((cats) => {
+  const insertMany = db.transaction(cats => {
     expect(db.inTransaction).toBe(true);
     try {
       for (const cat of cats) insert.run(cat);
@@ -433,9 +412,7 @@ it("db.transaction()", () => {
 it("inlineCapacity #987", async () => {
   const path = "/tmp/bun-987.db";
   if (!existsSync(path)) {
-    const arrayBuffer = await (
-      await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")
-    ).arrayBuffer();
+    const arrayBuffer = await (await fetch("https://github.com/oven-sh/bun/files/9265429/logs.log")).arrayBuffer();
     writeFileSync(path, arrayBuffer);
   }
 
@@ -484,4 +461,46 @@ it("inlineCapacity #987", async () => {
   name`;
 
   expect(Object.keys(db.query(query).all()[0]).length).toBe(99);
+});
+
+// https://github.com/oven-sh/bun/issues/1553
+it("latin1 supplement chars", () => {
+  const db = new Database();
+  db.run("CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "Español");
+  db.run("INSERT INTO foo (greeting) VALUES (?)", "¿Qué sucedió?");
+
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      greeting: "Welcome to bun!",
+    },
+    {
+      id: 2,
+      greeting: "Español",
+    },
+    {
+      id: 3,
+      greeting: "¿Qué sucedió?",
+    },
+  ]);
+
+  // test that it doesn't break when we do a structure transition
+  db.query("SELECT * FROM foo").all()[0].booop = true;
+  db.query("SELECT * FROM foo").all()[0].beep = true;
+  expect(db.query("SELECT * FROM foo").all()).toEqual([
+    {
+      id: 1,
+      greeting: "Welcome to bun!",
+    },
+    {
+      id: 2,
+      greeting: "Español",
+    },
+    {
+      id: 3,
+      greeting: "¿Qué sucedió?",
+    },
+  ]);
 });

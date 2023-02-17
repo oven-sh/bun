@@ -59,19 +59,19 @@ Ref<AbortSignal> AbortSignal::abort(JSDOMGlobalObject& globalObject, ScriptExecu
 Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t milliseconds)
 {
     auto signal = adoptRef(*new AbortSignal(&context));
-    // signal->setHasActiveTimeoutTimer(true);
-    // auto action = [signal](ScriptExecutionContext& context) mutable {
-    //     signal->setHasActiveTimeoutTimer(false);
+    signal->setHasActiveTimeoutTimer(true);
+    auto action = [signal](ScriptExecutionContext& context) mutable {
+        signal->setHasActiveTimeoutTimer(false);
 
-    //     auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.globalObject());
-    //     if (!globalObject)
-    //         return;
+        auto* globalObject = JSC::jsCast<JSDOMGlobalObject*>(context.jsGlobalObject());
+        if (!globalObject)
+            return;
 
-    //     auto& vm = globalObject->vm();
-    //     Locker locker { vm.apiLock() };
-    //     signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
-    // };
-    // DOMTimer::install(context, WTFMove(action), Seconds::fromMilliseconds(milliseconds), true);
+        auto& vm = globalObject->vm();
+        Locker locker { vm.apiLock() };
+        signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
+    };
+    context.postTaskOnTimeout(WTFMove(action), Seconds::fromMilliseconds(milliseconds));
     return signal;
 }
 
@@ -103,7 +103,13 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     Ref protectedThis { *this };
     auto algorithms = std::exchange(m_algorithms, {});
     for (auto& algorithm : algorithms)
-        algorithm();
+        algorithm(reason);
+
+    auto callbacks = std::exchange(m_native_callbacks, {});
+    for (auto callback : callbacks) {
+        const auto [ ctx, func ] = callback;
+        func(ctx, JSC::JSValue::encode(reason));
+    }
 
     // 5. Fire an event named abort at signal.
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
@@ -122,9 +128,15 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
     ASSERT(!m_followingSignal);
     m_followingSignal = signal;
-    signal.addAlgorithm([weakThis = WeakPtr { this }] {
-        if (weakThis)
-            weakThis->signalAbort(weakThis->m_followingSignal ? weakThis->m_followingSignal->reason().getValue() : JSC::jsUndefined());
+    signal.addAlgorithm([weakThis = WeakPtr { this }](JSC::JSValue reason) {
+        if (weakThis) {
+            if (reason.isEmpty() || reason.isUndefined()) {
+                weakThis->signalAbort(weakThis->m_followingSignal ? weakThis->m_followingSignal->reason().getValue()
+                                                                  : JSC::jsUndefined());
+            } else {
+                weakThis->signalAbort(reason);
+            }
+        }
     });
 }
 
@@ -136,11 +148,11 @@ void AbortSignal::eventListenersDidChange()
 bool AbortSignal::whenSignalAborted(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
-        algorithm->handleEvent();
+        algorithm->handleEvent(signal.m_reason.getValue());
         return true;
     }
-    signal.addAlgorithm([algorithm = WTFMove(algorithm)]() mutable {
-        algorithm->handleEvent();
+    signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {
+        algorithm->handleEvent(value);
     });
     return false;
 }

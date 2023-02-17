@@ -2,17 +2,15 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
-const bun = @import("./global.zig");
+const bun = @import("bun");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
-const AsyncIO = @import("io");
 
 const Environment = bun.Environment;
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
-pub const OnSpawnCallback = fn (ctx: ?*anyopaque) ?*anyopaque;
+pub const OnSpawnCallback = *const fn (ctx: ?*anyopaque) ?*anyopaque;
 
-io: ?*AsyncIO = null,
 sleep_on_idle_network_thread: bool = true,
 /// executed on the thread
 on_thread_spawn: ?OnSpawnCallback = null,
@@ -75,7 +73,7 @@ pub fn deinit(self: *ThreadPool) void {
 /// The user provides a `callback` which is invoked when the *Task can run on a thread.
 pub const Task = struct {
     node: Node = .{},
-    callback: fn (*Task) void,
+    callback: *const (fn (*Task) void),
 };
 
 /// An unordered collection of Tasks which can be submitted for scheduling as a group.
@@ -222,23 +220,12 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
     }
 }
 
-noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
-    if (self.sleep_on_idle_network_thread and self.io != null) {
-        return _wait(self, _is_waking, true);
-    }
-
-    return _wait(self, _is_waking, false);
-}
-
-pub fn waitForIO(_: *ThreadPool) void {}
-
 // sleep_on_idle seems to impact `bun install` performance negatively
 // so we can just not sleep for that
-fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) error{Shutdown}!bool {
+noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
     var is_idle = false;
     var is_waking = _is_waking;
     var sync = @bitCast(Sync, self.sync.load(.Monotonic));
-    var checked_count: usize = 0;
 
     while (true) {
         if (sync.state == .shutdown) return error.Shutdown;
@@ -261,18 +248,8 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                 .Acquire,
                 .Monotonic,
             ) orelse {
-                if (self.io) |io| {
-                    io.tick() catch {};
-                }
-
                 return is_waking or (sync.state == .signaled);
             });
-
-            // No notification to consume.
-            // Mark this thread as idle before sleeping on the idle_event.
-            if (self.io) |io| {
-                io.tick() catch {};
-            }
         } else if (!is_idle) {
             var new_sync = sync;
             new_sync.idle += 1;
@@ -289,42 +266,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                 is_idle = true;
                 continue;
             });
-
-            // Wait for a signal by either notify() or shutdown() without wasting cpu cycles.
-            // TODO: Add I/O polling here.
-            if (self.io) |io| {
-                io.tick() catch {};
-            }
         } else {
-            if (self.io) |io| {
-                if (comptime Environment.isLinux)
-                    unreachable;
-
-                const HTTP = @import("http");
-                io.tick() catch {};
-
-                if (HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > 0) {
-                    var remaining_ticks: isize = 5;
-
-                    while (remaining_ticks > 0 and HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) : (remaining_ticks -= 1) {
-                        io.run_for_ns(std.time.ns_per_ms * 2) catch {};
-                        io.tick() catch {};
-                    }
-                }
-
-                if (sleep_on_idle and io.hasNoWork()) {
-                    if (checked_count > 99999) {
-                        HTTP.cleanup(false);
-                        self.idle_event.waitFor(comptime std.time.ns_per_s * 60);
-                    } else {
-                        checked_count += 1;
-                    }
-                }
-
-                sync = @bitCast(Sync, self.sync.load(.Monotonic));
-                continue;
-            }
-
             self.idle_event.wait();
             sync = @bitCast(Sync, self.sync.load(.Monotonic));
         }
@@ -409,7 +351,7 @@ fn join(self: *ThreadPool) void {
     thread.join_event.notify();
 }
 
-const Output = @import("./global.zig").Output;
+const Output = @import("bun").Output;
 
 pub const Thread = struct {
     next: ?*Thread = null,
@@ -471,11 +413,6 @@ pub const Thread = struct {
         // Then the global queue
         if (self.run_buffer.consume(&thread_pool.run_queue)) |stole| {
             return stole;
-        }
-
-        // TODO: add optimistic I/O polling here
-        if (thread_pool.io) |io| {
-            io.tick() catch {};
         }
 
         // Then try work stealing from other threads

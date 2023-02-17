@@ -1,5 +1,4 @@
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
-
 const symbolAsyncIterator = Symbol.asyncIterator;
 
 class ERR_INVALID_ARG_TYPE extends Error {
@@ -29,10 +28,7 @@ function validateBoolean(value, name) {
 }
 
 function validateAbortSignal(signal, name) {
-  if (
-    typeof signal !== "undefined" &&
-    (signal === null || typeof signal !== "object" || !("aborted" in signal))
-  ) {
+  if (typeof signal !== "undefined" && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
     throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
   }
 }
@@ -235,8 +231,4 @@ function setIntervalPromise(after = 1, value, options = {}) {
   }
 }
 
-export {
-  setTimeoutPromise as setTimeout,
-  setImmediatePromise as setImmediate,
-  setIntervalPromise as setInterval,
-};
+export { setTimeoutPromise as setTimeout, setImmediatePromise as setImmediate, setIntervalPromise as setInterval };

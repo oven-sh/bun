@@ -26,6 +26,7 @@ class EventLoopTask;
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
 #include "WebCoreJSBuiltinInternals.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include "ZigConsoleClient.h"
 
@@ -34,7 +35,16 @@ class EventLoopTask;
 #include "DOMIsoSubspaces.h"
 #include "BunPlugin.h"
 
+#include "ErrorStackTrace.h"
+#include "CallSite.h"
+#include "CallSitePrototype.h"
+
+namespace WebCore {
+class SubtleCrypto;
+}
+
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+extern "C" void Bun__reportUnhandledError(JSGlobalObject*, EncodedJSValue);
 // defined in ModuleLoader.cpp
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
@@ -58,6 +68,8 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalO
 
 namespace Zig {
 
+class JSCStackTrace;
+
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
@@ -77,9 +89,9 @@ public:
         return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = std::forward<decltype(space)>(space); },
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
     }
 
@@ -138,6 +150,7 @@ public:
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
     void queueTask(WebCore::EventLoopTask* task);
+    void queueTaskOnTimeout(WebCore::EventLoopTask* task, int timeout);
     void queueTaskConcurrently(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
@@ -153,9 +166,11 @@ public:
 
     void clearDOMGuardedObjects();
 
+    static void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ObjectInitializationScope& objectScope, JSCStackTrace& stackTrace, JSC::JSArray* callSites);
+    JSC::JSValue formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, ZigStackFrame remappedStackFrames[]);
+
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
-    static void queueMicrotaskToEventLoop(JSC::JSGlobalObject& global, Ref<JSC::Microtask>&& task);
     static JSC::JSInternalPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*,
         JSC::JSString* moduleNameValue,
         JSC::JSValue parameters,
@@ -182,6 +197,11 @@ public:
     JSC::JSObject* FileSink() { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableFileSinkControllerPrototype() { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
+
+    JSC::Structure* JSBufferStructure() { return m_JSBufferClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* JSBufferConstructor() { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue JSBufferPrototype() { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::Structure* JSBufferSubclassStructure() { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
@@ -210,15 +230,26 @@ public:
     JSC::JSObject* JSReadableState() { return m_JSReadableStateClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSReadableStatePrototype() { return m_JSReadableStateClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* OnigurumaRegExpStructure() { return m_OnigurumaRegExpClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSValue OnigurumaRegExpPrototype() { return m_OnigurumaRegExpClassStructure.prototypeInitializedOnMainThread(this); }
-    JSC::JSObject* OnigurumaRegExpConstructor() { return m_OnigurumaRegExpClassStructure.constructorInitializedOnMainThread(this); }
-
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
-    JSC::JSObject* encodeIntoObjectPrototype() { return m_encodeIntoObjectPrototype.getInitializedOnMainThread(this); }
+    JSC::Structure* encodeIntoObjectStructure() { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
+
+    JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
+    JSC::JSObject* primordialsObject() { return m_primordialsObject.getInitializedOnMainThread(this); }
+
+    JSC::JSFunction* performMicrotaskFunction() { return m_performMicrotaskFunction.getInitializedOnMainThread(this); }
+    JSC::JSFunction* performMicrotaskVariadicFunction() { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
+
+    JSC::JSFunction* emitReadableNextTickFunction() { return m_emitReadableNextTickFunction.getInitializedOnMainThread(this); }
+
+    Structure* requireResolveFunctionStructure() { return m_requireResolveFunctionStructure.getInitializedOnMainThread(this); }
+    JSObject* requireResolveFunctionPrototype() { return m_resolveFunctionPrototype.getInitializedOnMainThread(this); }
+
+    JSFunction* bunSleepThenCallback() { return m_bunSleepThenCallback.getInitializedOnMainThread(this); }
+
+    JSObject* dnsObject() { return m_dnsObject.getInitializedOnMainThread(this); }
 
     JSC::JSObject* processObject()
     {
@@ -269,59 +300,13 @@ public:
 
         Bun__TestScope__onReject,
         Bun__TestScope__onResolve,
-    };
-    static constexpr size_t promiseFunctionsSize = 20;
 
-    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
-    {
-        if (handler == Bun__HTTPRequestContext__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onReject;
-        } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContext__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onResolve;
-        } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
-        } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
-        } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
-        } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
-        } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
-            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
-        } else if (handler == jsFunctionOnLoadObjectResultResolve) {
-            return PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
-        } else if (handler == jsFunctionOnLoadObjectResultReject) {
-            return PromiseFunctions::jsFunctionOnLoadObjectResultReject;
-        } else if (handler == Bun__TestScope__onReject) {
-            return PromiseFunctions::Bun__TestScope__onReject;
-        } else if (handler == Bun__TestScope__onResolve) {
-            return PromiseFunctions::Bun__TestScope__onResolve;
-        } else {
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-    }
+        CallbackJob__onResolve,
+        CallbackJob__onReject,
+    };
+    static constexpr size_t promiseFunctionsSize = 22;
+
+    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 
     JSFunction* thenable(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
     {
@@ -337,20 +322,31 @@ public:
         return func;
     }
 
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
+    mutable WriteBarrier<JSFunction> m_assignToStream;
+    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
-    mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
-    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
-    mutable WriteBarrier<JSFunction> m_assignToStream;
-    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
-
+    mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
-    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
-    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
-    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
+    mutable WriteBarrier<Unknown> m_JSDOMFormDataSetterValue;
+
+    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     JSObject* navigatorObject();
 
@@ -385,6 +381,13 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
+    // NAPI instance data
+    // This is not a correct implementation
+    // Addon modules can override each other's data
+    void* napiInstanceData = nullptr;
+    void* napiInstanceDataFinalizer = nullptr;
+    void* napiInstanceDataFinalizerHint = nullptr;
+
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
@@ -399,105 +402,69 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
-    LazyClassStructure m_JSFFIFunctionStructure;
-    LazyClassStructure m_NapiClassStructure;
+
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
+    LazyClassStructure m_JSBufferListClassStructure;
+    LazyClassStructure m_JSFFIFunctionStructure;
+    LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
-    LazyClassStructure m_JSFileSinkClassStructure;
-    LazyClassStructure m_JSBufferListClassStructure;
-    LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
-    LazyClassStructure m_OnigurumaRegExpClassStructure;
+    LazyClassStructure m_JSStringDecoderClassStructure;
+    LazyClassStructure m_NapiClassStructure;
+    LazyClassStructure m_callSiteStructure;
+    LazyClassStructure m_JSBufferClassStructure;
 
-    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
-
-    LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
-
-    LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
-
-    LazyProperty<JSGlobalObject, JSObject> m_processObject;
-    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
+    /**
+     * WARNING: You must update visitChildrenImpl() if you add a new field.
+     *
+     * That informs the garbage collector that these fields exist. If you don't
+     * do that, the garbage collector will not know about these fields and will
+     * not trace them. This will lead to crashes and very strange behavior at runtime.
+     *
+     * For example, if you don't add the queueMicrotask functions to visitChildrenImpl(),
+     * those callbacks will eventually never be called anymore. But it'll work the first time!
+     */
+    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
+    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_performMicrotaskVariadicFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_emitReadableNextTickFunction;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
+    LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
-
+    LazyProperty<JSGlobalObject, JSObject> m_primordialsObject;
+    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
+    LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
-
-    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
-
-    LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;
-
-    // LazyProperty<JSGlobalObject, WebCore::JSEventTarget> m_eventTarget;
-
-    JSClassRef m_dotEnvClassRef;
+    LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, JSC::Structure> m_requireResolveFunctionStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_resolveFunctionPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_dnsObject;
+    LazyProperty<JSGlobalObject, JSFunction> m_bunSleepThenCallback;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
+
+    WebCore::SubtleCrypto* crypto = nullptr;
+
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
     WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
-};
-
-class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
-public:
-    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
-    }
-
-    void call(JSC::JSGlobalObject* globalObject)
-    {
-
-        JSC::VM& vm = globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
-        : m_task { WTFMove(task) }
-    {
-    }
-
-    Ref<JSC::Microtask> m_task;
-};
-
-class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
-public:
-    static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
-        Ref<JSC::Microtask>&& task)
-    {
-        return adoptRef(*new JSMicrotaskCallback(globalObject, WTFMove(task).leakRef()));
-    }
-
-    void call()
-    {
-        auto* globalObject = m_globalObject.get();
-        if (UNLIKELY(!globalObject)) {
-            delete this;
-            return;
-        }
-
-        JSC::VM& vm = m_globalObject->vm();
-        auto task = &m_task.leakRef();
-        task->run(globalObject);
-
-        delete this;
-    }
-
-private:
-    JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { &globalObject }
-        , m_task { WTFMove(task) }
-    {
-    }
-
-    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
-    Ref<JSC::Microtask> m_task;
 };
 
 } // namespace Zig

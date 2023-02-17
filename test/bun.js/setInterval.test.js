@@ -6,13 +6,24 @@ it("setInterval", async () => {
   const result = await new Promise((resolve, reject) => {
     start = performance.now();
 
-    var id = setInterval(() => {
-      counter++;
-      if (counter === 10) {
-        resolve(counter);
-        clearInterval(id);
-      }
-    }, 1);
+    var id = setInterval(
+      (...args) => {
+        counter++;
+        if (counter === 10) {
+          resolve(counter);
+          clearInterval(id);
+        }
+        try {
+          expect(args.length).toBe(1);
+          expect(args[0]).toBe("foo");
+        } catch (err) {
+          reject(err);
+          clearInterval(id);
+        }
+      },
+      1,
+      "foo",
+    );
   });
 
   expect(result).toBe(10);
@@ -32,4 +43,20 @@ it("clearInterval", async () => {
     }, 10);
   });
   expect(called).toBe(false);
+});
+
+it("async setInterval", async () => {
+  var remaining = 5;
+  await new Promise((resolve, reject) => {
+    queueMicrotask(() => {
+      var id = setInterval(async () => {
+        await 1;
+        remaining--;
+        if (remaining === 0) {
+          clearInterval(id);
+          resolve();
+        }
+      }, 1);
+    });
+  });
 });

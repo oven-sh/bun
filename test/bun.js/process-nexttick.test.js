@@ -59,10 +59,7 @@ it("process.nextTick", async () => {
       passed = exception instanceof TypeError;
     }
 
-    if (!passed)
-      throw new Error(
-        "queueMicrotask should throw a TypeError if the argument is not a function"
-      );
+    if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is not a function");
   }
 
   {
@@ -73,21 +70,30 @@ it("process.nextTick", async () => {
       passed = exception instanceof TypeError;
     }
 
-    if (!passed)
-      throw new Error(
-        "queueMicrotask should throw a TypeError if the argument is empty"
-      );
+    if (!passed) throw new Error("queueMicrotask should throw a TypeError if the argument is empty");
   }
+});
 
+it("process.nextTick 2 args", async () => {
   await new Promise((resolve, reject) => {
     process.nextTick(
       (first, second) => {
-        if (first !== 12345 || second !== "hello")
-          reject(new Error("process.nextTick called with wrong arguments"));
+        if (first !== 12345 || second !== "hello") reject(new Error("process.nextTick called with wrong arguments"));
         resolve(true);
       },
       12345,
-      "hello"
+      "hello",
     );
+  });
+});
+
+it("process.nextTick 5 args", async () => {
+  await new Promise((resolve, reject) => {
+    var args = [12345, "hello", "hello", "hello", 5];
+    process.nextTick((...receivedArgs) => {
+      if (!args.every((arg, index) => arg === receivedArgs[index]))
+        reject(new Error("process.nextTick called with wrong arguments"));
+      resolve(true);
+    }, ...args);
   });
 });

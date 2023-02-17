@@ -62,7 +62,6 @@
 #include <wtf/SortedArrayMap.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -76,7 +75,7 @@ String convertEnumerationToString(CryptoKey::Type enumerationValue)
     static_assert(static_cast<size_t>(CryptoKey::Type::Public) == 0, "CryptoKey::Type::Public is not 0 as expected");
     static_assert(static_cast<size_t>(CryptoKey::Type::Private) == 1, "CryptoKey::Type::Private is not 1 as expected");
     static_assert(static_cast<size_t>(CryptoKey::Type::Secret) == 2, "CryptoKey::Type::Secret is not 2 as expected");
-    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));
+    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
 
@@ -165,8 +164,7 @@ template<> void JSCryptoKeyDOMConstructor::initializeProperties(VM& vm, JSDOMGlo
 
 /* Hash table for prototype */
 
-static const HashTableValue JSCryptoKeyPrototypeTableValues[] =
-{
+static const HashTableValue JSCryptoKeyPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKeyConstructor, 0 } },
     { "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_type, 0 } },
     { "extractable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCryptoKey_extractable, 0 } },
@@ -196,7 +194,6 @@ void JSCryptoKey::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, CryptoKey>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 }
 
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -220,7 +217,7 @@ void JSCryptoKey::destroy(JSC::JSCell* cell)
     thisObject->JSCryptoKey::~JSCryptoKey();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -238,7 +235,7 @@ static inline JSValue jsCryptoKey_typeGetter(JSGlobalObject& lexicalGlobalObject
     RELEASE_AND_RETURN(throwScope, (toJS<IDLEnumeration<CryptoKey::Type>>(lexicalGlobalObject, throwScope, impl.type())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_typeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -251,7 +248,7 @@ static inline JSValue jsCryptoKey_extractableGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.extractable())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_extractableGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -264,12 +261,12 @@ static inline JSValue jsCryptoKey_algorithmGetter(JSGlobalObject& lexicalGlobalO
         return cachedValue;
     auto& impl = thisObject.wrapped();
     JSValue result = toJS<IDLUnion<IDLDictionary<CryptoKeyAlgorithm>, IDLDictionary<CryptoAesKeyAlgorithm>, IDLDictionary<CryptoEcKeyAlgorithm>, IDLDictionary<CryptoHmacKeyAlgorithm>, IDLDictionary<CryptoRsaHashedKeyAlgorithm>, IDLDictionary<CryptoRsaKeyAlgorithm>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.algorithm());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_algorithm.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_algorithmGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -282,24 +279,24 @@ static inline JSValue jsCryptoKey_usagesGetter(JSGlobalObject& lexicalGlobalObje
         return cachedValue;
     auto& impl = thisObject.wrapped();
     JSValue result = toJS<IDLSequence<IDLEnumeration<CryptoKeyUsage>>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.usages());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_usages.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_usagesGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForCryptoKey.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoKey = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForCryptoKey.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForCryptoKey = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForCryptoKey.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoKey = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForCryptoKey.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoKey = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

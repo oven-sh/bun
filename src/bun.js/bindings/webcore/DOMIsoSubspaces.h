@@ -16,7 +16,6 @@ class DOMIsoSubspaces {
 public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
-    std::unique_ptr<IsoSubspace> m_subspaceForBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
@@ -29,7 +28,9 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForStringDecoder;
     std::unique_ptr<IsoSubspace> m_subspaceForReadableState;
     std::unique_ptr<IsoSubspace> m_subspaceForPendingVirtualModuleResult;
-    std::unique_ptr<IsoSubspace> m_subspaceForOnigurumaRegExp;
+    std::unique_ptr<IsoSubspace> m_subspaceForCallSite;
+    std::unique_ptr<IsoSubspace> m_subspaceForNapiExternal;
+    std::unique_ptr<IsoSubspace> m_subspaceForRequireResolveFunction;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -466,8 +467,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForFileList;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReader;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileReaderSync;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
-    // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
+    std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenList;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMTokenListIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;

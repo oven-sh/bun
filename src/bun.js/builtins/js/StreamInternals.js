@@ -256,10 +256,7 @@ function enqueueValueWithSize(queue, value, size)
 function peekQueueValue(queue)
 {
     "use strict";
-
-    @assert(queue.content.isNotEmpty());
-
-    return queue.peek()?.value;
+    return queue.content.peek()?.value;
 }
 
 function resetQueue(queue)
@@ -274,9 +271,11 @@ function resetQueue(queue)
 
 function extractSizeAlgorithm(strategy)
 {
-    if (!("size" in strategy))
+    const sizeAlgorithm = strategy.size;
+
+    if (sizeAlgorithm === @undefined)
         return () => 1;
-    const sizeAlgorithm = strategy["size"];
+
     if (typeof sizeAlgorithm !== "function")
         @throwTypeError("strategy.size must be a function");
 
@@ -285,9 +284,11 @@ function extractSizeAlgorithm(strategy)
 
 function extractHighWaterMark(strategy, defaultHWM)
 {
-    if (!("highWaterMark" in strategy))
+    const highWaterMark = strategy.highWaterMark;
+
+    if (highWaterMark === @undefined)
         return defaultHWM;
-    const highWaterMark = strategy["highWaterMark"];
+
     if (@isNaN(highWaterMark) || highWaterMark < 0)
         @throwRangeError("highWaterMark value is negative or not a number");
 

@@ -2,11 +2,11 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 const std = @import("std");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("io");
-const JSC = @import("../../jsc.zig");
+const AsyncIO = @import("bun").AsyncIO;
+const JSC = @import("bun").JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -23,7 +23,7 @@ const linux = os.linux;
 const PathOrBuffer = JSC.Node.PathOrBuffer;
 const PathLike = JSC.Node.PathLike;
 const PathOrFileDescriptor = JSC.Node.PathOrFileDescriptor;
-const FileDescriptor = JSC.Node.FileDescriptor;
+const FileDescriptor = bun.FileDescriptor;
 const DirIterator = @import("./dir_iterator.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const FileSystem = @import("../../fs.zig").FileSystem;
@@ -39,8 +39,7 @@ const gid_t = std.os.gid_t;
 const ReadPosition = u63;
 
 const Stats = JSC.Node.Stats;
-const BigIntStats = JSC.Node.BigIntStats;
-const DirEnt = JSC.Node.DirEnt;
+const Dirent = JSC.Node.Dirent;
 
 pub const FlavoredIO = struct {
     io: *AsyncIO,
@@ -101,7 +100,7 @@ const Arguments = struct {
         len: JSC.WebCore.Blob.SizeType = 0,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -866,14 +865,23 @@ const Arguments = struct {
     };
 
     const MkdirTemp = struct {
-        prefix: string = "",
+        prefix: JSC.Node.SliceOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
         encoding: Encoding = Encoding.utf8,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            var prefix = JSC.ZigString.Empty;
-            prefix_value.toZigString(&prefix, ctx.ptr());
+            var prefix = JSC.Node.SliceOrBuffer.fromJS(ctx, arguments.arena.allocator(), prefix_value) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "prefix must be a string or TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
 
             if (exception.* != null) return null;
 
@@ -899,7 +907,7 @@ const Arguments = struct {
             }
 
             return MkdirTemp{
-                .prefix = prefix.slice(),
+                .prefix = prefix,
                 .encoding = encoding,
             };
         }
@@ -993,7 +1001,7 @@ const Arguments = struct {
 
     pub const Open = struct {
         path: PathLike,
-        flags: FileSystemFlags = FileSystemFlags.@"r",
+        flags: FileSystemFlags = FileSystemFlags.r,
         mode: Mode = default_permission,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Open {
@@ -1011,7 +1019,7 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            var flags = FileSystemFlags.@"r";
+            var flags = FileSystemFlags.r;
             var mode: Mode = default_permission;
 
             if (arguments.next()) |val| {
@@ -1019,14 +1027,14 @@ const Arguments = struct {
 
                 if (val.isObject()) {
                     if (val.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
-                        flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
+                        flags = FileSystemFlags.fromJS(ctx, flags_, flags, exception) orelse flags;
                     }
 
                     if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 } else if (!val.isEmpty()) {
-                    flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                    flags = FileSystemFlags.fromJS(ctx, val, flags, exception) orelse flags;
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
@@ -1424,7 +1432,7 @@ const Arguments = struct {
                     }
 
                     if (current.getIfPropertyExists(ctx.ptr(), "position")) |num| {
-                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.toInt32();
+                        const position: i32 = if (num.isEmptyOrUndefinedOrNull()) -1 else num.coerce(i32, ctx);
                         if (position > -1) {
                             args.position = @intCast(ReadPosition, position);
                         }
@@ -1445,10 +1453,13 @@ const Arguments = struct {
         path: PathOrFileDescriptor,
         encoding: Encoding = Encoding.utf8,
 
-        flag: FileSystemFlags = FileSystemFlags.@"r",
+        offset: JSC.WebCore.Blob.SizeType = 0,
+        max_size: ?JSC.WebCore.Blob.SizeType = null,
+
+        flag: FileSystemFlags = FileSystemFlags.r,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -1463,7 +1474,7 @@ const Arguments = struct {
             if (exception.* != null) return null;
 
             var encoding = Encoding.buffer;
-            var flag = FileSystemFlags.@"r";
+            var flag = FileSystemFlags.r;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -1497,7 +1508,7 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
-                        flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                        flag = FileSystemFlags.fromJS(ctx, flag_, flag, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -1523,13 +1534,13 @@ const Arguments = struct {
 
     pub const WriteFile = struct {
         encoding: Encoding = Encoding.utf8,
-        flag: FileSystemFlags = FileSystemFlags.@"w",
-        mode: Mode = 0666,
+        flag: FileSystemFlags = FileSystemFlags.w,
+        mode: Mode = 0o666,
         file: PathOrFileDescriptor,
         data: StringOrBuffer,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
-            const file = PathOrFileDescriptor.fromJS(ctx, arguments, exception) orelse {
+            const file = PathOrFileDescriptor.fromJS(ctx, arguments, arguments.arena.allocator(), exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -1569,7 +1580,7 @@ const Arguments = struct {
             arguments.eat();
 
             var encoding = Encoding.buffer;
-            var flag = FileSystemFlags.@"w";
+            var flag = FileSystemFlags.w;
             var mode: Mode = default_permission;
 
             if (arguments.next()) |arg| {
@@ -1604,7 +1615,7 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
-                        flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
+                        flag = FileSystemFlags.fromJS(ctx, flag_, flag, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flag",
@@ -1752,7 +1763,7 @@ const Arguments = struct {
 
     pub const Access = struct {
         path: PathLike,
-        mode: FileSystemFlags = FileSystemFlags.@"r",
+        mode: FileSystemFlags = FileSystemFlags.r,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Access {
             const path = PathLike.fromJS(ctx, arguments, exception) orelse {
@@ -1769,12 +1780,12 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
 
-            var mode = FileSystemFlags.@"r";
+            var mode = FileSystemFlags.r;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isString()) {
-                    mode = FileSystemFlags.fromJS(ctx, arg, exception) orelse {
+                    mode = FileSystemFlags.fromJS(ctx, arg, mode, exception) orelse {
                         if (exception.* == null) {
                             JSC.throwInvalidArguments(
                                 "Invalid mode",
@@ -1797,7 +1808,7 @@ const Arguments = struct {
 
     pub const CreateReadStream = struct {
         file: PathOrFileDescriptor,
-        flags: FileSystemFlags = FileSystemFlags.@"r",
+        flags: FileSystemFlags = FileSystemFlags.r,
         encoding: Encoding = Encoding.utf8,
         mode: Mode = default_permission,
         autoClose: bool = true,
@@ -1823,7 +1834,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+            var fd: FileDescriptor = bun.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -1905,11 +1916,11 @@ const Arguments = struct {
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "start")) |start| {
-                        stream.start = start.toInt32();
+                        stream.start = start.coerce(i32, ctx);
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "end")) |end| {
-                        stream.end = end.toInt32();
+                        stream.end = end.coerce(i32, ctx);
                     }
 
                     if (arg.getIfPropertyExists(ctx.ptr(), "highWaterMark")) |highwaterMark| {
@@ -1918,7 +1929,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != std.math.maxInt(FileDescriptor)) {
+            if (fd != bun.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };
@@ -1932,7 +1943,7 @@ const Arguments = struct {
 
     pub const CreateWriteStream = struct {
         file: PathOrFileDescriptor,
-        flags: FileSystemFlags = FileSystemFlags.@"w",
+        flags: FileSystemFlags = FileSystemFlags.w,
         encoding: Encoding = Encoding.utf8,
         mode: Mode = default_permission,
         autoClose: bool = true,
@@ -1957,7 +1968,7 @@ const Arguments = struct {
                 .file = undefined,
                 .global_object = ctx.ptr(),
             };
-            var fd: FileDescriptor = std.math.maxInt(FileDescriptor);
+            var fd: FileDescriptor = bun.invalid_fd;
 
             if (arguments.next()) |arg| {
                 arguments.eat();
@@ -2044,7 +2055,7 @@ const Arguments = struct {
                 }
             }
 
-            if (fd != std.math.maxInt(FileDescriptor)) {
+            if (fd != bun.invalid_fd) {
                 stream.file = .{ .fd = fd };
             } else if (path) |path_| {
                 stream.file = .{ .path = path_ };
@@ -2128,7 +2139,7 @@ const Arguments = struct {
             if (arguments.next()) |arg| {
                 arguments.eat();
                 if (arg.isNumber()) {
-                    mode = arg.toInt32();
+                    mode = arg.coerce(i32, ctx);
                 }
             }
 
@@ -2153,7 +2164,7 @@ const Arguments = struct {
     };
 
     pub const Copy = struct {
-        pub const FilterCallback = fn (source: string, destination: string) bool;
+        pub const FilterCallback = *const fn (source: string, destination: string) bool;
         /// Dereference symlinks
         /// @default false
         dereference: bool = false,
@@ -2241,7 +2252,7 @@ const Return = struct {
     pub const Link = void;
     pub const Lstat = Stats;
     pub const Mkdir = string;
-    pub const Mkdtemp = PathString;
+    pub const Mkdtemp = JSC.ZigString;
     pub const Open = FileDescriptor;
     pub const WriteFile = void;
     pub const Read = struct {
@@ -2255,8 +2266,8 @@ const Return = struct {
         bytes_read: u52,
         buffer_val: JSC.JSValue = JSC.JSValue.zero,
         const fields = .{
-            .@"bytesRead" = JSC.ZigString.init("bytesRead"),
-            .@"buffer" = JSC.ZigString.init("buffer"),
+            .bytesRead = JSC.ZigString.init("bytesRead"),
+            .buffer = JSC.ZigString.init("buffer"),
         };
         pub fn toJS(this: Read, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             defer if (!this.buffer_val.isEmptyOrUndefinedOrNull())
@@ -2266,7 +2277,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesRead,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_read))),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_read))),
                 this.buffer_val,
             ).asObjectRef();
         }
@@ -2277,8 +2288,8 @@ const Return = struct {
         buffer: StringOrBuffer,
         buffer_val: JSC.JSValue = JSC.JSValue.zero,
         const fields = .{
-            .@"bytesWritten" = JSC.ZigString.init("bytesWritten"),
-            .@"buffer" = JSC.ZigString.init("buffer"),
+            .bytesWritten = JSC.ZigString.init("bytesWritten"),
+            .buffer = JSC.ZigString.init("buffer"),
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
@@ -2290,7 +2301,7 @@ const Return = struct {
                 ctx.ptr(),
                 &fields.bytesWritten,
                 &fields.buffer,
-                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @minimum(std.math.maxInt(u52), this.bytes_written))),
+                JSC.JSValue.jsNumberFromUint64(@intCast(u52, @min(std.math.maxInt(u52), this.bytes_written))),
                 if (this.buffer == .buffer)
                     this.buffer_val
                 else
@@ -2301,7 +2312,7 @@ const Return = struct {
     pub const Write = struct {
         bytes_written: u52,
         const fields = .{
-            .@"bytesWritten" = JSC.ZigString.init("bytesWritten"),
+            .bytesWritten = JSC.ZigString.init("bytesWritten"),
         };
 
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
@@ -2311,9 +2322,9 @@ const Return = struct {
     };
 
     pub const Readdir = union(Tag) {
-        with_file_types: []const DirEnt,
+        with_file_types: []Dirent,
         buffers: []const Buffer,
-        files: []const PathString,
+        files: []const JSC.ZigString,
 
         pub const Tag = enum {
             with_file_types,
@@ -2323,9 +2334,9 @@ const Return = struct {
 
         pub fn toJS(this: Readdir, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
             return switch (this) {
-                .with_file_types => JSC.To.JS.withType([]const DirEnt, this.with_file_types, ctx, exception),
+                .with_file_types => JSC.To.JS.withType([]const Dirent, this.with_file_types, ctx, exception),
                 .buffers => JSC.To.JS.withType([]const Buffer, this.buffers, ctx, exception),
-                .files => JSC.To.JS.withTypeClone([]const PathString, this.files, ctx, exception, true),
+                .files => JSC.To.JS.withType([]const JSC.ZigString, this.files, ctx, exception),
             };
         }
     };
@@ -2386,7 +2397,6 @@ pub const NodeFS = struct {
                         return Maybe(Return.AppendFile).success;
                     },
                     else => {
-                        _ = this;
                         @compileError("Not implemented yet");
                     },
                 }
@@ -2395,7 +2405,7 @@ pub const NodeFS = struct {
                 const path = path_.sliceZ(&this.sync_error_buf);
                 switch (comptime flavor) {
                     .sync => {
-                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.@"a"), 000666)) {
+                        const fd = switch (Syscall.open(path, @enumToInt(FileSystemFlags.a), 0o000666)) {
                             .result => |result| result,
                             .err => |err| return .{ .err = err },
                         };
@@ -2415,7 +2425,6 @@ pub const NodeFS = struct {
                         return Maybe(Return.AppendFile).success;
                     },
                     else => {
-                        _ = this;
                         @compileError("Not implemented yet");
                     },
                 }
@@ -2425,14 +2434,12 @@ pub const NodeFS = struct {
         return Maybe(Return.AppendFile).todo;
     }
 
-    pub fn close(this: *NodeFS, args: Arguments.Close, comptime flavor: Flavor) Maybe(Return.Close) {
+    pub fn close(_: *NodeFS, args: Arguments.Close, comptime flavor: Flavor) Maybe(Return.Close) {
         switch (comptime flavor) {
             .sync => {
                 return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
             },
-            else => {
-                _ = this;
-            },
+            else => {},
         }
 
         return .{ .err = Syscall.Error.todo };
@@ -2442,7 +2449,7 @@ pub const NodeFS = struct {
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
-    pub fn copyFile(this: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
+    pub fn copyFile(_: *NodeFS, args: Arguments.CopyFile, comptime flavor: Flavor) Maybe(Return.CopyFile) {
         const ret = Maybe(Return.CopyFile);
 
         switch (comptime flavor) {
@@ -2480,7 +2487,7 @@ pub const NodeFS = struct {
                                 return ret.success;
                             }
                         } else {
-                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
+                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                                 .result => |result| result,
                                 .err => |err| return .{ .err = err.withPath(args.src.slice()) },
                             };
@@ -2509,9 +2516,9 @@ pub const NodeFS = struct {
                             // 16 KB is high end of what is okay to use for stack space
                             // good thing we ask for absurdly large stack sizes
                             var buf: [16384]u8 = undefined;
-                            var remain = @intCast(u64, @maximum(stat_.size, 0));
+                            var remain = @intCast(u64, @max(stat_.size, 0));
                             toplevel: while (remain > 0) {
-                                const amt = switch (Syscall.read(src_fd, buf[0..@minimum(buf.len, remain)])) {
+                                const amt = switch (Syscall.read(src_fd, buf[0..@min(buf.len, remain)])) {
                                     .result => |result| result,
                                     .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
                                 };
@@ -2579,7 +2586,7 @@ pub const NodeFS = struct {
                         return Maybe(Return.CopyFile).todo;
                     }
 
-                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
+                    const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0o644)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err },
                     };
@@ -2607,7 +2614,7 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
-                    var size = @intCast(usize, @maximum(stat_.size, 0));
+                    var size = @intCast(usize, @max(stat_.size, 0));
 
                     defer {
                         _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
@@ -2653,11 +2660,7 @@ pub const NodeFS = struct {
                     return ret.success;
                 }
             },
-            else => {
-                _ = args;
-                _ = this;
-                _ = flavor;
-            },
+            else => {},
         }
 
         return Maybe(Return.CopyFile).todo;
@@ -2676,9 +2679,7 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Ret.todo;
     }
 
@@ -2689,9 +2690,7 @@ pub const NodeFS = struct {
             .sync => return Syscall.chown(path, args.uid, args.gid),
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Chown).todo;
     }
 
@@ -2706,26 +2705,22 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Chmod).todo;
     }
 
     /// This should almost never be async
-    pub fn fchmod(this: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
+    pub fn fchmod(_: *NodeFS, args: Arguments.FChmod, comptime flavor: Flavor) Maybe(Return.Fchmod) {
         switch (comptime flavor) {
             .sync => {
                 return Syscall.fchmod(args.fd, args.mode);
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Fchmod).todo;
     }
-    pub fn fchown(this: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
+    pub fn fchown(_: *NodeFS, args: Arguments.Fchown, comptime flavor: Flavor) Maybe(Return.Fchown) {
         switch (comptime flavor) {
             .sync => {
                 return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd, args.uid, args.gid), .fchown) orelse
@@ -2733,68 +2728,54 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Fchown).todo;
     }
-    pub fn fdatasync(this: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
+    pub fn fdatasync(_: *NodeFS, args: Arguments.FdataSync, comptime flavor: Flavor) Maybe(Return.Fdatasync) {
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fdatasync).errnoSys(system.fdatasync(args.fd), .fdatasync) orelse
                 Maybe(Return.Fdatasync).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fdatasync).todo;
     }
-    pub fn fstat(this: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
+    pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime flavor: Flavor) Maybe(Return.Fstat) {
         if (args.big_int) return Maybe(Return.Fstat).todo;
 
         switch (comptime flavor) {
             .sync => {
                 return switch (Syscall.fstat(args.fd)) {
-                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result) },
+                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
                     .err => |err| Maybe(Return.Fstat){ .err = err },
                 };
             },
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fstat).todo;
     }
 
-    pub fn fsync(this: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
+    pub fn fsync(_: *NodeFS, args: Arguments.Fsync, comptime flavor: Flavor) Maybe(Return.Fsync) {
         switch (comptime flavor) {
             .sync => return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd), .fsync) orelse
                 Maybe(Return.Fsync).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Fsync).todo;
     }
 
-    pub fn ftruncate(this: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
+    pub fn ftruncate(_: *NodeFS, args: Arguments.FTruncate, comptime flavor: Flavor) Maybe(Return.Ftruncate) {
         switch (comptime flavor) {
             .sync => return Maybe(Return.Ftruncate).errnoSys(system.ftruncate(args.fd, args.len orelse 0), .ftruncate) orelse
                 Maybe(Return.Ftruncate).success,
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Ftruncate).todo;
     }
-    pub fn futimes(this: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
+    pub fn futimes(_: *NodeFS, args: Arguments.Futimes, comptime flavor: Flavor) Maybe(Return.Futimes) {
         var times = [2]std.os.timespec{
             .{
                 .tv_sec = args.mtime,
@@ -2814,9 +2795,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Futimes).todo;
     }
 
@@ -2830,9 +2808,7 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Lchmod).todo;
     }
 
@@ -2846,9 +2822,7 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Lchown).todo;
     }
     pub fn link(this: *NodeFS, args: Arguments.Link, comptime flavor: Flavor) Maybe(Return.Link) {
@@ -2864,9 +2838,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Link).todo;
     }
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, comptime flavor: Flavor) Maybe(Return.Lstat) {
@@ -2879,16 +2850,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result) },
+                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result, false) },
                     .err => |err| Maybe(Return.Lstat){ .err = err },
                 };
             },
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Lstat).todo;
     }
 
@@ -2907,15 +2875,13 @@ pub const NodeFS = struct {
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Mkdir).todo;
     }
 
     // TODO: windows
     // TODO: verify this works correctly with unicode codepoints
-    fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
+    pub fn mkdirRecursive(this: *NodeFS, args: Arguments.Mkdir, comptime flavor: Flavor) Maybe(Return.Mkdir) {
         const Option = Maybe(Return.Mkdir);
         if (comptime Environment.isWindows) @compileError("This needs to be implemented on Windows.");
 
@@ -3044,17 +3010,15 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Mkdir).todo;
     }
 
-    pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
+    pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime _: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        const len = @minimum(args.prefix.len, prefix_buf.len - 7);
+        const prefix_slice = args.prefix.slice();
+        const len = @min(prefix_slice.len, prefix_buf.len -| 7);
         if (len > 0) {
-            @memcpy(prefix_buf, args.prefix.ptr, len);
+            @memcpy(prefix_buf, prefix_slice.ptr, len);
         }
         prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
@@ -3065,10 +3029,8 @@ pub const NodeFS = struct {
             else => |errno| return .{ .err = Syscall.Error{ .errno = @truncate(Syscall.Error.Int, @enumToInt(errno)), .syscall = .mkdtemp } },
         }
 
-        _ = this;
-        _ = flavor;
         return .{
-            .result = PathString.init(bun.default_allocator.dupe(u8, std.mem.span(rc.?)) catch unreachable),
+            .result = JSC.ZigString.dupeForJS(bun.sliceTo(rc.?, 0), bun.default_allocator) catch unreachable,
         };
     }
     pub fn open(this: *NodeFS, args: Arguments.Open, comptime flavor: Flavor) Maybe(Return.Open) {
@@ -3086,30 +3048,21 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Open).todo;
     }
-    pub fn openDir(this: *NodeFS, args: Arguments.OpenDir, comptime flavor: Flavor) Maybe(Return.OpenDir) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+    pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
         return Maybe(Return.OpenDir).todo;
     }
 
-    fn _read(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+    fn _read(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
         if (Environment.allow_assert) std.debug.assert(args.position == null);
 
         switch (comptime flavor) {
             // The sync version does no allocation except when returning the path
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.read(args.fd, buf)) {
                     .err => |err| .{
@@ -3128,14 +3081,12 @@ pub const NodeFS = struct {
         return Maybe(Return.Read).todo;
     }
 
-    fn _pread(this: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
-        _ = this;
-
+    fn _pread(_: *NodeFS, args: Arguments.Read, comptime flavor: Flavor) Maybe(Return.Read) {
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.pread(args.fd, buf, args.position.?)) {
                     .err => |err| .{
@@ -3170,16 +3121,12 @@ pub const NodeFS = struct {
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
     }
-    fn _write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        _ = args;
-        _ = this;
-        _ = flavor;
-
+    fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(buf.len, args.length)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(buf.len, args.length)];
 
                 return switch (Syscall.write(args.fd, buf)) {
                     .err => |err| .{
@@ -3198,18 +3145,14 @@ pub const NodeFS = struct {
         return Maybe(Return.Write).todo;
     }
 
-    fn _pwrite(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
-        _ = args;
-        _ = this;
-        _ = flavor;
-
+    fn _pwrite(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         const position = args.position.?;
 
         switch (comptime flavor) {
             .sync => {
                 var buf = args.buffer.slice();
-                buf = buf[@minimum(args.offset, buf.len)..];
-                buf = buf[0..@minimum(args.length, buf.len)];
+                buf = buf[@min(args.offset, buf.len)..];
+                buf = buf[0..@min(args.length, buf.len)];
 
                 return switch (Syscall.pwrite(args.fd, buf, position)) {
                     .err => |err| .{
@@ -3239,7 +3182,7 @@ pub const NodeFS = struct {
                     return _readdir(
                         this,
                         args,
-                        PathString,
+                        JSC.ZigString,
                         flavor,
                     );
                 }
@@ -3247,7 +3190,7 @@ pub const NodeFS = struct {
                 return _readdir(
                     this,
                     args,
-                    DirEnt,
+                    Dirent,
                     flavor,
                 );
             },
@@ -3261,8 +3204,8 @@ pub const NodeFS = struct {
         comptime flavor: Flavor,
     ) Maybe(Return.Readdir) {
         const file_type = comptime switch (ExpectedType) {
-            DirEnt => "with_file_types",
-            PathString => "files",
+            Dirent => "with_file_types",
+            JSC.ZigString => "files",
             Buffer => "buffers",
             else => unreachable,
         };
@@ -3289,13 +3232,13 @@ pub const NodeFS = struct {
                     .err => |err| {
                         for (entries.items) |*item| {
                             switch (comptime ExpectedType) {
-                                DirEnt => {
+                                Dirent => {
                                     bun.default_allocator.free(item.name.slice());
                                 },
                                 Buffer => {
                                     item.destroy();
                                 },
-                                PathString => {
+                                JSC.ZigString => {
                                     bun.default_allocator.free(item.slice());
                                 },
                                 else => unreachable,
@@ -3311,7 +3254,7 @@ pub const NodeFS = struct {
                     .result => |ent| ent,
                 }) |current| : (entry = iterator.next()) {
                     switch (comptime ExpectedType) {
-                        DirEnt => {
+                        Dirent => {
                             entries.append(.{
                                 .name = PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
                                 .kind = current.kind,
@@ -3321,10 +3264,8 @@ pub const NodeFS = struct {
                             const slice = current.name.slice();
                             entries.append(Buffer.fromString(slice, bun.default_allocator) catch unreachable) catch unreachable;
                         },
-                        PathString => {
-                            entries.append(
-                                PathString.init(bun.default_allocator.dupe(u8, current.name.slice()) catch unreachable),
-                            ) catch unreachable;
+                        JSC.ZigString => {
+                            entries.append(JSC.ZigString.dupeForJS(current.name.slice(), bun.default_allocator) catch unreachable) catch unreachable;
                         },
                         else => unreachable,
                     }
@@ -3335,9 +3276,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Readdir).todo;
     }
     pub fn readFile(this: *NodeFS, args: Arguments.ReadFile, comptime flavor: Flavor) Maybe(Return.ReadFile) {
@@ -3373,8 +3311,28 @@ pub const NodeFS = struct {
                     .result => |stat_| stat_,
                 };
 
+                // Only used in DOMFormData
+                if (args.offset > 0) {
+                    std.os.lseek_SET(fd, args.offset) catch {};
+                }
+
                 // For certain files, the size might be 0 but the file might still have contents.
-                const size = @intCast(u64, @maximum(stat_.size, 0));
+                const size = @intCast(
+                    u64,
+                    @max(
+                        @min(
+                            stat_.size,
+                            @intCast(
+                                @TypeOf(stat_.size),
+                                // Only used in DOMFormData
+                                args.max_size orelse std.math.maxInt(
+                                    JSC.WebCore.Blob.SizeType,
+                                ),
+                            ),
+                        ),
+                        0,
+                    ),
+                );
 
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
@@ -3457,9 +3415,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.ReadFile).todo;
     }
 
@@ -3515,9 +3470,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.WriteFile).todo;
     }
 
@@ -3549,9 +3501,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Readlink).todo;
     }
     pub fn realpath(this: *NodeFS, args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
@@ -3606,16 +3555,13 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Realpath).todo;
     }
     pub const realpathNative = realpath;
     // pub fn realpathNative(this: *NodeFS,  args: Arguments.Realpath, comptime flavor: Flavor) Maybe(Return.Realpath) {
     //     _ = args;
-    //     _ = this;
-    //     _ = flavor;
+    //
+    //
     //     return error.NotImplementedYet;
     // }
     pub fn rename(this: *NodeFS, args: Arguments.Rename, comptime flavor: Flavor) Maybe(Return.Rename) {
@@ -3631,31 +3577,20 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Rename).todo;
     }
     pub fn rmdir(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rmdir) {
         switch (comptime flavor) {
             .sync => {
-                var dir = args.old_path.sliceZ(&this.sync_error_buf);
-                switch (Syscall.getErrno(system.rmdir(dir))) {
-                    .SUCCESS => return Maybe(Return.Rmdir).success,
-                    else => |err| return Maybe(Return.Rmdir).errnoSys(err, .rmdir),
-                }
+                return Maybe(Return.Rmdir).errnoSysP(system.rmdir(args.path.sliceZ(&this.sync_error_buf)), .rmdir, args.path.slice()) orelse
+                    Maybe(Return.Rmdir).success;
             },
             else => {},
         }
-        _ = args;
-        _ = this;
-        _ = flavor;
+
         return Maybe(Return.Rmdir).todo;
     }
     pub fn rm(this: *NodeFS, args: Arguments.RmDir, comptime flavor: Flavor) Maybe(Return.Rm) {
-        _ = args;
-        _ = this;
-        _ = flavor;
         switch (comptime flavor) {
             .sync => {
                 if (comptime Environment.isMac) {
@@ -3828,16 +3763,13 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result) },
+                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result, false) },
                     .err => |err| Maybe(Return.Stat){ .err = err },
                 });
             },
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Stat).todo;
     }
 
@@ -3854,9 +3786,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Symlink).todo;
     }
     fn _truncate(this: *NodeFS, path: PathLike, len: JSC.WebCore.Blob.SizeType, comptime flavor: Flavor) Maybe(Return.Truncate) {
@@ -3868,8 +3797,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Truncate).todo;
     }
     pub fn truncate(this: *NodeFS, args: Arguments.Truncate, comptime flavor: Flavor) Maybe(Return.Truncate) {
@@ -3894,15 +3821,9 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Unlink).todo;
     }
-    pub fn unwatchFile(this: *NodeFS, args: Arguments.UnwatchFile, comptime flavor: Flavor) Maybe(Return.UnwatchFile) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+    pub fn unwatchFile(_: *NodeFS, _: Arguments.UnwatchFile, comptime _: Flavor) Maybe(Return.UnwatchFile) {
         return Maybe(Return.UnwatchFile).todo;
     }
     pub fn utimes(this: *NodeFS, args: Arguments.Utimes, comptime flavor: Flavor) Maybe(Return.Utimes) {
@@ -3930,9 +3851,6 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Utimes).todo;
     }
 
@@ -3961,15 +3879,9 @@ pub const NodeFS = struct {
             else => {},
         }
 
-        _ = args;
-        _ = this;
-        _ = flavor;
         return Maybe(Return.Lutimes).todo;
     }
-    pub fn watch(this: *NodeFS, args: Arguments.Watch, comptime flavor: Flavor) Maybe(Return.Watch) {
-        _ = args;
-        _ = this;
-        _ = flavor;
+    pub fn watch(_: *NodeFS, _: Arguments.Watch, comptime _: Flavor) Maybe(Return.Watch) {
         return Maybe(Return.Watch).todo;
     }
     pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
@@ -3979,3 +3891,18 @@ pub const NodeFS = struct {
         return Maybe(Return.CreateWriteStream).todo;
     }
 };
+
+pub export fn Bun__mkdirp(globalThis: *JSC.JSGlobalObject, path: [*:0]const u8) bool {
+    return globalThis.bunVM().nodeFS().mkdirRecursive(
+        Arguments.Mkdir{
+            .path = PathLike{ .string = PathString.init(bun.span(path)) },
+            .recursive = true,
+        },
+        .sync,
+    ) != .err;
+}
+
+comptime {
+    if (!JSC.is_bindgen)
+        _ = Bun__mkdirp;
+}

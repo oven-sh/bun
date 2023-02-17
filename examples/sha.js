@@ -1,4 +1,14 @@
-import { SHA1, SHA256, SHA512, SHA384, SHA512_256, MD5, MD4, sha } from "bun";
+import {
+  SHA1,
+  SHA256,
+  SHA512,
+  SHA384,
+  SHA512_256,
+  MD5,
+  MD4,
+  RIPEMD160,
+  sha,
+} from "bun";
 
 const input = "Hello World";
 const [first, second] = input.split(" ");
@@ -16,6 +26,7 @@ log("SHA256", SHA256.hash(input, "hex"));
 log("SHA384", SHA384.hash(input, "hex"));
 log("SHA512", SHA512.hash(input, "hex"));
 log("SHA512_256", SHA512_256.hash(input, "hex"));
+log("RIPEMD160", RIPEMD160.hash(input, "hex"));
 
 console.log("");
 console.log("---- Chunked ----");
@@ -23,7 +34,7 @@ console.log("");
 
 // You can also do updates in chunks:
 // const hash = new Hash();
-for (let Hash of [SHA1, SHA256, SHA384, SHA512, SHA512_256]) {
+for (let Hash of [SHA1, SHA256, SHA384, SHA512, SHA512_256, RIPEMD160]) {
   const hash = new Hash();
   hash.update(first);
   hash.update(" " + second);

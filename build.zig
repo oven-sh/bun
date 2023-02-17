@@ -1,18 +1,21 @@
 const std = @import("std");
-const resolve_path = @import("./src/resolver/resolve_path.zig");
 
 fn pkgPath(comptime out: []const u8) std.build.FileSource {
-    const outpath = comptime std.fs.path.dirname(@src().file).? ++ std.fs.path.sep_str ++ out;
-    return .{ .path = outpath };
+    if (comptime std.fs.path.dirname(@src().file)) |base| {
+        const outpath = comptime base ++ std.fs.path.sep_str ++ out;
+        return .{ .path = outpath };
+    } else {
+        return .{ .path = out };
+    }
 }
 pub fn addPicoHTTP(step: *std.build.LibExeObjStep, comptime with_obj: bool) void {
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile("src/deps/picohttpparser.o");
     }
 
-    step.addIncludeDir("src/deps");
+    step.addIncludePath("src/deps");
 
     if (with_obj) {
         step.addObjectFile(panicIfNotFound("src/deps/picohttpparser.o"));
@@ -40,48 +43,25 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
-    var boringssl: std.build.Pkg = .{
-        .name = "boringssl",
-        .source = pkgPath("src/boringssl.zig"),
-    };
-
-    var datetime: std.build.Pkg = .{
-        .name = "datetime",
-        .source = pkgPath("src/deps/zig-datetime/src/datetime.zig"),
-    };
-
-    var thread_pool: std.build.Pkg = .{
-        .name = "thread_pool",
-        .source = pkgPath("src/thread_pool.zig"),
-    };
-
-    var crash_reporter: std.build.Pkg = .{
-        .name = "crash_reporter",
-        .source = pkgPath("src/deps/backtrace.zig"),
-    };
-
-    var picohttp: std.build.Pkg = .{
-        .name = "picohttp",
-        .source = pkgPath("src/deps/picohttp.zig"),
+var compiler_rt_path: []const u8 = "";
+var compiler_rt_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+fn addInternalPackages(step: *std.build.LibExeObjStep, allocator: std.mem.Allocator, zig_exe: []const u8, target: anytype) !void {
+    var bun = std.build.Pkg{
+        .name = "bun",
+        .source = pkgPath("src/bun_redirect.zig"),
     };
 
     var io_darwin: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_darwin.zig"),
     };
     var io_linux: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_linux.zig"),
     };
     var io_stub: std.build.Pkg = .{
-        .name = "io",
+        .name = "async_io",
         .source = pkgPath("src/io/io_stub.zig"),
-    };
-
-    var lol_html: std.build.Pkg = .{
-        .name = "lolhtml",
-        .source = pkgPath("src/deps/lol-html.zig"),
     };
 
     var io = if (target.isDarwin())
@@ -90,21 +70,6 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io_linux
     else
         io_stub;
-
-    var strings: std.build.Pkg = .{
-        .name = "strings",
-        .source = pkgPath("src/string_immutable.zig"),
-    };
-
-    var clap: std.build.Pkg = .{
-        .name = "clap",
-        .source = pkgPath("src/deps/zig-clap/clap.zig"),
-    };
-
-    var http: std.build.Pkg = .{
-        .name = "http",
-        .source = pkgPath("src/http_client_async.zig"),
-    };
 
     var javascript_core_real: std.build.Pkg = .{
         .name = "javascript_core",
@@ -116,60 +81,55 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         .source = pkgPath("src/jsc_stub.zig"),
     };
 
-    var uws: std.build.Pkg = .{
-        .name = "uws",
-        .source = pkgPath("src/deps/uws.zig"),
-    };
-
     var javascript_core = if (target.getOsTag() == .freestanding)
         javascript_core_stub
     else
         javascript_core_real;
-
-    var analytics: std.build.Pkg = .{
-        .name = "analytics",
-        .source = pkgPath("src/analytics.zig"),
-    };
-
-    io.dependencies = &.{analytics};
-    uws.dependencies = &.{boringssl};
-    javascript_core.dependencies = &.{ http, strings, picohttp, io, uws };
-    http.dependencies = &.{
-        strings,
-        picohttp,
-        io,
-        boringssl,
-        thread_pool,
-        uws,
-    };
-    thread_pool.dependencies = &.{ io, http };
-    http.dependencies = &.{
-        strings,
-        picohttp,
-        io,
-        boringssl,
-        thread_pool,
-        uws,
-    };
-    thread_pool.dependencies = &.{ io, http };
-
-    thread_pool.dependencies = &.{
-        io,
-        http,
-    };
-
-    step.addPackage(thread_pool);
-    step.addPackage(picohttp);
+    javascript_core.dependencies = &[_]std.build.Pkg{};
     step.addPackage(io);
-    step.addPackage(strings);
-    step.addPackage(clap);
-    step.addPackage(http);
-    step.addPackage(boringssl);
-    step.addPackage(javascript_core);
-    step.addPackage(crash_reporter);
-    step.addPackage(datetime);
-    step.addPackage(lol_html);
-    step.addPackage(uws);
+    step.addPackage(bun);
+
+    const paths_to_try = .{
+        "{s}/../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/compiler_rt/stack_probe.zig",
+        "{s}/../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../lib/zig/compiler_rt/stack_probe.zig",
+        "{s}/../../../../lib/zig/compiler_rt/stack_probe.zig",
+    };
+    var found = false;
+    if (compiler_rt_path.len > 0) {
+        const compiler_rt: std.build.Pkg = .{
+            .name = "compiler_rt",
+            .source = .{ .path = compiler_rt_path },
+        };
+        found = true;
+        step.addPackage(compiler_rt);
+    } else {
+        inline for (paths_to_try) |path_fmt| {
+            if (!found) brk: {
+                // workaround for https://github.com/ziglang/zig/issues/14099
+                const path = try std.fmt.allocPrint(allocator, path_fmt, .{zig_exe});
+                var target_path = std.os.realpath(
+                    std.fs.path.resolve(allocator, &.{path}) catch break :brk,
+                    &compiler_rt_path_buf,
+                ) catch break :brk;
+                const compiler_rt: std.build.Pkg = .{
+                    .name = "compiler_rt",
+                    .source = .{ .path = target_path },
+                };
+                found = true;
+                step.addPackage(compiler_rt);
+                compiler_rt_path = target_path;
+            }
+        }
+    }
+
+    if (!found) {
+        std.io.getStdErr().writeAll("\nwarning: Could not find compiler_rt. This might cause a build error until https://github.com/ziglang/zig/issues/14099 is fixed.\n\n") catch {};
+    }
 }
 
 const BunBuildOptions = struct {
@@ -178,6 +138,7 @@ const BunBuildOptions = struct {
     baseline: bool = false,
     bindgen: bool = false,
     sizegen: bool = false,
+    base_path: [:0]const u8 = "",
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
@@ -186,6 +147,7 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.baseline), "baseline", this.baseline);
         opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
         opts.addOption(@TypeOf(this.sizegen), "sizegen", this.sizegen);
+        opts.addOption(@TypeOf(this.base_path), "base_path", this.base_path);
         return opts;
     }
 };
@@ -200,6 +162,18 @@ fn panicIfNotFound(comptime filepath: []const u8) []const u8 {
     return filepath;
 }
 
+const fmt = struct {
+    pub usingnamespace @import("std").fmt;
+
+    pub fn hexInt(value: anytype) @TypeOf(std.fmt.fmtSliceHexLower("")) {
+        return std.fmt.fmtSliceHexLower(std.mem.asBytes(&value));
+    }
+
+    pub fn hexIntUp(value: anytype) @TypeOf(std.fmt.fmtSliceHexUpper("")) {
+        return std.fmt.fmtSliceHexUpper(std.mem.asBytes(&value));
+    }
+};
+
 fn updateRuntime() anyerror!void {
     var runtime_out_file = try std.fs.cwd().openFile("src/runtime.out.js", .{ .mode = .read_only });
     const runtime_hash = std.hash.Wyhash.hash(
@@ -208,7 +182,7 @@ fn updateRuntime() anyerror!void {
     );
     const runtime_version_file = std.fs.cwd().createFile("src/runtime.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/runtime.version", .{});
     defer runtime_version_file.close();
-    runtime_version_file.writer().print("{x}", .{runtime_hash}) catch unreachable;
+    runtime_version_file.writer().print("{any}", .{fmt.hexInt(runtime_hash)}) catch unreachable;
     var fallback_out_file = try std.fs.cwd().openFile("src/fallback.out.js", .{ .mode = .read_only });
     const fallback_hash = std.hash.Wyhash.hash(
         0,
@@ -217,7 +191,7 @@ fn updateRuntime() anyerror!void {
 
     const fallback_version_file = std.fs.cwd().createFile("src/fallback.version", .{ .truncate = true }) catch std.debug.panic("Failed to create src/fallback.version", .{});
 
-    fallback_version_file.writer().print("{x}", .{fallback_hash}) catch unreachable;
+    fallback_version_file.writer().print("{any}", .{fmt.hexInt(fallback_hash)}) catch unreachable;
 
     fallback_version_file.close();
 }
@@ -240,7 +214,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
 
@@ -277,8 +250,8 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
-        output_dir = output_dir_;
+    if (b.option([]const u8, "output-dir", "target to install to") orelse std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+        output_dir = b.pathFromRoot(output_dir_);
     } else {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = b.pathFromRoot(output_dir_base);
@@ -286,20 +259,12 @@ pub fn build(b: *std.build.Builder) !void {
 
     std.fs.cwd().makePath(output_dir) catch {};
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
-    exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
+    const root_src = if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
     else
-        "src/main.zig");
-    // exe.setLibCFile("libc.txt");
-    exe.linkLibC();
-    // exe.linkLibCpp();
+        "root.zig";
 
-    exe.setOutputDir(output_dir);
     updateRuntime() catch {};
-
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
-    b.install_path = output_dir;
 
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
@@ -309,20 +274,9 @@ pub fn build(b: *std.build.Builder) !void {
         target.getOsVersionMax().semver
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
-    // exe.want_lto = true;
-    defer b.default_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
-    defer b.default_step.dependOn(&b.addLog(
-        "Build {s} v{} - v{}\n",
-        .{
-            triplet,
-            min_version,
-            max_version,
-        },
-    ).step);
-
     var obj_step = b.step("obj", "Build bun as a .o file");
-    var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-
+    obj_step.dependOn(&b.addLog("Output: {s}/{s}\n", .{ output_dir, bun_executable_name }).step);
+    var obj = b.addObject(bun_executable_name, root_src);
     var default_build_options: BunBuildOptions = brk: {
         const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
             !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
@@ -357,6 +311,7 @@ pub fn build(b: *std.build.Builder) !void {
             .sha = git_sha,
             .baseline = is_baseline,
             .bindgen = false,
+            .base_path = try b.allocator.dupeZ(u8, b.pathFromRoot(".")),
         };
     };
 
@@ -368,6 +323,7 @@ pub fn build(b: *std.build.Builder) !void {
         try addInternalPackages(
             obj,
             b.allocator,
+            b.zig_exe,
             target,
         );
 
@@ -393,9 +349,8 @@ pub fn build(b: *std.build.Builder) !void {
             ).step);
         }
 
-        obj_step.dependOn(&obj.step);
+        defer obj_step.dependOn(&obj.step);
 
-        obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
 
         var actual_build_options = default_build_options;
@@ -412,7 +367,9 @@ pub fn build(b: *std.build.Builder) !void {
         obj.bundle_compiler_rt = true;
         obj.omit_frame_pointer = mode != .Debug;
 
-        b.default_step.dependOn(&obj.step);
+        if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
+            obj.emit_bin = .no_emit;
+        }
 
         if (target.getOsTag() == .linux) {
             // obj.want_lto = tar;
@@ -429,7 +386,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("headers-obj", "Build JavaScriptCore headers");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("headers", "src/bindgen.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         var headers_build_options = default_build_options;
         headers_build_options.bindgen = true;
         headers_obj.addOptions("build_options", default_build_options.step(b));
@@ -444,14 +401,14 @@ pub fn build(b: *std.build.Builder) !void {
         // wasm_step.link_function_sections = true;
         // wasm_step.link_emit_relocs = true;
         // wasm_step.single_threaded = true;
-        try configureObjectStep(b, wasm_step, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, wasm_step, @TypeOf(target), target, obj.main_pkg_path.?);
     }
 
     {
         const headers_step = b.step("httpbench-obj", "Build HTTPBench tool (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -459,7 +416,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("machbench-obj", "Build Machbench tool (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("machbench", "misctools/machbench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -467,7 +424,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("fetch-obj", "Build fetch (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -475,7 +432,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("string-bench", "Build string bench");
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -483,7 +440,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("sha-bench-obj", "Build sha bench");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -491,7 +448,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("vlq-bench", "Build vlq bench");
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -499,7 +456,7 @@ pub fn build(b: *std.build.Builder) !void {
         const headers_step = b.step("tgz-obj", "Build tgz (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         headers_obj.addOptions("build_options", default_build_options.step(b));
     }
 
@@ -517,7 +474,7 @@ pub fn build(b: *std.build.Builder) !void {
             if (std.fs.path.dirname(test_bin)) |dir| headers_obj.setOutputDir(dir);
         }
 
-        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        try configureObjectStep(b, headers_obj, @TypeOf(target), target, obj.main_pkg_path.?);
         try linkObjectFiles(b, headers_obj, target);
 
         {
@@ -536,7 +493,7 @@ pub fn build(b: *std.build.Builder) !void {
 
             test_.setMainPkgPath(obj.main_pkg_path.?);
             test_.setTarget(target);
-            try configureObjectStep(b, test_, target, obj.main_pkg_path.?);
+            try configureObjectStep(b, test_, @TypeOf(target), target, obj.main_pkg_path.?);
             try linkObjectFiles(b, test_, target);
             test_.addOptions("build_options", default_build_options.step(b));
 
@@ -552,9 +509,12 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
+    if (obj.emit_bin != .no_emit)
+        obj.setOutputDir(output_dir);
+    b.default_step.dependOn(obj_step);
 }
 
-pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;
+pub var original_make_fn: ?*const fn (step: *std.build.Step) anyerror!void = null;
 
 // Due to limitations in std.build.Builder
 // we cannot use this with debugging
@@ -594,19 +554,18 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
         .{ "libJavaScriptCore.a", "libJavaScriptCore.a" },
         .{ "libWTF.a", "libWTF.a" },
         .{ "libbmalloc.a", "libbmalloc.a" },
-        .{ "libbacktrace.a", "libbacktrace.a" },
         .{ "liblolhtml.a", "liblolhtml.a" },
         .{ "uSockets.a", "uSockets.a" },
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
+        var deps_dir = std.fs.cwd().openIterableDir(deps_path, .{}) catch continue;
         var iterator = deps_dir.iterate();
-        obj.addIncludeDir(deps_path);
-        obj.addLibPath(deps_path);
+        obj.addIncludePath(deps_path);
+        obj.addLibraryPath(deps_path);
 
         while (iterator.next() catch null) |entr| {
-            const entry: std.fs.Dir.Entry = entr;
+            const entry: std.fs.IterableDir.Entry = entr;
             if (files_we_care_about.get(entry.name)) |obj_name| {
                 var has_added = try added.getOrPut(std.hash.Wyhash.hash(0, obj_name));
                 if (!has_added.found_existing) {
@@ -618,17 +577,20 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     }
 }
 
-pub fn configureObjectStep(_: *std.build.Builder, obj: *std.build.LibExeObjStep, target: anytype, main_pkg_path: []const u8) !void {
+pub fn configureObjectStep(b: *std.build.Builder, obj: *std.build.LibExeObjStep, comptime Target: type, target: Target, main_pkg_path: []const u8) !void {
     obj.setMainPkgPath(main_pkg_path);
 
     obj.setTarget(target);
-    try addInternalPackages(obj, std.heap.page_allocator, target);
+    try addInternalPackages(obj, std.heap.page_allocator, b.zig_exe, target);
     if (target.getOsTag() != .freestanding)
         addPicoHTTP(obj, false);
 
     obj.strip = false;
+
     obj.setOutputDir(output_dir);
     obj.setBuildMode(mode);
+    obj.bundle_compiler_rt = true;
+
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = true;
 

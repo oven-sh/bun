@@ -24,7 +24,7 @@ pub export var ValueTrue: EncodedJSValue = EncodedJSValue{
     .asInt64 = @bitCast(i64, @as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1))),
 };
 pub const JSContext = ?*anyopaque;
-pub inline fn JSVALUE_IS_CELL(arg_val: EncodedJSValue) @"bool" {
+pub inline fn JSVALUE_IS_CELL(arg_val: EncodedJSValue) bool {
     const val = arg_val;
     return !(((@bitCast(c_ulonglong, val.asInt64) & @as(c_ulonglong, 18446181123756130304)) | @bitCast(c_ulonglong, @as(c_longlong, @as(c_int, 2)))) != 0);
 }
@@ -120,7 +120,7 @@ pub inline fn JSVALUE_TO_FLOAT(arg_val: EncodedJSValue) f32 {
 }
 pub inline fn JSVALUE_TO_DOUBLE(arg_val: EncodedJSValue) f64 {
     var val = arg_val;
-    val.asInt64 -= @as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49);
+    val.asInt64 -= comptime @as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49);
     return val.asDouble;
 }
 pub inline fn JSVALUE_TO_BOOL(arg_val: EncodedJSValue) @"bool" {

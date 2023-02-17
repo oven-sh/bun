@@ -4,7 +4,10 @@ export default [
   define({
     name: "Subprocess",
     construct: true,
+    noConstructor: true,
     finalize: true,
+    hasPendingActivity: true,
+    configurable: false,
     klass: {},
     JSType: "0b11101110",
     proto: {
@@ -52,6 +55,9 @@ export default [
 
       exitCode: {
         getter: "getExitCode",
+      },
+      signalCode: {
+        getter: "getSignalCode",
       },
 
       exited: {

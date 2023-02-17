@@ -1,9 +1,9 @@
 const std = @import("std");
-const bun = @import("../../global.zig");
+const bun = @import("bun");
 const strings = bun.strings;
 const string = bun.string;
-const AsyncIO = @import("io");
-const JSC = @import("../../jsc.zig");
+const AsyncIO = @import("bun").AsyncIO;
+const JSC = @import("bun").JSC;
 const PathString = JSC.PathString;
 const Environment = bun.Environment;
 const C = bun.C;
@@ -28,37 +28,37 @@ pub const BufferVectorized = struct {
 
         const written = switch (encoding) {
             JSC.Node.Encoding.utf8 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.utf8),
             JSC.Node.Encoding.ascii => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.ascii),
             JSC.Node.Encoding.latin1 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.latin1),
             JSC.Node.Encoding.buffer => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.buffer),
             JSC.Node.Encoding.utf16le,
             JSC.Node.Encoding.ucs2,
             => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.utf16le),
             JSC.Node.Encoding.base64 => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.base64),
             JSC.Node.Encoding.base64url => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.base64url),
             JSC.Node.Encoding.hex => if (str.is16Bit())
-                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.hex)
+                JSC.WebCore.Encoder.writeU16(str.utf16SliceAligned().ptr, str.utf16SliceAligned().len, buf.ptr, buf.len, JSC.Node.Encoding.hex, true)
             else
                 JSC.WebCore.Encoder.writeU8(str.slice().ptr, str.slice().len, buf.ptr, buf.len, JSC.Node.Encoding.hex),
         };
@@ -77,7 +77,7 @@ pub const BufferVectorized = struct {
 
         const minimum_contents = contents;
         while (buf.len >= contents.len) {
-            const min_len = @minimum(contents.len, buf.len);
+            const min_len = @min(contents.len, buf.len);
             std.mem.copy(u8, buf[0..min_len], contents[0..min_len]);
             if (buf.len <= contents.len) {
                 break;
@@ -87,7 +87,7 @@ pub const BufferVectorized = struct {
         }
 
         while (buf.len > 0) {
-            const to_fill = @minimum(minimum_contents.len, buf.len);
+            const to_fill = @min(minimum_contents.len, buf.len);
             std.mem.copy(u8, buf[0..to_fill], minimum_contents[0..to_fill]);
             buf = buf[to_fill..];
         }

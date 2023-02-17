@@ -13,9 +13,7 @@ export class PerformanceEntry {
 }
 export class PerformanceNodeTiming {
   constructor() {
-    throw new Error(
-      "PerformanceNodeTiming is not supported in this environment."
-    );
+    throw new Error("PerformanceNodeTiming is not supported in this environment.");
   }
 }
 
@@ -24,4 +22,5 @@ export default {
   PerformanceEntry,
   PerformanceEntry,
   PerformanceNodeTiming,
+  [Symbol.for("CommonJS")]: 0,
 };

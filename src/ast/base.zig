@@ -100,7 +100,7 @@ pub fn setBits(
     return (target & bitmask) | (value << start_bit);
 }
 
-pub fn getBits(comptime TargetType: type, target: anytype, comptime start_bit: comptime_int, comptime number_of_bits: comptime_int) TargetType {
+pub inline fn getBits(comptime TargetType: type, target: anytype, comptime start_bit: comptime_int, comptime number_of_bits: comptime_int) TargetType {
     comptime {
         if (number_of_bits == 0) @compileError("non-zero number_of_bits must be provided");
 
@@ -283,13 +283,3 @@ test "Ref" {
         try std.testing.expectEqual(ref.isSourceContentsSlice(), first.is_source_contents_slice);
     }
 }
-
-// This is kind of the wrong place, but it's shared between files
-pub const RequireOrImportMeta = struct {
-    // CommonJS files will return the "require_*" wrapper function and an invalid
-    // exports object reference. Lazily-initialized ESM files will return the
-    // "init_*" wrapper function and the exports object for that file.
-    wrapper_ref: Ref = Ref.None,
-    exports_ref: Ref = Ref.None,
-    is_wrapper_async: bool = false,
-};

@@ -7,7 +7,7 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "cwd": "${workspaceFolder}/test/bun.js",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -21,7 +21,8 @@
       "args": ["wiptest"],
       "cwd": "${workspaceFolder}/test",
       "env": {
-        "FORCE_COLOR": "1"
+        "FORCE_COLOR": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2"
       },
       "console": "internalConsole"
     },
@@ -31,6 +32,18 @@
       "name": "bun run current file",
       "program": "bun-debug",
       "args": ["${file}"],
+      "cwd": "${file}/../../",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun run (hot)",
+      "program": "bun-debug",
+      "args": ["--hot", "${file}"],
       "cwd": "${file}/../../",
       "env": {
         "FORCE_COLOR": "1"
@@ -99,9 +112,64 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun build debug",
+      "program": "bun-debug",
+      "args": ["build", "--platform=bun", "--outdir=/tmp/testout", "${file}"],
+      "cwd": "${file}/../../",
+      "console": "internalConsole",
+      "env": {
+        "BUN_CONFIG_MINIFY_WHITESPACE": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bunx debug",
+      "program": "bun-debug",
+      "args": ["--bun", "x", "tsc", "--help"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun install",
+      "program": "bun-debug",
+      "args": ["install"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1"
+      }
+    },
+
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "fetch debug",
       "program": "${workspaceFolder}/misctools/fetch",
       "args": ["https://example.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Build zig unit test",
+      "program": "make",
+      "args": ["build-unit", "${file}"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Run zig unit test",
+      "program": "${workspaceFolder}/zig-out/bin/test",
+      "args": ["abc"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     }

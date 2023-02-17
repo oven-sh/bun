@@ -1,0 +1,19 @@
+{
+  "name": "bun-types",
+  "types": "index.d.ts",
+  "private": true,
+  "repository": "https://github.com/oven-sh/bun",
+  "scripts": {
+    "build": "rm -rf ./dist && bun run bundle && bun run fmt",
+    "bundle": "bun scripts/bundle.ts ./dist",
+    "test": "tsd",
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}'"
+  },
+  "devDependencies": {
+    "tsd": "^0.22.0",
+    "prettier": "^2.4.1"
+  },
+  "tsd": {
+    "directory": "tests"
+  }
+}

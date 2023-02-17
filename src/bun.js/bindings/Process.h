@@ -21,6 +21,13 @@ public:
 
     DECLARE_EXPORT_INFO;
 
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<Process*>(cell)->Process::~Process();
+    }
+
+    ~Process();
+
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,

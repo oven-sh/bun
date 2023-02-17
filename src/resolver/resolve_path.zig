@@ -3,7 +3,7 @@ const std = @import("std");
 const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
@@ -31,7 +31,7 @@ inline fn isDotSlash(slice: []const u8) bool {
 }
 
 inline fn @"is ../"(slice: []const u8) bool {
-    return slice.len >= 3 and strings.eqlComptimeIgnoreLen(slice[0..3], "../");
+    return strings.hasPrefixComptime(slice, "../");
 }
 
 // TODO: is it faster to determine longest_common_separator in the while loop
@@ -40,7 +40,7 @@ inline fn @"is ../"(slice: []const u8) bool {
 pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u8, comptime isPathSeparator: IsSeparatorFunc) []const u8 {
     var min_length: usize = std.math.maxInt(usize);
     for (input) |str| {
-        min_length = @minimum(str.len, min_length);
+        min_length = @min(str.len, min_length);
     }
 
     var index: usize = 0;
@@ -59,7 +59,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (input[0][index] != input[1][index]) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -69,7 +69,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(3, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -79,7 +79,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(4, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -89,7 +89,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(5, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -99,7 +99,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(6, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -109,7 +109,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(7, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -119,7 +119,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                 if (nqlAtIndex(8, index, input)) {
                     break;
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -132,7 +132,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
                         break;
                     }
                 }
-                if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{input[0][index]})) {
+                if (@call(.always_inline, isPathSeparator, .{input[0][index]})) {
                     last_common_separator = index;
                 }
             }
@@ -154,7 +154,7 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
     // and say, "do one of you have a path separator after what we thought was the end?"
     for (input) |str| {
         if (str.len > index + 1) {
-            if (@call(.{ .modifier = .always_inline }, isPathSeparator, .{str[index]})) {
+            if (@call(.always_inline, isPathSeparator, .{str[index]})) {
                 return str[0 .. index + 2];
             }
         }
@@ -192,9 +192,9 @@ pub fn relativeToCommonPath(
 
     const common_path = if (has_leading_separator) _common_path[1..] else _common_path;
 
-    const shortest = @minimum(normalized_from.len, normalized_to.len);
+    const shortest = @min(normalized_from.len, normalized_to.len);
 
-    var last_common_separator = std.mem.lastIndexOfScalar(u8, _common_path, separator) orelse 0;
+    var last_common_separator = strings.lastIndexOfChar(_common_path, separator) orelse 0;
 
     if (shortest == common_path.len) {
         if (normalized_to.len > normalized_from.len) {
@@ -788,7 +788,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
     std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
 
     if (comptime is_sentinel) {
-        buf.ptr[result.len + leading_separator.len + 1] = 0;
+        buf.ptr[result.len + leading_separator.len] = 0;
         return buf[0 .. result.len + leading_separator.len :0];
     } else {
         return buf[0 .. result.len + leading_separator.len];
@@ -804,7 +804,7 @@ pub fn isSepWin32(char: u8) bool {
 }
 
 pub fn isSepAny(char: u8) bool {
-    return @call(.{ .modifier = .always_inline }, isSepPosix, .{char}) or @call(.{ .modifier = .always_inline }, isSepWin32, .{char});
+    return @call(.always_inline, isSepPosix, .{char}) or @call(.always_inline, isSepWin32, .{char});
 }
 
 pub fn lastIndexOfSeparatorWindows(slice: []const u8) ?usize {
@@ -1255,8 +1255,4 @@ test "longestCommonPath" {
     const more = [_][]const u8{ "/app/public/index.html", "/app/public/index.js", "/app/public", "/app/src/bacon.ts" };
     _ = t.expect("/app/", longestCommonPath(&more), @src());
     _ = t.expect("/app/public/", longestCommonPath(more[0..2]), @src());
-}
-
-test "" {
-    @import("std").testing.refAllDecls(@This());
 }

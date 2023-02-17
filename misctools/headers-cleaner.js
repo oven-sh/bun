@@ -5,7 +5,7 @@ var { join } = require("path");
 const destination = join(__dirname, "../src/bun.js/bindings/headers.zig");
 const replacements = join(
   __dirname,
-  "../src/bun.js/bindings/headers-replacements.zig"
+  "../src/bun.js/bindings/headers-replacements.zig",
 );
 
 console.log("Writing to", destination);
@@ -24,7 +24,7 @@ const keep = (
     (a) =>
       /const (JSC|WTF|Web)_/gi.test(a) &&
       !a.includes("JSValue") &&
-      !a.includes("CatchScope")
+      !a.includes("CatchScope"),
   )
   .join("\n")
   .trim();
@@ -33,15 +33,30 @@ input = keep + input.slice(first_extern_line, last_extern_fn_line);
 input = input.replaceAll("*WebCore__", "*bindings.");
 input = input.replaceAll("*JSC__", "*bindings.");
 input = input.replaceAll("[*c] JSC__", "[*c]bindings.");
+input = input.replaceAll("[*c]JSC__", "[*c]bindings.");
+input = input.replaceAll(
+  "[*c]bindings.JSGlobalObject",
+  "*bindings.JSGlobalObject",
+);
+input = input.replaceAll("[*c]bindings.JSPromise", "?*bindings.JSPromise");
+input = input.replaceAll(
+  "[*c]const bindings.JSPromise",
+  "?*const bindings.JSPromise",
+);
+
 input = input.replaceAll("[*c] const JSC__", "[*c]const bindings.");
 input = input.replaceAll(
   "[*c]Inspector__ScriptArguments",
-  "[*c]bindings.ScriptArguments"
+  "[*c]bindings.ScriptArguments",
 );
 
 input = input
   .replaceAll("VirtualMachine", "bindings.VirtualMachine")
   .replaceAll("bindings.bindings.VirtualMachine", "bindings.VirtualMachine");
+
+input = input.replaceAll("?*JSC__JSGlobalObject", "*bindings.JSGlobalObject");
+input = input.replaceAll("?*bindings.CallFrame", "*bindings.CallFrame");
+input = input.replaceAll("[*c]bindings.VM", "*bindings.VM");
 
 const hardcode = {
   "[*c][*c]JSC__Exception": "*?*JSC__Exception     ",
@@ -98,5 +113,5 @@ writeFileSync(
     readFileSync(replacements, "utf8").trim() +
     "\n" +
     input.trim() +
-    "\n"
+    "\n",
 );

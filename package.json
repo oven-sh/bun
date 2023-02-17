@@ -1,23 +1,29 @@
 {
   "dependencies": {
-    "bun-types": "latest",
-    "express": "^4.18.2",
+    "eslint": "^8.20.0",
+    "eslint-config-prettier": "^8.5.0",
     "mitata": "^0.1.3",
-    "peechy": "0.4.32",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "peechy": "latest",
+    "prettier": "^2.4.1",
+    "react": "next",
+    "react-dom": "next",
+    "typescript": "latest"
   },
   "private": true,
   "scripts": {
     "build-runtime": "esbuild --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js",
-    "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js"
+    "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js",
+    "postinstall": "bash .scripts/postinstall.sh",
+    "typecheck": "tsc",
+    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}' --config .prettierrc",
+    "lint": "eslint './**/*.d.ts' --cache",
+    "lint:fix": "eslint './**/*.d.ts' --cache --fix"
   },
   "devDependencies": {
-    "he": "^1.2.0",
-    "html-entities": "^2.3.3",
-    "prettier": "^2.4.1",
-    "svelte": "^3.50.0",
-    "typescript": "4.6.3"
+    "@types/react": "^18.0.25",
+    "@typescript-eslint/eslint-plugin": "^5.31.0",
+    "@typescript-eslint/parser": "^5.31.0",
+    "bun-webkit": "0.0.1-61ed147fdeaa0787d77bddb332177f23ad96d6fe"
   },
   "version": "0.0.0"
 }

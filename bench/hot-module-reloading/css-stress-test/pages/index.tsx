@@ -3,6 +3,7 @@ export function IndexPage() {
   return (
     <Main
       productName={
+        // @ts-ignore
         typeof location !== "undefined" ? location.search.substring(1) : ""
       }
     />

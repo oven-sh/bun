@@ -1,4 +1,4 @@
-// This is copied from std.fs.Dir.Iterator
+// This is copied from std.fs.IterableDir.Iterator
 // The differences are:
 // - it returns errors in the expected format
 // - doesn't mark BADF as unreachable
@@ -9,17 +9,17 @@ const std = @import("std");
 const os = std.os;
 
 const Dir = std.fs.Dir;
-const JSC = @import("../../jsc.zig");
+const JSC = @import("bun").JSC;
 const PathString = JSC.PathString;
 
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
-const strings = @import("../../global.zig").strings;
+const strings = @import("bun").strings;
 const Maybe = JSC.Maybe;
 const File = std.fs.File;
 const Result = Maybe(?Entry);
 
-const Entry = JSC.Node.DirEnt;
+const Entry = JSC.Node.Dirent;
 
 pub const Iterator = switch (builtin.os.tag) {
     .macos, .ios, .freebsd, .netbsd, .dragonfly, .openbsd, .solaris => struct {

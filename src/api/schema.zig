@@ -17,7 +17,7 @@ pub const Reader = struct {
     }
 
     pub fn read(this: *Self, count: usize) ![]u8 {
-        const read_count = @minimum(count, this.remain.len);
+        const read_count = @min(count, this.remain.len);
         if (read_count < count) {
             return error.EOF;
         }
@@ -58,7 +58,7 @@ pub const Reader = struct {
         return E.InvalidValue;
     }
 
-    pub inline fn readArray(this: *Self, comptime T: type) ![]const T {
+    pub fn readArray(this: *Self, comptime T: type) ![]const T {
         const length = try this.readInt(u32);
         if (length == 0) {
             return &([_]T{});
@@ -156,7 +156,7 @@ pub const Reader = struct {
                             .Packed => {
                                 const sizeof = @sizeOf(T);
                                 var slice = try this.read(sizeof);
-                                return @ptrCast(*T, slice[0..sizeof]).*;
+                                return @ptrCast(*align(1) T, slice[0..sizeof]).*;
                             },
                             else => {},
                         }
@@ -263,7 +263,7 @@ pub fn Writer(comptime WritableStream: type) type {
             }
         }
 
-        pub inline fn writeArray(this: *Self, comptime T: type, slice: anytype) !void {
+        pub fn writeArray(this: *Self, comptime T: type, slice: anytype) !void {
             try this.writeInt(@truncate(u32, slice.len));
 
             switch (T) {

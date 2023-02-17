@@ -19,36 +19,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
 
-  Zig::ImportMetaObject *importMetaObject = Zig::ImportMetaObject::create(
-      globalObject, callFrame->uncheckedArgument(0));
+  auto str = callFrame->uncheckedArgument(0).toStringOrNull(globalObject);
+  RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+  WTF::String val = str->value(globalObject);
+  auto *meta = Zig::ImportMetaObject::create(globalObject, str);
   auto clientData = WebCore::clientData(vm);
-
-  RETURN_IF_EXCEPTION(scope, {});
-
-  if (!importMetaObject) {
-    throwTypeError(globalObject, scope, "Invalid path"_s);
-    return JSC::JSValue::encode(JSC::jsUndefined());
-  }
-
-  auto requireFunctionValue = importMetaObject->get(
-      globalObject, clientData->builtinNames().requirePublicName());
-  RETURN_IF_EXCEPTION(scope, {});
-
-  JSC::JSBoundFunction *boundRequireFunction = JSC::JSBoundFunction::create(
-      vm, globalObject, requireFunctionValue.getObject(), importMetaObject,
-      nullptr, 1, jsString(vm, String("require"_s)));
-  RETURN_IF_EXCEPTION(scope, {});
-  auto resolveFunction = importMetaObject->get(
-      globalObject, clientData->builtinNames().resolveSyncPublicName());
-
-  JSC::JSBoundFunction *boundResolveFunction = JSC::JSBoundFunction::create(
-      vm, globalObject, resolveFunction.getObject(), importMetaObject, nullptr,
-      1, jsString(vm, String("resolve"_s)));
+  auto requireFunction =
+      Zig::ImportMetaObject::createRequireFunction(vm, globalObject, val);
+  auto nameStr = jsCast<JSFunction *>(requireFunction)->name(vm);
+  JSC::JSBoundFunction *boundRequireFunction =
+      JSC::JSBoundFunction::create(vm, globalObject, requireFunction, meta,
+                                   nullptr, 0, jsString(vm, nameStr));
   boundRequireFunction->putDirect(
-      vm, clientData->builtinNames().resolvePublicName(), boundResolveFunction,
-      JSC::PropertyAttribute::Function | 0);
+      vm, clientData->builtinNames().resolvePublicName(),
+      requireFunction->getDirect(
+          vm, clientData->builtinNames().resolvePublicName()),
+      0);
 
-  RELEASE_AND_RETURN(scope, JSC::JSValue::encode(boundRequireFunction));
+  RELEASE_AND_RETURN(scope, JSValue::encode(boundRequireFunction));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModulePaths,
                          (JSC::JSGlobalObject * globalObject,
@@ -113,7 +101,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
     auto result =
         Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName),
-                         JSValue::encode(callFrame->argument(1)));
+                         JSValue::encode(callFrame->argument(1)), false);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -173,6 +161,9 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   exportValues.append(JSC::constructEmptyObject(globalObject));
 
   exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
+
+  exportNames.append(JSC::Identifier::fromString(vm, "globalPaths"_s));
+  exportValues.append(JSC::constructEmptyArray(globalObject, 0));
 
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,

@@ -152,7 +152,7 @@ export class Bun {
 
     Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
       fetch(url),
-      { env: Bun[wasm_imports_sym], wasi_snapshot_preview1: Wasi }
+      { env: Bun[wasm_imports_sym], wasi_snapshot_preview1: Wasi },
     );
 
     const res = Bun.wasm_exports.init();
@@ -209,7 +209,7 @@ export class Bun {
           ".json": Loader.json,
         }[path.extname(file_name)],
       },
-      bb
+      bb,
     );
     const data = bb.toUint8Array();
 
@@ -225,7 +225,11 @@ export class Bun {
     return response;
   }
 
-  static scan(content: Uint8Array | string, file_name: string, loader: Loader) {
+  static scan(
+    content: Uint8Array | string,
+    file_name: string,
+    loader?: Loader,
+  ) {
     if (!Bun.has_initialized) {
       throw "Please run await Bun.init(wasm_url) before using this.";
     }
@@ -262,7 +266,7 @@ export class Bun {
             ".json": Loader.json,
           }[path.extname(file_name)],
       },
-      bb
+      bb,
     );
     const data = bb.toUint8Array();
 

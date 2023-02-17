@@ -1,4 +1,5 @@
 // Start a fast HTTP server from a function
+
 Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
@@ -9,21 +10,21 @@ Bun.serve({
         "Enter a path that starts with https:// or http://\n",
         {
           status: 400,
-        }
+        },
       );
     }
 
     const response = await fetch(
       req.url.substring("http://localhost:3000/".length),
-      req.clone()
+      req.clone(),
     );
 
     return new HTMLRewriter()
       .on("a[href]", {
-        element(element: Element) {
+        element(element) {
           element.setAttribute(
             "href",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
           );
         },
       })

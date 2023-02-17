@@ -7,7 +7,7 @@ bench(`fetch(https://example.com) x ${count}`, async () => {
 
   for (let i = 0; i < requests.length; i++) {
     requests[i] = fetch(`https://www.example.com/?cachebust=${i}`).then((r) =>
-      r.text()
+      r.text(),
     );
   }
 

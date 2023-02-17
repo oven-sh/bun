@@ -73,13 +73,9 @@ describe("HTMLRewriter", () => {
         }
       },
     });
-    var input = new Response(
-      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>'
-    );
+    var input = new Response('<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>');
     var output = rewriter.transform(input);
-    expect(await output.text()).toBe(
-      '<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>'
-    );
+    expect(await output.text()).toBe('<div first second="alrihgt" third="123" fourth=5 fifth=helloooo>hello</div>');
     expect(expected.length).toBe(0);
   });
 
@@ -104,7 +100,7 @@ describe("HTMLRewriter", () => {
         "&lt;span&gt;append&lt;/span&gt;",
         "<span>append html</span>",
         "</p>",
-      ].join("")
+      ].join(""),
     );
 
     // setInnerContent
@@ -147,9 +143,7 @@ describe("HTMLRewriter", () => {
         element.setInnerContent(this.content);
       }
     }
-    const res = new HTMLRewriter()
-      .on("p", new Handler("new"))
-      .transform(new Response("<p>test</p>"));
+    const res = new HTMLRewriter().on("p", new Handler("new")).transform(new Response("<p>test</p>"));
     expect(await res.text()).toBe("<p>new</p>");
   });
 
@@ -169,8 +163,8 @@ describe("HTMLRewriter", () => {
     remove: "<p></p>",
   };
 
-  const commentPropertiesMacro = async (func) => {
-    const res = func(new HTMLRewriter(), (comment) => {
+  const commentPropertiesMacro = async func => {
+    const res = func(new HTMLRewriter(), comment => {
       expect(comment.removed).toBe(false);
       expect(comment.text).toBe("test");
       comment.text = "new";
@@ -202,92 +196,80 @@ describe("HTMLRewriter", () => {
     await checkSelector(
       "p:nth-child(2)",
       "<div><p>1</p><p>2</p><p>3</p></div>",
-      "<div><p>1</p><p>new</p><p>3</p></div>"
+      "<div><p>1</p><p>new</p><p>3</p></div>",
     );
     await checkSelector(
       "p:first-child",
       "<div><p>1</p><p>2</p><p>3</p></div>",
-      "<div><p>new</p><p>2</p><p>3</p></div>"
+      "<div><p>new</p><p>2</p><p>3</p></div>",
     );
     await checkSelector(
       "p:nth-of-type(2)",
       "<div><p>1</p><h1>2</h1><p>3</p><h1>4</h1><p>5</p></div>",
-      "<div><p>1</p><h1>2</h1><p>new</p><h1>4</h1><p>5</p></div>"
+      "<div><p>1</p><h1>2</h1><p>new</p><h1>4</h1><p>5</p></div>",
     );
     await checkSelector(
       "p:first-of-type",
       "<div><h1>1</h1><p>2</p><p>3</p></div>",
-      "<div><h1>1</h1><p>new</p><p>3</p></div>"
+      "<div><h1>1</h1><p>new</p><p>3</p></div>",
     );
     await checkSelector(
       "p:not(:first-child)",
       "<div><p>1</p><p>2</p><p>3</p></div>",
-      "<div><p>1</p><p>new</p><p>new</p></div>"
+      "<div><p>1</p><p>new</p><p>new</p></div>",
     );
-    await checkSelector(
-      "p.red",
-      '<p class="red">1</p><p>2</p>',
-      '<p class="red">new</p><p>2</p>'
-    );
-    await checkSelector(
-      "h1#header",
-      '<h1 id="header">1</h1><h1>2</h1>',
-      '<h1 id="header">new</h1><h1>2</h1>'
-    );
-    await checkSelector(
-      "p[data-test]",
-      "<p data-test>1</p><p>2</p>",
-      "<p data-test>new</p><p>2</p>"
-    );
+    await checkSelector("p.red", '<p class="red">1</p><p>2</p>', '<p class="red">new</p><p>2</p>');
+    await checkSelector("h1#header", '<h1 id="header">1</h1><h1>2</h1>', '<h1 id="header">new</h1><h1>2</h1>');
+    await checkSelector("p[data-test]", "<p data-test>1</p><p>2</p>", "<p data-test>new</p><p>2</p>");
     await checkSelector(
       'p[data-test="one"]',
       '<p data-test="one">1</p><p data-test="two">2</p>',
-      '<p data-test="one">new</p><p data-test="two">2</p>'
+      '<p data-test="one">new</p><p data-test="two">2</p>',
     );
     await checkSelector(
       'p[data-test="one" i]',
       '<p data-test="one">1</p><p data-test="OnE">2</p><p data-test="two">3</p>',
-      '<p data-test="one">new</p><p data-test="OnE">new</p><p data-test="two">3</p>'
+      '<p data-test="one">new</p><p data-test="OnE">new</p><p data-test="two">3</p>',
     );
     await checkSelector(
       'p[data-test="one" s]',
       '<p data-test="one">1</p><p data-test="OnE">2</p><p data-test="two">3</p>',
-      '<p data-test="one">new</p><p data-test="OnE">2</p><p data-test="two">3</p>'
+      '<p data-test="one">new</p><p data-test="OnE">2</p><p data-test="two">3</p>',
     );
     await checkSelector(
       'p[data-test~="two"]',
       '<p data-test="one two three">1</p><p data-test="one two">2</p><p data-test="one">3</p>',
-      '<p data-test="one two three">new</p><p data-test="one two">new</p><p data-test="one">3</p>'
+      '<p data-test="one two three">new</p><p data-test="one two">new</p><p data-test="one">3</p>',
     );
     await checkSelector(
       'p[data-test^="a"]',
       '<p data-test="a1">1</p><p data-test="a2">2</p><p data-test="b1">3</p>',
-      '<p data-test="a1">new</p><p data-test="a2">new</p><p data-test="b1">3</p>'
+      '<p data-test="a1">new</p><p data-test="a2">new</p><p data-test="b1">3</p>',
     );
     await checkSelector(
       'p[data-test$="1"]',
       '<p data-test="a1">1</p><p data-test="a2">2</p><p data-test="b1">3</p>',
-      '<p data-test="a1">new</p><p data-test="a2">2</p><p data-test="b1">new</p>'
+      '<p data-test="a1">new</p><p data-test="a2">2</p><p data-test="b1">new</p>',
     );
     await checkSelector(
       'p[data-test*="b"]',
       '<p data-test="abc">1</p><p data-test="ab">2</p><p data-test="a">3</p>',
-      '<p data-test="abc">new</p><p data-test="ab">new</p><p data-test="a">3</p>'
+      '<p data-test="abc">new</p><p data-test="ab">new</p><p data-test="a">3</p>',
     );
     await checkSelector(
       'p[data-test|="a"]',
       '<p data-test="a">1</p><p data-test="a-1">2</p><p data-test="a2">3</p>',
-      '<p data-test="a">new</p><p data-test="a-1">new</p><p data-test="a2">3</p>'
+      '<p data-test="a">new</p><p data-test="a-1">new</p><p data-test="a2">3</p>',
     );
     await checkSelector(
       "div span",
       "<div><h1><span>1</span></h1><span>2</span><b>3</b></div>",
-      "<div><h1><span>new</span></h1><span>new</span><b>3</b></div>"
+      "<div><h1><span>new</span></h1><span>new</span><b>3</b></div>",
     );
     await checkSelector(
       "div > span",
       "<div><h1><span>1</span></h1><span>2</span><b>3</b></div>",
-      "<div><h1><span>1</span></h1><span>new</span><b>3</b></div>"
+      "<div><h1><span>1</span></h1><span>new</span><b>3</b></div>",
     );
   });
 });

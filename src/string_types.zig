@@ -3,7 +3,7 @@ pub const string = []const u8;
 pub const stringZ = [:0]const u8;
 pub const stringMutable = []u8;
 pub const CodePoint = i32;
-const bun = @import("./global.zig");
+const bun = @import("bun");
 // macOS sets file path limit to 1024
 // Since a pointer on x64 is 64 bits and only 46 bits are used
 // We can safely store the entire path slice in a single u64.
@@ -15,7 +15,7 @@ pub const PathString = packed struct {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = @import("javascript_core");
+    const JSC = @import("bun").JSC;
     pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject, exception: JSC.C.ExceptionRef) PathString {
         if (!value.jsType().isStringLike()) {
             JSC.JSError(JSC.getAllocator(global), "Only path strings are supported for now", .{}, global, exception);
@@ -45,7 +45,7 @@ pub const PathString = packed struct {
 
     pub inline fn sliceAssumeZ(this: anytype) stringZ {
         @setRuntimeSafety(false); // "cast causes pointer to be null" is fine here. if it is null, the len will be 0.
-        return @intToPtr([*:0]u8, @intCast(usize, this.ptr))[0..this.len];
+        return @intToPtr([*:0]u8, @intCast(usize, this.ptr))[0..this.len :0];
     }
 
     pub inline fn init(str: string) @This() {
@@ -103,7 +103,7 @@ pub const HashedString = struct {
     pub fn Eql(this: HashedString, comptime Other: type, other: Other) bool {
         switch (comptime Other) {
             HashedString, *HashedString, *const HashedString => {
-                return ((@maximum(this.hash, other.hash) > 0 and this.hash == other.hash) or (this.ptr == other.ptr)) and this.len == other.len;
+                return ((@max(this.hash, other.hash) > 0 and this.hash == other.hash) or (this.ptr == other.ptr)) and this.len == other.len;
             },
             else => {
                 return @as(usize, this.len) == other.len and @truncate(u32, std.hash.Wyhash.hash(0, other[0..other.len])) == this.hash;

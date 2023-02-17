@@ -72,6 +72,8 @@ public:
     bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }
     void fastSet(HTTPHeaderName name, const String& value) { m_headers.set(name, value); }
 
+    const Vector<String, 0>& getSetCookieHeaders() const { return m_headers.getSetCookieHeaders(); }
+
     class Iterator {
     public:
         explicit Iterator(FetchHeaders&);
@@ -81,6 +83,8 @@ public:
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
         Vector<String> m_keys;
+        uint64_t m_updateCounter { 0 };
+        size_t m_cookieIndex { 0 };
     };
     Iterator createIterator() { return Iterator { *this }; }
 
@@ -92,6 +96,8 @@ public:
 
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
+
+    uint64_t m_updateCounter { 0 };
 
 private:
     Guard m_guard;

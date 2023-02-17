@@ -72,6 +72,19 @@ void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
     removeAllListeners(eventType);
 }
 
+bool EventEmitter::removeAllListeners()
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    auto& map = data->eventListenerMap;
+    bool any = !map.isEmpty();
+    map.clear();
+    this->m_thisObject.clear();
+    return any;
+}
+
 bool EventEmitter::removeAllListeners(const Identifier& eventType)
 {
     auto* data = eventTargetData();
@@ -184,6 +197,9 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     auto& context = *scriptExecutionContext();
     VM& vm = context.vm();
 
+    auto* thisObject = protectedThis->m_thisObject.get();
+    JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
+
     for (auto& registeredListener : listeners) {
         if (UNLIKELY(registeredListener->wasRemoved()))
             continue;
@@ -205,13 +221,13 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                 continue;
 
             WTF::NakedPtr<JSC::Exception> exceptionPtr;
-            JSC::call(jsFunction->globalObject(), jsFunction, callData, JSC::jsUndefined(), arguments, exceptionPtr);
+            JSC::call(jsFunction->globalObject(), jsFunction, callData, thisValue, arguments, exceptionPtr);
             if (auto* exception = exceptionPtr.get()) {
                 auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
                 auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
                 if (!hasErrorListener || eventType == errorIdentifier) {
                     // If the event type is error, report the exception to the console.
-                    Bun__reportError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+                    Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
                 } else if (hasErrorListener) {
                     MarkedArgumentBuffer expcep;
                     JSValue errorValue = exception->value();

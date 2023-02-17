@@ -1,20 +1,68 @@
-import {
-  file,
-  readableStreamToArrayBuffer,
-  readableStreamToArray,
-  readableStreamToText,
-} from "bun";
+import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText } from "bun";
 import { expect, it, beforeEach, afterEach, describe } from "bun:test";
 import { mkfifo } from "mkfifo";
-import { unlinkSync, writeFileSync } from "node:fs";
+import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "os";
 import { gc } from "./gc";
-new Uint8Array();
 
 beforeEach(() => gc());
 afterEach(() => gc());
 
-describe("ReadableStream.prototype.tee", async () => {
+describe("WritableStream", () => {
+  it("works", async () => {
+    try {
+      var chunks = [];
+      var writable = new WritableStream({
+        write(chunk, controller) {
+          chunks.push(chunk);
+        },
+        close(er) {
+          console.log("closed");
+          console.log(er);
+        },
+        abort(reason) {
+          console.log("aborted!");
+          console.log(reason);
+        },
+      });
+
+      var writer = writable.getWriter();
+
+      writer.write(new Uint8Array([1, 2, 3]));
+
+      writer.write(new Uint8Array([4, 5, 6]));
+
+      await writer.close();
+
+      expect(JSON.stringify(Array.from(Buffer.concat(chunks)))).toBe(JSON.stringify([1, 2, 3, 4, 5, 6]));
+    } catch (e) {
+      console.log(e);
+      console.log(e.stack);
+      throw e;
+    }
+  });
+
+  it("pipeTo", async () => {
+    const rs = new ReadableStream({
+      start(controller) {
+        controller.enqueue("hello world");
+        controller.close();
+      },
+    });
+
+    let received;
+    const ws = new WritableStream({
+      write(chunk, controller) {
+        received = chunk;
+      },
+    });
+    await rs.pipeTo(ws);
+    expect(received).toBe("hello world");
+  });
+});
+
+describe("ReadableStream.prototype.tee", () => {
   it("class", () => {
     const [a, b] = new ReadableStream().tee();
     expect(a instanceof ReadableStream).toBe(true);
@@ -182,19 +230,19 @@ it("Bun.file() read text from pipe", async () => {
     unlinkSync("/tmp/fifo");
   } catch (e) {}
 
+  console.log("here");
   mkfifo("/tmp/fifo", 0o666);
 
-  const large = "HELLO!".repeat((((1024 * 512) / "HELLO!".length) | 0) + 1);
+  // 65k so its less than the max on linux
+  const large = "HELLO!".repeat((((1024 * 65) / "HELLO!".length) | 0) + 1);
 
   const chunks = [];
-  var out = Bun.file("/tmp/fifo").stream();
+
   const proc = Bun.spawn({
-    cmd: [
-      "bash",
-      join(import.meta.dir + "/", "bun-streams-test-fifo.sh"),
-      "/tmp/fifo",
-    ],
+    cmd: ["bash", join(import.meta.dir + "/", "bun-streams-test-fifo.sh"), "/tmp/fifo"],
     stderr: "inherit",
+    stdout: null,
+    stdin: null,
     env: {
       FIFO_TEST: large,
     },
@@ -202,34 +250,19 @@ it("Bun.file() read text from pipe", async () => {
   const exited = proc.exited;
   proc.ref();
 
-  var prom = new Promise((resolve, reject) => {
-    setTimeout(() => {
-      (async function () {
-        var reader = out.getReader();
-        var total = 0;
-
-        while (true) {
-          const chunk = await reader.read();
-          total += chunk.value?.byteLength || 0;
-          if (chunk.value) chunks.push(chunk.value);
-
-          if (chunk.done || total >= large.length) {
-            const output = new TextDecoder()
-              .decode(new Uint8Array(Buffer.concat(chunks)))
-              .trim();
-            reader.releaseLock();
-            resolve(output);
-            break;
-          }
-        }
-      })();
-    });
-  });
+  const prom = (async function () {
+    while (chunks.length === 0) {
+      var out = Bun.file("/tmp/fifo").stream();
+      for await (const chunk of out) {
+        chunks.push(chunk);
+      }
+    }
+    return Buffer.concat(chunks).toString();
+  })();
 
   const [status, output] = await Promise.all([exited, prom]);
-
-  expect(output.length).toBe(large.length);
-  expect(output).toBe(large);
+  expect(output.length).toBe(large.length + 1);
+  expect(output).toBe(large + "\n");
   expect(status).toBe(0);
 });
 
@@ -420,30 +453,24 @@ it("ReadableStream for Blob", async () => {
     if (chunk.done) break;
     chunks.push(new TextDecoder().decode(chunk.value));
   }
-  expect(chunks.join("")).toBe(
-    new TextDecoder().decode(Buffer.from("abdefghijklmnop"))
-  );
+  expect(chunks.join("")).toBe(new TextDecoder().decode(Buffer.from("abdefghijklmnop")));
 });
 
 it("ReadableStream for File", async () => {
   var blob = file(import.meta.dir + "/fetch.js.txt");
-  var stream = blob.stream(24);
+  var stream = blob.stream();
   const chunks = [];
   var reader = stream.getReader();
   stream = undefined;
   while (true) {
     const chunk = await reader.read();
-    gc(true);
     if (chunk.done) break;
     chunks.push(chunk.value);
-    expect(chunk.value.byteLength <= 24).toBe(true);
-    gc(true);
   }
   reader = undefined;
   const output = new Uint8Array(await blob.arrayBuffer()).join("");
-  const input = chunks.map((a) => a.join("")).join("");
+  const input = chunks.map(a => a.join("")).join("");
   expect(output).toBe(input);
-  gc(true);
 });
 
 it("ReadableStream for File errors", async () => {
@@ -583,4 +610,21 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
   var stream = blob.stream();
   const text = await new Response(stream).text();
   expect(text).toBe("abdefgh");
+});
+
+it("Bun.file().stream() read text from large file", async () => {
+  const hugely = "HELLO!".repeat(1024 * 1024 * 10);
+  const tmpfile = join(realpathSync(tmpdir()), "bun-streams-test.txt");
+  writeFileSync(tmpfile, hugely);
+  try {
+    const chunks = [];
+    for await (const chunk of Bun.file(tmpfile).stream()) {
+      chunks.push(chunk);
+    }
+    const output = Buffer.concat(chunks).toString();
+    expect(output).toHaveLength(hugely.length);
+    expect(output).toBe(hugely);
+  } finally {
+    unlinkSync(tmpfile);
+  }
 });

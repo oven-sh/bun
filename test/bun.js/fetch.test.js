@@ -1,26 +1,262 @@
-import { it, describe, expect } from "bun:test";
-import fs from "fs";
-import { gc } from "./gc";
+import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import fs, { chmodSync, unlinkSync } from "fs";
+import { mkfifo } from "mkfifo";
+import { gc, withoutAggressiveGC } from "./gc";
 
 const exampleFixture = fs.readFileSync(
-  import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) +
-    "/fetch.js.txt",
-  "utf8"
+  import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) + "/fetch.js.txt",
+  "utf8",
 );
 
+let server ;
+beforeAll(() => {
+  server = Bun.serve({
+    async fetch(){
+      await Bun.sleep(2000);
+      return new Response("Hello")
+    },
+    port: 64321
+  });
+  
+});
+afterAll(() => {
+  server.stop();
+});
+
+
+describe("AbortSignal", ()=> {
+  it("AbortError", async ()=> {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+      name = error.name;
+    }
+    expect(name).toBe("AbortError");
+  })
+  it("AbortErrorWithReason", async ()=> {
+    let reason;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort("My Reason");
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+        reason = error
+    }
+    expect(reason).toBe("My Reason");
+  })
+  it("TimeoutError", async ()=> {
+    let name;
+    try {
+      const signal = AbortSignal.timeout(10);
+      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text());
+    } catch (error){
+      name = error.name;
+    }
+    expect(name).toBe("TimeoutError");
+  })
+})
+
+describe("Headers", () => {
+  it(".toJSON", () => {
+    var headers = new Headers({
+      "content-length": "123",
+      "content-type": "text/plain",
+      "x-another-custom-header": "Hello World",
+      "x-custom-header": "Hello World",
+    });
+    expect(JSON.stringify(headers.toJSON(), null, 2)).toBe(
+      JSON.stringify(Object.fromEntries(headers.entries()), null, 2),
+    );
+  });
+
+  it(".getSetCookie() with object", () => {
+    var headers = new Headers({
+      "content-length": "123",
+      "content-type": "text/plain",
+      "x-another-custom-header": "Hello World",
+      "x-custom-header": "Hello World",
+      "Set-Cookie": "foo=bar; Path=/; HttpOnly",
+    });
+    expect(headers.count).toBe(5);
+    expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly"]);
+  });
+
+  it(".getSetCookie() with array", () => {
+    var headers = new Headers([
+      ["content-length", "123"],
+      ["content-type", "text/plain"],
+      ["x-another-custom-header", "Hello World"],
+      ["x-custom-header", "Hello World"],
+      ["Set-Cookie", "foo=bar; Path=/; HttpOnly"],
+      ["Set-Cookie", "foo2=bar2; Path=/; HttpOnly"],
+    ]);
+    expect(headers.count).toBe(6);
+    expect(headers.getAll("set-cookie")).toEqual(["foo=bar; Path=/; HttpOnly", "foo2=bar2; Path=/; HttpOnly"]);
+  });
+
+  it("Set-Cookies init", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["Set-Cookie", "bar=baz"],
+      ["X-bun", "abc"],
+      ["X-bun", "def"],
+    ]);
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
+      ["set-cookie", "bar=baz"],
+      ["x-bun", "abc, def"],
+    ]);
+    expect([...headers.values()]).toEqual(["foo=bar", "bar=baz", "abc, def"]);
+  });
+
+  it("Headers append multiple", () => {
+    const headers = new Headers([
+      ["Set-Cookie", "foo=bar"],
+      ["X-bun", "foo"],
+    ]);
+    headers.append("Set-Cookie", "bar=baz");
+    headers.append("x-bun", "bar");
+    const actual = [...headers];
+
+    // we do not preserve the order
+    // which is kind of bad
+    expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
+      ["set-cookie", "bar=baz"],
+      ["x-bun", "foo, bar"],
+    ]);
+  });
+
+  it("append duplicate set cookie key", () => {
+    const headers = new Headers([["Set-Cookie", "foo=bar"]]);
+    headers.append("set-Cookie", "foo=baz");
+    headers.append("Set-cookie", "baz=bar");
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=baz"],
+      ["set-cookie", "baz=bar"],
+    ]);
+  });
+
+  it("set duplicate cookie key", () => {
+    const headers = new Headers([["Set-Cookie", "foo=bar"]]);
+    headers.set("set-Cookie", "foo=baz");
+    headers.set("set-cookie", "bar=qat");
+    const actual = [...headers];
+    expect(actual).toEqual([
+      ["set-cookie", "foo=baz"],
+      ["set-cookie", "bar=qat"],
+    ]);
+  });
+});
+
 describe("fetch", () => {
-  const urls = ["https://example.com", "http://example.com"];
+  const urls = [
+    "https://example.com",
+    "http://example.com",
+    new URL("https://example.com"),
+    new Request({ url: "https://example.com" }),
+    { toString: () => "https://example.com" },
+  ];
   for (let url of urls) {
     gc();
-    it(url, async () => {
+    let name = url;
+    if (name instanceof URL) {
+      name = "URL: " + name;
+    } else if (name instanceof Request) {
+      name = "Request: " + name.url;
+    } else if (name.hasOwnProperty("toString")) {
+      name = "Object: " + name.toString();
+    }
+    it(name, async () => {
       gc();
-      const response = await fetch(url, {}, { verbose: true });
+      const response = await fetch(url, { verbose: true });
       gc();
       const text = await response.text();
       gc();
       expect(exampleFixture).toBe(text);
     });
   }
+
+  it(`"redirect: "manual"`, async () => {
+    const server = Bun.serve({
+      port: 4082,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "manual",
+    });
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe("https://example.com");
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
+
+  it(`"redirect: "follow"`, async () => {
+    const server = Bun.serve({
+      port: 4083,
+      fetch(req) {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: "https://example.com",
+          },
+        });
+      },
+    });
+    const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      redirect: "follow",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBe(null);
+    expect(response.redirected).toBe(true);
+    server.stop();
+  });
+
+  it("provide body", async () => {
+    const server = Bun.serve({
+      port: 4084,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    // POST with body
+    const url = `http://${server.hostname}:${server.port}`;
+    const response = await fetch(url, { method: "POST", body: "buntastic" });
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("buntastic");
+
+    // GET cannot have body
+    try {
+      await fetch(url, { body: "buntastic" });
+      expect(false).toBe(true);
+    } catch (exception) {
+      expect(exception instanceof TypeError).toBe(true);
+    }
+
+    server.stop();
+  });
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -49,39 +285,46 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
     for (let jsonObject of [
       { hello: true },
       {
-        hello:
-          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
+        hello: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       },
     ]) {
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} json${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
         var response = blobbyConstructor(JSON.stringify(jsonObject));
         if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(
-          JSON.stringify(jsonObject)
-        );
+        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
         if (withGC) gc();
       });
 
-      it(`${
-        jsonObject.hello === true ? "latin1" : "utf16"
-      } arrayBuffer -> json${withGC ? " (with gc) " : ""}`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
-        );
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(
-          JSON.stringify(jsonObject)
-        );
-        if (withGC) gc();
-      });
-
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
         withGC ? " (with gc) " : ""
       }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
+
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
+        );
+        if (withGC) gc();
+        var failed = false;
+        try {
+          await response.json();
+        } catch (e) {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        if (withGC) gc();
+      });
+
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
         var response = blobbyConstructor(JSON.stringify(jsonObject));
         if (withGC) gc();
@@ -89,21 +332,17 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${
-        jsonObject.hello === true ? "latin1" : "utf16"
-      } arrayBuffer -> text${withGC ? " (with gc) " : ""}`, async () => {
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
         if (withGC) gc();
-        var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
-        );
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
         if (withGC) gc();
         expect(await response.text()).toBe(JSON.stringify(jsonObject));
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
 
         var response = blobbyConstructor(JSON.stringify(jsonObject));
@@ -115,23 +354,23 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 
-      it(`${
-        jsonObject.hello === true ? "latin1" : "utf16"
-      } arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
         if (withGC) gc();
 
-        var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject))
-        );
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
         if (withGC) gc();
 
         const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
@@ -140,19 +379,19 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         const compare = new Uint8Array(await response.arrayBuffer());
         if (withGC) gc();
 
-        for (let i = 0; i < compare.length; i++) {
-          if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-          expect(compare[i]).toBe(bytes[i]);
-          if (withGC) gc();
-        }
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
+        });
         if (withGC) gc();
       });
 
       hasBlobFn &&
-        it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${
-          withGC ? " (with gc) " : ""
-        }`, async () => {
+        it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${withGC ? " (with gc) " : ""}`, async () => {
           if (withGC) gc();
           const text = JSON.stringify(jsonObject);
           var response = blobbyConstructor(text);
@@ -176,7 +415,7 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
           const out = await blobed.text();
           expect(out).toBe(text);
           if (withGC) gc();
-          await new Promise((resolve) => setTimeout(resolve, 1));
+          await new Promise(resolve => setTimeout(resolve, 1));
           if (withGC) gc();
           expect(out).toBe(text);
           const first = await blobed.arrayBuffer();
@@ -190,8 +429,72 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
   }
 }
 
+describe("Bun.file", () => {
+  const tempdir = require("os").tmpdir();
+  var callCount = 0;
+  testBlobInterface(data => {
+    const blob = new Blob([data]);
+    const buffer = Bun.peek(blob.arrayBuffer());
+    const path = tempdir + "-" + callCount++ + ".bytes";
+    require("fs").writeFileSync(path, buffer);
+    const file = Bun.file(path);
+    expect(blob.size).toBe(file.size);
+    return file;
+  });
+
+  it("size is Infinity on a fifo", () => {
+    try {
+      unlinkSync("/tmp/test-fifo");
+    } catch (e) {}
+    mkfifo("/tmp/test-fifo");
+
+    const { size } = Bun.file("/tmp/test-fifo");
+    expect(size).toBe(Infinity);
+  });
+
+  function forEachMethod(fn) {
+    const method = ["arrayBuffer", "text", "json"];
+    for (const m of method) {
+      test(m, fn(m));
+    }
+  }
+
+  describe("bad permissions throws", () => {
+    beforeAll(async () => {
+      try {
+        unlinkSync("/tmp/my-new-file");
+      } catch {}
+      await Bun.write("/tmp/my-new-file", "hey");
+      chmodSync("/tmp/my-new-file", 0o000);
+    });
+    afterAll(() => {
+      try {
+        unlinkSync("/tmp/my-new-file");
+      } catch {}
+    });
+
+    forEachMethod(m => () => {
+      const file = Bun.file("/tmp/my-new-file");
+      expect(async () => await file[m]()).toThrow("Permission denied");
+    });
+  });
+
+  describe("non-existent file throws", () => {
+    beforeAll(() => {
+      try {
+        unlinkSync("/tmp/does-not-exist");
+      } catch {}
+    });
+
+    forEachMethod(m => async () => {
+      const file = Bun.file("/tmp/does-not-exist");
+      expect(async () => await file[m]()).toThrow("No such file or directory");
+    });
+  });
+});
+
 describe("Blob", () => {
-  testBlobInterface((data) => new Blob([data]));
+  testBlobInterface(data => new Blob([data]));
 
   var blobConstructorValues = [
     ["123", "456"],
@@ -205,13 +508,13 @@ describe("Blob", () => {
     [
       new Blob([
         new TextEncoder().encode(
-          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+          "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
         ),
       ]),
     ],
     [
       new TextEncoder().encode(
-        "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳"
+        "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       ),
     ],
   ];
@@ -235,11 +538,9 @@ describe("Blob", () => {
       const res = await response.text();
       if (res !== expected[i]) {
         throw new Error(
-          `Failed: ${expected[i]
+          `Failed: ${expected[i].split("").map(a => a.charCodeAt(0))}, received: ${res
             .split("")
-            .map((a) => a.charCodeAt(0))}, received: ${res
-            .split("")
-            .map((a) => a.charCodeAt(0))}`
+            .map(a => a.charCodeAt(0))}`,
         );
       }
 
@@ -257,21 +558,13 @@ describe("Blob", () => {
       if (withGC) gc();
       for (let part of parts) {
         if (withGC) gc();
-        expect(
-          await combined
-            .slice(str.indexOf(part), str.indexOf(part) + part.length)
-            .text()
-        ).toBe(part);
+        expect(await combined.slice(str.indexOf(part), str.indexOf(part) + part.length).text()).toBe(part);
         if (withGC) gc();
       }
       if (withGC) gc();
       for (let part of parts) {
         if (withGC) gc();
-        expect(
-          await combined
-            .slice(str.indexOf(part), str.indexOf(part) + part.length)
-            .text()
-        ).toBe(part);
+        expect(await combined.slice(str.indexOf(part), str.indexOf(part) + part.length).text()).toBe(part);
         if (withGC) gc();
       }
     });
@@ -296,17 +589,10 @@ describe("Blob", () => {
   for (let withGC of [false, true]) {
     for (let TypedArray of typedArrays) {
       for (let Constructor of Constructors) {
-        it(`${Constructor.name} arrayBuffer() with ${TypedArray.name}${
-          withGC ? " with gc" : ""
-        }`, async () => {
+        it(`${Constructor.name} arrayBuffer() with ${TypedArray.name}${withGC ? " with gc" : ""}`, async () => {
           const data = new TypedArray(sample);
           if (withGC) gc();
-          const input =
-            Constructor === Blob
-              ? [data]
-              : Constructor === Request
-              ? { body: data }
-              : data;
+          const input = Constructor === Blob ? [data] : Constructor === Request ? { body: data } : data;
           if (withGC) gc();
           const blob = new Constructor(input);
           if (withGC) gc();
@@ -325,12 +611,7 @@ describe("Blob", () => {
 describe("Response", () => {
   describe("Response.json", () => {
     it("works", async () => {
-      const inputs = [
-        "hellooo",
-        [[123], 456, 789],
-        { hello: "world" },
-        { ok: "😉 😌 😍 🥰 😘 " },
-      ];
+      const inputs = ["hellooo", [[123], 456, 789], { hello: "world" }, { ok: "😉 😌 😍 🥰 😘 " }];
       for (let input of inputs) {
         const output = JSON.stringify(input);
         expect(await Response.json(input).text()).toBe(output);
@@ -343,17 +624,13 @@ describe("Response", () => {
     it("sets the content-type header", () => {
       let response = Response.json("hello");
       expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
-      );
+      expect(response.headers.get("content-type")).toBe("application/json;charset=utf-8");
       expect(response.status).toBe(200);
     });
     it("supports number status code", () => {
       let response = Response.json("hello", 407);
       expect(response.type).toBe("basic");
-      expect(response.headers.get("content-type")).toBe(
-        "application/json;charset=utf-8"
-      );
+      expect(response.headers.get("content-type")).toBe("application/json;charset=utf-8");
       expect(response.status).toBe(407);
     });
 
@@ -438,11 +715,11 @@ describe("Response", () => {
       await body.json();
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof SyntaxError);
+      expect(exception instanceof SyntaxError).toBe(true);
     }
   });
 
-  testBlobInterface((data) => new Response(data), true);
+  testBlobInterface(data => new Response(data), true);
 });
 
 describe("Request", () => {
@@ -469,10 +746,7 @@ describe("Request", () => {
     gc();
   });
 
-  testBlobInterface(
-    (data) => new Request("https://hello.com", { body: data }),
-    true
-  );
+  testBlobInterface(data => new Request("https://hello.com", { body: data }), true);
 });
 
 describe("Headers", () => {

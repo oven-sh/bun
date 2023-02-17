@@ -25,6 +25,7 @@
   "/optional-chain-with-function.js",
   "/template-literal.js",
   "/number-literal-bug.js",
+  "/simple-lit-example.ts",
   "/caught-require.js",
   "/package-json-utf8.js",
   "/multiple-var.js",

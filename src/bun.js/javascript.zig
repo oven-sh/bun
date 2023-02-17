@@ -2,7 +2,7 @@ const std = @import("std");
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const StaticExport = @import("./bindings/static_export.zig");
 const c_char = StaticExport.c_char;
-const bun = @import("../global.zig");
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -14,79 +14,81 @@ const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../mimalloc_arena.zig").Arena;
 const C = bun.C;
-const NetworkThread = @import("http").NetworkThread;
-const IO = @import("io");
-pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
-    return @ptrCast(*Destination, @alignCast(@alignOf(*Destination), value));
-}
+const NetworkThread = @import("bun").HTTP.NetworkThread;
+const IO = @import("bun").AsyncIO;
 const Allocator = std.mem.Allocator;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
-const MacroEntryPoint = @import("../bundler.zig").MacroEntryPoint;
-const logger = @import("../logger.zig");
+const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+const ParseResult = bun.bundler.ParseResult;
+const logger = @import("bun").logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
-const Bundler = @import("../bundler.zig").Bundler;
-const PluginRunner = @import("../bundler.zig").PluginRunner;
-const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
-const js_printer = @import("../js_printer.zig");
-const js_parser = @import("../js_parser.zig");
-const js_ast = @import("../js_ast.zig");
-const hash_map = @import("../hash_map.zig");
+const Bundler = bun.Bundler;
+const PluginRunner = bun.bundler.PluginRunner;
+const ServerEntryPoint = bun.bundler.ServerEntryPoint;
+const js_printer = bun.js_printer;
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const http = @import("../http.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
-const ZigString = @import("../jsc.zig").ZigString;
+const ZigString = @import("bun").JSC.ZigString;
 const Runtime = @import("../runtime.zig");
-const Router = @import("./api/router.zig");
+const Router = @import("./api/filesystem_router.zig");
 const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
-const ParseResult = @import("../bundler.zig").ParseResult;
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = @import("../jsc.zig").WebCore;
+const WebCore = @import("bun").JSC.WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("../jsc.zig").C;
-const JSC = @import("../jsc.zig");
+const js = @import("bun").JSC.C;
+const JSC = @import("bun").JSC;
 const JSError = @import("./base.zig").JSError;
 const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
-const JSValue = @import("../jsc.zig").JSValue;
+const JSValue = @import("bun").JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
-const Microtask = @import("../jsc.zig").Microtask;
-const JSGlobalObject = @import("../jsc.zig").JSGlobalObject;
-const ExceptionValueRef = @import("../jsc.zig").ExceptionValueRef;
-const JSPrivateDataPtr = @import("../jsc.zig").JSPrivateDataPtr;
-const ZigConsoleClient = @import("../jsc.zig").ZigConsoleClient;
-const Node = @import("../jsc.zig").Node;
-const ZigException = @import("../jsc.zig").ZigException;
-const ZigStackTrace = @import("../jsc.zig").ZigStackTrace;
-const ErrorableResolvedSource = @import("../jsc.zig").ErrorableResolvedSource;
-const ResolvedSource = @import("../jsc.zig").ResolvedSource;
-const JSPromise = @import("../jsc.zig").JSPromise;
-const JSInternalPromise = @import("../jsc.zig").JSInternalPromise;
-const JSModuleLoader = @import("../jsc.zig").JSModuleLoader;
-const JSPromiseRejectionOperation = @import("../jsc.zig").JSPromiseRejectionOperation;
-const Exception = @import("../jsc.zig").Exception;
-const ErrorableZigString = @import("../jsc.zig").ErrorableZigString;
-const ZigGlobalObject = @import("../jsc.zig").ZigGlobalObject;
-const VM = @import("../jsc.zig").VM;
-const JSFunction = @import("../jsc.zig").JSFunction;
+const Microtask = @import("bun").JSC.Microtask;
+const JSGlobalObject = @import("bun").JSC.JSGlobalObject;
+const ExceptionValueRef = @import("bun").JSC.ExceptionValueRef;
+const JSPrivateDataPtr = @import("bun").JSC.JSPrivateDataPtr;
+const ZigConsoleClient = @import("bun").JSC.ZigConsoleClient;
+const Node = @import("bun").JSC.Node;
+const ZigException = @import("bun").JSC.ZigException;
+const ZigStackTrace = @import("bun").JSC.ZigStackTrace;
+const ErrorableResolvedSource = @import("bun").JSC.ErrorableResolvedSource;
+const ResolvedSource = @import("bun").JSC.ResolvedSource;
+const JSPromise = @import("bun").JSC.JSPromise;
+const JSInternalPromise = @import("bun").JSC.JSInternalPromise;
+const JSModuleLoader = @import("bun").JSC.JSModuleLoader;
+const JSPromiseRejectionOperation = @import("bun").JSC.JSPromiseRejectionOperation;
+const Exception = @import("bun").JSC.Exception;
+const ErrorableZigString = @import("bun").JSC.ErrorableZigString;
+const ZigGlobalObject = @import("bun").JSC.ZigGlobalObject;
+const VM = @import("bun").JSC.VM;
+const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
+const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
+const PackageManager = @import("../install/install.zig").PackageManager;
+
+const ModuleLoader = JSC.ModuleLoader;
+const FetchFlags = JSC.FetchFlags;
+
 pub const GlobalConstructors = [_]type{
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
@@ -106,9 +108,6 @@ pub const GlobalClasses = [_]type{
     WebCore.Alert.Class,
     WebCore.Confirm.Class,
     WebCore.Prompt.Class,
-
-    // The last item in this array becomes "process.env"
-    Bun.EnvironmentVariables.Class,
 };
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const Task = JSC.Task;
@@ -116,17 +115,17 @@ const Blob = @import("../blob.zig");
 pub const Buffer = MarkedArrayBuffer;
 const Lock = @import("../lock.zig").Lock;
 
-pub const OpaqueCallback = fn (current: ?*anyopaque) callconv(.C) void;
+pub const OpaqueCallback = *const fn (current: ?*anyopaque) callconv(.C) void;
 pub fn OpaqueWrap(comptime Context: type, comptime Function: fn (this: *Context) void) OpaqueCallback {
     return struct {
         pub fn callback(ctx: ?*anyopaque) callconv(.C) void {
             var context: *Context = @ptrCast(*Context, @alignCast(@alignOf(Context), ctx.?));
-            @call(.{}, Function, .{context});
+            @call(.auto, Function, .{context});
         }
     }.callback;
 }
 
-const bun_file_import_path = "/node_modules.server.bun";
+pub const bun_file_import_path = "/node_modules.server.bun";
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
 const MappingList = SourceMap.Mapping.List;
@@ -244,18 +243,19 @@ pub const SavedSourceMap = struct {
         return SourceMap.Mapping.find(mappings, line, column);
     }
 };
-const uws = @import("uws");
+const uws = @import("bun").uws;
 
 pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    return JSC.VirtualMachine.vm.global;
+    _ = @sizeOf(JSC.VirtualMachine) + 1;
+    return JSC.VirtualMachine.get().global;
 }
 
 pub export fn Bun__getVM() *JSC.VirtualMachine {
-    return JSC.VirtualMachine.vm;
+    return JSC.VirtualMachine.get();
 }
 
 pub export fn Bun__drainMicrotasks() void {
-    JSC.VirtualMachine.vm.eventLoop().tick();
+    JSC.VirtualMachine.get().eventLoop().tick();
 }
 
 export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
@@ -264,28 +264,38 @@ export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
 
 export fn Bun__readOriginTimerStart(vm: *JSC.VirtualMachine) f64 {
     // timespce to milliseconds
-    // use f128 to reduce precision loss when converting to f64
-    return @floatCast(f64, (@intToFloat(f128, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
+    return @floatCast(f64, (@intToFloat(f64, vm.origin_timestamp) + JSC.VirtualMachine.origin_relative_epoch) / 1_000_000.0);
 }
 
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = Bun__getDefaultGlobal;
-        _ = Bun__getVM;
-        _ = Bun__drainMicrotasks;
-        _ = Bun__queueTask;
-        _ = Bun__queueTaskConcurrently;
-        _ = Bun__handleRejectedPromise;
-        _ = Bun__readOriginTimer;
-        _ = Bun__onDidAppendPlugin;
-        _ = Bun__readOriginTimerStart;
-    }
-}
+// comptime {
+//     if (!JSC.is_bindgen) {
+//         _ = Bun__getDefaultGlobal;
+//         _ = Bun__getVM;
+//         _ = Bun__drainMicrotasks;
+//         _ = Bun__queueTask;
+//         _ = Bun__queueTaskConcurrently;
+//         _ = Bun__handleRejectedPromise;
+//         _ = Bun__readOriginTimer;
+//         _ = Bun__onDidAppendPlugin;
+//         _ = Bun__readOriginTimerStart;
+//         _ = Bun__reportUnhandledError;
+//     }
+// }
 
 /// This function is called on the main thread
 /// The bunVM() call will assert this
 pub export fn Bun__queueTask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__queueTaskWithTimeout(global: *JSGlobalObject, task: *JSC.CppTask, milliseconds: i32) void {
+    global.bunVM().eventLoop().enqueueTaskWithTimeout(Task.init(task), milliseconds);
+}
+
+pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JSValue) callconv(.C) JSValue {
+    var jsc_vm = globalObject.bunVM();
+    jsc_vm.onUnhandledError(globalObject, value);
+    return JSC.JSValue.jsUndefined();
 }
 
 /// This function is called on another thread
@@ -302,7 +312,14 @@ pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.Cpp
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
     const result = promise.result(global.vm());
-    global.bunVM().runErrorHandler(result, null);
+    var jsc_vm = global.bunVM();
+
+    // this seems to happen in some cases when GC is running
+    if (result == .zero)
+        return;
+
+    jsc_vm.onUnhandledError(global, result);
+    jsc_vm.autoGarbageCollect();
 }
 
 pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
@@ -333,6 +350,7 @@ pub const VirtualMachine = struct {
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
     main: string = "",
+    main_hash: u32 = 0,
     process: js.JSObjectRef = null,
     blobs: ?*Blob.Group = null,
     flush_list: std.ArrayList(string),
@@ -342,10 +360,17 @@ pub const VirtualMachine = struct {
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
+    pending_unref_counter: i32 = 0,
+
+    /// hide bun:wrap from stack traces
+    /// bun:wrap is very noisy
+    hide_bun_stackframes: bool = true,
 
     is_printing_plugin: bool = false,
 
     plugin_runner: ?PluginRunner = null,
+    is_main_thread: bool = false,
+    last_reported_error_for_dedupe: JSValue = .zero,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -400,10 +425,117 @@ pub const VirtualMachine = struct {
     active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
-    poller: JSC.Poller = JSC.Poller{},
     us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    auto_install_dependencies: bool = false,
+    load_builtins_from_path: []const u8 = "",
+
+    onUnhandledRejection: *const OnUnhandledRejection = defaultOnUnhandledRejection,
+    onUnhandledRejectionCtx: ?*anyopaque = null,
+    unhandled_error_counter: usize = 0,
+
+    modules: ModuleLoader.AsyncModule.Queue = .{},
+    aggressive_garbage_collection: GCLevel = GCLevel.none,
+
+    gc_controller: JSC.GarbageCollectionController = .{},
+
+    pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    const VMHolder = struct {
+        pub threadlocal var vm: ?*VirtualMachine = null;
+    };
+
+    pub inline fn get() *VirtualMachine {
+        return VMHolder.vm.?;
+    }
+
+    pub const GCLevel = enum(u3) {
+        none = 0,
+        mild = 1,
+        aggressive = 2,
+    };
+
+    pub threadlocal var is_main_thread_vm: bool = false;
+
+    pub const UnhandledRejectionScope = struct {
+        ctx: ?*anyopaque = null,
+        onUnhandledRejection: *const OnUnhandledRejection = undefined,
+        count: usize = 0,
+
+        pub fn apply(this: *UnhandledRejectionScope, vm: *JSC.VirtualMachine) void {
+            vm.onUnhandledRejection = this.onUnhandledRejection;
+            vm.onUnhandledRejectionCtx = this.ctx;
+            vm.unhandled_error_counter = this.count;
+        }
+    };
+
+    pub fn onQuietUnhandledRejectionHandler(this: *VirtualMachine, _: *JSC.JSGlobalObject, _: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+    }
+
+    pub fn unhandledRejectionScope(this: *VirtualMachine) UnhandledRejectionScope {
+        return .{
+            .onUnhandledRejection = this.onUnhandledRejection,
+            .ctx = this.onUnhandledRejectionCtx,
+            .count = this.unhandled_error_counter,
+        };
+    }
+
+    pub fn resetUnhandledRejection(this: *VirtualMachine) void {
+        this.onUnhandledRejection = defaultOnUnhandledRejection;
+    }
+
+    pub fn loadExtraEnv(this: *VirtualMachine) void {
+        var map = this.bundler.env.map;
+
+        if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null)
+            this.hide_bun_stackframes = false;
+
+        if (map.get("BUN_OVERRIDE_MODULE_PATH")) |override_path| {
+            if (override_path.len > 0) {
+                this.load_builtins_from_path = override_path;
+            }
+        }
+
+        if (map.get("BUN_GARBAGE_COLLECTOR_LEVEL")) |gc_level| {
+            if (strings.eqlComptime(gc_level, "1")) {
+                this.aggressive_garbage_collection = .mild;
+            } else if (strings.eqlComptime(gc_level, "2")) {
+                this.aggressive_garbage_collection = .aggressive;
+            }
+        }
+    }
+
+    pub fn onUnhandledError(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.unhandled_error_counter += 1;
+        this.onUnhandledRejection(this, globalObject, value);
+    }
+
+    pub fn defaultOnUnhandledRejection(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        this.runErrorHandler(value, null);
+    }
+
+    pub inline fn packageManager(this: *VirtualMachine) *PackageManager {
+        return this.bundler.getPackageManager();
+    }
+
+    pub fn garbageCollect(this: *const VirtualMachine, sync: bool) JSValue {
+        @setCold(true);
+        Global.mimalloc_cleanup(false);
+        if (sync)
+            return this.global.vm().runGC(true);
+
+        this.global.vm().collectAsync();
+        return JSValue.jsNumber(this.global.vm().heapSize());
+    }
+
+    pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
+        if (this.aggressive_garbage_collection != .none) {
+            _ = this.garbageCollect(this.aggressive_garbage_collection == .aggressive);
+        }
+    }
+
     pub fn reload(this: *VirtualMachine) void {
         Output.debug("Reloading...", .{});
         this.global.reload();
@@ -459,7 +591,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
-    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: JSC.ConcurrentTask) void {
+    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: *JSC.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
 
@@ -467,7 +599,17 @@ pub const VirtualMachine = struct {
         this.eventLoop().tick();
     }
 
-    pub fn waitForPromise(this: *VirtualMachine, promise: *JSC.JSInternalPromise) void {
+    pub fn waitFor(this: *VirtualMachine, cond: *bool) void {
+        while (!cond.*) {
+            this.eventLoop().tick();
+
+            if (!cond.*) {
+                this.eventLoop().autoTick();
+            }
+        }
+    }
+
+    pub fn waitForPromise(this: *VirtualMachine, promise: JSC.AnyPromise) void {
         this.eventLoop().waitForPromise(promise);
     }
 
@@ -476,15 +618,6 @@ pub const VirtualMachine = struct {
     }
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
-
-    /// Threadlocals are slow on macOS
-    pub threadlocal var vm_loaded = false;
-
-    /// Threadlocals are slow on macOS
-    /// Consider using `globalThis.bunVM()` instead.
-    /// There may be a time where we run multiple VMs in the same thread
-    /// At that point, this threadlocal will be a problem.
-    pub threadlocal var vm: *VirtualMachine = undefined;
 
     pub fn enableMacroMode(this: *VirtualMachine) void {
         if (!this.has_enabled_macro_mode) {
@@ -524,16 +657,16 @@ pub const VirtualMachine = struct {
     pub fn getAPIConstructors(globalObject: *JSGlobalObject) []const JSC.JSValue {
         if (is_bindgen)
             return &[_]JSC.JSValue{};
-        const is_first = !VirtualMachine.vm.has_loaded_constructors;
+        const is_first = !VirtualMachine.get().has_loaded_constructors;
         if (is_first) {
-            VirtualMachine.vm.global = globalObject;
-            VirtualMachine.vm.has_loaded_constructors = true;
+            VirtualMachine.get().global = globalObject;
+            VirtualMachine.get().has_loaded_constructors = true;
         }
 
         var slice = if (is_first)
-            @as([]JSC.JSValue, &JSC.VirtualMachine.vm.global_api_constructors)
+            @as([]JSC.JSValue, &JSC.VirtualMachine.get().global_api_constructors)
         else
-            VirtualMachine.vm.allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
+            VirtualMachine.get().allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
 
         inline for (GlobalConstructors) |Class, i| {
             var ref = Class.constructor(globalObject.ref()).?;
@@ -559,12 +692,16 @@ pub const VirtualMachine = struct {
             @intCast(
                 u128,
                 // handle if they set their system clock to be before epoch
-                @maximum(
+                @max(
                     std.time.nanoTimestamp(),
                     origin_relative_epoch,
                 ),
             ) - origin_relative_epoch,
         );
+    }
+
+    pub inline fn isLoaded() bool {
+        return VMHolder.vm != null;
     }
 
     pub fn init(
@@ -582,7 +719,7 @@ pub const VirtualMachine = struct {
             log.* = logger.Log.init(allocator);
         }
 
-        VirtualMachine.vm = try allocator.create(VirtualMachine);
+        VMHolder.vm = try allocator.create(VirtualMachine);
         var console = try allocator.create(ZigConsoleClient);
         console.* = ZigConsoleClient.init(Output.errorWriter(), Output.writer());
         const bundler = try Bundler.init(
@@ -593,7 +730,9 @@ pub const VirtualMachine = struct {
             env_loader,
         );
 
-        VirtualMachine.vm.* = VirtualMachine{
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
@@ -608,43 +747,48 @@ pub const VirtualMachine = struct {
             .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
             .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
-            .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };
-        VirtualMachine.vm.source_mappings = .{ .map = &VirtualMachine.vm.saved_source_map_table };
-        VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
+        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
-        VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-        VirtualMachine.vm.regular_event_loop.concurrent_tasks = .{};
-        VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
 
-        VirtualMachine.vm.bundler.configureLinker();
-        try VirtualMachine.vm.bundler.configureFramework(false);
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
 
         vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
 
         if (_args.serve orelse false) {
-            VirtualMachine.vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
         }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
         inline for (GlobalClasses) |Class, i| {
             global_classes[i] = Class.get().*;
         }
-        VirtualMachine.vm.global = ZigGlobalObject.create(
+        vm.global = ZigGlobalObject.create(
             &global_classes,
             @intCast(i32, global_classes.len),
             vm.console,
         );
-        VirtualMachine.vm.regular_event_loop.global = VirtualMachine.vm.global;
-        VirtualMachine.vm.regular_event_loop.virtual_machine = VirtualMachine.vm;
-        VirtualMachine.vm_loaded = true;
+        vm.regular_event_loop.global = vm.global;
+        vm.regular_event_loop.virtual_machine = vm;
 
         if (source_code_printer == null) {
             var writer = try js_printer.BufferWriter.init(allocator);
@@ -653,7 +797,7 @@ pub const VirtualMachine = struct {
             source_code_printer.?.ctx.append_null_byte = false;
         }
 
-        return VirtualMachine.vm;
+        return vm;
     }
 
     // dynamic import
@@ -664,22 +808,7 @@ pub const VirtualMachine = struct {
     pub threadlocal var source_code_printer: ?*js_printer.BufferPrinter = null;
 
     pub fn clearRefString(_: *anyopaque, ref_string: *JSC.RefString) void {
-        _ = VirtualMachine.vm.ref_strings.remove(ref_string.hash);
-    }
-
-    pub fn getFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) ?*JSC.WebCore.Blob.Store {
-        const hash = pathlike.hash();
-        return this.file_blobs.get(hash);
-    }
-
-    pub fn putFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor, store: *JSC.WebCore.Blob.Store) !void {
-        const hash = pathlike.hash();
-        try this.file_blobs.put(hash, store);
-    }
-
-    pub fn removeFileBlob(this: *VirtualMachine, pathlike: JSC.Node.PathOrFileDescriptor) void {
-        const hash = pathlike.hash();
-        _ = this.file_blobs.remove(hash);
+        _ = VirtualMachine.get().ref_strings.remove(ref_string.hash);
     }
 
     pub fn refCountedResolvedSource(this: *VirtualMachine, code: []const u8, specifier: []const u8, source_url: []const u8, hash_: ?u32) ResolvedSource {
@@ -739,397 +868,22 @@ pub const VirtualMachine = struct {
         this.resolved_count = 0;
     }
 
-    const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else "";
-
-    pub fn fetchBuiltinModule(jsc_vm: *VirtualMachine, specifier: string, log: *logger.Log, comptime disable_transpilying: bool) !?ResolvedSource {
-        if (jsc_vm.node_modules != null and strings.eqlComptime(specifier, bun_file_import_path)) {
-            // We kind of need an abstraction around this.
-            // Basically we should subclass JSC::SourceCode with:
-            // - hash
-            // - file descriptor for source input
-            // - file path + file descriptor for bytecode caching
-            // - separate bundles for server build vs browser build OR at least separate sections
-            const code = try jsc_vm.node_modules.?.readCodeAsStringSlow(jsc_vm.allocator);
-
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(code),
-                .specifier = ZigString.init(bun_file_import_path),
-                .source_url = ZigString.init(bun_file_import_path[1..]),
-                .hash = 0, // TODO
-            };
-        } else if (jsc_vm.node_modules == null and strings.eqlComptime(specifier, Runtime.Runtime.Imports.Name)) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(Runtime.Runtime.sourceContentBun()),
-                .specifier = ZigString.init(Runtime.Runtime.Imports.Name),
-                .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
-                .hash = Runtime.Runtime.versionHash(),
-            };
-        } else if (HardcodedModule.Map.get(specifier)) |hardcoded| {
-            switch (hardcoded) {
-                // This is all complicated because the imports have to be linked and we want to run the printer on it
-                // so it consistently handles bundled imports
-                // we can't take the shortcut of just directly importing the file, sadly.
-                .@"bun:main" => {
-                    if (comptime disable_transpilying) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = ZigString.init(jsc_vm.entry_point.source.contents),
-                            .specifier = ZigString.init(std.mem.span(main_file_name)),
-                            .source_url = ZigString.init(std.mem.span(main_file_name)),
-                            .hash = 0,
-                        };
-                    }
-                    defer jsc_vm.transpiled_count += 1;
-
-                    var bundler = &jsc_vm.bundler;
-                    var old = jsc_vm.bundler.log;
-                    jsc_vm.bundler.log = log;
-                    jsc_vm.bundler.linker.log = log;
-                    jsc_vm.bundler.resolver.log = log;
-                    defer {
-                        jsc_vm.bundler.log = old;
-                        jsc_vm.bundler.linker.log = old;
-                        jsc_vm.bundler.resolver.log = old;
-                    }
-
-                    var jsx = bundler.options.jsx;
-                    jsx.parse = false;
-                    var opts = js_parser.Parser.Options.init(jsx, .js);
-                    opts.enable_bundling = false;
-                    opts.transform_require_to_import = false;
-                    opts.features.dynamic_require = true;
-                    opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-                    opts.features.hot_module_reloading = false;
-                    opts.features.react_fast_refresh = false;
-                    opts.filepath_hash_for_hmr = 0;
-                    opts.warn_about_unbundled_modules = false;
-                    opts.macro_context = &jsc_vm.bundler.macro_context.?;
-                    const main_ast = (bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
-                        return error.ParseError;
-                    };
-                    var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
-                    var file_path = Fs.Path.init(bundler.fs.top_level_dir);
-                    file_path.name.dir = bundler.fs.top_level_dir;
-                    file_path.name.base = "bun:main";
-                    try bundler.linker.link(
-                        file_path,
-                        &parse_result,
-                        jsc_vm.origin,
-                        .absolute_path,
-                        false,
-                        true,
-                    );
-                    var printer = source_code_printer.?.*;
-                    var written: usize = undefined;
-                    printer.ctx.reset();
-                    {
-                        defer source_code_printer.?.* = printer;
-                        written = try jsc_vm.bundler.printWithSourceMap(
-                            parse_result,
-                            @TypeOf(&printer),
-                            &printer,
-                            .esm_ascii,
-                            SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                        );
-                    }
-
-                    if (comptime Environment.dump_source)
-                        try dumpSource(main_file_name, &printer);
-
-                    if (written == 0) {
-                        return error.PrintingErrorWriteFailed;
-                    }
-
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
-                        .specifier = ZigString.init(std.mem.span(main_file_name)),
-                        .source_url = ZigString.init(std.mem.span(main_file_name)),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:jsc" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("bun-jsc.exports.js")),
-                        .specifier = ZigString.init("bun:jsc"),
-                        .source_url = ZigString.init("bun:jsc"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:fs" => {
-                    if (comptime Environment.isDebug) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = ZigString.init(strings.append(bun.default_allocator, jsModuleFromFile("fs.exports.js"), JSC.Node.fs.constants_string) catch unreachable),
-                            .specifier = ZigString.init("node:fs"),
-                            .source_url = ZigString.init("node:fs"),
-                            .hash = 0,
-                        };
-                    }
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),
-                        .specifier = ZigString.init("node:fs"),
-                        .source_url = ZigString.init("node:fs"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:buffer" => return jsSyntheticModule(.@"node:buffer"),
-                .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
-                .@"node:module" => return jsSyntheticModule(.@"node:module"),
-                .@"node:events" => return jsSyntheticModule(.@"node:events"),
-                .@"node:process" => return jsSyntheticModule(.@"node:process"),
-                .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
-                .@"node:stream" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("streams.exports.js")),
-                        .specifier = ZigString.init("node:stream"),
-                        .source_url = ZigString.init("node:stream"),
-                        .hash = 0,
-                    };
-                },
-
-                .@"node:fs/promises" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(@embedFile("fs_promises.exports.js") ++ JSC.Node.fs.constants_string),
-                        .specifier = ZigString.init("node:fs/promises"),
-                        .source_url = ZigString.init("node:fs/promises"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:path" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("path.exports.js")),
-                        .specifier = ZigString.init("node:path"),
-                        .source_url = ZigString.init("node:path"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:path/win32" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("path-win32.exports.js")),
-                        .specifier = ZigString.init("node:path/win32"),
-                        .source_url = ZigString.init("node:path/win32"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:path/posix" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("path-posix.exports.js")),
-                        .specifier = ZigString.init("node:path/posix"),
-                        .source_url = ZigString.init("node:path/posix"),
-                        .hash = 0,
-                    };
-                },
-
-                .@"node:os" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(jsModuleFromFile("os.exports.js")),
-                        .specifier = ZigString.init("node:os"),
-                        .source_url = ZigString.init("node:os"),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:ffi" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            "export const FFIType = " ++
-                                JSC.FFI.ABIType.map_to_js_object ++
-                                ";\n\n" ++
-                                "export const suffix = '" ++ shared_library_suffix ++ "';\n\n" ++
-                                @embedFile("ffi.exports.js") ++
-                                "\n",
-                        ),
-                        .specifier = ZigString.init("bun:ffi"),
-                        .source_url = ZigString.init("bun:ffi"),
-                        .hash = 0,
-                    };
-                },
-                .@"detect-libc" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, @embedFile(if (Environment.isLinux) "detect-libc.linux.js" else "detect-libc.js")),
-                        ),
-                        .specifier = ZigString.init("detect-libc"),
-                        .source_url = ZigString.init("detect-libc"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:url" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("url.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:url"),
-                        .source_url = ZigString.init("node:url"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:assert" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("assert.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:assert"),
-                        .source_url = ZigString.init("node:assert"),
-                        .hash = 0,
-                    };
-                },
-                .@"bun:sqlite" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./bindings/sqlite/sqlite.exports.js")),
-                        ),
-                        .specifier = ZigString.init("bun:sqlite"),
-                        .source_url = ZigString.init("bun:sqlite"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:perf_hooks" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./perf_hooks.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:perf_hooks"),
-                        .source_url = ZigString.init("node:perf_hooks"),
-                        .hash = 0,
-                    };
-                },
-                .@"ws" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./ws.exports.js")),
-                        ),
-                        .specifier = ZigString.init("ws"),
-                        .source_url = ZigString.init("ws"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:timers" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./node_timers.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:timers"),
-                        .source_url = ZigString.init("node:timers"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:timers/promises" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./node_timers_promises.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:timers/promises"),
-                        .source_url = ZigString.init("node:timers/promises"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:stream/web" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./node_streams_web.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:stream/web"),
-                        .source_url = ZigString.init("node:stream/web"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:stream/consumer" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./node_streams_consumer.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:stream/consumer"),
-                        .source_url = ZigString.init("node:stream/consumer"),
-                        .hash = 0,
-                    };
-                },
-                .@"undici" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./undici.exports.js")),
-                        ),
-                        .specifier = ZigString.init("undici"),
-                        .source_url = ZigString.init("undici"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:http" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./http.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:http"),
-                        .source_url = ZigString.init("node:http"),
-                        .hash = 0,
-                    };
-                },
-                .@"depd" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./depd.exports.js")),
-                        ),
-                        .specifier = ZigString.init("depd"),
-                        .source_url = ZigString.init("depd"),
-                        .hash = 0,
-                    };
-                },
-            }
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and
-            strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
-        {
-            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = ZigString.init(entry.source.contents),
-                    .specifier = ZigString.init(specifier),
-                    .source_url = ZigString.init(specifier),
-                    .hash = 0,
-                };
-            }
-        }
-
-        return null;
-    }
-
     pub fn fetchWithoutOnLoadPlugins(
         jsc_vm: *VirtualMachine,
+        globalObject: *JSC.JSGlobalObject,
         _specifier: string,
+        referrer: string,
         log: *logger.Log,
         ret: *ErrorableResolvedSource,
         comptime flags: FetchFlags,
     ) !ResolvedSource {
-        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.isLoaded());
 
-        if (try fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
+        if (try ModuleLoader.fetchBuiltinModule(jsc_vm, _specifier, log, comptime flags.disableTranspiling())) |builtin| {
             return builtin;
         }
-
-        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier);
+        var display_specifier = _specifier;
+        var specifier = ModuleLoader.normalizeSpecifier(jsc_vm, _specifier, &display_specifier);
         var path = Fs.Path.init(specifier);
         const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
@@ -1142,12 +896,16 @@ pub const VirtualMachine = struct {
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
             specifier,
+            display_specifier,
+            referrer,
             path,
             loader,
             log,
             null,
             ret,
+            null,
             VirtualMachine.source_code_printer.?,
+            globalObject,
             flags,
         );
     }
@@ -1155,21 +913,36 @@ pub const VirtualMachine = struct {
     pub const ResolveFunctionResult = struct {
         result: ?Resolver.Result,
         path: string,
+        query_string: []const u8 = "",
     };
 
+    fn normalizeSpecifierForResolution(specifier_: []const u8, query_string: *[]const u8) []const u8 {
+        var specifier = specifier_;
+        if (strings.hasPrefixComptime(specifier, "file://")) specifier = specifier["file://".len..];
+
+        if (strings.indexOfChar(specifier, '?')) |i| {
+            specifier = specifier[0..i];
+            query_string.* = specifier[i..];
+        }
+
+        return specifier;
+    }
+
+    threadlocal var specifier_cache_resolver_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     fn _resolve(
         ret: *ResolveFunctionResult,
         _: *JSGlobalObject,
         specifier: string,
         source: string,
+        is_esm: bool,
         comptime is_a_file_path: bool,
         comptime realpath: bool,
     ) !void {
-        std.debug.assert(VirtualMachine.vm_loaded);
+        std.debug.assert(VirtualMachine.isLoaded());
         // macOS threadlocal vars are very slow
         // we won't change threads in this function
         // so we can copy it here
-        var jsc_vm = vm;
+        var jsc_vm = VirtualMachine.get();
 
         if (jsc_vm.node_modules == null and strings.eqlComptime(std.fs.path.basename(specifier), Runtime.Runtime.Imports.alt_name)) {
             ret.path = Runtime.Runtime.Imports.Name;
@@ -1181,39 +954,80 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = jsc_vm.entry_point.source.path.text;
             return;
-        } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon)) {
+        } else if (strings.hasPrefixComptime(specifier, js_ast.Macro.namespaceWithColon)) {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (HardcodedModule.Map.get(specifier)) |result| {
+        } else if (JSC.HardcodedModule.Map.get(specifier)) |result| {
             ret.result = null;
             ret.path = @as(string, @tagName(result));
             return;
         }
 
         const is_special_source = strings.eqlComptime(source, main_file_name) or js_ast.Macro.isMacroPath(source);
-
-        const result = try jsc_vm.bundler.resolver.resolve(
-            if (!is_special_source)
-                if (is_a_file_path)
-                    Fs.PathName.init(source).dirWithTrailingSlash()
-                else
-                    source
+        var query_string: []const u8 = "";
+        const normalized_specifier = normalizeSpecifierForResolution(specifier, &query_string);
+        const source_to_use = if (!is_special_source)
+            if (is_a_file_path)
+                Fs.PathName.init(source).dirWithTrailingSlash()
             else
-                jsc_vm.bundler.fs.top_level_dir,
-            // TODO: do we need to handle things like query string params?
-            if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
-            .stmt,
-        );
+                source
+        else
+            jsc_vm.bundler.fs.top_level_dir;
+
+        const result: Resolver.Result = try brk: {
+            var retry_on_not_found = query_string.len > 0;
+            while (true) {
+                break :brk switch (jsc_vm.bundler.resolver.resolveAndAutoInstall(
+                    source_to_use,
+                    normalized_specifier,
+                    if (is_esm) .stmt else .require,
+                    .read_only,
+                )) {
+                    .success => |r| r,
+                    .failure => |e| e,
+                    .pending => unreachable,
+                    .not_found => if (!retry_on_not_found)
+                        error.ModuleNotFound
+                    else {
+                        retry_on_not_found = false;
+
+                        const buster_name = name: {
+                            if (std.fs.path.isAbsolute(normalized_specifier)) {
+                                if (std.fs.path.dirname(normalized_specifier)) |dir| {
+                                    break :name strings.withTrailingSlash(dir, normalized_specifier);
+                                }
+                            }
+
+                            var parts = [_]string{
+                                source_to_use,
+                                normalized_specifier,
+                            };
+
+                            break :name bun.path.joinAbsStringBuf(
+                                jsc_vm.bundler.fs.top_level_dir,
+                                &specifier_cache_resolver_buf,
+                                &parts,
+                                .auto,
+                            );
+                        };
+
+                        jsc_vm.bundler.resolver.bustDirCache(buster_name);
+                        continue;
+                    },
+                };
+            }
+        };
 
         if (!jsc_vm.macro_mode) {
             jsc_vm.has_any_macro_remappings = jsc_vm.has_any_macro_remappings or jsc_vm.bundler.options.macro_remap.count() > 0;
         }
         ret.result = result;
+        ret.query_string = query_string;
         const result_path = result.pathConst() orelse return error.ModuleNotFound;
         jsc_vm.resolved_count += 1;
         if (comptime !realpath) {
@@ -1267,7 +1081,7 @@ pub const VirtualMachine = struct {
         microtask: *Microtask,
     ) void {
         if (comptime Environment.allow_assert)
-            std.debug.assert(VirtualMachine.vm_loaded);
+            std.debug.assert(VirtualMachine.isLoaded());
 
         var vm_ = globalObject.bunVM();
         if (vm_.global == globalObject) {
@@ -1277,28 +1091,66 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, false, true);
+    pub fn resolveForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false, true);
     }
 
-    pub fn resolveFilePathForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, true);
+    pub fn resolveFilePathForAPI(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, true);
     }
 
-    pub fn resolve(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, true, false);
+    pub fn resolve(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: *ZigString,
+        is_esm: bool,
+    ) void {
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true, false);
     }
 
-    pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
+    fn normalizeSource(source: []const u8) []const u8 {
+        if (strings.hasPrefixComptime(source, "file://")) {
+            return source["file://".len..];
+        }
+
+        return source;
+    }
+
+    fn resolveMaybeNeedsTrailingSlash(
+        res: *ErrorableZigString,
+        global: *JSGlobalObject,
+        specifier: ZigString,
+        source: ZigString,
+        query_string: ?*ZigString,
+        is_esm: bool,
+        comptime is_a_file_path: bool,
+        comptime realpath: bool,
+    ) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
-        var jsc_vm = vm;
+        var jsc_vm = VirtualMachine.get();
         if (jsc_vm.plugin_runner) |plugin_runner| {
             if (PluginRunner.couldBePlugin(specifier.slice())) {
                 const namespace = PluginRunner.extractNamespace(specifier.slice());
                 const after_namespace = if (namespace.len == 0)
                     specifier
                 else
-                    specifier.substring(namespace.len + 1);
+                    specifier.substring(namespace.len + 1, specifier.len);
 
                 if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
                     res.* = resolved_path;
@@ -1307,38 +1159,76 @@ pub const VirtualMachine = struct {
             }
         }
 
-        if (HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
-            res.* = ErrorableZigString.ok(ZigString.init(hardcoded));
+        if (JSC.HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
+            if (hardcoded.tag == .none) {
+                resolveMaybeNeedsTrailingSlash(
+                    res,
+                    global,
+                    ZigString.init(hardcoded.path),
+                    source,
+                    query_string,
+                    is_esm,
+                    is_a_file_path,
+                    realpath,
+                );
+                return;
+            }
+
+            res.* = ErrorableZigString.ok(ZigString.init(hardcoded.path));
             return;
         }
+        var old_log = jsc_vm.log;
+        var log = logger.Log.init(jsc_vm.allocator);
+        defer log.deinit();
+        jsc_vm.log = &log;
+        jsc_vm.bundler.resolver.log = &log;
+        jsc_vm.bundler.linker.log = &log;
+        defer {
+            jsc_vm.log = old_log;
+            jsc_vm.bundler.linker.log = old_log;
+            jsc_vm.bundler.resolver.log = old_log;
+        }
+        _resolve(&result, global, specifier.slice(), normalizeSource(source.slice()), is_esm, is_a_file_path, realpath) catch |err_| {
+            var err = err_;
+            const msg: logger.Msg = brk: {
+                var msgs: []logger.Msg = log.msgs.items;
 
-        _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err| {
-            // This should almost always just apply to dynamic imports
+                for (msgs) |m| {
+                    if (m.metadata == .resolve) {
+                        err = m.metadata.resolve.err;
+                        break :brk m;
+                    }
+                }
 
-            const printed = ResolveError.fmt(
-                jsc_vm.allocator,
-                specifier.slice(),
-                source.slice(),
-                err,
-            ) catch unreachable;
-            const msg = logger.Msg{
-                .data = logger.rangeData(
-                    null,
-                    logger.Range.None,
-                    printed,
-                ),
-                .metadata = .{
-                    // import_kind is wrong probably
-                    .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
-                },
+                const printed = ResolveError.fmt(
+                    jsc_vm.allocator,
+                    specifier.slice(),
+                    source.slice(),
+                    err,
+                ) catch unreachable;
+                break :brk logger.Msg{
+                    .data = logger.rangeData(
+                        null,
+                        logger.Range.None,
+                        printed,
+                    ),
+                    .metadata = .{
+                        // import_kind is wrong probably
+                        .resolve = .{ .specifier = logger.BabyString.in(printed, specifier.slice()), .import_kind = .stmt },
+                    },
+                };
             };
 
             {
-                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, vm.allocator, msg, source.slice())));
+                res.* = ErrorableZigString.err(err, @ptrCast(*anyopaque, ResolveError.create(global, VirtualMachine.get().allocator, msg, source.slice())));
             }
 
             return;
         };
+
+        if (query_string) |query| {
+            query.* = ZigString.init(result.query_string);
+        }
 
         res.* = ErrorableZigString.ok(ZigString.init(result.path));
     }
@@ -1346,31 +1236,34 @@ pub const VirtualMachine = struct {
     // // This double prints
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
-    //         VirtualMachine.vm.runErrorHandler(result, null);
+    //     if (@enumToInt(VirtualMachine.get().last_error_jsvalue) != @enumToInt(result)) {
+    //         VirtualMachine.get().runErrorHandler(result, null);
     //     }
 
     //     return JSValue.jsUndefined();
     // }
 
-    const main_file_name: string = "bun:main";
+    pub const main_file_name: string = "bun:main";
 
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
-        var log = logger.Log.init(vm.bundler.allocator);
-        const spec = specifier.slice();
-        // threadlocal is cheaper in linux
         var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
-            vm
+            VirtualMachine.get()
         else
             global.bunVM();
 
+        var log = logger.Log.init(jsc_vm.bundler.allocator);
+        var spec = specifier.toSlice(jsc_vm.allocator);
+        defer spec.deinit();
+        var refer = source.toSlice(jsc_vm.allocator);
+        defer refer.deinit();
+
         const result = if (!jsc_vm.bundler.options.disable_transpilation)
-            @call(.{ .modifier = .always_inline }, fetchWithoutOnLoadPlugins, .{ jsc_vm, spec, &log, ret, .transpile }) catch |err| {
+            @call(.always_inline, fetchWithoutOnLoadPlugins, .{ jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .transpile }) catch |err| {
                 processFetchLog(global, specifier, source, &log, ret, err);
                 return;
             }
         else
-            fetchWithoutOnLoadPlugins(jsc_vm, spec, &log, ret, .print_source_and_clone) catch |err| {
+            fetchWithoutOnLoadPlugins(jsc_vm, global, spec.slice(), refer.slice(), &log, ret, .print_source_and_clone) catch |err| {
                 processFetchLog(global, specifier, source, &log, ret, err);
                 return;
             };
@@ -1398,13 +1291,14 @@ pub const VirtualMachine = struct {
         }
 
         ret.result.value = result;
+        var vm = get();
 
         if (vm.blobs) |blobs| {
             const specifier_blob = brk: {
-                if (strings.hasPrefix(spec, VirtualMachine.vm.bundler.fs.top_level_dir)) {
-                    break :brk spec[VirtualMachine.vm.bundler.fs.top_level_dir.len..];
+                if (strings.hasPrefix(spec.slice(), VirtualMachine.get().bundler.fs.top_level_dir)) {
+                    break :brk spec.slice()[VirtualMachine.get().bundler.fs.top_level_dir.len..];
                 }
-                break :brk spec;
+                break :brk spec.slice();
             };
 
             if (vm.has_loaded) {
@@ -1420,11 +1314,23 @@ pub const VirtualMachine = struct {
     pub fn processFetchLog(globalThis: *JSGlobalObject, specifier: ZigString, referrer: ZigString, log: *logger.Log, ret: *ErrorableResolvedSource, err: anyerror) void {
         switch (log.msgs.items.len) {
             0 => {
-                const msg = logger.Msg{
-                    .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(vm.allocator, "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                const msg: logger.Msg = brk: {
+                    if (err == error.UnexpectedPendingResolution) {
+                        break :brk logger.Msg{
+                            .data = logger.rangeData(
+                                null,
+                                logger.Range.None,
+                                std.fmt.allocPrint(globalThis.allocator(), "Unexpected pending import in \"{s}\". To automatically install npm packages with Bun, please use an import statement instead of require() or dynamic import().\nThis error can also happen if dependencies import packages which are not referenced anywhere. Worst case, run `bun install` and opt-out of the node_modules folder until we come up with a better way to handle this error.", .{specifier.slice()}) catch unreachable,
+                            ),
+                        };
+                    }
+
+                    break :brk logger.Msg{
+                        .data = logger.rangeData(null, logger.Range.None, std.fmt.allocPrint(globalThis.allocator(), "{s} while building {s}", .{ @errorName(err), specifier.slice() }) catch unreachable),
+                    };
                 };
                 {
-                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, vm.bundler.allocator, msg)));
+                    ret.* = ErrorableResolvedSource.err(err, @ptrCast(*anyopaque, BuildError.create(globalThis, globalThis.allocator(), msg)));
                 }
                 return;
             },
@@ -1432,10 +1338,10 @@ pub const VirtualMachine = struct {
             1 => {
                 const msg = log.msgs.items[0];
                 ret.* = ErrorableResolvedSource.err(err, switch (msg.metadata) {
-                    .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
+                    .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
                     .resolve => ResolveError.create(
                         globalThis,
-                        vm.bundler.allocator,
+                        globalThis.allocator(),
                         msg,
                         referrer.slice(),
                     ).?,
@@ -1445,14 +1351,14 @@ pub const VirtualMachine = struct {
             else => {
                 var errors_stack: [256]*anyopaque = undefined;
 
-                var errors = errors_stack[0..@minimum(log.msgs.items.len, errors_stack.len)];
+                var errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
 
                 for (log.msgs.items) |msg, i| {
                     errors[i] = switch (msg.metadata) {
-                        .build => BuildError.create(globalThis, vm.bundler.allocator, msg).?,
+                        .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
                         .resolve => ResolveError.create(
                             globalThis,
-                            vm.bundler.allocator,
+                            globalThis.allocator(),
                             msg,
                             referrer.slice(),
                         ).?,
@@ -1465,7 +1371,7 @@ pub const VirtualMachine = struct {
                         errors.ptr,
                         @intCast(u16, errors.len),
                         &ZigString.init(
-                            std.fmt.allocPrint(vm.bundler.allocator, "{d} errors building \"{s}\"", .{
+                            std.fmt.allocPrint(globalThis.allocator(), "{d} errors building \"{s}\"", .{
                                 errors.len,
                                 specifier.slice(),
                             }) catch unreachable,
@@ -1495,7 +1401,17 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn runErrorHandlerWithDedupe(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        if (this.last_reported_error_for_dedupe == result and !this.last_reported_error_for_dedupe.isEmptyOrUndefinedOrNull())
+            return;
+
+        this.runErrorHandler(result, exception_list);
+    }
+
     pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+        if (!result.isEmptyOrUndefinedOrNull())
+            this.last_reported_error_for_dedupe = result;
+
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
@@ -1537,12 +1453,14 @@ pub const VirtualMachine = struct {
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
                 promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
-                this.waitForPromise(promise);
+                this.waitForPromise(JSC.AnyPromise{
+                    .Internal = promise,
+                });
                 if (promise.status(this.global.vm()) == .Rejected)
                     return promise;
             }
 
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
             this.pending_internal_promise = promise;
         } else {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
@@ -1557,6 +1475,7 @@ pub const VirtualMachine = struct {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if (this.bun_watcher != null) {
+            this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
                 JSC.JSPromise.Status.Pending => {
                     while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
@@ -1570,7 +1489,10 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            this.waitForPromise(promise);
+            this.eventLoop().performGC();
+            this.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
         }
 
         this.eventLoop().autoTick();
@@ -1609,7 +1531,7 @@ pub const VirtualMachine = struct {
         path: string,
         promise: *JSInternalPromise = undefined,
         pub fn load(this: *MacroEntryPointLoader) void {
-            this.promise = vm._loadMacroEntryPoint(this.path);
+            this.promise = VirtualMachine.get()._loadMacroEntryPoint(this.path);
         }
     };
 
@@ -1617,7 +1539,9 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
-        this.waitForPromise(promise);
+        this.waitForPromise(JSC.AnyPromise{
+            .Internal = promise,
+        });
 
         return promise;
     }
@@ -1679,7 +1603,7 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
-                    VirtualMachine.vm.printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
@@ -1776,14 +1700,16 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn reportUncaughtExceptio(_: *JSGlobalObject, exception: *JSC.Exception) JSValue {
-        VirtualMachine.vm.runErrorHandler(exception.value(), null);
+    pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
+        var jsc_vm = globalObject.bunVM();
+        jsc_vm.onUnhandledError(globalObject, exception.value());
         return JSC.JSValue.jsUndefined();
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
         const stack = trace.frames();
         if (stack.len > 0) {
+            var vm = VirtualMachine.get();
             var i: i16 = 0;
             const origin: ?*const URL = if (vm.is_from_devserver) &vm.origin else null;
             const dir = vm.bundler.fs.top_level_dir;
@@ -1836,6 +1762,25 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub export fn Bun__remapStackFramePositions(globalObject: *JSC.JSGlobalObject, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        globalObject.bunVM().remapStackFramePositions(frames, frames_count);
+    }
+
+    pub fn remapStackFramePositions(this: *VirtualMachine, frames: [*]JSC.ZigStackFrame, frames_count: usize) void {
+        var i: usize = 0;
+        while (i < frames_count) : (i += 1) {
+            if (frames[i].position.isInvalid()) continue;
+            if (this.source_mappings.resolveMapping(
+                frames[i].source_url.slice(),
+                @max(frames[i].position.line, 0),
+                @max(frames[i].position.column_start, 0),
+            )) |mapping| {
+                frames[i].position.line = mapping.original.lines;
+                frames[i].position.column_start = mapping.original.columns;
+            }
+        }
+    }
+
     pub fn remapZigException(
         this: *VirtualMachine,
         exception: *ZigException,
@@ -1851,17 +1796,46 @@ pub const VirtualMachine = struct {
         }
 
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
+        if (this.hide_bun_stackframes) {
+            var start_index: ?usize = null;
+            for (frames) |frame, i| {
+                if (frame.source_url.eqlComptime("bun:wrap") or
+                    frame.function_name.eqlComptime("::bunternal::"))
+                {
+                    start_index = i;
+                    break;
+                }
+            }
+
+            if (start_index) |k| {
+                var j = k;
+                var i: usize = k;
+                while (i < frames.len) : (i += 1) {
+                    const frame = frames[i];
+                    if (frame.source_url.eqlComptime("bun:wrap") or
+                        frame.function_name.eqlComptime("::bunternal::"))
+                    {
+                        continue;
+                    }
+                    frames[j] = frame;
+                    j += 1;
+                }
+                exception.stack.frames_len = @truncate(u8, j);
+                frames.len = j;
+            }
+        }
+
         if (frames.len == 0) return;
 
         var top = &frames[0];
         if (this.source_mappings.resolveMapping(
             top.source_url.slice(),
-            @maximum(top.position.line, 0),
-            @maximum(top.position.column_start, 0),
+            @max(top.position.line, 0),
+            @max(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
             var errorable: ErrorableResolvedSource = undefined;
-            var original_source = fetchWithoutOnLoadPlugins(this, top.source_url.slice(), &log, &errorable, .print_source) catch return;
+            var original_source = fetchWithoutOnLoadPlugins(this, this.global, top.source_url.slice(), "", &log, &errorable, .print_source) catch return;
             const code = original_source.source_code.slice();
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
@@ -1884,7 +1858,7 @@ pub const VirtualMachine = struct {
                 std.mem.set(ZigString, source_lines, ZigString.Empty);
                 std.mem.set(i32, source_line_numbers, 0);
 
-                var lines_ = lines[0..@minimum(lines.len, source_lines.len)];
+                var lines_ = lines[0..@min(lines.len, source_lines.len)];
                 for (lines_) |line, j| {
                     source_lines[(lines_.len - 1) - j] = ZigString.init(line);
                     source_line_numbers[j] = top.position.line - @intCast(i32, j) + 1;
@@ -1906,8 +1880,8 @@ pub const VirtualMachine = struct {
                 if (frame.position.isInvalid()) continue;
                 if (this.source_mappings.resolveMapping(
                     frame.source_url.slice(),
-                    @maximum(frame.position.line, 0),
-                    @maximum(frame.position.column_start, 0),
+                    @max(frame.position.line, 0),
+                    @max(frame.position.column_start, 0),
                 )) |mapping| {
                     frame.position.line = mapping.original.lines;
                     frame.remapped = true;
@@ -1925,7 +1899,7 @@ pub const VirtualMachine = struct {
 
         var line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
         var max_line: i32 = -1;
-        for (line_numbers) |line| max_line = @maximum(max_line, line);
+        for (line_numbers) |line| max_line = @max(max_line, line);
         const max_line_number_pad = std.fmt.count("{d}", .{max_line});
 
         var source_lines = exception.stack.sourceLineIterator();
@@ -1948,8 +1922,11 @@ pub const VirtualMachine = struct {
 
         const message = exception.message;
         var did_print_name = false;
-        if (source_lines.next()) |source| {
-            if (source.text.len > 0 and exception.stack.frames()[0].position.isInvalid()) {
+        if (source_lines.next()) |source| brk: {
+            if (source.text.len == 0) break :brk;
+
+            const top_frame = if (exception.stack.frames_len > 0) exception.stack.frames()[0] else null;
+            if (top_frame == null or top_frame.?.position.isInvalid()) {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
 
@@ -1964,12 +1941,11 @@ pub const VirtualMachine = struct {
                 );
 
                 try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
-            } else if (source.text.len > 0) {
+            } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
                 try writer.writeByteNTimes(' ', pad);
-                const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
 
                 try writer.print(
@@ -2020,6 +1996,36 @@ pub const VirtualMachine = struct {
             .fd = exception.fd != -1,
         };
 
+        const extra_fields = .{
+            "url",
+            "info",
+            "pkg",
+            "errors",
+        };
+
+        if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
+            inline for (extra_fields) |field| {
+                if (error_instance.get(this.global, field)) |value| {
+                    if (!value.isEmptyOrUndefinedOrNull()) {
+                        const kind = value.jsType();
+                        if (kind.isStringLike()) {
+                            if (value.toStringOrNull(this.global)) |str| {
+                                var zig_str = str.toSlice(this.global, bun.default_allocator);
+                                defer zig_str.deinit();
+                                try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>\"{s}\"<r>\n", allow_ansi_color), .{ field, zig_str.slice() });
+                                add_extra_line = true;
+                            }
+                        } else if (kind.isObject() or kind.isArray()) {
+                            var zig_str = ZigString.init("");
+                            value.jsonStringify(this.global, 2, &zig_str);
+                            try writer.print(comptime Output.prettyFmt(" {s}<d>: <r>{s}<r>\n", allow_ansi_color), .{ field, zig_str });
+                            add_extra_line = true;
+                        }
+                    }
+                }
+            }
+        }
+
         if (show.path) {
             if (show.syscall) {
                 try writer.writeAll("  ");
@@ -2027,6 +2033,16 @@ pub const VirtualMachine = struct {
                 try writer.writeAll(" ");
             }
             try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path});
+        }
+
+        if (show.fd) {
+            if (show.syscall) {
+                try writer.writeAll("   ");
+            } else if (show.errno) {
+                try writer.writeAll("  ");
+            }
+
+            try writer.print(comptime Output.prettyFmt(" fd<d>: <r><cyan>\"{d}\"<r>\n", allow_ansi_color), .{exception.fd});
         }
 
         if (show.system_code) {
@@ -2077,16 +2093,21 @@ pub const VirtualMachine = struct {
             try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
         }
     }
+
+    comptime {
+        if (!JSC.is_bindgen)
+            _ = Bun__remapStackFramePositions;
+    }
 };
 
-const GetterFn = fn (
+const GetterFn = *const fn (
     this: anytype,
     ctx: js.JSContextRef,
     thisObject: js.JSValueRef,
     prop: js.JSStringRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef;
-const SetterFn = fn (
+const SetterFn = *const fn (
     this: anytype,
     ctx: js.JSContextRef,
     thisObject: js.JSValueRef,
@@ -2128,7 +2149,7 @@ pub const EventListenerMixin = struct {
         ctx: *CtxType,
         comptime onError: fn (ctx: *CtxType, err: anyerror, value: JSValue, request_ctx: *http.RequestContext) anyerror!void,
     ) !void {
-        if (comptime JSC.is_bindgen) unreachable;
+        JSC.markBinding(@src());
 
         var listeners = vm.event_listeners.get(EventType.fetch) orelse (return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {});
         if (listeners.items.len == 0) return onError(ctx, error.NoListeners, JSValue.jsUndefined(), request_context) catch {};
@@ -2164,7 +2185,9 @@ pub const EventListenerMixin = struct {
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 
-            vm.event_loop.waitForPromise(promise);
+            vm.event_loop.waitForPromise(JSC.AnyPromise{
+                .Internal = promise,
+            });
 
             if (fetch_event.rejected) return;
 
@@ -2204,19 +2227,14 @@ pub const EventListenerMixin = struct {
                 if (arguments.len == 0 or arguments.len == 1 or !js.JSValueIsString(ctx, arguments[0]) or !js.JSValueIsObject(ctx, arguments[arguments.len - 1]) or !js.JSObjectIsFunction(ctx, arguments[arguments.len - 1])) {
                     return js.JSValueMakeUndefined(ctx);
                 }
-
-                const name_len = js.JSStringGetLength(arguments[0]);
-                if (name_len > event_listener_names_buf.len) {
-                    return js.JSValueMakeUndefined(ctx);
-                }
-
-                const name_used_len = js.JSStringGetUTF8CString(arguments[0], &event_listener_names_buf, event_listener_names_buf.len);
-                const name = event_listener_names_buf[0 .. name_used_len - 1];
+                var name_slice = JSValue.c(arguments[0]).toSlice(ctx, ctx.allocator());
+                defer name_slice.deinit();
+                const name = name_slice.slice();
                 const event = EventType.match(name) orelse return js.JSValueMakeUndefined(ctx);
-                var entry = VirtualMachine.vm.event_listeners.getOrPut(event) catch unreachable;
+                var entry = VirtualMachine.get().event_listeners.getOrPut(event) catch unreachable;
 
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = List.initCapacity(VirtualMachine.vm.allocator, 1) catch unreachable;
+                    entry.value_ptr.* = List.initCapacity(VirtualMachine.get().allocator, 1) catch unreachable;
                 }
 
                 var callback = arguments[arguments.len - 1];
@@ -2234,7 +2252,7 @@ pub const EventListenerMixin = struct {
                 .read_only = true,
             },
             .{
-                .@"callAsFunction" = .{
+                .callAsFunction = .{
                     .rfn = Handler.addListener,
                 },
             },
@@ -2252,7 +2270,7 @@ pub const ResolveError = struct {
     pub fn fmt(allocator: std.mem.Allocator, specifier: string, referrer: string, err: anyerror) !string {
         switch (err) {
             error.ModuleNotFound => {
-                if (Resolver.isPackagePath(specifier)) {
+                if (Resolver.isPackagePath(specifier) and !strings.containsChar(specifier, '/')) {
                     return try std.fmt.allocPrint(allocator, "Cannot find package \"{s}\" from \"{s}\"", .{ specifier, referrer });
                 } else {
                     return try std.fmt.allocPrint(allocator, "Cannot find module \"{s}\" from \"{s}\"", .{ specifier, referrer });
@@ -2319,35 +2337,35 @@ pub const ResolveError = struct {
         },
         .{
             .toString = .{ .rfn = toString },
-            .convertToType = .{ .rfn = convertToType },
+            .convertToType = .{ .rfn = &convertToType },
         },
         .{
-            .@"referrer" = .{
-                .@"get" = getReferrer,
+            .referrer = .{
+                .get = getReferrer,
                 .ro = true,
             },
-            .@"code" = .{
-                .@"get" = getCode,
+            .code = .{
+                .get = getCode,
                 .ro = true,
             },
-            .@"message" = .{
-                .@"get" = getMessage,
+            .message = .{
+                .get = getMessage,
                 .ro = true,
             },
-            .@"name" = .{
-                .@"get" = getName,
+            .name = .{
+                .get = getName,
                 .ro = true,
             },
-            .@"specifier" = .{
-                .@"get" = getSpecifier,
+            .specifier = .{
+                .get = getSpecifier,
                 .ro = true,
             },
-            .@"importKind" = .{
-                .@"get" = getImportKind,
+            .importKind = .{
+                .get = getImportKind,
                 .ro = true,
             },
-            .@"position" = .{
-                .@"get" = getPosition,
+            .position = .{
+                .get = getPosition,
                 .ro = true,
             },
         },
@@ -2467,17 +2485,17 @@ pub const BuildError = struct {
             .toString = .{ .rfn = toString },
         },
         .{
-            .@"message" = .{
-                .@"get" = getMessage,
+            .message = .{
+                .get = getMessage,
                 .ro = true,
             },
-            .@"name" = .{
-                .@"get" = getName,
+            .name = .{
+                .get = getName,
                 .ro = true,
             },
             // This is called "position" instead of "location" because "location" may be confused with Location.
-            .@"position" = .{
-                .@"get" = getPosition,
+            .position = .{
+                .get = getPosition,
                 .ro = true,
             },
         },
@@ -2623,781 +2641,6 @@ pub const BuildError = struct {
 
 pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
 
-pub const HardcodedModule = enum {
-    @"bun:ffi",
-    @"bun:jsc",
-    @"bun:main",
-    @"bun:sqlite",
-    @"depd",
-    @"detect-libc",
-    @"node:assert",
-    @"node:buffer",
-    @"node:events",
-    @"node:fs",
-    @"node:fs/promises",
-    @"node:http",
-    @"node:module",
-    @"node:os",
-    @"node:path",
-    @"node:path/posix",
-    @"node:path/win32",
-    @"node:perf_hooks",
-    @"node:process",
-    @"node:stream",
-    @"node:stream/consumer",
-    @"node:stream/web",
-    @"node:string_decoder",
-    @"node:timers",
-    @"node:timers/promises",
-    @"node:tty",
-    @"node:url",
-    @"undici",
-    @"ws",
-
-    /// Already resolved modules go in here.
-    /// This does not remap the module name, it is just a hash table.
-    /// Do not put modules that have aliases in here
-    /// Put those in Aliases
-    pub const Map = bun.ComptimeStringMap(
-        HardcodedModule,
-        .{
-            .{ "buffer", HardcodedModule.@"node:buffer" },
-            .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
-            .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
-            .{ "bun:main", HardcodedModule.@"bun:main" },
-            .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "depd", HardcodedModule.@"depd" },
-            .{ "detect-libc", HardcodedModule.@"detect-libc" },
-            .{ "node:assert", HardcodedModule.@"node:assert" },
-            .{ "node:buffer", HardcodedModule.@"node:buffer" },
-            .{ "node:events", HardcodedModule.@"node:events" },
-            .{ "node:fs", HardcodedModule.@"node:fs" },
-            .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
-            .{ "node:http", HardcodedModule.@"node:http" },
-            .{ "node:module", HardcodedModule.@"node:module" },
-            .{ "node:os", HardcodedModule.@"node:os" },
-            .{ "node:path", HardcodedModule.@"node:path" },
-            .{ "node:path/posix", HardcodedModule.@"node:path/posix" },
-            .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
-            .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
-            .{ "node:process", HardcodedModule.@"node:process" },
-            .{ "node:stream", HardcodedModule.@"node:stream" },
-            .{ "node:stream/consumer", HardcodedModule.@"node:stream/consumer" },
-            .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
-            .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
-            .{ "node:timers", HardcodedModule.@"node:timers" },
-            .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
-            .{ "node:tty", HardcodedModule.@"node:tty" },
-            .{ "node:url", HardcodedModule.@"node:url" },
-            .{ "undici", HardcodedModule.@"undici" },
-            .{ "ws", HardcodedModule.@"ws" },
-        },
-    );
-    pub const Aliases = bun.ComptimeStringMap(
-        string,
-        .{
-            .{ "assert", "node:assert" },
-            .{ "buffer", "node:buffer" },
-            .{ "bun", "bun" },
-            .{ "bun:ffi", "bun:ffi" },
-            .{ "bun:jsc", "bun:jsc" },
-            .{ "bun:sqlite", "bun:sqlite" },
-            .{ "bun:wrap", "bun:wrap" },
-            .{ "depd", "depd" },
-            .{ "detect-libc", "detect-libc" },
-            .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
-            .{ "events", "node:events" },
-            .{ "ffi", "bun:ffi" },
-            .{ "fs", "node:fs" },
-            .{ "fs/promises", "node:fs/promises" },
-            .{ "http", "node:http" },
-            .{ "module", "node:module" },
-            .{ "node:assert", "node:assert" },
-            .{ "node:buffer", "node:buffer" },
-            .{ "node:events", "node:events" },
-            .{ "node:fs", "node:fs" },
-            .{ "node:fs/promises", "node:fs/promises" },
-            .{ "node:http", "node:http" },
-            .{ "node:module", "node:module" },
-            .{ "node:os", "node:os" },
-            .{ "node:path", "node:path" },
-            .{ "node:path/posix", "node:path/posix" },
-            .{ "node:path/win32", "node:path/win32" },
-            .{ "node:perf_hooks", "node:perf_hooks" },
-            .{ "node:process", "node:process" },
-            .{ "node:stream", "node:stream" },
-            .{ "node:stream/consumer", "node:stream/consumer" },
-            .{ "node:stream/web", "node:stream/web" },
-            .{ "node:string_decoder", "node:string_decoder" },
-            .{ "node:timers", "node:timers" },
-            .{ "node:timers/promises", "node:timers/promises" },
-            .{ "node:tty", "node:tty" },
-            .{ "node:url", "node:url" },
-            .{ "os", "node:os" },
-            .{ "path", "node:path" },
-            .{ "path/posix", "node:path/posix" },
-            .{ "path/win32", "node:path/win32" },
-            .{ "perf_hooks", "node:perf_hooks" },
-            .{ "process", "node:process" },
-            .{ "stream", "node:stream" },
-            .{ "stream/consumer", "node:stream/consumer" },
-            .{ "stream/web", "node:stream/web" },
-            .{ "string_decoder", "node:string_decoder" },
-            .{ "timers", "node:timers" },
-            .{ "timers/promises", "node:timers/promises" },
-            .{ "tty", "node:tty" },
-            .{ "undici", "undici" },
-            .{ "url", "node:url" },
-            .{ "ws", "ws" },
-            .{ "ws/lib/websocket", "ws" },
-        },
-    );
-};
-
-pub const DisabledModule = bun.ComptimeStringMap(
-    void,
-    .{
-        .{"child_process"},
-        .{"https"},
-        .{"node:child_process"},
-        .{"node:https"},
-        .{"node:tls"},
-        .{"node:worker_threads"},
-        .{"tls"},
-        .{"worker_threads"},
-    },
-);
-
-// This exists to make it so we can reload these quicker in development
-fn jsModuleFromFile(comptime input: string) string {
-    const absolute_path = comptime std.fs.path.dirname(@src().file).? ++ "/" ++ input;
-    const Holder = struct {
-        pub const file = @embedFile(absolute_path);
-    };
-
-    if (comptime !Environment.allow_assert) {
-        return Holder.file;
-    }
-
-    var file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
-        const WarnOnce = struct {
-            pub var warned = false;
-        };
-        if (!WarnOnce.warned) {
-            WarnOnce.warned = true;
-            Output.prettyErrorln("Could not find file: " ++ absolute_path ++ " - using embedded version", .{});
-        }
-        return Holder.file;
-    };
-
-    var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file: " ++ absolute_path);
-    return contents;
-}
-
-inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag) ResolvedSource {
-    return ResolvedSource{
-        .allocator = null,
-        .source_code = ZigString.init(""),
-        .specifier = ZigString.init(@tagName(name)),
-        .source_url = ZigString.init(@tagName(name)),
-        .hash = 0,
-        .tag = name,
-    };
-}
-
-fn dumpSource(specifier: string, printer: anytype) !void {
-    const BunDebugHolder = struct {
-        pub var dir: ?std.fs.Dir = null;
-    };
-    if (BunDebugHolder.dir == null) {
-        BunDebugHolder.dir = try std.fs.cwd().makeOpenPath("/tmp/bun-debug-src/", .{ .iterate = true });
-    }
-
-    if (std.fs.path.dirname(specifier)) |dir_path| {
-        var parent = try BunDebugHolder.dir.?.makeOpenPath(dir_path[1..], .{ .iterate = true });
-        defer parent.close();
-        try parent.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
-    } else {
-        try BunDebugHolder.dir.?.writeFile(std.fs.path.basename(specifier), printer.ctx.getWritten());
-    }
-}
-
-pub const ModuleLoader = struct {
-    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *ZigString) Api.Loader {
-        var jsc_vm = global.bunVM();
-        const filename = str.toSlice(jsc_vm.allocator);
-        defer filename.deinit();
-        const loader = jsc_vm.bundler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
-        if (loader == .file) {
-            return Api.Loader.js;
-        }
-
-        return loader;
-    }
-    pub fn transpileSourceCode(
-        jsc_vm: *VirtualMachine,
-        specifier: string,
-        path: Fs.Path,
-        loader: options.Loader,
-        log: *logger.Log,
-        virtual_source: ?*const logger.Source,
-        ret: *ErrorableResolvedSource,
-        source_code_printer: *js_printer.BufferPrinter,
-        comptime flags: FetchFlags,
-    ) !ResolvedSource {
-        const disable_transpilying = comptime flags.disableTranspiling();
-
-        switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml => {
-                jsc_vm.transpiled_count += 1;
-                jsc_vm.bundler.resetStore();
-                const hash = http.Watcher.getHash(path.text);
-
-                var allocator = if (jsc_vm.has_loaded) jsc_vm.arena.allocator() else jsc_vm.allocator;
-
-                var fd: ?StoredFileDescriptorType = null;
-                var package_json: ?*PackageJSON = null;
-
-                if (jsc_vm.bun_dev_watcher) |watcher| {
-                    if (watcher.indexOf(hash)) |index| {
-                        const _fd = watcher.watchlist.items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
-                        package_json = watcher.watchlist.items(.package_json)[index];
-                    }
-                } else if (jsc_vm.bun_watcher) |watcher| {
-                    if (watcher.indexOf(hash)) |index| {
-                        const _fd = watcher.watchlist.items(.fd)[index];
-                        fd = if (_fd > 0) _fd else null;
-                        package_json = watcher.watchlist.items(.package_json)[index];
-                    }
-                }
-
-                var old = jsc_vm.bundler.log;
-                jsc_vm.bundler.log = log;
-                jsc_vm.bundler.linker.log = log;
-                jsc_vm.bundler.resolver.log = log;
-
-                defer {
-                    jsc_vm.bundler.log = old;
-                    jsc_vm.bundler.linker.log = old;
-                    jsc_vm.bundler.resolver.log = old;
-                }
-
-                // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = specifier.len > "/bun-vfs/node_modules/".len and strings.eqlComptimeIgnoreLen(specifier[0.."/bun-vfs/node_modules/".len], "/bun-vfs/node_modules/");
-
-                const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
-                    MacroRemap{}
-                else
-                    jsc_vm.bundler.options.macro_remap;
-
-                var fallback_source: logger.Source = undefined;
-
-                var parse_options = Bundler.ParseOptions{
-                    .allocator = allocator,
-                    .path = path,
-                    .loader = loader,
-                    .dirname_fd = 0,
-                    .file_descriptor = fd,
-                    .file_hash = hash,
-                    .macro_remappings = macro_remappings,
-                    .jsx = jsc_vm.bundler.options.jsx,
-                    .virtual_source = virtual_source,
-                    .hoist_bun_plugin = true,
-                };
-
-                if (is_node_override) {
-                    if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
-                        const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
-                        fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
-                        parse_options.virtual_source = &fallback_source;
-                    }
-                }
-
-                var parse_result = jsc_vm.bundler.parseMaybeReturnFileOnly(
-                    parse_options,
-                    null,
-                    disable_transpilying,
-                ) orelse {
-                    return error.ParseError;
-                };
-
-                if (jsc_vm.bundler.log.errors > 0) {
-                    return error.ParseError;
-                }
-
-                if (comptime disable_transpilying) {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = switch (comptime flags) {
-                            .print_source_and_clone => ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-                            .print_source => ZigString.init(parse_result.source.contents),
-                            else => unreachable,
-                        },
-                        .specifier = ZigString.init(specifier),
-                        .source_url = ZigString.init(path.text),
-                        .hash = 0,
-                    };
-                }
-
-                const has_bun_plugin = parse_result.ast.bun_plugin.hoisted_stmts.items.len > 0;
-
-                if (has_bun_plugin) {
-                    try ModuleLoader.runBunPlugin(jsc_vm, source_code_printer, &parse_result, ret);
-                }
-
-                var printer = source_code_printer.*;
-                printer.ctx.reset();
-
-                const start_count = jsc_vm.bundler.linker.import_counter;
-                // We _must_ link because:
-                // - node_modules bundle won't be properly
-                try jsc_vm.bundler.linker.link(
-                    path,
-                    &parse_result,
-                    jsc_vm.origin,
-                    .absolute_path,
-                    false,
-                    true,
-                );
-
-                if (!jsc_vm.macro_mode)
-                    jsc_vm.resolved_count += jsc_vm.bundler.linker.import_counter - start_count;
-                jsc_vm.bundler.linker.import_counter = 0;
-
-                const written = brk: {
-                    defer source_code_printer.* = printer;
-                    break :brk try jsc_vm.bundler.printWithSourceMap(
-                        parse_result,
-                        @TypeOf(&printer),
-                        &printer,
-                        .esm_ascii,
-                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                    );
-                };
-
-                if (written == 0) {
-                    // if it's an empty file but there were plugins
-                    // we don't want it to break if you try to import from it
-                    if (has_bun_plugin) {
-                        return ResolvedSource{
-                            .allocator = null,
-                            .source_code = ZigString.init("// auto-generated plugin stub\nexport default undefined\n"),
-                            .specifier = ZigString.init(specifier),
-                            .source_url = ZigString.init(path.text),
-                            // // TODO: change hash to a bitfield
-                            // .hash = 1,
-
-                            // having JSC own the memory causes crashes
-                            .hash = 0,
-                        };
-                    }
-                    return error.PrintingErrorWriteFailed;
-                }
-
-                if (comptime Environment.dump_source) {
-                    try dumpSource(specifier, &printer);
-                }
-
-                if (jsc_vm.isWatcherEnabled()) {
-                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
-
-                    if (parse_result.input_fd) |fd_| {
-                        if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
-                            jsc_vm.bun_watcher.?.addFile(
-                                fd_,
-                                path.text,
-                                hash,
-                                loader,
-                                0,
-                                package_json,
-                                true,
-                            ) catch {};
-                        }
-                    }
-
-                    return resolved_source;
-                }
-
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
-                    .specifier = ZigString.init(specifier),
-                    .source_url = ZigString.init(path.text),
-                    // // TODO: change hash to a bitfield
-                    // .hash = 1,
-
-                    // having JSC own the memory causes crashes
-                    .hash = 0,
-                };
-            },
-            // provideFetch() should be called
-            .napi => unreachable,
-            // .wasm => {
-            //     jsc_vm.transpiled_count += 1;
-            //     var fd: ?StoredFileDescriptorType = null;
-
-            //     var allocator = if (jsc_vm.has_loaded) jsc_vm.arena.allocator() else jsc_vm.allocator;
-
-            //     const hash = http.Watcher.getHash(path.text);
-            //     if (jsc_vm.watcher) |watcher| {
-            //         if (watcher.indexOf(hash)) |index| {
-            //             const _fd = watcher.watchlist.items(.fd)[index];
-            //             fd = if (_fd > 0) _fd else null;
-            //         }
-            //     }
-
-            //     var parse_options = Bundler.ParseOptions{
-            //         .allocator = allocator,
-            //         .path = path,
-            //         .loader = loader,
-            //         .dirname_fd = 0,
-            //         .file_descriptor = fd,
-            //         .file_hash = hash,
-            //         .macro_remappings = MacroRemap{},
-            //         .jsx = jsc_vm.bundler.options.jsx,
-            //     };
-
-            //     var parse_result = jsc_vm.bundler.parse(
-            //         parse_options,
-            //         null,
-            //     ) orelse {
-            //         return error.ParseError;
-            //     };
-
-            //     return ResolvedSource{
-            //         .allocator = if (jsc_vm.has_loaded) &jsc_vm.allocator else null,
-            //         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-            //         .specifier = ZigString.init(specifier),
-            //         .source_url = ZigString.init(path.text),
-            //         .hash = 0,
-            //         .tag = ResolvedSource.Tag.wasm,
-            //     };
-            // },
-            else => {
-                return ResolvedSource{
-                    .allocator = &jsc_vm.allocator,
-                    .source_code = ZigString.init(try strings.quotedAlloc(jsc_vm.allocator, path.pretty)),
-                    .specifier = ZigString.init(path.text),
-                    .source_url = ZigString.init(path.text),
-                    .hash = 0,
-                };
-            },
-        }
-    }
-
-    pub fn runBunPlugin(
-        jsc_vm: *VirtualMachine,
-        source_code_printer: *js_printer.BufferPrinter,
-        parse_result: *ParseResult,
-        ret: *ErrorableResolvedSource,
-    ) !void {
-        var printer = source_code_printer.*;
-        printer.ctx.reset();
-
-        defer printer.ctx.reset();
-        // If we start transpiling in the middle of an existing transpilation session
-        // we will hit undefined memory bugs
-        // unless we disable resetting the store until we are done transpiling
-        const prev_disable_reset = js_ast.Stmt.Data.Store.disable_reset;
-        js_ast.Stmt.Data.Store.disable_reset = true;
-        js_ast.Expr.Data.Store.disable_reset = true;
-
-        // flip the source code we use
-        // unless we're already transpiling a plugin
-        // that case could happen when
-        const was_printing_plugin = jsc_vm.is_printing_plugin;
-        const prev = jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache;
-        jsc_vm.is_printing_plugin = true;
-        defer {
-            js_ast.Stmt.Data.Store.disable_reset = prev_disable_reset;
-            js_ast.Expr.Data.Store.disable_reset = prev_disable_reset;
-            if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = prev;
-            jsc_vm.is_printing_plugin = was_printing_plugin;
-        }
-        // we flip use_alternate_source_cache
-        if (!was_printing_plugin) jsc_vm.bundler.resolver.caches.fs.use_alternate_source_cache = !prev;
-
-        // this is a bad idea, but it should work for now.
-        const original_name = parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name;
-        parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = "globalThis.Bun.plugin";
-        defer {
-            parse_result.ast.symbols[parse_result.ast.bun_plugin.ref.innerIndex()].original_name = original_name;
-        }
-        const hoisted_stmts = parse_result.ast.bun_plugin.hoisted_stmts.items;
-
-        var parts = [1]js_ast.Part{
-            js_ast.Part{
-                .stmts = hoisted_stmts,
-            },
-        };
-        var ast_copy = parse_result.ast;
-        ast_copy.import_records = try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records);
-        defer jsc_vm.allocator.free(ast_copy.import_records);
-        ast_copy.parts = &parts;
-        ast_copy.prepend_part = null;
-        var temporary_source = parse_result.source;
-        var source_name = try std.fmt.allocPrint(jsc_vm.allocator, "{s}.plugin.{s}", .{ temporary_source.path.text, temporary_source.path.name.ext[1..] });
-        temporary_source.path = Fs.Path.init(source_name);
-
-        var temp_parse_result = parse_result.*;
-        temp_parse_result.ast = ast_copy;
-
-        try jsc_vm.bundler.linker.link(
-            temporary_source.path,
-            &temp_parse_result,
-            jsc_vm.origin,
-            .absolute_path,
-            false,
-            true,
-        );
-
-        _ = brk: {
-            defer source_code_printer.* = printer;
-            break :brk try jsc_vm.bundler.printWithSourceMapMaybe(
-                temp_parse_result.ast,
-                &temporary_source,
-                @TypeOf(&printer),
-                &printer,
-                .esm_ascii,
-                true,
-                SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-            );
-        };
-        const wrote = printer.ctx.getWritten();
-
-        if (wrote.len > 0) {
-            if (comptime Environment.dump_source)
-                try dumpSource(temporary_source.path.text, &printer);
-
-            var exception = [1]JSC.JSValue{JSC.JSValue.zero};
-            const promise = JSC.JSModuleLoader.evaluate(
-                jsc_vm.global,
-                wrote.ptr,
-                wrote.len,
-                temporary_source.path.text.ptr,
-                temporary_source.path.text.len,
-                parse_result.source.path.text.ptr,
-                parse_result.source.path.text.len,
-                JSC.JSValue.jsUndefined(),
-                &exception,
-            );
-            if (!exception[0].isEmpty()) {
-                ret.* = JSC.ErrorableResolvedSource.err(
-                    error.JSErrorObject,
-                    exception[0].asVoid(),
-                );
-                return error.PluginError;
-            }
-
-            if (!promise.isEmptyOrUndefinedOrNull()) {
-                if (promise.asInternalPromise()) |promise_value| {
-                    jsc_vm.waitForPromise(promise_value);
-
-                    if (promise_value.status(jsc_vm.global.vm()) == .Rejected) {
-                        ret.* = JSC.ErrorableResolvedSource.err(
-                            error.JSErrorObject,
-                            promise_value.result(jsc_vm.global.vm()).asVoid(),
-                        );
-                        return error.PluginError;
-                    }
-                }
-            }
-        }
-    }
-    pub fn normalizeSpecifier(jsc_vm: *VirtualMachine, slice_: string) string {
-        var slice = slice_;
-        if (slice.len == 0) return slice;
-        var was_http = false;
-        if (strings.hasPrefixComptime(slice, "https://")) {
-            slice = slice["https://".len..];
-            was_http = true;
-        } else if (strings.hasPrefixComptime(slice, "http://")) {
-            slice = slice["http://".len..];
-            was_http = true;
-        }
-
-        if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
-            slice = slice[jsc_vm.origin.host.len..];
-        } else if (was_http) {
-            if (strings.indexOfChar(slice, '/')) |i| {
-                slice = slice[i..];
-            }
-        }
-
-        if (jsc_vm.origin.path.len > 1) {
-            if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
-                slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        if (jsc_vm.bundler.options.routes.asset_prefix_path.len > 0) {
-            if (strings.hasPrefix(slice, jsc_vm.bundler.options.routes.asset_prefix_path)) {
-                slice = slice[jsc_vm.bundler.options.routes.asset_prefix_path.len..];
-            }
-        }
-
-        return slice;
-    }
-
-    pub export fn Bun__fetchBuiltinModule(
-        jsc_vm: *VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
-        specifier: *ZigString,
-        referrer: *ZigString,
-        ret: *ErrorableResolvedSource,
-    ) bool {
-        JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
-        defer log.deinit();
-        if (jsc_vm.fetchBuiltinModule(specifier.slice(), &log, false) catch |err| {
-            VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
-            return true;
-        }) |builtin| {
-            ret.* = ErrorableResolvedSource.ok(builtin);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
-    pub export fn Bun__transpileFile(
-        jsc_vm: *VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *ZigString,
-        referrer: *ZigString,
-        ret: *ErrorableResolvedSource,
-    ) bool {
-        JSC.markBinding(@src());
-        var log = logger.Log.init(jsc_vm.bundler.allocator);
-        defer log.deinit();
-        var _specifier = specifier_ptr.toSlice(jsc_vm.allocator);
-        defer _specifier.deinit();
-        var specifier = normalizeSpecifier(jsc_vm, _specifier.slice());
-        const path = Fs.Path.init(specifier);
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                break :brk options.Loader.js;
-            }
-
-            break :brk options.Loader.file;
-        };
-        ret.* = ErrorableResolvedSource.ok(
-            ModuleLoader.transpileSourceCode(
-                jsc_vm,
-                specifier,
-                path,
-                loader,
-                &log,
-                null,
-                ret,
-                VirtualMachine.source_code_printer.?,
-                FetchFlags.transpile,
-            ) catch |err| {
-                if (err == error.PluginError) {
-                    return true;
-                }
-                VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);
-                return true;
-            },
-        );
-        return true;
-    }
-
-    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *ZigString) JSValue {
-        JSC.markBinding(@src());
-        if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
-
-        const specifier = specifier_ptr.slice();
-
-        if (!PluginRunner.couldBePlugin(specifier)) {
-            return JSValue.zero;
-        }
-
-        const namespace = PluginRunner.extractNamespace(specifier);
-        const after_namespace = if (namespace.len == 0)
-            specifier
-        else
-            specifier[@minimum(namespace.len + 1, specifier.len)..];
-
-        return globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(after_namespace), .bun) orelse return JSValue.zero;
-    }
-
-    export fn Bun__transpileVirtualModule(
-        globalObject: *JSC.JSGlobalObject,
-        specifier_ptr: *ZigString,
-        referrer_ptr: *ZigString,
-        source_code: *ZigString,
-        loader_: Api.Loader,
-        ret: *ErrorableResolvedSource,
-    ) bool {
-        JSC.markBinding(@src());
-        const jsc_vm = globalObject.bunVM();
-        std.debug.assert(jsc_vm.plugin_runner != null);
-
-        var specifier_slice = specifier_ptr.toSlice(jsc_vm.allocator);
-        const specifier = specifier_slice.slice();
-        defer specifier_slice.deinit();
-        var source_code_slice = source_code.toSlice(jsc_vm.allocator);
-        defer source_code_slice.deinit();
-
-        var virtual_source = logger.Source.initPathString(specifier, source_code_slice.slice());
-        var log = logger.Log.init(jsc_vm.allocator);
-        const path = Fs.Path.init(specifier);
-
-        const loader = if (loader_ != ._none)
-            options.Loader.fromString(@tagName(loader_)).?
-        else
-            jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
-                if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                    break :brk options.Loader.js;
-                }
-
-                break :brk options.Loader.file;
-            };
-
-        defer log.deinit();
-        ret.* = ErrorableResolvedSource.ok(
-            ModuleLoader.transpileSourceCode(
-                jsc_vm,
-                specifier,
-                path,
-                options.Loader.fromString(@tagName(loader)).?,
-                &log,
-                &virtual_source,
-                ret,
-                VirtualMachine.source_code_printer.?,
-                FetchFlags.transpile,
-            ) catch |err| {
-                if (err == error.PluginError) {
-                    return true;
-                }
-                VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer_ptr.*, &log, ret, err);
-                return true;
-            },
-        );
-        return true;
-    }
-
-    comptime {
-        _ = Bun__transpileVirtualModule;
-        _ = Bun__runVirtualModule;
-        _ = Bun__transpileFile;
-        _ = Bun__fetchBuiltinModule;
-        _ = Bun__getDefaultLoader;
-    }
-};
-
-const FetchFlags = enum {
-    transpile,
-    print_source,
-    print_source_and_clone,
-
-    pub fn disableTranspiling(this: FetchFlags) bool {
-        return this != .transpile;
-    }
-};
-
 pub const Watcher = @import("../watcher.zig").NewWatcher(*HotReloader);
 
 pub const HotReloader = struct {
@@ -3405,6 +2648,9 @@ pub const HotReloader = struct {
 
     onAccept: std.ArrayHashMapUnmanaged(Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
     vm: *JSC.VirtualMachine,
+    verbose: bool = false,
+
+    tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
     pub const HotReloadTask = struct {
         reloader: *HotReloader,
@@ -3451,7 +2697,7 @@ pub const HotReloader = struct {
             javascript_callback: JSC.Strong,
             zig_callback: struct {
                 ptr: *anyopaque,
-                function: FunctionSignature,
+                function: *const FunctionSignature,
             },
         };
     }
@@ -3468,6 +2714,7 @@ pub const HotReloader = struct {
         var reloader = bun.default_allocator.create(HotReloader) catch @panic("OOM");
         reloader.* = .{
             .vm = this,
+            .verbose = this.log.level.atLeast(.info),
         };
         this.bun_watcher = JSC.Watcher.init(
             reloader,
@@ -3489,6 +2736,14 @@ pub const HotReloader = struct {
         }
     }
 
+    fn putTombstone(this: *HotReloader, key: []const u8, value: *bun.fs.FileSystem.RealFS.EntriesOption) void {
+        this.tombstones.put(bun.default_allocator, key, value) catch unreachable;
+    }
+
+    fn getTombstone(this: *HotReloader, key: []const u8) ?*bun.fs.FileSystem.RealFS.EntriesOption {
+        return this.tombstones.get(key);
+    }
+
     pub fn onFileUpdate(
         this: *HotReloader,
         events: []watcher.WatchEvent,
@@ -3500,6 +2755,7 @@ pub const HotReloader = struct {
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
+        const parents = slice.items(.parent_hash);
         var file_descriptors = slice.items(.fd);
         var ctx = this.vm.bun_watcher.?;
         defer ctx.flushEvictions();
@@ -3528,7 +2784,7 @@ pub const HotReloader = struct {
             const id = hashes[event.index];
 
             if (comptime Environment.isDebug) {
-                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+                Output.prettyErrorln("[watch] {s} ({s}, {})", .{ file_path, @tagName(kind), event.op });
             }
 
             switch (kind) {
@@ -3542,36 +2798,80 @@ pub const HotReloader = struct {
                         );
                     }
 
-                    if (comptime bun.FeatureFlags.verbose_watcher) {
+                    if (this.verbose)
                         Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
-                    }
 
-                    if (event.op.write) {
+                    if (event.op.write or event.op.delete or event.op.rename) {
                         current_task.append(id);
                     }
                 },
                 .directory => {
-                    const affected = event.names(changed_files);
+                    var affected_buf: [128][]const u8 = undefined;
                     var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
-                    if (affected.len > 0) {
-                        entries_option = rfs.entries.get(file_path);
+
+                    const affected = brk: {
+                        if (comptime Environment.isMac) {
+                            if (rfs.entries.get(file_path)) |existing| {
+                                this.putTombstone(file_path, existing);
+                                entries_option = existing;
+                            } else if (this.getTombstone(file_path)) |existing| {
+                                entries_option = existing;
+                            }
+
+                            var affected_i: usize = 0;
+
+                            // if a file descriptor is stale, we need to close it
+                            if (event.op.delete and entries_option != null) {
+                                for (parents) |parent_hash, entry_id| {
+                                    if (parent_hash == id) {
+                                        const affected_path = file_paths[entry_id];
+                                        const was_deleted = check: {
+                                            std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                            break :check false;
+                                        };
+                                        if (!was_deleted) continue;
+
+                                        affected_buf[affected_i] = affected_path[file_path.len..];
+                                        affected_i += 1;
+                                        if (affected_i >= affected_buf.len) break;
+                                    }
+                                }
+                            }
+
+                            break :brk affected_buf[0..affected_i];
+                        }
+
+                        break :brk event.names(changed_files);
+                    };
+
+                    if (affected.len > 0 and !Environment.isMac) {
+                        if (rfs.entries.get(file_path)) |existing| {
+                            this.putTombstone(file_path, existing);
+                            entries_option = existing;
+                        } else if (this.getTombstone(file_path)) |existing| {
+                            entries_option = existing;
+                        }
                     }
 
-                    rfs.bustEntriesCache(file_path);
-                    resolver.dir_cache.remove(file_path);
+                    resolver.bustDirCache(file_path);
 
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
-                        for (affected) |changed_name_ptr| {
-                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+
+                        for (affected) |changed_name_| {
+                            const changed_name: []const u8 = if (comptime Environment.isMac)
+                                changed_name_
+                            else
+                                std.mem.span(changed_name_.?);
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                            var prev_entry_id: usize = std.math.maxInt(usize);
                             if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
                                 var path_string: bun.PathString = undefined;
                                 var file_hash: Watcher.HashType = last_file_hash;
                                 const abs_path: string = brk: {
-                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                    if (dir_ent.entries.get(@ptrCast([]const u8, changed_name))) |file_ent| {
                                         // reset the file descriptor
                                         file_ent.entry.cache.fd = 0;
                                         file_ent.entry.need_stat = true;
@@ -3579,7 +2879,19 @@ pub const HotReloader = struct {
                                         file_hash = Watcher.getHash(path_string.slice());
                                         for (hashes) |hash, entry_id| {
                                             if (hash == file_hash) {
-                                                file_descriptors[entry_id] = 0;
+                                                if (file_descriptors[entry_id] != 0) {
+                                                    if (prev_entry_id != entry_id) {
+                                                        current_task.append(@truncate(u32, entry_id));
+                                                        ctx.removeAtIndex(
+                                                            @truncate(u16, entry_id),
+                                                            0,
+                                                            &.{},
+                                                            .file,
+                                                        );
+                                                    }
+                                                }
+
+                                                prev_entry_id = entry_id;
                                                 break;
                                             }
                                         }
@@ -3601,17 +2913,14 @@ pub const HotReloader = struct {
                                 if (last_file_hash == file_hash) continue;
                                 last_file_hash = file_hash;
 
-                                Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                                if (this.verbose)
+                                    Output.prettyErrorln("<r> <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
                             }
                         }
                     }
 
-                    // if (event.op.delete or event.op.rename)
-                    //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
-                    if (comptime false) {
-                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
-                    } else {
-                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    if (this.verbose) {
+                        Output.prettyErrorln("<r> <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
                     }
                 },
             }

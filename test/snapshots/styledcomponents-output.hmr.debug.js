@@ -57,7 +57,7 @@ var hmr = new FastHMR(2532152522, "styledcomponents-output.js", FastRefresh), ex
       ReactDOM.render(jsx(ErrorScreenRoot, {
         id: "error-el",
         children: "The react child should have this text"
-      }, undefined, false, undefined, this), reactEl);
+      }), reactEl);
       const style = document.querySelector("style[data-styled]");
       console.assert(style, "style tag should exist");
       console.assert(style.textContent.split("").every((a) => a.codePointAt(0) < 128), "style tag should not contain invalid unicode codepoints");

@@ -5,22 +5,32 @@ it("setTimeout", async () => {
   const result = await new Promise((resolve, reject) => {
     var numbers = [];
 
-    for (let i = 1; i < 100; i++) {
-      const id = setTimeout(() => {
-        numbers.push(i);
-        if (i === 99) {
-          resolve(numbers);
-        }
-      }, i);
+    for (let i = 0; i < 10; i++) {
+      const id = setTimeout(
+        (...args) => {
+          numbers.push(i);
+          if (i === 9) {
+            resolve(numbers);
+          }
+          try {
+            expect(args.length).toBe(1);
+            expect(args[0]).toBe("foo");
+          } catch (err) {
+            reject(err);
+          }
+        },
+        i,
+        "foo",
+      );
       expect(id > lastID).toBe(true);
       lastID = id;
     }
   });
 
   for (let j = 0; j < result.length; j++) {
-    expect(result[j]).toBe(j + 1);
+    expect(result[j]).toBe(j);
   }
-  expect(result.length).toBe(99);
+  expect(result.length).toBe(10);
 });
 
 it("clearTimeout", async () => {
@@ -35,9 +45,7 @@ it("clearTimeout", async () => {
   clearTimeout(id);
 
   await new Promise((resolve, reject) => {
-    setTimeout(() => {
-      resolve();
-    }, 10);
+    setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
 });
@@ -80,4 +88,50 @@ it("setTimeout(() => {}, 0)", async () => {
     }, 10);
   });
   expect(ranFirst).toBe(-1);
+});
+
+it("Bun.sleep", async () => {
+  var sleeps = 0;
+  await Bun.sleep(0);
+  const start = performance.now();
+  sleeps++;
+  await Bun.sleep(1);
+  sleeps++;
+  await Bun.sleep(2);
+  sleeps++;
+  const end = performance.now();
+  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+
+  expect(sleeps).toBe(3);
+});
+
+it("Bun.sleep propagates exceptions", async () => {
+  try {
+    await Bun.sleep(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
+});
+
+it("Bun.sleep works with a Date object", async () => {
+  var ten_ms = new Date();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 10);
+  const now = performance.now();
+  await Bun.sleep(ten_ms);
+  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+});
+
+it("node.js timers/promises setTimeout propagates exceptions", async () => {
+  const { setTimeout } = require("timers/promises");
+  try {
+    await setTimeout(1).then(a => {
+      throw new Error("TestPassed");
+    });
+    throw "Should not reach here";
+  } catch (err) {
+    expect(err.message).toBe("TestPassed");
+  }
 });

@@ -123,13 +123,24 @@ typedef struct {
 
 typedef void (*uws_listen_handler)(struct us_listen_socket_t *listen_socket,
                                    void *user_data);
+typedef void (*uws_listen_domain_handler)(struct us_listen_socket_t *listen_socket, 
+                                          const char* domain, int options, 
+                                          void *user_data);
+
 typedef void (*uws_method_handler)(uws_res_t *response, uws_req_t *request,
                                    void *user_data);
 typedef void (*uws_filter_handler)(uws_res_t *response, int, void *user_data);
 typedef void (*uws_missing_server_handler)(const char *hostname,
                                            void *user_data);
+typedef void (*uws_get_headers_server_handler)(const char *header_name, 
+                                               size_t header_name_size, 
+                                               const char *header_value, 
+                                               size_t header_value_size, 
+                                               void *user_data);
+
 // Basic HTTP
 uws_app_t *uws_create_app(int ssl, struct us_socket_context_options_t options);
+
 void uws_app_destroy(int ssl, uws_app_t *app);
 void uws_app_get(int ssl, uws_app_t *app, const char *pattern,
                  uws_method_handler handler, void *user_data);
@@ -159,8 +170,18 @@ void uws_app_listen(int ssl, uws_app_t *app, int port,
 void uws_app_listen_with_config(int ssl, uws_app_t *app, const char *host,
                                 uint16_t port, int32_t options,
                                 uws_listen_handler handler, void *user_data);
+void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, 
+                           uws_listen_domain_handler handler, void *user_data);
+
+void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain,
+                                        int options, uws_listen_domain_handler handler,
+                                        void *user_data);
+void uws_app_domain(int ssl, uws_app_t *app, const char *server_name);
+
 bool uws_constructor_failed(int ssl, uws_app_t *app);
-unsigned int uws_num_subscribers(int ssl, uws_app_t *app, const char *topic);
+
+unsigned int uws_num_subscribers(int ssl, uws_app_t *app, const char *topic,
+                                 size_t topic_length);
 bool uws_publish(int ssl, uws_app_t *app, const char *topic,
                  size_t topic_length, const char *message,
                  size_t message_length, uws_opcode_t opcode, bool compress);
@@ -272,7 +293,7 @@ void uws_res_upgrade(int ssl, uws_res_t *res, void *data,
 // Request
 bool uws_req_is_ancient(uws_req_t *res);
 bool uws_req_get_yield(uws_req_t *res);
-void uws_req_set_field(uws_req_t *res, bool yield);
+void uws_req_set_yield(uws_req_t *res, bool yield);
 size_t uws_req_get_url(uws_req_t *res, const char **dest);
 size_t uws_req_get_method(uws_req_t *res, const char **dest);
 size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
@@ -281,8 +302,11 @@ size_t uws_req_get_query(uws_req_t *res, const char *key, size_t key_length,
                          const char **dest);
 size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
                              const char **dest);
+void uws_req_for_each_header(uws_req_t *res, uws_get_headers_server_handler handler, void *user_data);
+
 
 struct us_loop_t *uws_get_loop();
+struct us_loop_t *uws_get_loop_with_native(void* existing_native_loop);
 
 void uws_loop_addPostHandler(us_loop_t *loop, void *ctx_,
                              void (*cb)(void *ctx, us_loop_t *loop));
@@ -298,13 +322,16 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
 
 void *uws_res_get_native_handle(int ssl, uws_res_t *res);
 void uws_res_uncork(int ssl, uws_res_t *res);
-void uws_res_set_write_offset(int ssl, uws_res_t *res, size_t off);
 void us_socket_mark_needs_more_not_ssl(uws_res_t *res);
 int uws_res_state(int ssl, uws_res_t *res);
 bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
                      size_t total_len, bool close);
 
 void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res);
+void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset);
+
+void uws_app_close(int ssl, uws_app_t *app);
+
 #ifdef __cplusplus
 }
 #endif

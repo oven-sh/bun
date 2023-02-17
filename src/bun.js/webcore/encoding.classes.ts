@@ -6,6 +6,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
+    configurable: false,
     klass: {},
     proto: {
       encoding: {
@@ -19,6 +20,11 @@ export default [
       decode: {
         fn: "decode",
         length: 1,
+
+        DOMJIT: {
+          returns: "JSString",
+          args: ["JSUint8Array"],
+        },
       },
     },
   }),

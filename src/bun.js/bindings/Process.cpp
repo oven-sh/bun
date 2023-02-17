@@ -5,14 +5,16 @@
 #include <dlfcn.h>
 #include "ZigGlobalObject.h"
 #include "headers.h"
-
+#include "JSEnvironmentVariableMap.h"
+#include "ImportMetaObject.h"
+#include <sys/stat.h>
 #pragma mark - Node.js Process
 
 namespace Zig {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "18.10.1"
+#define REPORTED_NODE_VERSION "18.13.0"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -38,8 +40,122 @@ static JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
+static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int fd)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    WTF::String process = WTF::String("node:process"_s);
+    JSC::JSValue requireFunction = Zig::ImportMetaObject::createRequireFunction(
+        vm,
+        globalObject,
+        process);
+
+    args.append(JSC::jsNumber(fd));
+    args.append(requireFunction);
+
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (returnedException) {
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+
+    return result;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStdinGetter,
+    (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = JSC::JSValue::decode(thisValue);
+    if (!value || value.isUndefinedOrNull() || !value.isObject())
+        return JSValue::encode(jsUndefined());
+
+    auto* thisObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    WTF::String process = WTF::String("node:process"_s);
+    JSC::JSValue requireFunction = Zig::ImportMetaObject::createRequireFunction(
+        vm,
+        globalObject,
+        process);
+
+    args.append(JSC::jsNumber(STDIN_FILENO));
+    args.append(requireFunction);
+    args.append(thisObject->get(globalObject, PropertyName(JSC::Identifier::fromString(vm, "Bun"_s))));
+
+    auto clientData = WebCore::clientData(vm);
+    JSC::CallData callData = JSC::getCallData(getStdioWriteStream);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, getStdioWriteStream, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(returnedException)) {
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+
+    if (LIKELY(result))
+        value.getObject()->putDirect(vm, property, result, 0);
+
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStdoutGetter,
+    (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    JSValue value = JSValue::decode(thisValue);
+    auto& vm = globalObject->vm();
+    JSC::JSObject* thisObject = value.toObject(globalObject);
+    JSC::JSValue stream = constructStdioWriteStream(globalObject, 1);
+
+    if (stream)
+        thisObject->putDirect(vm, property, stream, 0);
+
+    return JSValue::encode(stream);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(
+    Process_lazyStderrGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    JSValue value = JSValue::decode(thisValue);
+    auto& vm = globalObject->vm();
+    JSC::JSObject* thisObject = value.toObject(globalObject);
+    JSC::JSValue stream = constructStdioWriteStream(globalObject, 2);
+
+    if (stream)
+        thisObject->putDirect(vm, property, stream, 0);
+
+    return JSValue::encode(stream);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName propertyName))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    if (value)
+        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
+
+    return true;
+}
+
+JSC_DECLARE_HOST_FUNCTION(Process_functionNextTick);
+JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
@@ -58,61 +174,49 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    switch (argCount) {
+    Zig::GlobalObject* global = JSC::jsCast<Zig::GlobalObject*>(globalObject);
 
+    switch (callFrame->argumentCount()) {
     case 1: {
-        // This is a JSC builtin function
-        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {});
+        global->queueMicrotask(global->performMicrotaskFunction(), job, JSC::JSValue {}, JSC::JSValue {}, JSC::JSValue {});
         break;
     }
-
-    case 2:
-    case 3:
-    case 4:
-    case 5: {
-        JSC::JSValue argument0 = callFrame->uncheckedArgument(1);
-        JSC::JSValue argument1 = argCount > 2 ? callFrame->uncheckedArgument(2) : JSC::JSValue {};
-        JSC::JSValue argument2 = argCount > 3 ? callFrame->uncheckedArgument(3) : JSC::JSValue {};
-        JSC::JSValue argument3 = argCount > 4 ? callFrame->uncheckedArgument(4) : JSC::JSValue {};
-        globalObject->queueMicrotask(
-            job, argument0, argument1, argument2, argument3);
+    case 2: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), JSC::JSValue {}, JSC::JSValue {});
         break;
     }
-
+    case 3: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), JSC::JSValue {});
+        break;
+    }
+    case 4: {
+        global->queueMicrotask(global->performMicrotaskFunction(), job, callFrame->uncheckedArgument(1), callFrame->uncheckedArgument(2), callFrame->uncheckedArgument(3));
+        break;
+    }
     default: {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope,
-            "nextTick doesn't support more than 4 arguments currently"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+        JSC::JSArray* args = JSC::constructEmptyArray(globalObject, nullptr, argCount - 1);
+        if (UNLIKELY(!args)) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwVMError(globalObject, scope, createOutOfMemoryError(globalObject));
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        for (unsigned i = 1; i < argCount; i++) {
+            args->putDirectIndex(globalObject, i - 1, callFrame->uncheckedArgument(i));
+        }
+
+        global->queueMicrotask(
+            global->performMicrotaskVariadicFunction(), job, args, JSValue {}, JSC::JSValue {});
 
         break;
     }
-
-        // JSC::MarkedArgumentBuffer args;
-        // for (unsigned i = 1; i < callFrame->argumentCount(); i++) {
-        //   args.append(callFrame->uncheckedArgument(i));
-        // }
-
-        // JSC::ArgList argsList(args);
-        // JSC::gcProtect(job);
-        // JSC::JSFunction *callback = JSC::JSNativeStdFunction::create(
-        //   vm, globalObject, 0, String(),
-        //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
-        //     JSC::VM &vm = globalObject->vm();
-        //     auto callData = getCallData(job);
-
-        //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
-        //   });
-
-        // globalObject->queueMicrotask(JSC::createJSMicrotask(vm, JSC::JSValue(callback)));
     }
 
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(jsUndefined());
 }
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
+JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
@@ -177,8 +281,43 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     return napi_register_module_v1(globalObject, JSC::JSValue::encode(exports));
 }
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionExit);
-static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
+JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (callFrame->argumentCount() == 0) {
+        return JSC::JSValue::encode(JSC::jsNumber(umask(0)));
+    }
+
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    int umaskValue = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
+
+    return JSC::JSValue::encode(JSC::jsNumber(umask(umaskValue)));
+}
+
+extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" double Bun__readOriginTimerStart(void*);
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionUptime,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject_ = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    double now = static_cast<double>(Bun__readOriginTimer(globalObject_->bunVM()));
+    double result = (now / 1000000.0) / 1000.0;
+    return JSC::JSValue::encode(JSC::jsNumber(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionBinding,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    throwTypeError(globalObject, scope, "process.binding is not supported in Bun. If this breaks a library you're using, please file an issue at https://bun.sh/issues and include a reproducible code sample."_s);
+    return JSC::JSValue::encode(JSC::JSValue {});
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0) {
@@ -193,9 +332,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
-static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTime);
-
-static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
+JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject
@@ -252,7 +389,6 @@ static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
 static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     ZigString str = ZigString { nullptr, 0 };
@@ -300,10 +436,180 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setterRelease,
     return true;
 }
 
+// static const NeverDestroyed<String> signalNames[] = {
+//     MAKE_STATIC_STRING_IMPL("SIGHUP"),
+//     MAKE_STATIC_STRING_IMPL("SIGINT"),
+//     MAKE_STATIC_STRING_IMPL("SIGQUIT"),
+//     MAKE_STATIC_STRING_IMPL("SIGILL"),
+//     MAKE_STATIC_STRING_IMPL("SIGTRAP"),
+//     MAKE_STATIC_STRING_IMPL("SIGABRT"),
+//     MAKE_STATIC_STRING_IMPL("SIGIOT"),
+//     MAKE_STATIC_STRING_IMPL("SIGBUS"),
+//     MAKE_STATIC_STRING_IMPL("SIGFPE"),
+//     MAKE_STATIC_STRING_IMPL("SIGKILL"),
+//     MAKE_STATIC_STRING_IMPL("SIGUSR1"),
+//     MAKE_STATIC_STRING_IMPL("SIGSEGV"),
+//     MAKE_STATIC_STRING_IMPL("SIGUSR2"),
+//     MAKE_STATIC_STRING_IMPL("SIGPIPE"),
+//     MAKE_STATIC_STRING_IMPL("SIGALRM"),
+//     MAKE_STATIC_STRING_IMPL("SIGTERM"),
+//     MAKE_STATIC_STRING_IMPL("SIGCHLD"),
+//     MAKE_STATIC_STRING_IMPL("SIGCONT"),
+//     MAKE_STATIC_STRING_IMPL("SIGSTOP"),
+//     MAKE_STATIC_STRING_IMPL("SIGTSTP"),
+//     MAKE_STATIC_STRING_IMPL("SIGTTIN"),
+//     MAKE_STATIC_STRING_IMPL("SIGTTOU"),
+//     MAKE_STATIC_STRING_IMPL("SIGURG"),
+//     MAKE_STATIC_STRING_IMPL("SIGXCPU"),
+//     MAKE_STATIC_STRING_IMPL("SIGXFSZ"),
+//     MAKE_STATIC_STRING_IMPL("SIGVTALRM"),
+//     MAKE_STATIC_STRING_IMPL("SIGPROF"),
+//     MAKE_STATIC_STRING_IMPL("SIGWINCH"),
+//     MAKE_STATIC_STRING_IMPL("SIGIO"),
+//     MAKE_STATIC_STRING_IMPL("SIGINFO"),
+//     MAKE_STATIC_STRING_IMPL("SIGSYS"),
+// };
+// static const int signalNumbers[] = {
+//     SIGHUP,
+//     SIGINT,
+//     SIGQUIT,
+//     SIGILL,
+//     SIGTRAP,
+//     SIGABRT,
+//     SIGIOT,
+//     SIGBUS,
+//     SIGFPE,
+//     SIGKILL,
+//     SIGUSR1,
+//     SIGSEGV,
+//     SIGUSR2,
+//     SIGPIPE,
+//     SIGALRM,
+//     SIGTERM,
+//     SIGCHLD,
+//     SIGCONT,
+//     SIGSTOP,
+//     SIGTSTP,
+//     SIGTTIN,
+//     SIGTTOU,
+//     SIGURG,
+//     SIGXCPU,
+//     SIGXFSZ,
+//     SIGVTALRM,
+//     SIGPROF,
+//     SIGWINCH,
+//     SIGIO,
+//     SIGINFO,
+//     SIGSYS,
+// };
+
+// JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessOn, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// {
+//     VM& vm = globalObject->vm();
+//     auto scope = DECLARE_THROW_SCOPE(vm);
+
+//     if (callFrame->argumentCount() < 2) {
+//         throwVMError(globalObject, scope, "Not enough arguments"_s);
+//         return JSValue::encode(jsUndefined());
+//     }
+
+//     String eventName = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+//     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+// }
+
+Process::~Process()
+{
+    for (auto& listener : this->wrapped().eventListenerMap().entries()) {
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
+{
+    abort();
+    __builtin_unreachable();
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    auto* process = jsCast<Process*>(globalObject->processObject());
+
+    auto getError = [&]() -> JSValue {
+        JSValue arg0 = callFrame->uncheckedArgument(0);
+        if (!arg0.isEmpty() && arg0.isCell() && arg0.asCell()->type() == ErrorInstanceType) {
+            return arg0;
+        }
+
+        WTF::String str = arg0.toWTFString(globalObject);
+        return createError(globalObject, str);
+    };
+
+    auto ident = Identifier::fromString(vm, "warning"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(getError());
+
+        process->wrapped().emit(ident, args);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto jsArgs = JSValue::encode(getError());
+    Zig__ConsoleClient__messageWithTypeAndLevel(reinterpret_cast<Zig::ConsoleClient*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log),
+        static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(Process_lazyArgv0Getter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    EncodedJSValue ret = Bun__Process__getArgv0(globalObject);
+
+    if (LIKELY(thisObject)) {
+        thisObject->putDirect(globalObject->vm(), name, JSValue::decode(ret), 0);
+    }
+
+    return ret;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(Process_lazyExecArgvGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    EncodedJSValue ret = Bun__Process__getExecArgv(globalObject);
+
+    if (LIKELY(thisObject)) {
+        thisObject->putDirect(globalObject->vm(), name, JSValue::decode(ret), 0);
+    }
+
+    return ret;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(Process_lazyExecPathGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
+{
+    JSC::JSObject* thisObject = JSValue::decode(thisValue).getObject();
+    EncodedJSValue ret = Bun__Process__getExecPath(globalObject);
+
+    if (LIKELY(thisObject)) {
+        thisObject->putDirect(globalObject->vm(), name, JSValue::decode(ret), 0);
+    }
+
+    return ret;
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     auto clientData = WebCore::clientData(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
 
     putDirectCustomAccessor(vm, clientData->builtinNames().pidPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getPID, nullptr),
@@ -325,27 +631,27 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::jsString(vm, makeAtomString(Bun__version_sha)), 0);
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+        JSC::JSFunction::create(vm, globalObject, 1,
             MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+        JSC::JSFunction::create(vm, globalObject, 1,
             MAKE_STATIC_STRING_IMPL("dlopen"), Process_functionDlopen, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().cwdPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("cwd"), Process_functionCwd, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().chdirPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("chdir"), Process_functionChdir, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "exit"_s),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, globalObject, 0,
             MAKE_STATIC_STRING_IMPL("exit"), Process_functionExit, ImplementationVisibility::Public),
         PropertyAttribute::Function | 0);
 
@@ -360,7 +666,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), makeAtomString(REPORTED_NODE_VERSION)));
+        JSC::jsString(this->vm(), makeString("v", REPORTED_NODE_VERSION)));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
@@ -388,10 +694,10 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::jsString(this->vm(), makeAtomString("arm64")));
 #endif
 
-    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, globalObject, 0,
         MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
 
-    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, globalObject, 0,
         MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
@@ -399,6 +705,70 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "release"_s)),
         JSC::CustomGetterSetter::create(vm, Process_getterRelease, Process_setterRelease), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdout"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStdoutGetter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stderr"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStderrGetter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "stdin"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyStdinGetter, Process_defaultSetter), 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "abort"_s),
+        0, Process_functionAbort, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "argv0"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyArgv0Getter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "execPath"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyExecPathGetter, Process_defaultSetter), 0);
+
+    this->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "execArgv"_s)),
+        JSC::CustomGetterSetter::create(vm, Process_lazyExecArgvGetter, Process_defaultSetter), 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "uptime"_s),
+        0, Process_functionUptime, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "umask"_s),
+        1, Process_functionUmask, ImplementationVisibility::Public, NoIntrinsic, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
+        1, Process_functionBinding, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | 0);
+
+    //   target_defaults:
+    //    { cflags: [],
+    //      default_configuration: 'Release',
+    //      defines: [],
+    //      include_dirs: [],
+    //      libraries: [] },
+    //   variables:
+    //    {
+    //      host_arch: 'x64',
+    //      napi_build_version: 5,
+    //      node_install_npm: 'true',
+    //      node_prefix: '',
+    //      node_shared_cares: 'false',
+    //      node_shared_http_parser: 'false',
+    //      node_shared_libuv: 'false',
+    //      node_shared_zlib: 'false',
+    //      node_use_openssl: 'true',
+    //      node_shared_openssl: 'false',
+    //      strict_aliasing: 'true',
+    //      target_arch: 'x64',
+    //      v8_use_snapshot: 1
+    //    }
+    // }
+    JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s),
+        JSC::jsNumber(1), 0);
+    config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
+    config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "config"_s), config, 0);
+
+    this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "emitWarning"_s),
+        1, Process_emitWarning, ImplementationVisibility::Public, NoIntrinsic, 0);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,
@@ -478,6 +848,10 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getPPID, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::JSValue(getppid()));
 }
 
+#if !defined(BUN_WEBKIT_VERSION)
+#define BUN_WEBKIT_VERSION "unknown"
+#endif
+
 JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -489,18 +863,9 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSC::JSValue argv = thisObject->getIfPropertyExists(
-            globalObject, clientData->builtinNames().versionsPrivateName())) {
-        return JSValue::encode(argv);
-    }
-
-// BUN_WEBKIT_VERSION is typically injected in the github actions
-#ifndef BUN_WEBKIT_VERSION
-#define BUN_WEBKIT_VERSION Bun__versions_webkit
-#endif
-
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 19);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
@@ -509,30 +874,48 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_mimalloc))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_libarchive))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_picohttpparser))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_boringssl))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_zlib))));
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_boringssl))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_libarchive))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_mimalloc))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_picohttpparser))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_uws))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_webkit))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_zig))));
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zig))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_zlib))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_tinycc))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_lolhtml))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_c_ares))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(Bun__versions_usockets))), 0);
+
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsString(vm, makeString("10.8.168.20-node.8"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsString(vm, makeString("1.44.2"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsString(vm, makeString("8"_s))), 0);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString("67"))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString("108"))));
 
-    thisObject->putDirect(vm, clientData->builtinNames().versionsPrivateName(), object);
-    return JSC::JSValue::encode(object);
+    thisObject->putDirect(vm, clientData->builtinNames().versionsPublicName(), object, 0);
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return JSValue::encode(object);
 }
 JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName))
 {
-
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
 
@@ -541,8 +924,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    thisObject->putDirect(vm, clientData->builtinNames().versionsPrivateName(),
-        JSC::JSValue::decode(value));
+    thisObject->putDirect(vm, clientData->builtinNames().versionsPublicName(),
+        JSC::JSValue::decode(value), 0);
 
     return true;
 }
@@ -550,7 +933,6 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
 static JSC_DEFINE_HOST_FUNCTION(Process_functionCwd,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__getCwd(globalObject));
     JSC::JSObject* obj = result.getObject();

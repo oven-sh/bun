@@ -1,5 +1,6 @@
 const std = @import("std");
 const system = std.system;
+const bun = @import("bun");
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
 pub const ThreadPool = struct {
@@ -61,7 +62,7 @@ pub const ThreadPool = struct {
             fn runFn(runnable: *Runnable) void {
                 const run_node = @fieldParentPtr(RunNode, "data", runnable);
                 const closure = @fieldParentPtr(@This(), "run_node", run_node);
-                _ = @call(.{}, func, closure.func_args);
+                _ = @call(.auto, func, closure.func_args);
                 closure.allocator.destroy(closure);
             }
         };
@@ -352,7 +353,7 @@ pub const ThreadPool = struct {
     const List = std.TailQueue(Runnable);
     const RunNode = List.Node;
     const Runnable = struct {
-        runFn: fn (*Runnable) void,
+        runFn: *const (fn (*Runnable) void),
     };
 };
 
@@ -610,7 +611,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
             .netbsd => extern struct {
                 ptr_magic: c_uint = 0x99990009,
                 ptr_interlock: switch (@import("builtin").target.cpu.arch) {
-                    .aarch64, .sparc, .x86_64, .i386 => u8,
+                    .aarch64, .sparc, .x86_64 => u8,
                     .arm, .powerpc => c_int,
                     else => unreachable,
                 } = 0,
@@ -657,8 +658,8 @@ else
         const IS_WRITING: usize = 1;
         const WRITER: usize = 1 << 1;
         const READER: usize = 1 << (1 + std.meta.bitCount(Count));
-        const WRITER_MASK: usize = std.math.maxInt(Count) << @ctz(usize, WRITER);
-        const READER_MASK: usize = std.math.maxInt(Count) << @ctz(usize, READER);
+        const WRITER_MASK: usize = std.math.maxInt(Count) << @ctz(WRITER);
+        const READER_MASK: usize = std.math.maxInt(Count) << @ctz(READER);
         const Count = std.meta.Int(.unsigned, @divFloor(std.meta.bitCount(usize) - 1, 2));
 
         pub fn init() RwLock {

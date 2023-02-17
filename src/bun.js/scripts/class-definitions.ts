@@ -1,19 +1,31 @@
+interface PropertyAttribute {
+  enumerable?: boolean;
+  configurable?: boolean;
+}
+
 export type Field =
-  | { getter: string; cache?: true | string }
-  | { setter: string }
-  | { accessor: { getter: string; setter: string }; cache?: true | string }
-  | {
+  | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | ({ setter: string; this?: boolean } & PropertyAttribute)
+  | ({
+      accessor: { getter: string; setter: string };
+      cache?: true | string;
+      this?: boolean;
+    } & PropertyAttribute)
+  | ({
       fn: string;
       length?: number;
       DOMJIT?: {
-        return: string;
-        args?: [string, string] | [string, string, string] | [string];
+        returns: string;
+        args?: [string, string] | [string, string, string] | [string] | [];
+        pure?: boolean;
       };
-    };
+    } & PropertyAttribute)
+  | { internal: true };
 
 export interface ClassDefinition {
   name: string;
   construct?: boolean;
+  call?: boolean;
   finalize?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
@@ -21,27 +33,40 @@ export interface ClassDefinition {
   JSType?: string;
   noConstructor?: boolean;
   estimatedSize?: boolean;
+  hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
+
+  custom?: Record<string, CustomField>;
+
+  configurable?: boolean;
+  enumerable?: boolean;
+}
+
+export interface CustomField {
+  header?: string;
+  extraHeaderIncludes?: string[];
+  impl?: string;
+  type?: string;
 }
 
 export function define(
   {
     klass = {},
     proto = {},
-    isEventEmitter = false,
+    values = [],
     estimatedSize = false,
+    call = false,
+    construct = false,
     ...rest
-  } = {} as ClassDefinition
+  } = {} as ClassDefinition,
 ): ClassDefinition {
   return {
     ...rest,
-    isEventEmitter,
+    call,
+    construct,
     estimatedSize,
-    klass: Object.fromEntries(
-      Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))
-    ),
-    proto: Object.fromEntries(
-      Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))
-    ),
+    values,
+    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
+    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
   };
 }

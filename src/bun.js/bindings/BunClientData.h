@@ -22,8 +22,11 @@ class DOMWrapperWorld;
 #include "wtf/RefPtr.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include "JavaScriptCore/IsoSubspacePerVM.h"
-
+#include "wtf/StdLibExtras.h"
 #include "WebCoreJSBuiltins.h"
+
+namespace Zig {
+}
 
 namespace WebCore {
 using namespace JSC;
@@ -145,7 +148,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
                 uniqueSubspace = makeUnique<JSC::IsoSubspace> ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, T);
         }
         space = uniqueSubspace.get();
-        setServer(subspaces, uniqueSubspace);
+        setServer(subspaces, WTFMove(uniqueSubspace));
 
         IGNORE_WARNINGS_BEGIN("unreachable-code")
         IGNORE_WARNINGS_BEGIN("tautological-compare")
@@ -159,7 +162,7 @@ ALWAYS_INLINE JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm, GetClient
 
     auto uniqueClientSubspace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
     auto* clientSpace = uniqueClientSubspace.get();
-    setClient(clientSubspaces, uniqueClientSubspace);
+    setClient(clientSubspaces, WTFMove(uniqueClientSubspace));
     return clientSpace;
 }
 

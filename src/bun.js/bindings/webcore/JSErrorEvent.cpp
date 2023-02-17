@@ -377,9 +377,9 @@ JSC::GCClient::IsoSubspace* JSErrorEvent::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSErrorEvent, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorEvent = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorEvent = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForErrorEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorEvent = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorEvent = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

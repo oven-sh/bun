@@ -94,13 +94,15 @@ pub inline fn isNPMPackageName(target: string) bool {
     if (target.len > 214) return false;
 
     const scoped = switch (target[0]) {
-        'a'...'z', '0'...'9', '$', '-' => false,
+        // Old packages may have capital letters
+        'A'...'Z', 'a'...'z', '0'...'9', '$', '-' => false,
         '@' => true,
         else => return false,
     };
     var slash_index: usize = 0;
     for (target[1..]) |c, i| {
         switch (c) {
+            // Old packages may have capital letters
             'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;

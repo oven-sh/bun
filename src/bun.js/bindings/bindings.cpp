@@ -955,9 +955,10 @@ bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* headers, const ZigString*
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     auto result = headers->has(Zig::toString(*arg1));
-    if (result.hasException())
+    if (result.hasException()) {
         WebCore::propagateException(*global, throwScope, result.releaseException());
-    else
+        return false;
+    } else
         return result.releaseReturnValue();
 }
 void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* global)

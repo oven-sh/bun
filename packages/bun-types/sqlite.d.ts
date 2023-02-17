@@ -165,14 +165,14 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType = SQLQueryBindings>(
+    run<ParamsType extends SQLQueryBindings[]>(
       sqlQuery: string,
       ...bindings: ParamsType[]
     ): void;
     /** 
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType = SQLQueryBindings>(
+    exec<ParamsType extends SQLQueryBindings[]>(
       sqlQuery: string,
       ...bindings: ParamsType[]
     ): void;
@@ -202,9 +202,12 @@ declare module "bun:sqlite" {
      * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      */
-    query<ParamsType = SQLQueryBindings, ReturnType = any>(
+    query<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
       sqlQuery: string,
-    ): Statement<ParamsType, ReturnType>;
+    ): Statement<
+      ReturnType,
+      ParamsType extends Array<any> ? ParamsType : [ParamsType]
+    >;
 
     /**
      * Compile a SQL query and return a {@link Statement} object.
@@ -227,10 +230,15 @@ declare module "bun:sqlite" {
      * Under the hood, this calls `sqlite3_prepare_v3`.
      *
      */
-    prepare<ParamsType = SQLQueryBindings, ReturnType = any>(
-      sql: string,
-      ...params: ParamsType[]
-    ): Statement<ParamsType, ReturnType>;
+    prepare<
+      ReturnType,
+      ParamsType extends SQLQueryBindings | SQLQueryBindings[],
+    >(
+      sqlQuery: string,
+    ): Statement<
+      ReturnType,
+      ParamsType extends Array<any> ? ParamsType : [ParamsType]
+    >;
 
     /**
      * Is the database in a transaction?
@@ -383,7 +391,10 @@ declare module "bun:sqlite" {
    * // => undefined
    * ```
    */
-  export class Statement<ParamsType = SQLQueryBindings, ReturnType = any> {
+  export class Statement<
+    ReturnType = unknown,
+    ParamsType extends SQLQueryBindings[] = any[],
+  > {
     /**
      * Creates a new prepared statement from native code.
      *
@@ -410,7 +421,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "foo"}]
      * ```
      */
-    all(...params: ParamsType[]): ReturnType[];
+    all(...params: ParamsType): ReturnType[];
 
     /**
      * Execute the prepared statement and return **the first** result.
@@ -446,7 +457,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    get(...params: ParamsType[]): ReturnType | null;
+    get(...params: ParamsType): ReturnType | null;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -479,7 +490,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    run(...params: ParamsType[]): void;
+    run(...params: ParamsType): void;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -516,7 +527,7 @@ declare module "bun:sqlite" {
      *
      */
     values(
-      ...params: ParamsType[]
+      ...params: ParamsType
     ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**

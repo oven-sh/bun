@@ -831,8 +831,9 @@ declare module "bun" {
    * ```
    *
    */
+
   export class Transpiler {
-    constructor(options: TranspilerOptions);
+    constructor(options?: TranspilerOptions);
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.

@@ -9,7 +9,6 @@ describe("Headers", async () => {
     server = Bun.serve({
       fetch(req) {
         const hdr = req.headers.get("x-test");
-        console.log("Server got: ", Object.fromEntries(req.headers.entries()));
         return new Response(hdr);
       },
       port: port,
@@ -39,8 +38,6 @@ describe("Headers", async () => {
     var encoder = new TextEncoder();
     var decoder = new TextDecoder();
     const roundTripString = decoder.decode(encoder.encode(origString));
-    console.log("origString = ", origString);
-    console.log("encoded = ", encoder.encode(origString));
 
     expect(roundTripString).toBe(origString);
 
@@ -57,6 +54,5 @@ async function fetchContent(headers) {
     { headers: headers },
     { verbose: true }
   );
-  console.log(res.status);
   return await res.text();
 }

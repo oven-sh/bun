@@ -305,6 +305,14 @@ pub const StringOrTinyString = struct {
         return StringOrTinyString.init(try appendy.append(string, stringy));
     }
 
+    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+        if (stringy.len <= StringOrTinyString.Max) {
+            return StringOrTinyString.initLowerCase(stringy);
+        }
+
+        return StringOrTinyString.init(try appendy.appendLowerCase(string, stringy));
+    }
+
     pub fn init(stringy: string) StringOrTinyString {
         switch (stringy.len) {
             0 => {

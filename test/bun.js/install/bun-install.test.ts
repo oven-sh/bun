@@ -16,7 +16,6 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { rmSync } from "fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -2075,4 +2074,255 @@ it("should report error on duplicated workspace packages", async () => {
   const out = await new Response(stdout).text();
   expect(out).toEqual("");
   expect(await exited).toBe(1);
+});
+
+it("should handle Git URL in dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "uglify-js": "git+https://git@github.com/mishoo/UglifyJS.git",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  let out = await new Response(stdout).text();
+  out = out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out = out.replace(/(\.git)#[a-f0-9]+/, "$1");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify-js@git+https://git@github.com/mishoo/UglifyJS.git",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("9694c5fe9c41ad51.git");
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle Git URL with committish in dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        uglify: "git+https://git@github.com/mishoo/UglifyJS.git#v3.14.1",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify", "bin", "uglifyjs"),
+  );
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
+    "9694c5fe9c41ad51.git",
+    "@G@e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "uglify", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  expect(package_json.version).toBe("3.14.1");
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should fail on Git URL with invalid committish", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        uglify: "git+https://git@github.com/mishoo/UglifyJS.git#404-no_such_tag",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain(
+    'Error no commit matching "404-no_such_tag" found for "uglify" (but repository exists)',
+  );
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toBe("");
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
+it("should de-duplicate committish in Git URLs", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "uglify-ver": "git+https://git@github.com/mishoo/UglifyJS.git#v3.14.1",
+        "uglify-hash": "git+https://git@github.com/mishoo/UglifyJS.git#e219a9a",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + uglify-hash@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+    " + uglify-ver@git+https://git@github.com/mishoo/UglifyJS.git#e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".bin",
+    ".cache",
+    "uglify-hash",
+    "uglify-ver",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-hash", "bin", "uglifyjs"),
+  );
+  expect(await readdirSorted(join(package_dir, "node_modules", ".cache"))).toEqual([
+    "9694c5fe9c41ad51.git",
+    "@G@e219a9a78a0d2251e4dcbd4bb9034207eb484fe8",
+  ]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-hash"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const hash_json = await file(join(package_dir, "node_modules", "uglify-hash", "package.json")).json();
+  expect(hash_json.name).toBe("uglify-js");
+  expect(hash_json.version).toBe("3.14.1");
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-ver"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const ver_json = await file(join(package_dir, "node_modules", "uglify-ver", "package.json")).json();
+  expect(ver_json.name).toBe("uglify-js");
+  expect(ver_json.version).toBe("3.14.1");
+  await access(join(package_dir, "bun.lockb"));
 });

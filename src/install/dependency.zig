@@ -119,6 +119,7 @@ pub inline fn realname(this: *const Dependency) String {
     return switch (this.version.tag) {
         .npm => this.version.value.npm.name,
         .dist_tag => this.version.value.dist_tag.name,
+        .git => this.version.value.git.package_name,
         .github => this.version.value.github.package_name,
         else => this.name,
     };
@@ -128,6 +129,7 @@ pub inline fn isAliased(this: *const Dependency, buf: []const u8) bool {
     return switch (this.version.tag) {
         .npm => !this.version.value.npm.name.eql(this.name, buf, buf),
         .dist_tag => !this.version.value.dist_tag.name.eql(this.name, buf, buf),
+        .git => !this.version.value.git.package_name.eql(this.name, buf, buf),
         .github => !this.version.value.github.package_name.eql(this.name, buf, buf),
         else => false,
     };
@@ -234,6 +236,7 @@ pub const Version = struct {
             .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            .git => lhs.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
             .github => lhs.value.github.eql(&rhs.value.github, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
             .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
@@ -262,10 +265,13 @@ pub const Version = struct {
         /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
         symlink = 5,
 
+        /// Local path specified under `workspaces`
         workspace = 6,
-        /// TODO:
+
+        /// Git Repository (via `git` CLI)
         git = 7,
-        /// TODO:
+
+        /// GitHub Repository (via REST API)
         github = 8,
 
         pub inline fn isNPM(this: Tag) bool {
@@ -543,8 +549,7 @@ pub const Version = struct {
         symlink: String,
 
         workspace: String,
-        /// Unsupported, but still parsed so an error can be thrown
-        git: void,
+        git: Repository,
         github: Repository,
     };
 };
@@ -687,6 +692,25 @@ pub fn parseWithTag(
                     },
                 },
                 .tag = .dist_tag,
+            };
+        },
+        .git => {
+            var input = dependency;
+            if (strings.hasPrefixComptime(input, "git+")) {
+                input = input["git+".len..];
+            }
+            const hash_index = strings.lastIndexOfChar(input, '#');
+
+            return .{
+                .literal = sliced.value(),
+                .value = .{
+                    .git = .{
+                        .owner = String.from(""),
+                        .repo = sliced.sub(if (hash_index) |index| input[0..index] else input).value(),
+                        .committish = if (hash_index) |index| sliced.sub(input[index + 1 ..]).value() else String.from(""),
+                    },
+                },
+                .tag = .git,
             };
         },
         .github => {
@@ -834,10 +858,6 @@ pub fn parseWithTag(
                 .tag = .workspace,
                 .literal = sliced.value(),
             };
-        },
-        .git => {
-            if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Support for dependency type \"{s}\" is not implemented yet (\"{s}\")", .{ @tagName(tag), dependency }) catch unreachable;
-            return null;
         },
     }
 }

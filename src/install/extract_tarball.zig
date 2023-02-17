@@ -212,8 +212,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         null,
                         *DirnameReader,
                         &dirname_reader,
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
+                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                         1,
                         true,
                         true,
@@ -225,8 +224,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         null,
                         *DirnameReader,
                         &dirname_reader,
-                        // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
+                        // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                         1,
                         true,
                         false,
@@ -252,7 +250,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         void,
                         void{},
                         // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
                         1,
                         true,
                         true,
@@ -265,7 +262,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                         void,
                         void{},
                         // for npm packages, the root dir is always "package"
-                        // for github tarballs, the root dir is always the commit id
                         1,
                         true,
                         false,
@@ -362,7 +358,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
     var json_len: usize = 0;
     switch (this.resolution.tag) {
         .github => {
-            var json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
+            const json_file = final_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
                 Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
                     @errorName(err),
                     name,
@@ -370,7 +366,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 Global.crash();
             };
             defer json_file.close();
-            var json_stat = try json_file.stat();
+            const json_stat = try json_file.stat();
             json_buf = try this.package_manager.allocator.alloc(u8, json_stat.size + 64);
             json_len = try json_file.preadAll(json_buf, 0);
 
@@ -392,12 +388,10 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         else => {},
     }
 
-    const ret_final_path = try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
     const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);
     return .{
         .url = this.url,
         .resolved = resolved,
-        .final_path = ret_final_path,
         .json_path = ret_json_path,
         .json_buf = json_buf,
         .json_len = json_len,

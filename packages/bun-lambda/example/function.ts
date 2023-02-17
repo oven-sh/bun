@@ -22,17 +22,10 @@ export default {
     async open(ws: ServerWebSocket): Promise<void> {
       console.log("WebSocket opened");
     },
-    async message(
-      ws: ServerWebSocket,
-      message: string | Uint8Array
-    ): Promise<void> {
+    async message(ws: ServerWebSocket, message: string | Uint8Array): Promise<void> {
       console.log("WebSocket message", message);
     },
-    async close(
-      ws: ServerWebSocket,
-      code: number,
-      reason?: string
-    ): Promise<void> {
+    async close(ws: ServerWebSocket, code: number, reason?: string): Promise<void> {
       console.log("WebSocket closed", ...[code, reason].filter(Boolean));
     },
   },

@@ -1,104 +1,87 @@
-import type { Endpoints } from "@octokit/types";
-import type { Errorlike } from "bun";
-import { spawnSync } from "bun";
-import type { JSZipObject } from "jszip";
-import { loadAsync } from "jszip";
-import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
+// HACK: https://github.com/oven-sh/bun/issues/2081
+process.stdout.getWindowSize = () => [80, 80];
+process.stderr.getWindowSize = () => [80, 80];
+
+import { createReadStream, createWriteStream } from "node:fs";
 import { join } from "node:path";
+import { Command, Flags } from "@oclif/core";
+import JSZip from "jszip";
 
-type Release =
-  Endpoints["GET /repos/{owner}/{repo}/releases/latest"]["response"]["data"];
+export class BuildCommand extends Command {
+  static summary = "Build a custom Lambda layer for Bun.";
 
-async function getRelease(repo: string, tag?: string | null): Promise<Release> {
-  const response = await fetch(
-    tag
-      ? `https://api.github.com/repos/${repo}/releases/tag/${tag}`
-      : `https://api.github.com/repos/${repo}/releases/latest`
-  );
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.json();
-}
+  static flags = {
+    arch: Flags.string({
+      description: "The architecture type to support.",
+      options: ["x64", "aarch64"],
+      default: "aarch64",
+    }),
+    release: Flags.string({
+      description: "The release of Bun to install.",
+      default: "latest",
+    }),
+    url: Flags.string({
+      description: "A custom URL to download Bun.",
+      exclusive: ["release"],
+    }),
+    output: Flags.file({
+      exists: false,
+      default: async () => "bun-lambda-layer.zip",
+    }),
+  };
 
-async function getFile(url: string, filename: string): Promise<JSZipObject | null> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  const buffer = await response.arrayBuffer();
-  const zip = await loadAsync(buffer);
-  for (const [name, file] of Object.entries(zip.files)) {
-    if (!file.dir && filename === name) {
-      return file;
-    }
-  }
-  return null;
-}
-
-const repo = process.argv[3] ?? "oven-sh/bun";
-const release = await getRelease(repo, process.argv[2]);
-const latest = await getRelease(repo);
-const layers = [
-  {
-    name: "bun-linux-x64",
-    asset: "bun-linux-x64-baseline",
-    arch: "x86_64",
-  },
-  {
-    name: "bun-linux-aarch64",
-    arch: "arm64",
-  },
-];
-
-for (const { name, asset: assetName, arch } of layers) {
-  const assetId = assetName ?? name;
-  const asset = release.assets.find((asset) => asset.name === `${assetId}.zip`);
-  if (!asset) {
-    throw new Error(`Release does not contain an asset named '${assetId}.zip'`);
-  }
-  const file = await getFile(asset.browser_download_url, `${assetId}/bun`);
-  if (!file) {
-    throw new Error(`Release does not contain a file named '${assetId}/bun'`);
-  }
-  try {
-    mkdirSync(name);
-  } catch (cause) {
-    const error = cause as Errorlike;
-    if (error.code !== "EEXIST") {
-      throw error;
-    }
-  }
-  writeFileSync(join(name, "bun"), await file.async("uint8array"));
-  for (const file of ["runtime.ts", "bootstrap"]) {
-    copyFileSync(file, join(name, file));
-  }
-  const tags = [
-    `${name}-${release.tag_name.replace("bun-v", "").replaceAll(".", "_")}`,
-  ];
-  if (latest.id === release.id) {
-    // TODO: tags.push(name);
-  }
-  for (const tag of tags) {
-    const cmd = [
-      "bunx",
-      "serverless",
-      "deploy",
-      "--config",
-      "runtime.yml",
-      "--param",
-      `path=${name}`,
-      "--param",
-      `arch=${arch}`,
-      "--param",
-      `name=${tag}`,
-    ];
-    console.log("$", ...cmd);
-    spawnSync({
-      // @ts-ignore
-      cmd,
-      stdout: "inherit",
-      stderr: "inherit",
+  async run() {
+    const result = await this.parse(BuildCommand);
+    const { flags } = result;
+    this.debug("Options:", flags);
+    const { arch, release, url, output } = flags;
+    const { href } = new URL(url ?? `https://bun.sh/download/${release}/linux/${arch}?avx2=true`);
+    this.log("Downloading...", href);
+    const response = await fetch(href, {
+      headers: {
+        "User-Agent": "bun-lambda",
+      },
     });
+    if (response.url !== href) {
+      this.debug("Redirected URL:", response.url);
+    }
+    this.debug("Response:", response.status, response.statusText);
+    if (!response.ok) {
+      const reason = await response.text();
+      this.error(reason, { exit: 1 });
+    }
+    this.log("Extracting...");
+    const buffer = await response.arrayBuffer();
+    let archive;
+    try {
+      archive = await JSZip.loadAsync(buffer);
+    } catch (cause) {
+      this.debug(cause);
+      this.error("Failed to unzip file:", { exit: 1 });
+    }
+    this.debug("Extracted archive:", Object.keys(archive.files));
+    const bun = archive.filter((_, { dir, name }) => !dir && name.endsWith("bun"))[0];
+    if (!bun) {
+      this.error("Failed to find executable in zip", { exit: 1 });
+    }
+    const cwd = bun.name.split("/")[0];
+    archive = archive.folder(cwd) ?? archive;
+    for (const filename of ["bootstrap", "runtime.ts"]) {
+      const path = join(__dirname, "..", filename);
+      archive.file(filename, createReadStream(path));
+    }
+    this.log("Saving...", output);
+    archive
+      .generateNodeStream({
+        streamFiles: true,
+        compression: "DEFLATE",
+        compressionOptions: {
+          level: 9,
+        },
+      })
+      .pipe(createWriteStream(output));
+    this.log("Saved");
   }
 }
+
+await BuildCommand.run(process.argv.slice(2));

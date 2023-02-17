@@ -7,11 +7,7 @@ type Lambda = {
   websocket?: {
     open?: (ws: ServerWebSocket) => Promise<void>;
     message?: (ws: ServerWebSocket, message: string) => Promise<void>;
-    close?: (
-      ws: ServerWebSocket,
-      code: number,
-      reason: string
-    ) => Promise<void>;
+    close?: (ws: ServerWebSocket, code: number, reason: string) => Promise<void>;
   };
 };
 
@@ -73,19 +69,16 @@ function env(name: string, fallback?: string): string {
   return value;
 }
 
+const runtimeUrl = new URL(`http://${env("AWS_LAMBDA_RUNTIME_API")}/2018-06-01/`);
+
 async function fetch(url: string, options?: RequestInit): Promise<Response> {
-  const { href } = new URL(
-    url,
-    `http://${env("AWS_LAMBDA_RUNTIME_API")}/2018-06-01/`
-  );
+  const { href } = new URL(url, runtimeUrl);
   const response = await globalThis.fetch(href, {
     ...options,
     timeout: false,
   });
   if (!response.ok) {
-    exit(
-      `Runtime failed to send request to Lambda [status: ${response.status}]`
-    );
+    exit(`Runtime failed to send request to Lambda [status: ${response.status}]`);
   }
   return response;
 }
@@ -113,9 +106,7 @@ function formatError(error: unknown): LambdaError {
     return {
       errorType: error.name,
       errorMessage: error.message,
-      stackTrace: error.stack
-        ?.split("\n")
-        .filter((line) => !line.includes(" /opt/runtime.ts")),
+      stackTrace: error.stack?.split("\n").filter(line => !line.includes(" /opt/runtime.ts")),
     };
   }
   return {
@@ -126,19 +117,14 @@ function formatError(error: unknown): LambdaError {
 
 async function sendError(type: string, cause: unknown): Promise<void> {
   console.error(cause);
-  await fetch(
-    requestId === undefined
-      ? "runtime/init/error"
-      : `runtime/invocation/${requestId}/error`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/vnd.aws.lambda.error+json",
-        "Lambda-Runtime-Function-Error-Type": `Bun.${type}`,
-      },
-      body: JSON.stringify(formatError(cause)),
-    }
-  );
+  await fetch(requestId === undefined ? "runtime/init/error" : `runtime/invocation/${requestId}/error`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/vnd.aws.lambda.error+json",
+      "Lambda-Runtime-Function-Error-Type": `Bun.${type}`,
+    },
+    body: JSON.stringify(formatError(cause)),
+  });
 }
 
 async function throwError(type: string, cause: unknown): Promise<never> {
@@ -155,14 +141,8 @@ async function init(): Promise<Lambda> {
   try {
     file = await import(filePath);
   } catch (cause) {
-    if (
-      cause instanceof Error &&
-      cause.message.startsWith("Cannot find module")
-    ) {
-      return throwError(
-        "FileDoesNotExist",
-        `Did not find a file named '${fileName}'`
-      );
+    if (cause instanceof Error && cause.message.startsWith("Cannot find module")) {
+      return throwError("FileDoesNotExist", `Did not find a file named '${fileName}'`);
     }
     return throwError("InitError", cause);
   }
@@ -179,7 +159,7 @@ async function init(): Promise<Lambda> {
       fetch === undefined ? "MethodDoesNotExist" : "MethodIsNotAFunction",
       moduleName === "default"
         ? `${fileName} does not have a default export with a function named 'fetch'`
-        : `${fileName} does not export a function named '${moduleName}'`
+        : `${fileName} does not export a function named '${moduleName}'`,
     );
   }
   if (websocket === undefined) {
@@ -193,7 +173,7 @@ async function init(): Promise<Lambda> {
     if (typeof method !== "function") {
       return throwError(
         "MethodIsNotAFunction",
-        `${fileName} does not have a function named '${name}' on the default 'websocket' property`
+        `${fileName} does not have a function named '${name}' on the default 'websocket' property`,
       );
     }
   }
@@ -210,8 +190,7 @@ type LambdaRequest<E = any> = {
 
 async function receiveRequest(): Promise<LambdaRequest> {
   const response = await fetch("runtime/invocation/next");
-  requestId =
-    response.headers.get("Lambda-Runtime-Aws-Request-Id") ?? undefined;
+  requestId = response.headers.get("Lambda-Runtime-Aws-Request-Id") ?? undefined;
   if (requestId === undefined) {
     exit("Runtime received a request without a request ID");
   }
@@ -220,13 +199,11 @@ async function receiveRequest(): Promise<LambdaRequest> {
     exit("Runtime received a request without a trace ID");
   }
   process.env["_X_AMZN_TRACE_ID"] = traceId;
-  functionArn =
-    response.headers.get("Lambda-Runtime-Invoked-Function-Arn") ?? undefined;
+  functionArn = response.headers.get("Lambda-Runtime-Invoked-Function-Arn") ?? undefined;
   if (functionArn === undefined) {
     exit("Runtime received a request without a function ARN");
   }
-  const deadlineMs =
-    parseInt(response.headers.get("Lambda-Runtime-Deadline-Ms") ?? "0") || null;
+  const deadlineMs = parseInt(response.headers.get("Lambda-Runtime-Deadline-Ms") ?? "0") || null;
   let event;
   try {
     event = await response.json();
@@ -269,12 +246,8 @@ async function formatResponse(response: Response): Promise<LambdaResponse> {
     };
   }
   const mime = headers["content-type"];
-  const isBase64Encoded =
-    !mime ||
-    (!mime.startsWith("text/") && !mime.startsWith("application/json"));
-  const body = isBase64Encoded
-    ? Buffer.from(await response.arrayBuffer()).toString("base64")
-    : await response.text();
+  const isBase64Encoded = !mime || (!mime.startsWith("text/") && !mime.startsWith("application/json"));
+  const body = isBase64Encoded ? Buffer.from(await response.arrayBuffer()).toString("base64") : await response.text();
   delete headers["set-cookie"];
   const cookies = response.headers.getAll("Set-Cookie");
   if (cookies.length === 0) {
@@ -351,14 +324,10 @@ function formatHttpEventV1(event: HttpEventV1): Request {
   const hostname = headers.get("Host") ?? request.domainName;
   const proto = headers.get("X-Forwarded-Proto") ?? "http";
   const url = new URL(request.path, `${proto}://${hostname}/`);
-  for (const [name, value] of new URLSearchParams(
-    event.queryStringParameters
-  )) {
+  for (const [name, value] of new URLSearchParams(event.queryStringParameters)) {
     url.searchParams.append(name, value);
   }
-  for (const [name, values] of Object.entries(
-    event.multiValueQueryStringParameters ?? {}
-  )) {
+  for (const [name, values] of Object.entries(event.multiValueQueryStringParameters ?? {})) {
     for (const value of values ?? []) {
       url.searchParams.append(name, value);
     }
@@ -399,9 +368,7 @@ function formatHttpEventV2(event: HttpEventV2): Request {
       headers.append(name, value);
     }
   }
-  for (const [name, values] of Object.entries(
-    event.queryStringParameters ?? {}
-  )) {
+  for (const [name, values] of Object.entries(event.queryStringParameters ?? {})) {
     for (const value of values.split(",")) {
       headers.append(name, value);
     }
@@ -449,16 +416,11 @@ type WebSocketEvent = {
 };
 
 function isWebSocketEvent(event: any): event is WebSocketEvent {
-  return (
-    typeof event.requestContext === "object" &&
-    typeof event.requestContext.connectionId === "string"
-  );
+  return typeof event.requestContext === "object" && typeof event.requestContext.connectionId === "string";
 }
 
 function isWebSocketUpgrade(event: any): event is WebSocketEvent {
-  return (
-    isWebSocketEvent(event) && event.requestContext.eventType === "CONNECT"
-  );
+  return isWebSocketEvent(event) && event.requestContext.eventType === "CONNECT";
 }
 
 function formatWebSocketUpgrade(event: WebSocketEvent): Request {
@@ -538,13 +500,12 @@ class LambdaServer implements Server {
   }
 
   async accept(request: LambdaRequest): Promise<unknown> {
-    const deadlineMs =
-      request.deadlineMs === null ? Date.now() + 60_000 : request.deadlineMs;
+    const deadlineMs = request.deadlineMs === null ? Date.now() + 60_000 : request.deadlineMs;
     const durationMs = Math.max(1, deadlineMs - Date.now());
     let response: unknown;
     try {
       response = await Promise.race([
-        new Promise<undefined>((resolve) => setTimeout(resolve, durationMs)),
+        new Promise<undefined>(resolve => setTimeout(resolve, durationMs)),
         this.#acceptRequest(request),
       ]);
     } catch (cause) {
@@ -607,8 +568,7 @@ class LambdaServer implements Server {
       case "DISCONNECT": {
         try {
           if (close) {
-            const { disconnectStatusCode: code, disconnectReason: reason } =
-              request;
+            const { disconnectStatusCode: code, disconnectReason: reason } = request;
             await close(webSocket, code, reason);
           }
         } finally {
@@ -672,22 +632,16 @@ class LambdaServer implements Server {
     options?: {
       headers?: HeadersInit;
       data?: T;
-    }
+    },
   ): boolean {
-    if (
-      request.method === "GET" &&
-      request.headers.get("Upgrade")?.toLowerCase() === "websocket"
-    ) {
+    if (request.method === "GET" && request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       this.#upgrade = new Response(null, {
         status: 101,
         headers: options?.headers,
       });
       if ("aws" in request && isWebSocketUpgrade(request.aws)) {
         const { connectionId } = request.aws.requestContext;
-        this.#webSockets.set(
-          connectionId,
-          new LambdaWebSocket(request.aws, options?.data)
-        );
+        this.#webSockets.set(connectionId, new LambdaWebSocket(request.aws, options?.data));
         this.pendingWebSockets++;
       }
       return true;
@@ -695,11 +649,7 @@ class LambdaServer implements Server {
     return false;
   }
 
-  publish(
-    topic: string,
-    data: string | ArrayBuffer | ArrayBufferView,
-    compress?: boolean
-  ): number {
+  publish(topic: string, data: string | ArrayBuffer | ArrayBufferView, compress?: boolean): number {
     let count = 0;
     for (const webSocket of this.#webSockets.values()) {
       count += webSocket.publish(topic, data, compress) ? 1 : 0;
@@ -721,9 +671,7 @@ class LambdaWebSocket implements ServerWebSocket {
   constructor(event: WebSocketEvent, data?: any) {
     const request = event.requestContext;
     this.#connectionId = `${request.connectionId}`;
-    this.#url = `https://${request.domainName}/${request.stage}/@connections/${
-      this.#connectionId
-    }`;
+    this.#url = `https://${request.domainName}/${request.stage}/@connections/${this.#connectionId}`;
     const [region, accountId] = (functionArn ?? "").split(":").slice(3, 5);
     this.#invokeArn = `arn:aws:execute-api:${region}:${accountId}:${request.apiId}/${request.stage}/*`;
     this.#topics = null;
@@ -732,21 +680,14 @@ class LambdaWebSocket implements ServerWebSocket {
     this.data = data;
   }
 
-  send(
-    data: string | ArrayBuffer | ArrayBufferView,
-    compress?: boolean
-  ): number {
+  send(data: string | ArrayBuffer | ArrayBufferView, compress?: boolean): number {
     if (typeof data === "string") {
       return this.sendText(data, compress);
     }
     if (data instanceof ArrayBuffer) {
       return this.sendBinary(new Uint8Array(data), compress);
     }
-    const buffer = new Uint8Array(
-      data.buffer,
-      data.byteOffset,
-      data.byteLength
-    );
+    const buffer = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     return this.sendBinary(buffer, compress);
   }
 
@@ -769,13 +710,13 @@ class LambdaWebSocket implements ServerWebSocket {
                   Resource: [this.#invokeArn],
                 },
               ],
-            }
+            },
           );
         } else {
           warnOnce(`Failed to send WebSocket message due to a ${status} error`);
         }
       })
-      .catch((error) => {
+      .catch(error => {
         warnOnce("Failed to send WebSocket message", error);
       });
     return data.length;
@@ -784,17 +725,13 @@ class LambdaWebSocket implements ServerWebSocket {
   sendBinary(data: Uint8Array, compress?: boolean): number {
     warnOnce(
       "Lambda does not support binary WebSocket messages",
-      "https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-develop-binary-media-types.html"
+      "https://docs.aws.amazon.com/apigateway/latest/developerguide/websocket-api-develop-binary-media-types.html",
     );
     const base64 = Buffer.from(data).toString("base64");
     return this.sendText(base64, compress);
   }
 
-  publish(
-    topic: string,
-    data: string | ArrayBuffer | ArrayBufferView,
-    compress?: boolean
-  ): number {
+  publish(topic: string, data: string | ArrayBuffer | ArrayBufferView, compress?: boolean): number {
     if (this.isSubscribed(topic)) {
       return this.send(data, compress);
     }
@@ -834,13 +771,13 @@ class LambdaWebSocket implements ServerWebSocket {
                   Resource: [this.#invokeArn],
                 },
               ],
-            }
+            },
           );
         } else {
           warnOnce(`Failed to close WebSocket due to a ${status} error`);
         }
       })
-      .catch((error) => {
+      .catch(error => {
         warnOnce("Failed to close WebSocket", error);
       });
     this.readyState = 3; // WebSocket.CLOSED;
@@ -863,9 +800,7 @@ class LambdaWebSocket implements ServerWebSocket {
     return this.#topics !== null && this.#topics.has(topic);
   }
 
-  cork(
-    callback: (ws: ServerWebSocket<undefined>) => any
-  ): void | Promise<void> {
+  cork(callback: (ws: ServerWebSocket<undefined>) => any): void | Promise<void> {
     // Lambda does not support sending multiple messages at a time.
     return callback(this);
   }

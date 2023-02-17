@@ -224,8 +224,7 @@ pub const ModuleLoader = struct {
                 module.poll_ref.ref(this.vm());
 
                 this.map.append(this.vm().allocator, module) catch unreachable;
-                this.vm().packageManager().flushDependencyQueue();
-                _ = this.vm().packageManager().scheduleNetworkTasks();
+                this.vm().packageManager().drainDependencyList();
             }
 
             pub fn onDependencyError(ctx: *anyopaque, dependency: Dependency, root_dependency_id: Install.DependencyID, err: anyerror) void {
@@ -273,7 +272,7 @@ pub const ModuleLoader = struct {
                 var pm = this.vm().packageManager();
 
                 this.runTasks();
-                _ = pm.scheduleNetworkTasks();
+                _ = pm.scheduleTasks();
                 this.runTasks();
 
                 this.pollModules();

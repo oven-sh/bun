@@ -1,3 +1,5 @@
+var writer = Bun.stdout.writer();
 setInterval(() => {
-  console.log("Wrote to stdout");
+  writer.write("Wrote to stdout\n");
+  writer.flush();
 }, 20);

@@ -1373,10 +1373,6 @@ pub const ZigConsoleClient = struct {
                             return .{ .tag = .JSX, .cell = js_type };
                         }
                     }
-
-                    if (value.as(JSC.DOMURL) != null) {
-                        return .{ .tag = .String, .cell = js_type };
-                    }
                 }
 
                 return .{

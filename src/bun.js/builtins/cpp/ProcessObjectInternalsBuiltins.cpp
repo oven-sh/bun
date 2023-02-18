@@ -481,7 +481,7 @@ const char* const s_processObjectInternalsGetStdioWriteStreamCode =
 const JSC::ConstructAbility s_processObjectInternalsGetStdinStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_processObjectInternalsGetStdinStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_processObjectInternalsGetStdinStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_processObjectInternalsGetStdinStreamCodeLength = 4305;
+const int s_processObjectInternalsGetStdinStreamCodeLength = 4940;
 static const JSC::Intrinsic s_processObjectInternalsGetStdinStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_processObjectInternalsGetStdinStreamCode =
     "(function (fd_, rawRequire, Bun) {\n" \
@@ -505,12 +505,24 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "    #onClose;\n" \
     "    #onDrain;\n" \
     "\n" \
+    "    #setRawMode;\n" \
+    "    #internalIsRaw;\n" \
+    "\n" \
     "    get isTTY() {\n" \
     "      return require(\"tty\").isatty(fd_);\n" \
     "    }\n" \
     "\n" \
     "    get fd() {\n" \
     "      return fd_;\n" \
+    "    }\n" \
+    "\n" \
+    "    get isRaw() {\n" \
+    "      return (this.#internalIsRaw ??= globalThis[Symbol.for(\"Bun.lazy\")](\"bun:tty\").isRaw)(fd_);\n" \
+    "    }\n" \
+    "\n" \
+    "    #createSetRawMode() {\n" \
+    "      var internalSetRawMode = globalThis[Symbol.for(\"Bun.lazy\")](\"bun:tty\").setRawMode;\n" \
+    "      return mode => internalSetRawMode(fd_, mode);\n" \
     "    }\n" \
     "\n" \
     "    constructor() {\n" \
@@ -555,7 +567,17 @@ const char* const s_processObjectInternalsGetStdinStreamCode =
     "      }\n" \
     "    }\n" \
     "\n" \
-    "    setRawMode(mode) {}\n" \
+    "    setRawMode(mode) {\n" \
+    "      if (!this.isTTY) {\n" \
+    "        throw new Error(\"Cannot set raw mode on non-TTY stream\");\n" \
+    "      }\n" \
+    "      if (typeof mode !== \"boolean\") {\n" \
+    "        throw new Error(\"Invalid `mode` for function `setRawMode`\");\n" \
+    "      }\n" \
+    "      (this.#setRawMode ??= this.#createSetRawMode())(mode);\n" \
+    "      return this;\n" \
+    "    }\n" \
+    "\n" \
     "    on(name, callback) {\n" \
     "      //\n" \
     "      //\n" \

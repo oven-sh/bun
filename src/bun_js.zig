@@ -49,8 +49,6 @@ pub const Run = struct {
         JSC.markBinding(@src());
         bun.JSC.initialize();
 
-        _ = C.setTtyOrigTermiosIfNeeded();
-
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();

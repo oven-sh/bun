@@ -477,13 +477,11 @@ function getStdinStream(fd_, rawRequire, Bun) {
     }
 
     get isRaw() {
-      return (this.#internalIsRaw ??=
-        require("node:tty")[Symbol.for("__BUN_INTERNAL_DO_NOT_USE_ELSE_RISK_TERMINATION__isRaw")])(fd_);
+      return (this.#internalIsRaw ??= globalThis[Symbol.for("Bun.lazy")]("bun:tty").isRaw)(fd_);
     }
 
     #createSetRawMode() {
-      var internalSetRawMode =
-        require("node:tty")[Symbol.for("__BUN_INTERNAL_DO_NOT_USE_ELSE_RISK_TERMINATION__setRawMode")];
+      var internalSetRawMode = globalThis[Symbol.for("Bun.lazy")]("bun:tty").setRawMode;
       return mode => internalSetRawMode(fd_, mode);
     }
 

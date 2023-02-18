@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 #include "TTYHelper.h"
 
+using namespace Zig;
+
 extern "C" int32_t set_tty_orig_termios()
 {
     return tty__get_termios(STDIN_FILENO, NULL);

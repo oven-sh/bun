@@ -91,6 +91,7 @@
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
 #include "JSReadableHelper.h"
+#include "JSTTYHelper.h"
 #include "Process.h"
 
 #include "WebCoreJSBuiltinInternals.h"
@@ -1194,6 +1195,7 @@ JSC:
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
         static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
+        static NeverDestroyed<const String> bunTtyString(MAKE_STATIC_STRING_IMPL("bun:tty"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
         static NeverDestroyed<const String> masqueradesAsUndefined(MAKE_STATIC_STRING_IMPL("masqueradesAsUndefined"));
@@ -1268,6 +1270,13 @@ JSC:
             obj->putDirect(
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
+            return JSValue::encode(obj);
+        }
+
+        if (string == bunTtyString) {
+            auto* obj = constructEmptyObject(globalObject);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isRaw"_s)), JSC::JSFunction::create(vm, globalObject, 0, "isRaw"_s, jsFunctionInternalTty_isRaw, ImplementationVisibility::Public), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRawMode"_s)), JSC::JSFunction::create(vm, globalObject, 0, "setRawMode"_s, jsFunctionInternalTty_setRawMode, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 

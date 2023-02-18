@@ -26,7 +26,7 @@ Builds a Lambda layer for Bun and saves it to a `.zip` file.
 Example:
 
 ```sh
-bun run build -- \
+bun run build-layer -- \
   --arch x64 \
   --release canary \
   --output /path/to/layer.zip
@@ -45,7 +45,7 @@ Builds a Lambda layer for Bun then publishes it to your AWS account.
 Example:
 
 ```sh
-bun run publish -- \
+bun run publish-layer -- \
   --arch aarch64 \
   --release latest \
   --output /path/to/layer.zip \

@@ -24,7 +24,7 @@ export class PublishCommand extends BuildCommand {
   };
 
   #aws(args: string[]): string {
-    this.log("$", "aws", ...args);
+    this.debug("$", "aws", ...args);
     const { status, stdout, stderr } = spawnSync("aws", args, {
       stdio: "pipe",
     });
@@ -38,10 +38,10 @@ export class PublishCommand extends BuildCommand {
 
   async run() {
     const { flags } = await this.parse(PublishCommand);
-    this.log("Options:", flags);
+    this.debug("Options:", flags);
     try {
       const version = this.#aws(["--version"]);
-      this.log("AWS CLI:", version);
+      this.debug("AWS CLI:", version);
     } catch (error) {
       this.debug(error);
       this.error(
@@ -56,7 +56,7 @@ export class PublishCommand extends BuildCommand {
     this.log("Publishing...");
     for (const regionName of region) {
       for (const layerName of layer) {
-        this.#aws([
+        const result = this.#aws([
           "lambda",
           "publish-layer-version",
           "--layer-name",
@@ -77,6 +77,8 @@ export class PublishCommand extends BuildCommand {
           "--output",
           "json",
         ]);
+        const { LayerVersionArn } = JSON.parse(result);
+        this.log("Published", LayerVersionArn);
       }
     }
     this.log("Done");

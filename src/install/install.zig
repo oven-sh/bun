@@ -599,10 +599,12 @@ const Task = struct {
                 this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .git_clone => {
+                const manager = this.package_manager;
                 const dir = Repository.download(
-                    this.package_manager.allocator,
-                    this.package_manager.env,
-                    this.package_manager.getCacheDirectory().dir,
+                    manager.allocator,
+                    manager.env,
+                    manager.log,
+                    manager.getCacheDirectory().dir,
                     this.id,
                     this.request.git_clone.name.slice(),
                     this.request.git_clone.url.slice(),
@@ -610,22 +612,24 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = std.math.maxInt(std.os.fd_t) };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
-                this.package_manager.git_repositories.put(this.package_manager.allocator, this.id, dir.fd) catch unreachable;
+                manager.git_repositories.put(manager.allocator, this.id, dir.fd) catch unreachable;
                 this.data = .{
                     .git_clone = dir.fd,
                 };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
             .git_checkout => {
+                const manager = this.package_manager;
                 const data = Repository.checkout(
-                    this.package_manager.allocator,
-                    this.package_manager.env,
-                    this.package_manager.getCacheDirectory().dir,
+                    manager.allocator,
+                    manager.env,
+                    manager.log,
+                    manager.getCacheDirectory().dir,
                     .{ .fd = this.request.git_checkout.repo_dir },
                     this.request.git_checkout.name.slice(),
                     this.request.git_checkout.url.slice(),
@@ -634,7 +638,7 @@ const Task = struct {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_checkout = .{} };
-                    this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                    manager.resolve_tasks.writeItem(this.*) catch unreachable;
                     return;
                 };
 
@@ -642,7 +646,7 @@ const Task = struct {
                     .git_checkout = data,
                 };
                 this.status = Status.success;
-                this.package_manager.resolve_tasks.writeItem(this.*) catch unreachable;
+                manager.resolve_tasks.writeItem(this.*) catch unreachable;
             },
         }
     }
@@ -2919,6 +2923,7 @@ pub const PackageManager = struct {
                     const resolved = try Repository.findCommit(
                         this.allocator,
                         this.env,
+                        this.log,
                         .{ .fd = repo_fd },
                         alias,
                         this.lockfile.str(&dep.committish),

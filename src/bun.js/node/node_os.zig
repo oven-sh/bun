@@ -462,7 +462,7 @@ pub const Os = struct {
             .powerpc64 => "ppc64",
             .powerpc64le => "ppc64le",
             .s390x => "s390x",
-            .i386 => "i386",
+            .x86 => "i386",
             .x86_64 => "x86_64",
             else => "unknown",
         };

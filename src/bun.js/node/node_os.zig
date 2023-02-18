@@ -37,6 +37,7 @@ pub const Os = struct {
         module.put(globalObject, JSC.ZigString.static("uptime"), JSC.NewFunction(globalObject, JSC.ZigString.static("uptime"), 0, uptime, true));
         module.put(globalObject, JSC.ZigString.static("userInfo"), JSC.NewFunction(globalObject, JSC.ZigString.static("userInfo"), 0, userInfo, true));
         module.put(globalObject, JSC.ZigString.static("version"), JSC.NewFunction(globalObject, JSC.ZigString.static("version"), 0, version, true));
+        module.put(globalObject, JSC.ZigString.static("machine"), JSC.NewFunction(globalObject, JSC.ZigString.static("machine"), 0, machine, true));
 
         module.put(globalObject, JSC.ZigString.static("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, JSC.ZigString.static("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
@@ -290,18 +291,6 @@ pub const Os = struct {
         });
     }
 
-    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        JSC.markBinding(@src());
-
-        const machine_name = if (comptime Environment.isLinux) b: {
-                                const uts = std.os.uname();
-                                break :b std.mem.span(&uts.machine);
-                             }
-                             else "unknown";
-
-        return JSC.ZigString.init(machine_name).withEncoding().toValueGC(globalThis);
-    }
-
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
@@ -462,5 +451,25 @@ pub const Os = struct {
         JSC.markBinding(@src());
         var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
+    }
+
+    inline fn getMachineName() []const u8 {
+        return switch (@import("builtin").target.cpu.arch) {
+            .arm => "arm",
+            .aarch64 => "arm64",
+            .mips => "mips",
+            .mips64 => "mips64",
+            .powerpc64 => "ppc64",
+            .powerpc64le => "ppc64le",
+            .s390x => "s390x",
+            .x86 => "i386",
+            .x86_64 => "x86_64",
+            else => "unknown",
+        };
+    }
+
+    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        JSC.markBinding(@src());
+        return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
     }
 };

@@ -6518,9 +6518,28 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__signalGetterWrap, (JSGlobalObject * l
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSRequest* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = RequestPrototype__getSignal(thisObject->wrapped(), globalObject);
+
+    if (JSValue cachedValue = thisObject->m_signal.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        RequestPrototype__getSignal(thisObject->wrapped(), globalObject));
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, result);
+    thisObject->m_signal.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void RequestPrototype__signalSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+    thisObject->m_signal.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue RequestPrototype__signalGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_signal.get());
 }
 
 JSC_DEFINE_HOST_FUNCTION(RequestPrototype__textCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -6736,6 +6755,7 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_signal);
     visitor.append(thisObject->m_url);
 }
 
@@ -6749,6 +6769,7 @@ void JSRequest::visitAdditionalChildren(Visitor& visitor)
 
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_signal);
     visitor.append(thisObject->m_url);
     ;
 }

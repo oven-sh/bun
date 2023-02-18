@@ -57,6 +57,7 @@ export default [
       },
       signal: {
         getter: "getSignal",
+        cache: true,
       },
     },
   }),

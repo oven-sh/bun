@@ -618,6 +618,7 @@ public:
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_body;
     mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_signal;
     mutable JSC::WriteBarrier<JSC::Unknown> m_url;
 };
 

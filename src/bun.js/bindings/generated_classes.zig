@@ -1680,6 +1680,28 @@ pub const JSRequest = struct {
         return result;
     }
 
+    extern fn RequestPrototype__signalSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn RequestPrototype__signalGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.signal` setter
+    /// This value will be visited by the garbage collector.
+    pub fn signalSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__signalSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Request.signal` getter
+    /// This value will be visited by the garbage collector.
+    pub fn signalGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__signalGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn RequestPrototype__urlGetCachedValue(JSC.JSValue) JSC.JSValue;

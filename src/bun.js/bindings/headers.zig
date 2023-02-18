@@ -144,6 +144,7 @@ pub extern fn JSC__AbortSignal__createTimeoutError(arg0: [*c]const ZigString, ar
 pub extern fn JSC__AbortSignal__fromJS(JSValue0: JSC__JSValue) ?*bindings.AbortSignal;
 pub extern fn JSC__AbortSignal__ref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn JSC__AbortSignal__signal(arg0: ?*bindings.AbortSignal, JSValue1: JSC__JSValue) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__toJS(arg0: ?*bindings.AbortSignal, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__unref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn JSC__JSPromise__asValue(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSPromise__create(arg0: *bindings.JSGlobalObject) ?*bindings.JSPromise;

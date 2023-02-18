@@ -59,7 +59,6 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    js_signal: JSC.Strong = .{},
     body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
@@ -221,12 +220,13 @@ pub const Request = struct {
     }
 
     pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        if(this.signal) |_| {
-            return this.js_signal.swap();
+        // Already have an C++ instance
+        if(this.signal) |signal| {
+            return signal.toJS(globalThis);
         } else {
             //Lazy create default signal
             const js_signal = AbortSignal.create(globalThis);
-            this.js_signal = JSC.Strong.create(js_signal, globalThis);
+            js_signal.ensureStillAlive();
             if (AbortSignal.fromJS(js_signal)) |signal| {
                 this.signal = signal;
             }
@@ -271,10 +271,11 @@ pub const Request = struct {
         }
 
         this.body.deinit();
-        if(this.signal != null) {
-           this.js_signal.deinit();
+        if(this.signal) |signal| {
+           _ = signal.unref();
            this.signal = null;
         }
+
         bun.default_allocator.destroy(this);
     }
 
@@ -438,11 +439,10 @@ pub const Request = struct {
                 if (arguments[1].get(globalThis, "signal")) |signal_| {
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
-                        request.js_signal = JSC.Strong.create(
-                            signal_,
-                            globalThis,
-                        );
+                        signal_.ensureStillAlive();
                         request.signal = signal;
+                        _ = signal.ref();
+                        
                     } else {
                         if (request.headers) |head| {
                             head.deref();
@@ -544,11 +544,9 @@ pub const Request = struct {
             this.headers = req.headers.?.cloneThis(globalThis).?;
         }
 
-        //TODO: check if this behavior works
         if(this.signal) |signal| {
             req.signal = signal;
-            const js_signal = this.js_signal.swap();
-            this.js_signal = JSC.Strong.create(js_signal, globalThis);
+            _ = signal.ref();
         }
     }
 

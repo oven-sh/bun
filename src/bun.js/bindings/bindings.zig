@@ -1728,6 +1728,10 @@ pub const AbortSignal = extern opaque {
         return cppFn("fromJS", .{value});
     }
 
+    pub fn toJS(this: *AbortSignal, global: *JSGlobalObject) JSValue {
+        return cppFn("toJS", .{this, global});
+    }
+
     pub fn create(global: *JSGlobalObject) JSValue {
         return cppFn("create", .{ global });
     }
@@ -1751,6 +1755,7 @@ pub const AbortSignal = extern opaque {
         "aborted",
         "addListener",
         "fromJS",
+        "toJS",
     };
 };
 

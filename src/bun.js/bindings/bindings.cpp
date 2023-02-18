@@ -3804,7 +3804,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__create(JSC__JSGlobalObject* globalObje
 extern "C" JSC__JSValue JSC__AbortSignal__toJS(JSC__AbortSignal* arg0, JSC__JSGlobalObject* globalObject) {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
-    return JSValue::encode(toJSNewlyCreated<IDLInterface<JSC__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), adoptRef(*abortSignal)));
+    return JSValue::encode(toJS<IDLInterface<JSC__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), adoptRef(*abortSignal)));
 }
 
 

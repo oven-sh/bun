@@ -545,8 +545,8 @@ pub const Request = struct {
         }
 
         if(this.signal) |signal| {
-            req.signal = signal;
             _ = signal.ref();
+            req.signal = signal;
         }
     }
 

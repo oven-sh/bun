@@ -964,11 +964,63 @@ pub const FileSystemFlags = enum(Mode) {
     const O_SYNC: Mode = 0;
     const O_TRUNC: Mode = std.os.O.TRUNC;
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, default: FileSystemFlags, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
-        if (val.isUndefinedOrNull()) {
-            return default;
-        }
+    const map = bun.ComptimeStringMap(Mode, .{
+        .{ "r", O_RDONLY },
+        .{ "rs", O_RDONLY | O_SYNC },
+        .{ "sr", O_RDONLY | O_SYNC },
+        .{ "r+", O_RDWR },
+        .{ "rs+", O_RDWR | O_SYNC },
+        .{ "sr+", O_RDWR | O_SYNC },
 
+        .{ "R", O_RDONLY },
+        .{ "RS", O_RDONLY | O_SYNC },
+        .{ "SR", O_RDONLY | O_SYNC },
+        .{ "R+", O_RDWR },
+        .{ "RS+", O_RDWR | O_SYNC },
+        .{ "SR+", O_RDWR | O_SYNC },
+
+        .{ "w", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "W", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "WX", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XW", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "w+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "W+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "WX+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XW+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "a", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "A", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "AX", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XA", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "AS", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "SA", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "a+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+
+        .{ "A+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "AX+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XA+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "AS+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+    });
+
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
             const number = val.coerce(i32, ctx);
             return @intToEnum(FileSystemFlags, @intCast(Mode, @max(number, 0)));
@@ -981,6 +1033,16 @@ pub const FileSystemFlags = enum(Mode) {
                 JSC.throwInvalidArguments(
                     "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
                     .{},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
+            // it's definitely wrong when the string is super long
+            else if (str.len > 12) {
+                JSC.throwInvalidArguments(
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
                     ctx,
                     exception,
                 );
@@ -1003,27 +1065,14 @@ pub const FileSystemFlags = enum(Mode) {
                                 break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
                             }
                         }
-
-                        var flags: Mode = 0;
-                        for (chars) |c| {
-                            flags |= switch (c) {
-                                'R', 'r' => O_RDONLY,
-                                'W', 'w' => O_WRONLY | O_CREAT | O_TRUNC,
-                                'A', 'a' => O_WRONLY | O_CREAT | O_APPEND,
-                                '+' => O_RDWR,
-                                'X', 'x' => O_WRONLY | O_CREAT | O_EXCL,
-                                'S', 's' => O_SYNC,
-                                else => break :brk null,
-                            };
-                        }
-
-                        break :brk flags;
                     },
                 }
+
+                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
             } orelse {
                 JSC.throwInvalidArguments(
-                    "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                    .{},
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
                     ctx,
                     exception,
                 );

@@ -4,35 +4,64 @@ A custom runtime layer that runs Bun on AWS Lambda.
 
 ## Setup
 
-First, you will need to deploy the runtime layer to your AWS account. Clone the repository and run the build script to get started.
+First, you will need to deploy the layer to your AWS account. Clone this repository and run the `publish-layer` script to get started.
 
 ```sh
 git clone git@github.com:oven-sh/bun.git
 cd packages/bun-lambda
 bun install
-bun run build
+bun run publish-layer
 ```
 
-If you want to create a layer for a specific version of Bun, you can pass the release as an argument.
+### `bun run build-layer`
+
+Builds a Lambda layer for Bun and saves it to a `.zip` file.
+
+| Flag        | Description                                                          | Default                |
+| ----------- | -------------------------------------------------------------------- | ---------------------- |
+| `--arch`    | The architecture to support, either: "x64" or "aarch64"              | aarch64                |
+| `--release` | The release of Bun, can be: "latest", "canary", or a release "x.y.z" | latest                 |
+| `--output`  | The path to write the layer as a `.zip`.                             | ./bun-lambda-layer.zip |
+
+Example:
 
 ```sh
-bun run build -- bun-v0.5.4
+bun run build -- \
+  --arch x64 \
+  --release canary \
+  --output /path/to/layer.zip
 ```
 
-The `build` script uses [`serverless`](https://www.serverless.com/) to deploy the layer to your AWS account. If you have not used it before, you may need to login or sign up.
+### `bun run publish-layer`
+
+Builds a Lambda layer for Bun then publishes it to your AWS account.
+
+| Flag       | Description                      | Default |
+| ---------- | -------------------------------- | ------- |
+| `--layer`  | The name of the layer.           | bun     |
+| `--region` | The region to publish the layer. |         |
+| `--public` | If the layer should be public.   | false   |
+
+Example:
 
 ```sh
-bunx serverless login
+bun run publish -- \
+  --arch aarch64 \
+  --release latest \
+  --output /path/to/layer.zip \
+  --region us-east-1
 ```
 
 ## Usage
 
-You don't need to make any changes to your Bun code for it to work on Lambda.
+Once you publish the layer to your AWS account, you can create a Lambda function that uses the layer.
+
+Here's an example function that can run on Lambda using the layer for Bun:
 
 ```ts
 export default {
   async fetch(request: Request): Promise<Response> {
-    return new Response("Hello from AWS Lambda!");
+    return new Response("Hello from Lambda!");
   },
 };
 ```

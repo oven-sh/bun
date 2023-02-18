@@ -1,15 +1,16 @@
 {
   "devDependencies": {
     "bun-types": "^0.4.0",
+    "jszip": "^3.10.1",
+    "oclif": "^3.6.5",
     "prettier": "^2.8.2"
   },
   "dependencies": {
-    "jszip": "^3.10.1",
-    "oclif": "^3.6.5"
+    "aws4fetch": "^1.0.17"
   },
   "scripts": {
-    "build": "bun scripts/build.ts",
-    "publish": "bun scripts/publish.ts",
+    "build-layer": "bun scripts/build-layer.ts",
+    "publish-layer": "bun scripts/publish-layer.ts",
     "format": "prettier --write ."
   }
 }

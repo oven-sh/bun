@@ -9,10 +9,11 @@ export default {
       body: request.body ? await request.text() : null,
     });
     if (server.upgrade(request)) {
-      console.log("Detected a WebSocket connection");
+      console.log("WebSocket upgraded");
       return;
     }
-    return new Response("Hello from Bun on Lambda", {
+    return new Response("Hello from Bun on Lambda!", {
+      status: 200,
       headers: {
         "Content-Type": "text/plain;charset=utf-8",
       },
@@ -22,11 +23,11 @@ export default {
     async open(ws: ServerWebSocket): Promise<void> {
       console.log("WebSocket opened");
     },
-    async message(ws: ServerWebSocket, message: string | Uint8Array): Promise<void> {
+    async message(ws: ServerWebSocket, message: string): Promise<void> {
       console.log("WebSocket message", message);
     },
     async close(ws: ServerWebSocket, code: number, reason?: string): Promise<void> {
-      console.log("WebSocket closed", ...[code, reason].filter(Boolean));
+      console.log("WebSocket closed", { code, reason });
     },
   },
 };

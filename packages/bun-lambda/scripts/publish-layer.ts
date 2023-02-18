@@ -1,6 +1,6 @@
 import { Flags } from "@oclif/core";
 import { spawnSync } from "node:child_process";
-import { BuildCommand } from "./build";
+import { BuildCommand } from "./build-layer";
 
 export class PublishCommand extends BuildCommand {
   static summary = "Publish a custom Lambda layer for Bun.";

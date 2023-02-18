@@ -749,9 +749,13 @@ describe("Request", () => {
       body: "<div>hello</div>",
     });
     gc();
+    expect(body.signal).toBeDefined();
+    gc();
     expect(body.headers.get("content-type")).toBe("text/html; charset=utf-8");
     gc();
     var clone = body.clone();
+    gc();
+    expect(clone.signal).toBeDefined();
     gc();
     body.headers.set("content-type", "text/plain");
     gc();
@@ -760,8 +764,33 @@ describe("Request", () => {
     expect(body.headers.get("content-type")).toBe("text/plain");
     gc();
     expect(await clone.text()).toBe("<div>hello</div>");
-    gc();
   });
+
+  it("signal", async ()=> {
+    gc();
+    var controller = new AbortController();
+    var req = new Request("https://hello.com", { signal: controller.signal })
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+
+  })
+
+  it("cloned signal", async ()=> {
+    gc();
+    var controller = new AbortController();
+    var req = new Request("https://hello.com", { signal: controller.signal })
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+    gc();
+    var cloned = req.clone();
+    expect(cloned.signal.aborted).toBe(true);
+  })
 
   testBlobInterface(data => new Request("https://hello.com", { body: data }), true);
 });

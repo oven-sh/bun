@@ -2629,7 +2629,54 @@ pub fn NewPrinter(
                 p.print(" ");
             }
 
-            p.print(e.value);
+            if (comptime is_bun_platform) {
+                // Translate any non-ASCII to unicode escape sequences
+                var ascii_start: usize = 0;
+                var is_ascii = false;
+                var iter = CodepointIterator.init(e.value);
+                var cursor = CodepointIterator.Cursor{};
+                while (iter.next(&cursor)) {
+                    switch (cursor.c) {
+                        first_ascii...last_ascii => {
+                            if (!is_ascii) {
+                                ascii_start = cursor.i;
+                                is_ascii = true;
+                            }
+                        },
+                        else => {
+                            if (is_ascii) {
+                                p.print(e.value[ascii_start..cursor.i]);
+                                is_ascii = false;
+                            }
+
+                            switch (cursor.c) {
+                                0...0xFFFF => {
+                                    p.print([_]u8{
+                                        '\\',
+                                        'u',
+                                        hex_chars[cursor.c >> 12],
+                                        hex_chars[(cursor.c >> 8) & 15],
+                                        hex_chars[(cursor.c >> 4) & 15],
+                                        hex_chars[cursor.c & 15],
+                                    });
+                                },
+                                else => {
+                                    p.print("\\u{");
+                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                    p.print("}");
+                                },
+                            }
+                        },
+                    }
+                }
+
+                if (is_ascii) {
+                    p.print(e.value[ascii_start..]);
+                }
+            } else {
+                // UTF8 sequence is fine
+                p.print(e.value);
+            }
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;

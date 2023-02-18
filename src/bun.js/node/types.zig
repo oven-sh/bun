@@ -964,9 +964,9 @@ pub const FileSystemFlags = enum(Mode) {
     const O_SYNC: Mode = 0;
     const O_TRUNC: Mode = std.os.O.TRUNC;
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, default: FileSystemFlags, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isUndefinedOrNull()) {
-            return @intToEnum(FileSystemFlags, O_RDONLY);
+            return default;
         }
 
         if (val.isNumber()) {

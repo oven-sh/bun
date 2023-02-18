@@ -212,15 +212,17 @@ pub const FileSystem = struct {
             };
             // entry.name only lives for the duration of the iteration
 
-            const name = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.init(entry.name);
+            const name = try strings.StringOrTinyString.initAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
+            );
 
-            const name_lowercased = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.initLowerCase(entry.name);
+            const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
+            );
 
             const stored = try EntryStore.instance.append(.{
                 .base_ = name,

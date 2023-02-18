@@ -987,12 +987,12 @@ pub const FetchHeaders = opaque {
         });
     }
 
-    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8) void {
-        if (this.has(&ZigString.init(name_))) {
+    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8, global: *JSGlobalObject) void {
+        if (this.has(&ZigString.init(name_), global)) {
             return;
         }
 
-        this.put_(&ZigString.init(name_), &ZigString.init(value));
+        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
     }
 
     pub fn from(
@@ -1064,11 +1064,13 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: *const ZigString,
         value: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("append", .{
             this,
             name_,
             value,
+            global,
         });
     }
 
@@ -1076,11 +1078,13 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: *const ZigString,
         value: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("put_", .{
             this,
             name_,
             value,
+            global,
         });
     }
 
@@ -1088,28 +1092,32 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: []const u8,
         value: []const u8,
+        global: *JSGlobalObject,
     ) void {
-        this.put_(&ZigString.init(name_), &ZigString.init(value));
+        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
     }
 
     pub fn get_(
         this: *FetchHeaders,
         name_: *const ZigString,
         out: *ZigString,
+        global: *JSGlobalObject,
     ) void {
         shim.cppFn("get_", .{
             this,
             name_,
             out,
+            global,
         });
     }
 
     pub fn get(
         this: *FetchHeaders,
         name_: []const u8,
+        global: *JSGlobalObject,
     ) ?[]const u8 {
         var out = ZigString.Empty;
-        get_(this, &ZigString.init(name_), &out);
+        get_(this, &ZigString.init(name_), &out, global);
         if (out.len > 0) {
             return out.slice();
         }
@@ -1120,10 +1128,12 @@ pub const FetchHeaders = opaque {
     pub fn has(
         this: *FetchHeaders,
         name_: *const ZigString,
+        global: *JSGlobalObject,
     ) bool {
         return shim.cppFn("has", .{
             this,
             name_,
+            global,
         });
     }
 
@@ -1285,10 +1295,12 @@ pub const FetchHeaders = opaque {
     pub fn remove(
         this: *FetchHeaders,
         name_: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("remove", .{
             this,
             name_,
+            global,
         });
     }
 
@@ -1328,9 +1340,11 @@ pub const FetchHeaders = opaque {
 
     pub fn cloneThis(
         this: *FetchHeaders,
+        global: *JSGlobalObject,
     ) ?*FetchHeaders {
         return shim.cppFn("cloneThis", .{
             this,
+            global,
         });
     }
 
@@ -1697,7 +1711,6 @@ pub const AbortSignal = extern opaque {
     pub fn abortReason(this: *AbortSignal) JSValue {
         return cppFn("abortReason", .{this});
     }
-
 
     pub fn ref(
         this: *AbortSignal,
@@ -2881,22 +2894,6 @@ pub const JSValue = enum(JSValueReprInt) {
     pub inline fn cast(ptr: anytype) JSValue {
         return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(ptr)));
     }
-
-    pub const Formatter = struct {
-        value: JSValue,
-        global: *JSGlobalObject,
-
-        pub fn format(formatter: Formatter, comptime fmt: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
-            const self = formatter.value;
-            const kind: JSType = jsType(self);
-            if (kind.isStringLike()) {
-                var zig_str = self.getZigString();
-                return try zig_str.format(fmt, opts, writer);
-            }
-
-            if (kind) {}
-        }
-    };
 
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
         return cppFn("coerceToInt32", .{ this, globalThis });

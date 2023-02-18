@@ -987,3 +987,10 @@ it("fs.Dirent", () => {
 it("fs.Stats", () => {
   expect(Stats).toBeDefined();
 });
+
+it("repro 1516: can use undefined/null to specify default flag", () => {
+  const path = "/tmp/repro_1516.txt";
+  writeFileSync(path, "b", { flag: undefined });
+  expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
+  rmSync(path);
+});

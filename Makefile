@@ -1083,7 +1083,7 @@ dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
 
 .PHONY: dev
-dev: mkdir-dev dev-obj bun-link-lld-debug bun-codesign-debug
+dev: mkdir-dev dev-obj bun-link-lld-debug
 
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin

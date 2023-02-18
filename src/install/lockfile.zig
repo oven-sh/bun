@@ -2446,6 +2446,128 @@ pub const Package = extern struct {
         return this_dep;
     }
 
+    fn processWorkspaceNamesArray(
+        workspace_names_ptr: *[]string,
+        allocator: std.mem.Allocator,
+        log: *logger.Log,
+        arr: *JSAst.E.Array,
+        source: *const logger.Source,
+        loc: logger.Loc,
+        string_builder: *StringBuilder,
+    ) !u32 {
+        var workspace_names = try allocator.alloc(string, arr.items.len);
+        defer workspace_names_ptr.* = workspace_names;
+
+        var fallback = std.heap.stackFallback(1024, allocator);
+        var workspace_allocator = fallback.get();
+
+        const orig_msgs_len = log.msgs.items.len;
+
+        for (arr.slice()) |item, i| {
+            defer fallback.fixed_buffer_allocator.reset();
+            const path = item.asString(allocator) orelse {
+                log.addErrorFmt(source, item.loc, allocator,
+                    \\Workspaces expects an array of strings, e.g.
+                    \\"workspaces": [
+                    \\  "path/to/package"
+                    \\]
+                , .{}) catch {};
+                return error.InvalidPackageJSON;
+            };
+
+            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        source,
+                        item.loc,
+                        allocator,
+                        "Workspace not found \"{s}\" in \"{s}\"",
+                        .{
+                            path,
+                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                        },
+                    ) catch {};
+                } else log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} opening workspace package \"{s}\" from \"{s}\"",
+                    .{
+                        @errorName(err),
+                        path,
+                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                    },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_dir.close();
+
+            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        source,
+                        item.loc,
+                        allocator,
+                        "package.json not found in workspace package \"{s}\" from \"{s}\"",
+                        .{ path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                    ) catch {};
+                } else log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
+                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_file.close();
+
+            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
+                log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
+                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_allocator.free(workspace_bytes);
+            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
+
+            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
+
+            _ = try workspace_json.parseExpr();
+            if (!workspace_json.has_found_name) {
+                log.addErrorFmt(
+                    source,
+                    loc,
+                    allocator,
+                    "Missing \"name\" from package.json in {s}",
+                    .{workspace_source.path.text},
+                ) catch {};
+                // report errors for multiple workspaces
+                continue;
+            }
+
+            const workspace_name = workspace_json.found_name;
+
+            string_builder.count(workspace_name);
+            string_builder.count(path);
+            string_builder.cap += bun.MAX_PATH_BYTES;
+            workspace_names[i] = try allocator.dupe(u8, workspace_name);
+        }
+
+        if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
+        return @truncate(u32, arr.items.len);
+    }
+
     fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
@@ -2601,105 +2723,44 @@ pub const Package = extern struct {
                         }
                         if (arr.items.len == 0) break :brk;
 
-                        workspace_names = try allocator.alloc(string, arr.items.len);
-
-                        var fallback = std.heap.stackFallback(1024, allocator);
-                        var workspace_allocator = fallback.get();
-
-                        const orig_msgs_len = log.msgs.items.len;
-
-                        for (arr.slice()) |item, i| {
-                            defer fallback.fixed_buffer_allocator.reset();
-                            const path = item.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.loc, allocator,
-                                    \\Workspaces expects an array of strings, e.g.
-                                    \\"workspaces": [
-                                    \\  "path/to/package"
-                                    \\]
-                                , .{}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
-
-                            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
-                                if (err == error.FileNotFound) {
-                                    log.addErrorFmt(
-                                        &source,
-                                        item.loc,
-                                        allocator,
-                                        "Workspace not found \"{s}\" in \"{s}\"",
-                                        .{
-                                            path,
-                                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                                        },
-                                    ) catch {};
-                                } else log.addErrorFmt(
-                                    &source,
-                                    item.loc,
-                                    allocator,
-                                    "{s} opening workspace package \"{s}\" from \"{s}\"",
-                                    .{
-                                        @errorName(err),
-                                        path,
-                                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                                    },
-                                ) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_dir.close();
-
-                            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
-                                log.addErrorFmt(
-                                    &source,
-                                    item.loc,
-                                    allocator,
-                                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
-                                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
-                                ) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_file.close();
-
-                            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
-                                log.addErrorFmt(&source, item.loc, allocator, "{s} reading package.json for workspace package \"{s}\" from \"{s}\"", .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable }) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_allocator.free(workspace_bytes);
-                            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
-
-                            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
-
-                            _ = try workspace_json.parseExpr();
-                            if (!workspace_json.has_found_name) {
-                                log.addErrorFmt(
-                                    &source,
-                                    dependencies_q.loc,
-                                    allocator,
-                                    "Missing \"name\" from package.json in {s}",
-                                    .{workspace_source.path.text},
-                                ) catch {};
-                                // report errors for multiple workspaces
-                                continue;
-                            }
-
-                            const workspace_name = workspace_json.found_name;
-
-                            string_builder.count(workspace_name);
-                            string_builder.count(path);
-                            string_builder.cap += bun.MAX_PATH_BYTES;
-                            workspace_names[i] = try allocator.dupe(u8, workspace_name);
-                        }
-
-                        if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
-                        total_dependencies_count += @truncate(u32, arr.items.len);
+                        total_dependencies_count += try processWorkspaceNamesArray(
+                            &workspace_names,
+                            allocator,
+                            log,
+                            arr,
+                            &source,
+                            dependencies_q.loc,
+                            &string_builder,
+                        );
                     },
                     .e_object => |obj| {
                         if (group.behavior.isWorkspace()) {
+
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if (obj.get("packages")) |packages_query| {
+                                if (packages_query.data == .e_array) {
+                                    if (packages_query.data.e_array.items.len == 0) break :brk;
+
+                                    total_dependencies_count += try processWorkspaceNamesArray(
+                                        &workspace_names,
+                                        allocator,
+                                        log,
+                                        packages_query.data.e_array,
+                                        &source,
+                                        packages_query.loc,
+                                        &string_builder,
+                                    );
+                                    break :brk;
+                                }
+                            }
+
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\Workspaces expects an array of strings, e.g.
                                 \\"workspaces": [
@@ -2927,11 +2988,61 @@ pub const Package = extern struct {
                         allocator.free(workspace_names);
                     },
                     .e_object => |obj| {
+                        if (group.behavior.isWorkspace()) {
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if (obj.get("packages")) |packages_q| {
+                                if (packages_q.data == .e_array) {
+                                    var arr = packages_q.data.e_array;
+                                    if (arr.items.len == 0) break :brk;
+
+                                    for (arr.slice()) |item, i| {
+                                        const name = workspace_names[i];
+                                        defer allocator.free(name);
+
+                                        const external_name = string_builder.append(ExternalString, name);
+                                        const path = item.asString(allocator).?;
+
+                                        if (try parseDependency(
+                                            lockfile,
+                                            allocator,
+                                            log,
+                                            source,
+                                            group,
+                                            &string_builder,
+                                            features,
+                                            package_dependencies,
+                                            dependencies,
+                                            in_workspace,
+                                            .workspace,
+                                            null,
+                                            external_name,
+                                            path,
+                                            item,
+                                            item,
+                                        )) |dep| {
+                                            dependencies[0] = dep;
+                                            dependencies = dependencies[1..];
+                                        }
+                                    }
+
+                                    allocator.free(workspace_names);
+                                    break :brk;
+                                }
+                            }
+                        }
+
                         for (obj.properties.slice()) |item| {
                             const key = item.key.?;
                             const value = item.value.?;
                             const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
-                            const version = value.asString(allocator).?;
+                            const version = value.asString(allocator) orelse "";
                             var tag: ?Dependency.Version.Tag = null;
                             var workspace_path: ?String = null;
 

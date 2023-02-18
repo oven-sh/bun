@@ -970,61 +970,67 @@ pub const FileSystemFlags = enum(Mode) {
         }
 
         if (val.isNumber()) {
-            const number = val.toInt32();
-            return @intToEnum(FileSystemFlags, number);
+            const number = val.coerce(i32, ctx);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, @max(number, 0)));
         }
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            var zig_str = JSC.ZigString.init("");
-            val.toZigString(&zig_str, ctx.ptr());
+            const str = val.getZigString(ctx);
+            if (str.isEmpty()) {
+                JSC.throwInvalidArguments(
+                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
 
-            var buf: [4]u8 = .{ 0, 0, 0, 0 };
-            @memcpy(&buf, zig_str.ptr, @min(buf.len, zig_str.len));
-            const Matcher = strings.ExactSizeMatcher(4);
+            const flags = brk: {
+                switch (str.is16Bit()) {
+                    inline else => |is_16bit| {
+                        const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
 
-            // https://github.com/nodejs/node/blob/8c3637cd35cca352794e2c128f3bc5e6b6c41380/lib/internal/fs/utils.js#L565
-            const flags = switch (Matcher.match(buf[0..4])) {
-                Matcher.case("r") => O_RDONLY,
-                Matcher.case("rs"), Matcher.case("sr") => O_RDONLY | O_SYNC,
-                Matcher.case("r+") => O_RDWR,
-                Matcher.case("rs+"), Matcher.case("sr+") => O_RDWR | O_SYNC,
+                        if (std.ascii.isDigit(@truncate(u8, chars[0]))) {
+                            // node allows "0o644" as a string :(
+                            if (is_16bit) {
+                                const slice = str.toSlice(bun.default_allocator);
+                                defer slice.deinit();
 
-                Matcher.case("w") => O_TRUNC | O_CREAT | O_WRONLY,
-                Matcher.case("wx"), Matcher.case("xw") => O_TRUNC | O_CREAT | O_WRONLY | O_EXCL,
+                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
+                            } else {
+                                break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
+                            }
+                        }
 
-                Matcher.case("w+") => O_TRUNC | O_CREAT | O_RDWR,
-                Matcher.case("wx+"), Matcher.case("xw+") => O_TRUNC | O_CREAT | O_RDWR | O_EXCL,
+                        var flags: Mode = 0;
+                        for (chars) |c| {
+                            flags |= switch (c) {
+                                'R', 'r' => O_RDONLY,
+                                'W', 'w' => O_WRONLY | O_CREAT | O_TRUNC,
+                                'A', 'a' => O_WRONLY | O_CREAT | O_APPEND,
+                                '+' => O_RDWR,
+                                'X', 'x' => O_WRONLY | O_CREAT | O_EXCL,
+                                'S', 's' => O_SYNC,
+                                else => break :brk null,
+                            };
+                        }
 
-                Matcher.case("a") => O_APPEND | O_CREAT | O_WRONLY,
-                Matcher.case("ax"), Matcher.case("xa") => O_APPEND | O_CREAT | O_WRONLY | O_EXCL,
-                Matcher.case("as"), Matcher.case("sa") => O_APPEND | O_CREAT | O_WRONLY | O_SYNC,
-
-                Matcher.case("a+") => O_APPEND | O_CREAT | O_RDWR,
-                Matcher.case("ax+"), Matcher.case("xa+") => O_APPEND | O_CREAT | O_RDWR | O_EXCL,
-                Matcher.case("as+"), Matcher.case("sa+") => O_APPEND | O_CREAT | O_RDWR | O_SYNC,
-
-                Matcher.case("") => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag: string can't be empty",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
-                else => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
+                        break :brk flags;
+                    },
+                }
+            } orelse {
+                JSC.throwInvalidArguments(
+                    "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return null;
             };
 
-            return @intToEnum(FileSystemFlags, flags);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, flags));
         }
 
         return null;

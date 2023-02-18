@@ -1698,6 +1698,7 @@ pub const AbortSignal = extern opaque {
         return cppFn("abortReason", .{this});
     }
 
+
     pub fn ref(
         this: *AbortSignal,
     ) *AbortSignal {
@@ -1714,6 +1715,10 @@ pub const AbortSignal = extern opaque {
         return cppFn("fromJS", .{value});
     }
 
+    pub fn create(global: *JSGlobalObject) JSValue {
+        return cppFn("create", .{ global });
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -1725,6 +1730,7 @@ pub const AbortSignal = extern opaque {
     pub const Extern = [_][]const u8{
         "createAbortError",
         "createTimeoutError",
+        "create",
         "ref",
         "unref",
         "signal",
@@ -3546,7 +3552,7 @@ pub const JSValue = enum(JSValueReprInt) {
         status,
         url,
         body,
-        data,
+        data
     };
 
     // intended to be more lightweight than ZigString

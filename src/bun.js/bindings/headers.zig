@@ -138,6 +138,7 @@ pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: *bindings.JSGloba
 pub extern fn JSC__AbortSignal__aborted(arg0: ?*bindings.AbortSignal) bool;
 pub extern fn JSC__AbortSignal__abortReason(arg0: ?*bindings.AbortSignal) JSC__JSValue;
 pub extern fn JSC__AbortSignal__addListener(arg0: ?*bindings.AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSC__JSValue) callconv(.C) void) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__createAbortError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__createTimeoutError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__fromJS(JSValue0: JSC__JSValue) ?*bindings.AbortSignal;

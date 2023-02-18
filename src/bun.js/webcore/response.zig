@@ -1015,6 +1015,10 @@ pub const Fetch = struct {
                 // no proxy only url
                 url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
                 url_proxy_buffer = url.href;
+                if (request.signal) |signal_| {
+                    _ = signal_.ref();
+                    signal = signal_;
+                }
             }
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
             if (arguments.len >= 2) {

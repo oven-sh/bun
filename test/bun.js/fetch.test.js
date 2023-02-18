@@ -66,6 +66,23 @@ describe("AbortSignal", ()=> {
     }
     expect(name).toBe("TimeoutError");
   })
+  it("Request", async ()=> {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      const request = new Request("http://127.0.0.1:64321", { signal });
+      async function manualAbort(){
+        await Bun.sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch(request).then((res)=> res.text()), manualAbort()]);
+    } catch (error){
+        name = error.name
+    }
+    expect(name).toBe("AbortError");
+  })
+
 })
 
 describe("Headers", () => {

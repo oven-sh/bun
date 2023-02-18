@@ -1056,9 +1056,6 @@ declare class Request implements BlobInterface {
   readonly referrerPolicy: ReferrerPolicy;
   /**
    * Returns the signal associated with request, which is an AbortSignal object indicating whether or not request has been aborted, and its abort event handler.
-   *
-   * Note: this is **not implemented yet**. The cake is a lie.
-   */
   readonly signal: AbortSignal;
 
   /** Copy the Request object into a new Request, including the body */

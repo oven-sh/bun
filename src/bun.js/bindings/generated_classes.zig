@@ -1799,6 +1799,9 @@ pub const JSRequest = struct {
         if (@TypeOf(Request.getReferrerPolicy) != GetterType)
             @compileLog("Expected Request.getReferrerPolicy to be a getter");
 
+        if (@TypeOf(Request.getSignal) != GetterType)
+            @compileLog("Expected Request.getSignal to be a getter");
+
         if (@TypeOf(Request.getText) != CallbackType)
             @compileLog("Expected Request.getText to be a callback but received " ++ @typeName(@TypeOf(Request.getText)));
         if (@TypeOf(Request.getUrl) != GetterType)
@@ -1825,6 +1828,7 @@ pub const JSRequest = struct {
             @export(Request.getRedirect, .{ .name = "RequestPrototype__getRedirect" });
             @export(Request.getReferrer, .{ .name = "RequestPrototype__getReferrer" });
             @export(Request.getReferrerPolicy, .{ .name = "RequestPrototype__getReferrerPolicy" });
+            @export(Request.getSignal, .{ .name = "RequestPrototype__getSignal" });
             @export(Request.getText, .{ .name = "RequestPrototype__getText" });
             @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
         }

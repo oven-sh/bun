@@ -12,6 +12,7 @@ const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
+const AbortSignal = JSC.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = @import("bun").Output;
@@ -57,6 +58,8 @@ pub const Request = struct {
     url_was_allocated: bool = false,
 
     headers: ?*FetchHeaders = null,
+    signal: ?*AbortSignal = null,
+    js_signal: JSC.Strong = .{},
     body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
@@ -217,6 +220,20 @@ pub const Request = struct {
         return ZigString.Empty.toValueGC(globalThis);
     }
 
+    pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        if(this.signal) |_| {
+            return this.js_signal.swap();
+        } else {
+            //Lazy create default signal
+            const js_signal = AbortSignal.create(globalThis);
+            this.js_signal = JSC.Strong.create(js_signal, globalThis);
+            if (AbortSignal.fromJS(js_signal)) |signal| {
+                this.signal = signal;
+            }
+            return js_signal;
+        }
+    } 
+
     pub fn getMethod(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -254,7 +271,10 @@ pub const Request = struct {
         }
 
         this.body.deinit();
-
+        if(this.signal != null) {
+           this.js_signal.deinit();
+           this.signal = null;
+        }
         bun.default_allocator.destroy(this);
     }
 
@@ -415,6 +435,23 @@ pub const Request = struct {
                     }
                 }
 
+                if (arguments[1].get(globalThis, "signal")) |signal_| {
+                    if (AbortSignal.fromJS(signal_)) |signal| {
+                        //Keep it alive
+                        request.js_signal = JSC.Strong.create(
+                            signal_,
+                            globalThis,
+                        );
+                        request.signal = signal;
+                    } else {
+                        if (request.headers) |head| {
+                            head.deref();
+                        }
+
+                        return null;
+                    }
+                }
+
                 request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                     return null;
                 }).slice();
@@ -505,6 +542,13 @@ pub const Request = struct {
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
             this.headers = req.headers.?.cloneThis().?;
+        }
+
+        //TODO: check if this behavior works
+        if(this.signal) |signal| {
+            req.signal = signal;
+            const js_signal = this.js_signal.swap();
+            this.js_signal = JSC.Strong.create(js_signal, globalThis);
         }
     }
 

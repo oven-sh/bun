@@ -8,7 +8,7 @@ const HTTPClient = @import("bun").HTTP;
 const NetworkThread = HTTPClient.NetworkThread;
 const Environment = @import("../../env.zig");
 
-const Edit = @import("../../deps/zig-diff/main.zig").Edit;
+const DiffMatchPatch = @import("../../deps/diffz/DiffMatchPatch.zig");
 
 const JSC = @import("bun").JSC;
 const js = JSC.C;
@@ -70,16 +70,53 @@ pub const DiffFormatter = struct {
     not: bool = false,
 
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var diff = std.ArrayList(Edit).init(default_allocator);
         var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
         var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
         defer {
-            diff.deinit();
             received_buf.deinit();
             expected_buf.deinit();
         }
 
-        this.received.getDiff(&received_buf, this.expected, &expected_buf, &diff, this.globalObject);
+        {
+            var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
+            var buffered_writer = &buffered_writer_;
+
+            var buf_writer = buffered_writer.writer();
+            const Writer = @TypeOf(buf_writer);
+
+            JSC.ZigConsoleClient.format(
+                .Debug,
+                this.globalObject,
+                @ptrCast([*]const JSValue, &this.received),
+                1,
+                Writer,
+                Writer,
+                buf_writer,
+                false,
+                false,
+                false,
+                true,
+            );
+            buffered_writer.flush() catch unreachable;
+
+            buffered_writer_.context = &expected_buf;
+
+            JSC.ZigConsoleClient.format(
+                .Debug,
+                this.globalObject,
+                @ptrCast([*]const JSValue, &this.expected),
+                1,
+                Writer,
+                Writer,
+                buf_writer,
+                false,
+                false,
+                false,
+                true,
+            );
+            buffered_writer.flush() catch unreachable;
+        }
+
         const received_slice = received_buf.toOwnedSliceLeaky();
         const expected_slice = expected_buf.toOwnedSliceLeaky();
 
@@ -95,9 +132,17 @@ pub const DiffFormatter = struct {
 
         const should_diff: bool = (this.received.isObject() and this.expected.isObject()) or (this.received.isString() and this.expected.isString());
         if (!should_diff) {
-            try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
+            if (Output.enable_ansi_colors) {
+                try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
+            } else {
+                try writer.writeAll("Expected: ");
+            }
             try writer.writeAll(expected_slice);
-            try writer.writeAll(Output.prettyFmt("\n<red>Received<r>: ", true));
+            if (Output.enable_ansi_colors) {
+                try writer.writeAll(Output.prettyFmt("<red>Received<r>: ", true));
+            } else {
+                try writer.writeAll("Received: ");
+            }
             try writer.writeAll(received_slice);
             return;
         }
@@ -107,275 +152,63 @@ pub const DiffFormatter = struct {
         const insert_fmt = "<green>{s}<r>";
 
         if (this.expected.isString()) {
-            if (Output.enable_ansi_colors) {
-                try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
-            } else {
-                try writer.writeAll("Expected: ");
-            }
-            var i: usize = 0;
-            for (diff.items) |edit| {
-                if (edit.type != .Insert) continue;
-                const s = edit.range[0];
-                const e = edit.range[1];
-                const str = expected_slice[s..e];
-                if (i < s) try writer.writeAll(expected_slice[i..s]);
-                i = e;
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt(insert_fmt, true), .{str});
-                } else {
-                    try writer.print(Output.prettyFmt(insert_fmt, false), .{str});
-                }
-            }
-            if (i < expected_slice.len) try writer.writeAll(expected_slice[i..]);
+            var dmp = DiffMatchPatch.default;
+            dmp.diff_timeout = 200;
+            var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
+            defer diffs.deinit(default_allocator);
 
-            if (Output.enable_ansi_colors) {
-                try writer.writeAll(Output.prettyFmt("\n<red>Received<r>: ", true));
-            } else {
-                try writer.writeAll("\nReceived: ");
-            }
-            i = 0;
-            for (diff.items) |edit| {
-                if (edit.type == .Insert) continue;
-                const s = edit.range[0];
-                const e = edit.range[1];
-                const str = received_slice[s..e];
-                if (i < s) try writer.writeAll(received_slice[i..s]);
-                i = e;
-                if (edit.type == .Delete) {
-                    if (Output.enable_ansi_colors) {
-                        try writer.print(Output.prettyFmt(delete_fmt, true), .{str});
-                    } else {
-                        try writer.print(Output.prettyFmt(delete_fmt, false), .{str});
-                    }
-                } else {
-                    try writer.writeAll(str);
+            try writer.writeAll(Output.prettyFmt("Expected: <d>\"<r>", true));
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .delete => continue,
+                    .insert => try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text}),
+                    .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
                 }
             }
 
-            if (i < received_slice.len) try writer.writeAll(received_slice[i..]);
+            try writer.writeAll(Output.prettyFmt("<d>\"<r>\nReceived: <d>\"<r>", true));
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .insert => continue,
+                    .delete => try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text}),
+                    .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                }
+            }
+            try writer.writeAll(Output.prettyFmt("<d>\"<r>", true));
+
             return;
         }
 
-        {
-            var i: usize = 0;
-            for (diff.items) |edit| {
-                if (edit.type != .Insert) continue;
-                const s = edit.range[0];
-                const e = edit.range[1];
-                const str = expected_slice[s..e];
-                if (i < s) try writer.writeAll(expected_slice[i..s]);
-                i = e;
-                try writer.print(Output.prettyFmt(insert_fmt, true), .{str});
-            }
-            if (i < expected_slice.len) try writer.writeAll(expected_slice[i..]);
-            try writer.writeAll("\n");
+        var dmp = DiffMatchPatch.default;
+        dmp.diff_timeout = 200;
+        var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+        defer diffs.deinit(default_allocator);
 
-            i = 0;
-            for (diff.items) |edit| {
-                if (edit.type == .Insert) continue;
-                const s = edit.range[0];
-                const e = edit.range[1];
-                const str = received_slice[s..e];
-                if (i < s) try writer.writeAll(received_slice[i..s]);
-                i = e;
-                if (edit.type == .Delete) {
-                    try writer.print(Output.prettyFmt(delete_fmt, true), .{str});
-                } else {
-                    try writer.writeAll(str);
-                }
-            }
-            if (i < received_slice.len) try writer.writeAll(received_slice[i..]);
-            try writer.writeAll("\n");
-        }
+        var insert_count: usize = 0;
+        var delete_count: usize = 0;
 
-        var next_line: bool = false;
-        var line_had_delete: bool = false;
-        var line_had_insert: bool = false;
-        for (diff.items) |edit| {
-            const diff_start = brk: {
-                if (!next_line) break :brk edit.range[0];
-                var start = edit.range[0];
-                var end = edit.range[1];
-                if (edit.type == .Insert) {
-                    if (strings.indexOfChar(expected_slice[start..end], '\n')) |n| {
-                        next_line = false;
-                        line_had_delete = false;
-                        line_had_insert = false;
-                        break :brk n + start + 1;
-                    }
-                    continue;
-                }
-
-                // equal or delete.
-                if (strings.indexOfChar(received_slice[start..end], '\n')) |n| {
-                    next_line = false;
-                    line_had_delete = false;
-                    line_had_insert = false;
-                    break :brk n + start + 1;
-                }
-                continue;
-            };
-            const diff_end = edit.range[1];
-
-            if (diff_start == diff_end) continue;
-
-            const diff_slice = if (edit.type == .Insert) expected_slice[diff_start..diff_end] else received_slice[diff_start..diff_end];
-            if (strings.trim(diff_slice, "\n ").len == 0) continue;
-            std.debug.print("diff slice: {s}\nlen: {d}\n", .{ diff_slice, diff_slice.len });
-
-            switch (edit.type) {
-                .Equal => {
-                    if (diff_start == 0 or received_slice[diff_start - 1] == '\n') {
-                        var line_start = diff_start;
-                        if (strings.indexOfChar(received_slice[line_start..diff_end], '\n')) |n| {
-                            var line_end = n + line_start;
-                            if (line_end != diff_end) {
-                                line_end += 1;
-                            }
-                            std.debug.print("printing start equal: {s}\n", .{received_slice[line_start..line_end]});
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{received_slice[line_start..line_end]});
-                            line_start = line_end;
-                        }
-
-                        if (line_start == diff_end) {
-                            continue;
-                        }
-                    }
-
-                    if (strings.indexOfChar(received_slice[diff_start..diff_end], '\n')) |n| {
-                        var line_start = n + diff_start;
-                        if (line_start != diff_end) {
-                            line_start += 1;
-                        }
-                        while (strings.indexOfChar(received_slice[line_start..diff_end], '\n')) |k| {
-                            var line_end = k + line_start;
-                            if (line_end != diff_end) {
-                                line_end += 1;
-                            }
-                            std.debug.print("printing more equal: {s}\n", .{received_slice[line_start..line_end]});
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{received_slice[line_start..line_end]});
-                            line_start = line_end;
-                        }
-
-                        if (diff_end == received_slice.len) {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{received_slice[line_start..received_slice.len]});
-                            continue;
-                        }
-                    }
-
-                    // // print as opposite color.
-                    // if (line_had_delete and !line_had_insert) {
-                    //     if (strings.lastIndexOfChar(expected_slice[0..diff_start], '\n')) |n| {
-                    //         var line_start = n;
-                    //         if (line_start != diff_start) {
-                    //             line_start += 1;
-                    //         }
-                    //         if (strings.indexOfChar(expected_slice[diff_start..diff_end], '\n')) |k| {
-                    //             var line_end = k + diff_start;
-                    //             if (line_end != diff_end) {
-                    //                 line_end += 1;
-                    //             }
-
-                    //             std.debug.print("printing other insert: {s}\n", .{expected_slice[line_start..line_end]});
-                    //             try writer.print(Output.prettyFmt(insert_fmt, true), .{expected_slice[line_start..line_end]});
-                    //             line_had_insert = true;
-                    //         }
-                    //     }
-                    // } else if (line_had_insert and !line_had_delete) {
-                    //     if (strings.lastIndexOfChar(received_slice[0..diff_start], '\n')) |n| {
-                    //         var line_start = n;
-                    //         if (line_start != diff_start) {
-                    //             line_start += 1;
-                    //         }
-                    //         if (strings.indexOfChar(received_slice[diff_start..diff_end], '\n')) |k| {
-                    //             var line_end = k + diff_start;
-                    //             if (line_end != diff_end) {
-                    //                 line_end += 1;
-                    //             }
-
-                    //             std.debug.print("printing other delete: {s}\n", .{received_slice[line_start..line_end]});
-                    //             try writer.print(Output.prettyFmt(delete_fmt, true), .{received_slice[line_start..line_end]});
-                    //             line_had_delete = true;
-                    //         }
-                    //     }
-                    // }
+        for (diffs.items) |df| {
+            switch (df.operation) {
+                .equal => {
+                    try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
                 },
-                .Delete, .Insert => {
-                    const slice = if (edit.type == .Delete) received_slice else expected_slice;
-                    const prev_diff = if (edit.type == .Delete) line_had_insert else line_had_delete;
-                    const curr_diff = if (edit.type == .Delete) &line_had_delete else &line_had_insert;
-                    if (strings.lastIndexOfChar(slice[0..diff_start], '\n')) |n| {
-                        var line_start = n;
-                        if (line_start != diff_end) {
-                            line_start += 1;
-                        }
-                        while (strings.indexOfChar(slice[line_start..diff_end], '\n')) |k| {
-                            var line_end = k + line_start;
-                            if (line_end != diff_end) {
-                                line_end += 1;
-                            }
-                            if (curr_diff.* == false) {
-                                if (edit.type == .Delete) {
-                                    std.debug.print("printing more delete: {s}\n", .{slice[line_start..line_end]});
-                                    try writer.print(Output.prettyFmt(delete_fmt, true), .{slice[line_start..line_end]});
-                                } else {
-                                    std.debug.print("printing more insert: {s}\n", .{slice[line_start..line_end]});
-                                    try writer.print(Output.prettyFmt(insert_fmt, true), .{slice[line_start..line_end]});
-                                }
-                                curr_diff.* = true;
-                            }
-                            line_start = line_end;
-                        }
-
-                        if (line_start != diff_end) {
-                            if (strings.indexOfChar(slice[line_start..], '\n')) |k| {
-                                var line_end = k + line_start + 1;
-                                if (edit.type == .Delete) {
-                                    std.debug.print("printing end delete: {s}\n", .{slice[line_start..line_end]});
-                                    try writer.print(Output.prettyFmt(delete_fmt, true), .{slice[line_start..line_end]});
-                                } else {
-                                    std.debug.print("printing end insert: {s}\n", .{slice[line_start..line_end]});
-                                    try writer.print(Output.prettyFmt(insert_fmt, true), .{slice[line_start..line_end]});
-                                }
-                                curr_diff.* = true;
-                                if (prev_diff) {
-                                    next_line = true;
-                                }
-                            }
-                        }
+                .insert => {
+                    for (df.text) |c| {
+                        if (c == '\n') insert_count += 1;
                     }
+                    try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                },
+                .delete => {
+                    for (df.text) |c| {
+                        if (c == '\n') delete_count += 1;
+                    }
+                    try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
                 },
             }
         }
 
-        // for (diff.items) |edit| {
-        //     switch (edit.type) {
-        //         .Equal => {
-        //             const s = received_slice[edit.range[0]..edit.range[1]];
-        //             if (Output.enable_ansi_colors) {
-        //                 try writer.print(Output.prettyFmt(equal_fmt, true), .{s});
-        //             } else {
-        //                 try writer.print(Output.prettyFmt(equal_fmt, false), .{s});
-        //             }
-        //         },
-        //         .Delete => {
-        //             const s = received_slice[edit.range[0]..edit.range[1]];
-        //             if (Output.enable_ansi_colors) {
-        //                 try writer.print(Output.prettyFmt(delete_fmt, true), .{s});
-        //             } else {
-        //                 try writer.print(Output.prettyFmt(delete_fmt, false), .{s});
-        //             }
-        //         },
-        //         .Insert => {
-        //             const s = expected_slice[edit.range[0]..edit.range[1]];
-        //             if (Output.enable_ansi_colors) {
-        //                 try writer.print(Output.prettyFmt(insert_fmt, true), .{s});
-        //             } else {
-        //                 try writer.print(Output.prettyFmt(insert_fmt, false), .{s});
-        //             }
-        //         },
-        //     }
-        // }
+        try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+        try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
     }
 };
 
@@ -689,10 +522,6 @@ pub const Expect = struct {
         });
 
         return .zero;
-    }
-
-    pub fn fmtLabel(comptime label_fmt: []const u8) string {
-        return if (Output.enable_ansi_colors) Output.prettyFmt(label_fmt, true) else Output.prettyFmt(label_fmt, false);
     }
 
     pub fn toHaveLength(
@@ -1200,13 +1029,13 @@ pub const Expect = struct {
         // handle failure
         const label = brk: {
             if (not) {
-                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toHaveProperty<d>(<r><green>expected<r><d>)<r>";
+                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toHaveProperty<d>((<r><green>path<r><d>,<r> <green>value<r><d>)<r>";
                 if (Output.enable_ansi_colors) {
                     break :brk Output.prettyFmt(not_label_fmt, true);
                 }
                 break :brk Output.prettyFmt(not_label_fmt, false);
             }
-            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>expected<r><d>)<r>";
+            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toHaveProperty<d>(<r><green>path<r><d>,<r> <green>value<r><d>)<r>";
             if (Output.enable_ansi_colors) {
                 break :brk Output.prettyFmt(label_fmt, true);
             }

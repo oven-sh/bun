@@ -628,7 +628,7 @@ describe("fs.WriteStream", () => {
   it("should be able to write to a file", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirForce(pathToDir);
-    const path = `${pathToDir}/fs-writestream-test.txt`;
+    const path = join(pathToDir, `fs-writestream-test.txt`);
 
     const stream = new fs.WriteStream(path, { flags: "w+" });
     stream.write("Test file written successfully");
@@ -675,7 +675,7 @@ describe("fs.WriteStream", () => {
   it("should be able to write to a file with re-exported WriteStream", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirForce(pathToDir);
-    const path = `${pathToDir}/fs-writestream-re-exported-test.txt`;
+    const path = join(pathToDir, `fs-writestream-re-exported-test.txt`);
 
     const stream = new WriteStream_(path, { flags: "w+" });
     stream.write("Test file written successfully");
@@ -705,7 +705,7 @@ describe("fs.ReadStream", () => {
   it("should be able to read from a file", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirForce(pathToDir);
-    const path = `${pathToDir}fs-readstream-test.txt`;
+    const path = join(pathToDir, `fs-readstream-test.txt`);
 
     writeFileSync(path, "Test file written successfully", {
       encoding: "utf8",
@@ -761,7 +761,7 @@ describe("fs.ReadStream", () => {
   it("should be able to read from a file, with re-exported ReadStream", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirForce(pathToDir);
-    const path = `${pathToDir}fs-readstream-re-exported-test.txt`;
+    const path = join(pathToDir, `fs-readstream-re-exported-test.txt`);
 
     writeFileSync(path, "Test file written successfully", {
       encoding: "utf8",

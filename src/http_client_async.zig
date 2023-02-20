@@ -1553,7 +1553,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
         this.fail(error.Aborted, reason);
         return;
     }
-    
+
     var socket = http_thread.connect(this, is_ssl) catch |err| {
         this.fail(err, null);
         return;

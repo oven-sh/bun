@@ -672,7 +672,7 @@ pub const Fetch = struct {
                 true => this.onResolve(),
                 false => this.onReject(),
             };
-
+            result.ensureStillAlive();
             this.clearData();
 
             promise_value.ensureStillAlive();

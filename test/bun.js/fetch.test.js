@@ -768,27 +768,26 @@ describe("Request", () => {
 
   it("signal", async ()=> {
     gc();
-    var controller = new AbortController();
-    var req = new Request("https://hello.com", { signal: controller.signal })
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal })
     expect(req.signal.aborted).toBe(false);
     gc();
     controller.abort();
     gc();
     expect(req.signal.aborted).toBe(true);
-
   })
 
   it("cloned signal", async ()=> {
     gc();
-    var controller = new AbortController();
-    var req = new Request("https://hello.com", { signal: controller.signal })
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal })
     expect(req.signal.aborted).toBe(false);
     gc();
     controller.abort();
     gc();
     expect(req.signal.aborted).toBe(true);
     gc();
-    var cloned = req.clone();
+    const cloned = req.clone();
     expect(cloned.signal.aborted).toBe(true);
   })
 

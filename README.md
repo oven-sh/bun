@@ -2287,9 +2287,12 @@ import { serve, file } from "bun";
 
 serve({
   fetch(req) {
-    const [start = 0, end = Infinity] = req.headers.get("Range").split("=").at(-1).split("-") ?? [];
+    const [start = 0, end = Infinity] =
+      req.headers.get("Range").split("=").at(-1).split("-") ?? [];
 
-    return new Response(file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)));
+    return new Response(
+      file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)),
+    );
   },
 });
 ```
@@ -2453,7 +2456,10 @@ For server websocket connections, Bun exposes a `ServerWebSocket` class which is
 ```ts
 Bun.serve({
   fetch(req, server) {
-    if (server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })) return;
+    if (
+      server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })
+    )
+      return;
   },
   websocket: {
     message(ws, message) {
@@ -2524,7 +2530,9 @@ The HTTP server and server-side websockets are based on [uWebSockets](https://gi
 import { spawn } from "bun";
 
 const { stdout } = spawn(["esbuild"], {
-  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
+  stdin: await fetch(
+    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
+  ),
 });
 
 const text = await new Response(stdout).text();
@@ -3011,7 +3019,9 @@ test("peek", () => {
   // If we peek a rejected promise, it:
   // - returns the error
   // - does not mark the promise as handled
-  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
+  const rejected = Promise.reject(
+    new Error("Successfully tested promise rejection"),
+  );
   expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
@@ -3040,7 +3050,10 @@ test("peek.status", () => {
 
 ```ts
 interface Bun {
-  write(destination: string | number | FileBlob, input: string | FileBlob | Blob | ArrayBufferView): Promise<number>;
+  write(
+    destination: string | number | FileBlob,
+    input: string | FileBlob | Blob | ArrayBufferView,
+  ): Promise<number>;
 }
 ```
 
@@ -3105,7 +3118,9 @@ Example:
 import { Database } from "bun:sqlite";
 
 const db = new Database("mydb.sqlite");
-db.run("CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.run(
+  "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo (greeting) VALUES (?)", "Hello World!");
 
@@ -3298,7 +3313,9 @@ import { Database } from "bun:sqlite";
 
 // generate some data
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 db.run("INSERT INTO foo (greeting) VALUES ($greeting)", {
   $greeting: "Welcome to bun",
 });
@@ -3323,7 +3340,9 @@ import { Database } from "bun:sqlite";
 
 // generate some data
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 
 // compile the prepared statement
 const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
@@ -3355,7 +3374,9 @@ Creating a table:
 import { Database } from "bun:sqlite";
 
 let db = new Database();
-db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.exec(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 ```
 
 Inserting one row:
@@ -3364,7 +3385,9 @@ Inserting one row:
 import { Database } from "bun:sqlite";
 
 let db = new Database();
-db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.exec(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 
 // insert one row
 db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
@@ -3384,7 +3407,9 @@ Creates a function that always runs inside a transaction. When the function is i
 // setup
 import { Database } from "bun:sqlite";
 const db = Database.open(":memory:");
-db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+db.exec(
+  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
+);
 
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
 const insertMany = db.transaction(cats => {
@@ -3404,9 +3429,15 @@ Transaction functions can be called from inside other transaction functions. Whe
 // setup
 import { Database } from "bun:sqlite";
 const db = Database.open(":memory:");
-db.exec("CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);");
-db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
-const newExpense = db.prepare("INSERT INTO expenses (note, dollars) VALUES (?, ?)");
+db.exec(
+  "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);",
+);
+db.exec(
+  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
+);
+const newExpense = db.prepare(
+  "INSERT INTO expenses (note, dollars) VALUES (?, ?)",
+);
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
 const insertMany = db.transaction(cats => {
   for (const cat of cats) insert.run(cat);
@@ -3447,7 +3478,9 @@ SQLite has a built-in way to [serialize](https://www.sqlite.org/c3ref/serialize.
 let db = new Database();
 
 // write some data
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
@@ -3523,7 +3556,9 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
+);
 db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
@@ -3549,10 +3584,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3576,10 +3617,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3613,10 +3660,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3646,10 +3699,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object (TODO: use a better example query)
 let statement = db.query("SELECT * FROM foo");
@@ -3673,10 +3732,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3696,10 +3761,16 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
+);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2,
+);
 
 // Statement object
 const statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3973,7 +4044,11 @@ const lib = linkSymbols({
   },
 });
 
-const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
+const [major, minor, patch] = [
+  lib.symbols.getMajor(),
+  lib.symbols.getMinor(),
+  lib.symbols.getPatch(),
+];
 ```
 
 #### Callbacks (`JSCallback`)
@@ -3993,10 +4068,13 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
-  returns: "bool",
-  args: ["ptr", "usize"],
-});
+const searchIterator = new JSCallback(
+  (ptr, length) => /hello/.test(new CString(ptr, length)),
+  {
+    returns: "bool",
+    args: ["ptr", "usize"],
+  },
+);
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {

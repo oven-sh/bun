@@ -70,6 +70,20 @@ describe("AbortSignal", () => {
     expect(name).toBe("AbortError");
   })
 
+  it("AbortAfterFinish", async () => {
+    let error = undefined;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+
+      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text())
+      controller.abort();
+    } catch (ex) {
+      error = ex;
+    }
+    expect(error).toBeUndefined();
+  })
+
   it("AbortErrorWithReason", async () => {
     let reason;
     try {

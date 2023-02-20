@@ -68,60 +68,44 @@ pub const Os = struct {
         } = .{}
     };
 
-    const CPUErrorSet = error {
-        too_many_cpus,
-        eol,
-        no_processor_info,
-        OutOfMemory,
-    };
-
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
         var cpu_buffer: [8192]CPU = undefined;
-        const cpus_or_error = if (comptime Environment.isLinux)
-                                cpusImplLinux(globalThis.allocator(), &cpu_buffer)
-                              else if (comptime Environment.isMac)
-                                cpusImplDarwin(globalThis.allocator(), &cpu_buffer)
-                              else
-                                @as(anyerror![]CPU, cpu_buffer[0..0]);  // unsupported platform -> empty array
+        const list = (if (comptime Environment.isLinux)
+                          cpusImplLinux(globalThis.allocator(), &cpu_buffer)
+                      else if (comptime Environment.isMac)
+                          cpusImplDarwin(globalThis.allocator(), &cpu_buffer)
+                      else
+                          @as(anyerror![]CPU, cpu_buffer[0..0])  // unsupported platform -> empty array
+                     ) catch {
+                          const err = JSC.SystemError{
+                              .message = JSC.ZigString.init("An error occurred while fetching cpu information"),
+                          };
+                          globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                          return JSC.JSValue.jsUndefined();
+                     };
 
-        if (cpus_or_error) |list| {
-            // Convert the CPU list to a JS Array
-            const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
-            for (list) |cpu, cpu_index| {
-                const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
+        // Convert the CPU list to a JS Array
+        const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
+        for (list) |cpu, cpu_index| {
+            const obj = JSC.JSValue.createEmptyObject(globalThis, std.meta.fields(CPU).len);
+            obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
+            obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
 
-                const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
-                const times = JSC.JSValue.createEmptyObject(globalThis, 5);
-                inline for (timesFields) |fieldName| {
-                    times.put(globalThis, JSC.ZigString.static(fieldName),
-                                    JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
-                }
-                obj.put(globalThis, JSC.ZigString.static("times"), times);
-                values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
+            const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
+            const times = JSC.JSValue.createEmptyObject(globalThis, timesFields.len);
+            inline for (timesFields) |fieldName| {
+                times.put(globalThis, JSC.ZigString.static(fieldName),
+                                JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
             }
-            return values;
-
-        } else |zig_err| {
-            const msg = switch (zig_err) {
-                CPUErrorSet.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
-                CPUErrorSet.eol => "Malformed /proc/stat file",
-                CPUErrorSet.no_processor_info => "Unable to get processor information",
-                CPUErrorSet.OutOfMemory => "Unable to allocate: out of memory"
-            };
-            //TODO more suitable error type?
-            const err = JSC.SystemError{
-                .message = JSC.ZigString.init(msg),
-            };
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            obj.put(globalThis, JSC.ZigString.static("times"), times);
+            values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
         }
+        return values;
     }
 
-    fn cpusImplLinux(allocator: std.mem.Allocator, cpu_buffer: []CPU) CPUErrorSet![]CPU {
+    fn cpusImplLinux(allocator: std.mem.Allocator, cpu_buffer: []CPU) ![]CPU {
         // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
         var line_buffer: [1024*8]u8 = undefined;
         var num_cpus: usize = 0;
@@ -209,7 +193,7 @@ pub const Os = struct {
         return slice;
     }
 
-    fn cpusImplDarwin(allocator: std.mem.Allocator, cpu_buffer: []CPU) CPUErrorSet![]CPU {
+    fn cpusImplDarwin(allocator: std.mem.Allocator, cpu_buffer: []CPU) ![]CPU {
         const local_bindings = @import("../../darwin_c.zig");
         const c = std.c;
 

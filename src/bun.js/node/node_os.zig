@@ -67,12 +67,21 @@ pub const Os = struct {
         } = .{}
     };
 
+    const CPUErrorSet = error {
+        too_many_cpus,
+        eol,
+        no_processor_info,
+        OutOfMemory,
+    };
+
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
         var cpu_buffer: [8192]CPU = undefined;
         const cpus_or_error = if (comptime Environment.isLinux)
-                                cpusImplLinux(&cpu_buffer)
+                                cpusImplLinux(globalThis.allocator(), &cpu_buffer)
+                              else if (comptime Environment.isMac)
+                                cpusImplDarwin(globalThis.allocator(), &cpu_buffer)
                               else
                                 @as(anyerror![]CPU, cpu_buffer[0..0]);  // unsupported platform -> empty array
 
@@ -97,9 +106,10 @@ pub const Os = struct {
 
         } else |zig_err| {
             const msg = switch (zig_err) {
-                error.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
-                error.eol => "Malformed /proc/stat file",
-                else => "An error occurred while fetching cpu information",
+                CPUErrorSet.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
+                CPUErrorSet.eol => "Malformed /proc/stat file",
+                CPUErrorSet.no_processor_info => "Unable to get processor information",
+                CPUErrorSet.OutOfMemory => "Unable to allocate: out of memory"
             };
             //TODO more suitable error type?
             const err = JSC.SystemError{
@@ -110,7 +120,7 @@ pub const Os = struct {
         }
     }
 
-    fn cpusImplLinux(cpu_buffer: []CPU) ![]CPU {
+    fn cpusImplLinux(allocator: std.mem.Allocator, cpu_buffer: []CPU) CPUErrorSet![]CPU {
         // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
         var line_buffer: [1024*8]u8 = undefined;
         var num_cpus: usize = 0;
@@ -172,7 +182,7 @@ pub const Os = struct {
                 } else if (std.mem.startsWith(u8, line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
-                    slice[cpu_index].model = JSC.ZigString.init(model_name);
+                    slice[cpu_index].model = try JSC.ZigString.init(model_name).clone(allocator);
                 }
                 //TODO: special handling for ARM64 (no model name)?
             }
@@ -195,6 +205,68 @@ pub const Os = struct {
             }
         }
 
+        return slice;
+    }
+
+    fn cpusImplDarwin(allocator: std.mem.Allocator, cpu_buffer: []CPU) CPUErrorSet![]CPU {
+        const local_bindings = @import("../../darwin_c.zig");
+        const c = std.c;
+
+        var len: usize = undefined;
+
+        // Get CPU model
+        var model_name: [512]u8 = undefined;
+        len = model_name.len;
+        // Try brand_string first and if it fails try hw.model
+        if (std.c.sysctlbyname("machdep.cpu.brand_string", &model_name, &len, null, 0) != 0 or
+            std.c.sysctlbyname("hw.model", &model_name, &len, null, 0) != 0) {
+            return error.no_processor_info;
+        }
+        const model_name_value = try JSC.ZigString.init(model_name[0..len]).clone(allocator);
+
+        // Get CPU speed
+        var speed: u64 = 0;
+        len = @sizeOf(@TypeOf(speed));
+        _ = std.c.sysctlbyname("hw.cpufrequency", &speed, &len, null, 0);
+        if (speed == 0) {
+            // Suggested by Node implementation:
+            // If sysctl hw.cputype == CPU_TYPE_ARM64, the correct value is unavailable
+            // from Apple, but we can hard-code it here to a plausible value.
+            speed = 2_400_000_000;
+        }
+
+        // Fetch the CPU info structure
+        var num_cpus: c.natural_t = 0;
+        var info: [*]local_bindings.processor_cpu_load_info = undefined;
+        var msg_type: std.c.mach_msg_type_number_t = 0;
+        if (local_bindings.host_processor_info(
+                std.c.mach_host_self(),
+                local_bindings.PROCESSOR_CPU_LOAD_INFO,
+                &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info),
+                &msg_type) != .SUCCESS) {
+            return error.no_processor_info;
+        }
+        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), msg_type);
+
+        // Now we know how many CPUs we have
+        var slice = cpu_buffer[0..num_cpus];
+
+        // Get the multiplier
+        const unistd = @cImport({@cInclude("unistd.h");});
+        const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
+        const multiplier = 1000 / @intCast(u64, ticks);
+
+        // Set up each CPU value in the return
+        for (slice) |*cpu, index| {
+            cpu.times.user = @intCast(u64, info[index].cpu_ticks[0]) * multiplier;
+            cpu.times.nice = @intCast(u64, info[index].cpu_ticks[3]) * multiplier;
+            cpu.times.sys  = @intCast(u64, info[index].cpu_ticks[1]) * multiplier;
+            cpu.times.idle = @intCast(u64, info[index].cpu_ticks[2]) * multiplier;
+            cpu.times.irq  = 0;  // not available
+
+            cpu.model = model_name_value;
+            cpu.speed = speed / 1_000_000;
+        }
         return slice;
     }
 

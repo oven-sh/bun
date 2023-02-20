@@ -550,6 +550,21 @@ pub fn get_system_loadavg() [3]f64 {
     };
 }
 
+pub const processor_flavor_t = i32;
+
+// https://opensource.apple.com/source/xnu/xnu-792/osfmk/mach/processor_info.h.auto.html
+pub const PROCESSOR_CPU_LOAD_INFO: processor_flavor_t = 2;
+// https://opensource.apple.com/source/xnu/xnu-792/osfmk/mach/machine.h.auto.html
+pub const CPU_STATE_MAX = 4;
+pub const processor_cpu_load_info = struct {
+    cpu_ticks: [CPU_STATE_MAX]c_ulong,
+};
+pub const processor_info_array_t = *c_int;
+pub const PROCESSOR_INFO_MAX = 1024;
+
+pub extern fn host_processor_info(host: std.c.host_t , flavor: processor_flavor_t , out_processor_count: *std.c.natural_t , out_processor_info: *processor_info_array_t, out_processor_infoCnt: *std.c.mach_msg_type_number_t) std.c.E;
+
+
 pub extern fn getuid(...) std.os.uid_t;
 pub extern fn getgid(...) std.os.gid_t;
 

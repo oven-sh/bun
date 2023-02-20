@@ -97,9 +97,9 @@ bun upgrade --canary
   - [Configuration](#configuration)
     - [bunfig.toml](#bunfigtoml)
   - [Loaders](#loaders)
-    - [CSS in JS (bun dev only)](#css-in-js-bun-dev-only)
-      - [When `platform` is `browser`](#when-platform-is-browser)
-      - [When `platform` is `bun`](#when-platform-is-bun)
+      - [CSS in JS (bun dev only)](#css-in-js-bun-dev-only)
+        - [When `platform` is `browser`](#when-platform-is-browser)
+        - [When `platform` is `bun`](#when-platform-is-bun)
     - [CSS Loader](#css-loader)
     - [CSS runtime](#css-runtime)
     - [Frameworks](#frameworks)
@@ -155,8 +155,8 @@ bun upgrade --canary
     - [Loader API Reference](#loader-api-reference)
       - [`builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`](#builderonload-filter-namespace-optional-namespace--callback)
   - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
-    - [Usage](#usage-1)
-    - [Error handling](#error-handling)
+      - [Usage](#usage-1)
+      - [Error handling](#error-handling)
     - [HTTPS with Bun.serve()](#https-with-bunserve)
     - [Streaming files with Bun.serve()](#streaming-files-with-bunserve)
     - [WebSockets with Bun.serve()](#websockets-with-bunserve)
@@ -168,9 +168,9 @@ bun upgrade --canary
   - [`Bun.spawn` – spawn a process](#bunspawn--spawn-a-process)
   - [`Bun.which` – find the path to a binary](#bunwhich--find-the-path-to-a-binary)
   - [`Bun.listen` \& `Bun.connect` - TCP/TLS sockets](#bunlisten--bunconnect---tcptls-sockets)
-    - [Benchmark-driven API design](#benchmark-driven-api-design)
-    - [Hot-reloading TCP servers \& clients](#hot-reloading-tcp-servers--clients)
-    - [No buffering](#no-buffering)
+      - [Benchmark-driven API design](#benchmark-driven-api-design)
+      - [Hot-reloading TCP servers \& clients](#hot-reloading-tcp-servers--clients)
+      - [No buffering](#no-buffering)
   - [`Bun.dns` - lookup a domain](#bundns---lookup-a-domain)
   - [`Bun.peek` - read a promise without resolving it](#bunpeek---read-a-promise-without-resolving-it)
   - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
@@ -564,15 +564,15 @@ bun
 By default, `bun` will look for any HTML files in the `public` directory and serve that. For browsers navigating to the page, the `.html` file extension is optional in the URL, and `index.html` will automatically rewrite for the directory.
 
 Here are examples of routing from `public/` and how they’re matched:
-| Dev Server URL | File Path |
-|----------------|-----------|
-| /dir | public/dir/index.html |
-| / | public/index.html |
-| /index | public/index.html |
-| /hi | public/hi.html |
-| /file | public/file.html |
+| Dev Server URL    | File Path               |
+| ----------------- | ----------------------- |
+| /dir              | public/dir/index.html   |
+| /                 | public/index.html       |
+| /index            | public/index.html       |
+| /hi               | public/hi.html          |
+| /file             | public/file.html        |
 | /font/Inter.woff2 | public/font/Inter.woff2 |
-| /hello | public/index.html |
+| /hello            | public/index.html       |
 
 If `public/index.html` exists, it becomes the default page instead of a 404 page, unless that pathname has a file extension.
 

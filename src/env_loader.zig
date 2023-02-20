@@ -411,6 +411,11 @@ pub const Loader = struct {
 
     const empty_string_value: string = "\"\"";
 
+    pub fn isProduction(this: *const Loader) bool {
+        const env = this.map.get("BUN_ENV") orelse this.map.get("NODE_ENV") orelse return false;
+        return strings.eqlComptime(env, "production");
+    }
+
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {
         if (this.get("NODE") orelse this.get("npm_node_execpath")) |node| {
             @memcpy(buf, node.ptr, node.len);

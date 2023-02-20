@@ -3836,6 +3836,10 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
     abortSignal->deref();
     return arg0;
 }
+extern "C" void JSC__AbortSignal__cleanNativeBindings(JSC__AbortSignal* arg0, void* arg1) {
+    WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
+    abortSignal->cleanNativeBindings(arg1);
+}
 
 extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason)) {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
@@ -3903,6 +3907,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* me
 
     return JSC::JSValue::encode(error);
 }
+
 #pragma mark - WebCore::DOMFormData
 
 CPP_DECL void WebCore__DOMFormData__append(WebCore__DOMFormData* arg0, ZigString* arg1, ZigString* arg2)

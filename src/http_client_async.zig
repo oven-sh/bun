@@ -1017,7 +1017,9 @@ pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
             log("onAborted", .{});
             if (this) |this_| {
                 const self = bun.cast(*@This(), this_);
-                self.client.closeAndAbort(reason, is_ssl, self.socket);
+                if (self.client.state.response_stage != .done and self.client.state.response_stage != .fail) {
+                    self.client.closeAndAbort(reason, is_ssl, self.socket);
+                }
             }
         }
 
@@ -1064,6 +1066,15 @@ pub fn hasSignalAborted(this: *HTTPClient) ?JSC.JSValue {
     return null;
 }
 
+pub fn deinitSignal(this: *HTTPClient) void {
+     if (this.signal != null) {
+        var signal = this.signal.?;
+        const ctx = bun.cast(*anyopaque, this);
+        signal.cleanNativeBindings(ctx);
+        _ = signal.unref();
+        this.signal = null;
+    }
+}
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect) |redirect| {
         redirect.release();
@@ -1078,11 +1089,8 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
 
-    if (this.signal != null) {
-        var signal = this.signal.?;
-        _ = signal.unref();
-        this.signal = null;
-    }
+    this.deinitSignal();
+
     if (this.abort_handler != null and this.abort_handler_deinit != null) {
         this.abort_handler_deinit.?(this.abort_handler.?);
         this.abort_handler = null;
@@ -1549,7 +1557,7 @@ pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) 
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     // Aborted before connecting
-    if(this.hasSignalAborted()) |reason| {
+    if (this.hasSignalAborted()) |reason| {
         this.fail(error.Aborted, reason);
         return;
     }
@@ -2154,6 +2162,8 @@ fn fail(this: *HTTPClient, err: anyerror, reason: ?JSC.JSValue) void {
     this.proxy_tunneling = false;
 
     callback.run(result);
+
+    this.deinitSignal();
 }
 
 // We have to clone metadata immediately after use
@@ -2187,6 +2197,8 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 
 pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("done", .{});
+
+    this.deinitSignal();
 
     var out_str = this.state.body_out_str.?;
     var body = out_str.*;

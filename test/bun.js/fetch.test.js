@@ -14,6 +14,9 @@ beforeAll(() => {
   server = Bun.serve({
     async fetch(request) {
      
+      if (request.url.endsWith("/nodelay")) {
+        return new Response("Hello")
+      }
       if (request.url.endsWith("/stream")) {
         const reader = request.body.getReader();
         const body = new ReadableStream({
@@ -76,7 +79,7 @@ describe("AbortSignal", () => {
       var controller = new AbortController();
       const signal = controller.signal;
 
-      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text())
+      await fetch("http://127.0.0.1:64321/nodelay", { signal: signal }).then((res) => res.text())
       controller.abort();
     } catch (ex) {
       error = ex;

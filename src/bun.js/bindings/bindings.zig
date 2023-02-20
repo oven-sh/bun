@@ -1697,6 +1697,11 @@ pub const AbortSignal = extern opaque {
     ) *AbortSignal {
         return cppFn("addListener", .{ this, ctx, callback });
     }
+
+    pub fn cleanNativeBindings(this: *AbortSignal, ctx: ?*anyopaque) void {
+        return cppFn("cleanNativeBindings", .{ this, ctx });
+    }
+
     pub fn signal(
         this: *AbortSignal,
         reason: JSValue,
@@ -1756,6 +1761,7 @@ pub const AbortSignal = extern opaque {
         "addListener",
         "fromJS",
         "toJS",
+        "cleanNativeBindings"
     };
 };
 

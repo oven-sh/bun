@@ -2953,6 +2953,8 @@ declare module "bun" {
        */
       env?: Record<string, string>;
 
+      signal?: AbortSignal | null;
+
       /**
        * The standard file descriptors of the process
        * - `inherit`: The process will inherit the standard input of the current process

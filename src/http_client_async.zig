@@ -235,6 +235,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
         /// Attempt to keep the socket alive by reusing it for another request.
         /// If no space is available, close the socket.
         pub fn releaseSocket(this: *@This(), socket: HTTPSocket, hostname: []const u8, port: u16) void {
+            log("releaseSocket", .{});
+
             if (comptime Environment.allow_assert) {
                 std.debug.assert(!socket.isClosed());
                 std.debug.assert(!socket.isShutdown());
@@ -1031,6 +1033,14 @@ pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
 
 pub fn addAbortSignalEventListenner(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.signal) |signal| {
+        const aborted = signal.aborted();
+        if (aborted) {
+            log("addAbortSignalEventListenner already aborted!", .{});
+            const reason = signal.abortReason();
+            this.closeAndAbort(reason, is_ssl, socket);
+            return;
+        }
+
         const handler = ClientSocketAbortHandler(is_ssl).init(this, socket) catch unreachable;
         this.abort_handler = bun.cast(*anyopaque, handler);
         this.abort_handler_deinit = ClientSocketAbortHandler(is_ssl).deinit;
@@ -1538,6 +1548,12 @@ pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) 
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    // Aborted before connecting
+    if(this.hasSignalAborted()) |reason| {
+        this.fail(error.Aborted, reason);
+        return;
+    }
+    
     var socket = http_thread.connect(this, is_ssl) catch |err| {
         this.fail(err, null);
         return;
@@ -1815,12 +1831,15 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    socket.ext(**anyopaque).?.* = bun.cast(
-        **anyopaque,
-        NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-    );
-    socket.close(0, null);
+    log("closeAndFail", .{});
     this.fail(err, null);
+    if (!socket.isClosed()) {
+        socket.ext(**anyopaque).?.* = bun.cast(
+            **anyopaque,
+            NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+        );
+        socket.close(0, null);
+    }
 }
 
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2112,12 +2131,15 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 }
 
 pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    socket.ext(**anyopaque).?.* = bun.cast(
-        **anyopaque,
-        NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-    );
-    socket.close(0, null);
+    log("closeAndAbort", .{});
     this.fail(error.Aborted, reason);
+    if (!socket.isClosed()) {
+        socket.ext(**anyopaque).?.* = bun.cast(
+            **anyopaque,
+            NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+        );
+        socket.close(0, null);
+    }
 }
 
 fn fail(this: *HTTPClient, err: anyerror, reason: ?JSC.JSValue) void {
@@ -2164,6 +2186,8 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 }
 
 pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("done", .{});
+
     var out_str = this.state.body_out_str.?;
     var body = out_str.*;
     this.cloned_metadata.response = this.state.pending_response;

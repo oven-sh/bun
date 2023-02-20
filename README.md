@@ -140,6 +140,7 @@ bun upgrade --canary
     - [What is the module ID hash?](#what-is-the-module-id-hash)
   - [`bun upgrade`](#bun-upgrade)
   - [`bun completions`](#bun-completions)
+  - [`bun x`](#bun-x)
 - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
   - [Usage](#usage-1)
   - [HTTPS](#https-with-bunserve)
@@ -1861,6 +1862,20 @@ Added in Bun v0.1.7.
 This command installs completions for `zsh` and/or `fish`. It runs automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
+
+### `bun x`
+
+This command runs a given binary from `npm`. It will look for the binary to run in any installed modules in the current file tree, and install the package in a temporary directory to run if its not available.
+
+> Run vendor package
+```bash
+bun x vendor-package
+```
+
+> Run a specific version of vendor package
+```bash
+bun x vendor-package@1.0.2
+```
 
 ## Loader API
 

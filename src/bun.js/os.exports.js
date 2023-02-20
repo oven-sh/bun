@@ -8,7 +8,6 @@ function bound(obj) {
     homedir: obj.homedir.bind(obj),
     hostname: obj.hostname.bind(obj),
     loadavg: obj.loadavg.bind(obj),
-    machine: obj.machine.bind(obj),
     networkInterfaces: obj.networkInterfaces.bind(obj),
     platform: obj.platform.bind(obj),
     release: obj.release.bind(obj),
@@ -19,9 +18,11 @@ function bound(obj) {
     uptime: obj.uptime.bind(obj),
     userInfo: obj.userInfo.bind(obj),
     version: obj.version.bind(obj),
+    machine: obj.machine.bind(obj),
     devNull: obj.devNull,
     EOL: obj.EOL,
     constants: obj.constants,
+    [Symbol.for("CommonJS")]: 0,
   };
 }
 
@@ -36,7 +37,6 @@ export var {
   homedir,
   hostname,
   loadavg,
-  machine,
   networkInterfaces,
   platform,
   release,
@@ -47,6 +47,7 @@ export var {
   uptime,
   userInfo,
   version,
+  machine,
   devNull,
   EOL,
   constants,

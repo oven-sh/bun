@@ -2200,6 +2200,44 @@ it("should handle Git URL with committish in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should fail on invalid Git URL", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        uglify: "git+http://bun.sh/no_such_repo",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toBe("");
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should fail on Git URL with invalid committish", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -2224,7 +2262,7 @@ it("should fail on Git URL with invalid committish", async () => {
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain(
-    'Error no commit matching "404-no_such_tag" found for "uglify" (but repository exists)',
+    'error: no commit matching "404-no_such_tag" found for "uglify" (but repository exists)',
   );
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();

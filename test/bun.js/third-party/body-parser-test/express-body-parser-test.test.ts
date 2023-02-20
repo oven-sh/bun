@@ -28,6 +28,7 @@ test("httpServer", async done => {
   const httpServer = require("http").createServer(app);
 
   app.on("error", err => {
+    console.error(err);
     done(err);
   });
   app.use(json());
@@ -50,9 +51,9 @@ test("httpServer", async done => {
       "Content-Type": "application/json",
     },
   });
-
-  expect(resp.status).toBe(200);
   expect(await resp.text()).toBe("POST - pong");
+  expect(resp.status).toBe(200);
+
   expect(reached).toBe(true);
   done();
 });

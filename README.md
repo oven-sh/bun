@@ -73,130 +73,176 @@ bun upgrade --canary
 
 ## Table of Contents
 
-- [Install](#install)
-- [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
-  - [Types for bun.js (editor autocomplete)](#types-for-bunjs-editor-autocomplete)
-  - [Fast paths for Web APIs](#fast-paths-for-web-apis)
-- [Using bun as a package manager](#using-bun-as-a-package-manager)
-- [Using bun as a task runner](#using-bun-as-a-task-runner)
-- [Creating a Discord bot with Bun](#creating-a-discord-bot-with-bun)
-  - [Application Commands](#application-commands)
-- [Using bun with Next.js](#using-bun-with-nextjs)
-- [Using bun with single page apps](#using-bun-with-single-page-apps)
-  - [Using bun with Create React App](#using-bun-with-create-react-app)
-- [Using bun with TypeScript](#using-bun-with-typescript)
-  - [Transpiling TypeScript with Bun](#transpiling-typescript-with-bun)
-  - [Adding Type Definitions](#adding-type-definitions)
-- [Not implemented yet](#not-implemented-yet)
-  - [Limitations & intended usage](#limitations--intended-usage)
-  - [Upcoming breaking changes](#upcoming-breaking-changes)
-- [Configuration](#configuration)
-  - [bunfig.toml](#bunfigtoml)
+- [bun](#bun)
+  - [Install](#install)
+  - [Upgrade](#upgrade)
+  - [Table of Contents](#table-of-contents)
+  - [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
+    - [Types for bun.js (editor autocomplete)](#types-for-bunjs-editor-autocomplete)
+    - [Fast paths for Web APIs](#fast-paths-for-web-apis)
+  - [Using bun as a package manager](#using-bun-as-a-package-manager)
+  - [Using bun as a task runner](#using-bun-as-a-task-runner)
+  - [Using bun as a WebAssembly runner](#using-bun-as-a-webassembly-runner)
+  - [Creating a Discord bot with Bun](#creating-a-discord-bot-with-bun)
+    - [Application Commands](#application-commands)
+  - [Using bun with Next.js](#using-bun-with-nextjs)
+  - [Using bun with single-page apps](#using-bun-with-single-page-apps)
+    - [Using bun with Create React App](#using-bun-with-create-react-app)
+  - [Using bun with TypeScript](#using-bun-with-typescript)
+    - [Transpiling TypeScript with Bun](#transpiling-typescript-with-bun)
+    - [Adding Type Definitions](#adding-type-definitions)
+  - [Not implemented yet](#not-implemented-yet)
+    - [Limitations \& intended usage](#limitations--intended-usage)
+    - [Upcoming breaking changes](#upcoming-breaking-changes)
+  - [Configuration](#configuration)
+    - [bunfig.toml](#bunfigtoml)
   - [Loaders](#loaders)
-  - [CSS in JS](#css-in-js-bun-dev-only)
-    - [When `platform` is `browser`](#when-platform-is-browser)
-    - [When `platform` is `bun`](#when-platform-is-bun)
-  - [CSS Loader](#css-loader)
-  - [CSS runtime](#css-runtime)
-  - [Frameworks](#frameworks)
-- [Troubleshooting](#troubleshooting)
-  - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
-  - [error: Unexpected](#error-unexpected)
-  - [bun install is stuck](#bun-install-is-stuck)
-  - [Unzip is required](#unzip-is-required)
-    - [Debian / Ubuntu / Mint](#debian--ubuntu--mint)
-    - [RedHat / CentOS / Fedora](#redhat--centos--fedora)
-    - [Arch / Manjaro](#arch--manjaro)
-    - [OpenSUSE](#opensuse)
-- [Reference](#reference)
-  - [`bun install`](#bun-install)
-    - [Configuring bun install with `bunfig.toml`](#configuring-bun-install-with-bunfigtoml)
-    - [Configuring with environment variables](#configuring-with-environment-variables)
-    - [Platform-specific dependencies?](#platform-specific-dependencies)
-    - [Peer dependencies?](#peer-dependencies)
-    - [Lockfile](#lockfile)
-    - [Why is it binary?](#why-is-it-binary)
-    - [How do I inspect it?](#how-do-i-inspect-it)
-    - [What does the lockfile store?](#what-does-the-lockfile-store)
-    - [Why is it fast?](#why-is-it-fast)
-    - [Cache](#cache)
-    - [npm registry metadata](#npm-registry-metadata)
-  - [`bun run`](#bun-run)
-  - [`bun create`](#bun-create)
-    - [Usage](#usage)
-    - [Local templates](#local-templates)
-    - [Flags](#flags)
-    - [Publishing a new template](#publishing-a-new-template)
-    - [Testing your new template](#testing-your-new-template)
-    - [Config](#config)
-    - [How `bun create` works](#how-bun-create-works)
-  - [`bun init`](#bun-init)
-  - [`bun bun`](#bun-bun)
-    - [Why bundle?](#why-bundle)
-    - [What is `.bun`?](#what-is-bun)
-    - [Position-independent code](#position-independent-code)
-    - [Where is the code?](#where-is-the-code)
-    - [Advanced](#advanced)
-    - [What is the module ID hash?](#what-is-the-module-id-hash)
-  - [`bun upgrade`](#bun-upgrade)
-  - [`bun completions`](#bun-completions)
-  - [`bun x`](#bun-x)
-- [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
-  - [Usage](#usage-1)
-  - [HTTPS](#https-with-bunserve)
-  - [WebSockets](#websockets-with-bunserve)
-  - [Error handling](#error-handling)
-- [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
-- [`Bun.spawn` - spawn processes](#bunspawn--spawn-a-process)
-- [`Bun.which` - find the path to a bin](#bunwhich--find-the-path-to-a-binary)
-- [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
-  - [bun:sqlite Benchmark](#bunsqlite-benchmark)
-  - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
-  - [`Database`](#database)
-    - [Database.prototype.query](#databaseprototypequery)
-    - [Database.prototype.prepare](#databaseprototypeprepare)
-    - [Database.prototype.exec & Database.prototype.run](#databaseprototypeexec--databaseprototyperun)
-    - [Database.prototype.serialize](#databaseprototypeserialize)
-    - [Database.prototype.loadExtension](#databaseprototypeloadextension)
-  - [Statement](#statement)
-    - [Statement.all](#statementall)
-    - [Statement.values](#statementvalues)
-    - [Statement.get](#statementget)
-    - [Statement.run](#statementrun)
-    - [Statement.finalize](#statementfinalize)
-    - [Statement.toString()](#statementtostring)
-  - [Datatypes](#datatypes)
-- [`bun:ffi` (Foreign Functions Interface)](#bunffi-foreign-functions-interface)
-  - [Low-overhead FFI](#low-overhead-ffi)
-  - [Usage](#usage-2)
-  - [Supported FFI types (`FFIType`)](#supported-ffi-types-ffitype)
-  - [Strings (`CString`)](#strings-cstring)
-    - [Returning a string](#returning-a-string)
-  - [Function pointers (`CFunction`)](#function-pointers-CFunction)
-  - [Pointers](#pointers)
-    - [Passing a pointer](#passing-a-pointer)
-    - [Reading pointers](#reading-pointers)
-    - [Not implemented yet](#not-implemented-yet-1)
-- [Node-API (napi)](#node-api-napi)
-- [`Bun.Transpiler`](#buntranspiler)
-  - [`Bun.Transpiler.transformSync`](#buntranspilertransformsync)
-  - [`Bun.Transpiler.transform`](#buntranspilertransform)
-  - [`Bun.Transpiler.scan`](#buntranspilerscan)
-  - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
-- [`Bun.peek` - read a promise same-tick](#bunpeek---read-a-promise-without-resolving-it)
-- [`Bun.dns` - lookup a domain](#bundns---lookup-a-domain)
-- [Module resolution in Bun](#module-resolution-in-bun)
-- [Environment variables](#environment-variables)
-- [Credits](#credits)
-- [License](#license)
-- [Developing bun](#developing-bun)
-  - [Dev Container (Linux/Windows)](#dev-container-linuxwindows)
-  - [MacOS](#macos)
-    - [Build bun (macOS)](#build-bun-macos)
-    - [Verify it worked (macOS)](#verify-it-worked-macos)
-    - [Troubleshooting (macOS)](#troubleshooting-macos)
-  - [Troubleshooting (general)](#troubleshooting-general)
-- [vscode-zig](#vscode-zig)
+    - [CSS in JS (bun dev only)](#css-in-js-bun-dev-only)
+      - [When `platform` is `browser`](#when-platform-is-browser)
+      - [When `platform` is `bun`](#when-platform-is-bun)
+    - [CSS Loader](#css-loader)
+    - [CSS runtime](#css-runtime)
+    - [Frameworks](#frameworks)
+  - [Troubleshooting](#troubleshooting)
+    - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
+    - [error: Unexpected](#error-unexpected)
+    - [Unzip is required](#unzip-is-required)
+      - [Debian / Ubuntu / Mint](#debian--ubuntu--mint)
+      - [RedHat / CentOS / Fedora](#redhat--centos--fedora)
+      - [Arch / Manjaro](#arch--manjaro)
+      - [OpenSUSE](#opensuse)
+    - [bun install is stuck](#bun-install-is-stuck)
+  - [Reference](#reference)
+    - [`bun install`](#bun-install)
+      - [Configuring bun install with `bunfig.toml`](#configuring-bun-install-with-bunfigtoml)
+      - [Configuring with environment variables](#configuring-with-environment-variables)
+      - [Platform-specific dependencies?](#platform-specific-dependencies)
+      - [Peer dependencies?](#peer-dependencies)
+      - [Lockfile](#lockfile)
+      - [Why is it binary?](#why-is-it-binary)
+      - [How do I inspect it?](#how-do-i-inspect-it)
+      - [What does the lockfile store?](#what-does-the-lockfile-store)
+      - [Why is it fast?](#why-is-it-fast)
+      - [Cache](#cache)
+      - [Platform-specific backends](#platform-specific-backends)
+      - [npm registry metadata](#npm-registry-metadata)
+    - [`bun run`](#bun-run)
+      - [Run in Bun's JavaScript runtime](#run-in-buns-javascript-runtime)
+    - [`bun --hot`](#bun---hot)
+      - [How `bun --hot` works](#how-bun---hot-works)
+    - [`bun create`](#bun-create)
+      - [Usage](#usage)
+      - [Local templates](#local-templates)
+      - [Flags](#flags)
+      - [Publishing a new template](#publishing-a-new-template)
+      - [Testing your new template](#testing-your-new-template)
+      - [Config](#config)
+      - [How `bun create` works](#how-bun-create-works)
+    - [`bun bun`](#bun-bun)
+      - [Why bundle?](#why-bundle)
+      - [What is `.bun`?](#what-is-bun)
+      - [Position-independent code](#position-independent-code)
+      - [Where is the code?](#where-is-the-code)
+      - [Advanced](#advanced)
+      - [What is the module ID hash?](#what-is-the-module-id-hash)
+    - [`bun upgrade`](#bun-upgrade)
+    - [Canary builds](#canary-builds)
+    - [`bun init`](#bun-init)
+      - [How is `bun init` different than `bun create`?](#how-is-bun-init-different-than-bun-create)
+    - [`bun completions`](#bun-completions)
+    - [`bun x` (`bunx`)](#bun-x-bunx)
+  - [Loader API](#loader-api)
+    - [Loader API Reference](#loader-api-reference)
+      - [`builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`](#builderonload-filter-namespace-optional-namespace--callback)
+  - [`Bun.serve` - fast HTTP server](#bunserve---fast-http-server)
+    - [Usage](#usage-1)
+    - [Error handling](#error-handling)
+    - [HTTPS with Bun.serve()](#https-with-bunserve)
+    - [Streaming files with Bun.serve()](#streaming-files-with-bunserve)
+    - [WebSockets with Bun.serve()](#websockets-with-bunserve)
+      - [ServerWebSocket vs WebSocket](#serverwebsocket-vs-websocket)
+        - [Headers](#headers)
+        - [Publish/subscribe](#publishsubscribe)
+        - [Backpressure](#backpressure)
+        - [Callbacks are per server instead of per socket](#callbacks-are-per-server-instead-of-per-socket)
+  - [`Bun.spawn` – spawn a process](#bunspawn--spawn-a-process)
+  - [`Bun.which` – find the path to a binary](#bunwhich--find-the-path-to-a-binary)
+  - [`Bun.listen` \& `Bun.connect` - TCP/TLS sockets](#bunlisten--bunconnect---tcptls-sockets)
+    - [Benchmark-driven API design](#benchmark-driven-api-design)
+    - [Hot-reloading TCP servers \& clients](#hot-reloading-tcp-servers--clients)
+    - [No buffering](#no-buffering)
+  - [`Bun.dns` - lookup a domain](#bundns---lookup-a-domain)
+  - [`Bun.peek` - read a promise without resolving it](#bunpeek---read-a-promise-without-resolving-it)
+  - [`Bun.write` – optimizing I/O](#bunwrite--optimizing-io)
+  - [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
+    - [bun:sqlite Benchmark](#bunsqlite-benchmark)
+    - [Getting started with bun:sqlite](#getting-started-with-bunsqlite)
+      - [`Database`](#database)
+      - [Database.prototype.query](#databaseprototypequery)
+      - [Database.prototype.prepare](#databaseprototypeprepare)
+      - [Database.prototype.exec \& Database.prototype.run](#databaseprototypeexec--databaseprototyperun)
+      - [Database.prototype.transaction](#databaseprototypetransaction)
+      - [Database.prototype.serialize](#databaseprototypeserialize)
+      - [Database.prototype.loadExtension](#databaseprototypeloadextension)
+      - [Statement](#statement)
+      - [Statement.all](#statementall)
+      - [Statement.values](#statementvalues)
+      - [Statement.get](#statementget)
+      - [Statement.run](#statementrun)
+      - [Statement.finalize](#statementfinalize)
+      - [Statement.toString()](#statementtostring)
+      - [Datatypes](#datatypes)
+    - [`bun:ffi` (Foreign Functions Interface)](#bunffi-foreign-functions-interface)
+      - [Low-overhead FFI](#low-overhead-ffi)
+      - [Usage](#usage-2)
+      - [Supported FFI types (`FFIType`)](#supported-ffi-types-ffitype)
+      - [Strings (`CString`)](#strings-cstring)
+        - [Returning a string](#returning-a-string)
+      - [Function pointers (`CFunction`)](#function-pointers-cfunction)
+      - [Callbacks (`JSCallback`)](#callbacks-jscallback)
+      - [Pointers](#pointers)
+        - [Passing a pointer](#passing-a-pointer)
+        - [Reading pointers](#reading-pointers)
+        - [Not implemented yet](#not-implemented-yet-1)
+    - [Node-API (napi)](#node-api-napi)
+    - [`Bun.Transpiler`](#buntranspiler)
+      - [`Bun.Transpiler.transformSync`](#buntranspilertransformsync)
+      - [`Bun.Transpiler.transform`](#buntranspilertransform)
+      - [`Bun.Transpiler.scan`](#buntranspilerscan)
+      - [`Bun.Transpiler.scanImports`](#buntranspilerscanimports)
+  - [Module resolution in Bun](#module-resolution-in-bun)
+    - [Module loading](#module-loading)
+    - [Module resolution](#module-resolution)
+    - [Bun's Module Resolution Algorithm](#buns-module-resolution-algorithm)
+      - [Resolving packages](#resolving-packages)
+        - [Prefer offline](#prefer-offline)
+        - [Prefer latest](#prefer-latest)
+      - [Resolving modules](#resolving-modules)
+      - [Frequently asked questions](#frequently-asked-questions)
+  - [Environment variables](#environment-variables)
+  - [Profiling Bun](#profiling-bun)
+    - [Benchmarking `Bun.serve`](#benchmarking-bunserve)
+    - [Measuring memory usage](#measuring-memory-usage)
+      - [JavaScript heap stats](#javascript-heap-stats)
+      - [JavaScript heap snapshot](#javascript-heap-snapshot)
+      - [Native heap stats](#native-heap-stats)
+  - [Credits](#credits)
+  - [License](#license)
+  - [Developing bun](#developing-bun)
+    - [Dev Container (Linux/Windows)](#dev-container-linuxwindows)
+      - [Visual Studio Code](#visual-studio-code)
+      - [Other editors and CLI](#other-editors-and-cli)
+      - [In the dev container](#in-the-dev-container)
+    - [MacOS](#macos)
+      - [Install Zig (macOS)](#install-zig-macos)
+      - [Build bun (macOS)](#build-bun-macos)
+      - [Verify it worked (macOS)](#verify-it-worked-macos)
+      - [JavaScript builtins](#javascript-builtins)
+      - [Code generation scripts](#code-generation-scripts)
+    - [Modifying ESM core modules](#modifying-esm-core-modules)
+      - [Troubleshooting (macOS)](#troubleshooting-macos)
+  - [vscode-zig](#vscode-zig)
+    - [Troubleshooting (general)](#troubleshooting-general)
 
 ## Using bun.js - a new JavaScript runtime environment
 
@@ -1451,7 +1497,7 @@ globalThis.reloadCount = reloadCount + 1;
 
 const reloadServer = (globalThis.reloadServer ||= (() => {
   let server;
-  return (handler) => {
+  return handler => {
     if (server) {
       // call `server.reload` to reload the server
       server.reload(handler);
@@ -1863,18 +1909,42 @@ This command installs completions for `zsh` and/or `fish`. It runs automatically
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
 
-### `bun x`
+### `bun x` (`bunx`)
 
-This command runs a given binary from `npm`. It will look for the binary to run in any installed modules in the current file tree, and install the package in a temporary directory to run if its not available.
+This command runs a given binary from `npm`. It will look for the executable to run in any installed modules in the current file tree, and install the package in a temporary directory to run if its not available.
 
-> Run vendor package
+> Run vendor package executable
+
 ```bash
 bun x vendor-package
 ```
 
-> Run a specific version of vendor package
+Bun also provides a shortened alias `bunx` which you can use instead.
+
+> Run package executable with `bunx` alias
+
+```bash
+bunx vendor-package
+```
+
+> Run a specific version of package executable
+
 ```bash
 bun x vendor-package@1.0.2
+```
+
+**NOTE: By default, `bun x` currently runs JS scripts in `Node`, but you can force running them in `Bun` by appending the `--bun` flag to the `bun` command. This will be changed in the future when more Node compatibility is achieved.**
+
+> Force a package executable to run in Bun
+
+```bash
+bun --bun x vendor-package
+```
+
+or:
+
+```bash
+bunx --bun vendor-package
 ```
 
 ## Loader API
@@ -1900,7 +1970,7 @@ plugin({
     const { load } = require("js-yaml");
     const { readFileSync } = require("fs");
     // Run this function on any import that ends with .yaml or .yml
-    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+    builder.onLoad({ filter: /\.(yaml|yml)$/ }, args => {
       // Read the YAML file from disk
       const text = readFileSync(args.path, "utf8");
 
@@ -2217,12 +2287,9 @@ import { serve, file } from "bun";
 
 serve({
   fetch(req) {
-    const [start = 0, end = Infinity] =
-      req.headers.get("Range").split("=").at(-1).split("-") ?? [];
+    const [start = 0, end = Infinity] = req.headers.get("Range").split("=").at(-1).split("-") ?? [];
 
-    return new Response(
-      file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)),
-    );
+    return new Response(file("./my-big-video-to-stream.mp4").slice(Number(start), Number(end)));
   },
 });
 ```
@@ -2386,10 +2453,7 @@ For server websocket connections, Bun exposes a `ServerWebSocket` class which is
 ```ts
 Bun.serve({
   fetch(req, server) {
-    if (
-      server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })
-    )
-      return;
+    if (server.upgrade(req, { headers: { "Set-Cookie": "name=HiThereMyNameIs" } })) return;
   },
   websocket: {
     message(ws, message) {
@@ -2460,9 +2524,7 @@ The HTTP server and server-side websockets are based on [uWebSockets](https://gi
 import { spawn } from "bun";
 
 const { stdout } = spawn(["esbuild"], {
-  stdin: await fetch(
-    "https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js",
-  ),
+  stdin: await fetch("https://raw.githubusercontent.com/oven-sh/bun/main/examples/hashing.js"),
 });
 
 const text = await new Response(stdout).text();
@@ -2949,9 +3011,7 @@ test("peek", () => {
   // If we peek a rejected promise, it:
   // - returns the error
   // - does not mark the promise as handled
-  const rejected = Promise.reject(
-    new Error("Successfully tested promise rejection"),
-  );
+  const rejected = Promise.reject(new Error("Successfully tested promise rejection"));
   expect(peek(rejected).message).toBe("Successfully tested promise rejection");
 });
 ```
@@ -2980,10 +3040,7 @@ test("peek.status", () => {
 
 ```ts
 interface Bun {
-  write(
-    destination: string | number | FileBlob,
-    input: string | FileBlob | Blob | ArrayBufferView,
-  ): Promise<number>;
+  write(destination: string | number | FileBlob, input: string | FileBlob | Blob | ArrayBufferView): Promise<number>;
 }
 ```
 
@@ -3048,9 +3105,7 @@ Example:
 import { Database } from "bun:sqlite";
 
 const db = new Database("mydb.sqlite");
-db.run(
-  "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.run("CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo (greeting) VALUES (?)", "Hello World!");
 
@@ -3243,9 +3298,7 @@ import { Database } from "bun:sqlite";
 
 // generate some data
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 db.run("INSERT INTO foo (greeting) VALUES ($greeting)", {
   $greeting: "Welcome to bun",
 });
@@ -3270,9 +3323,7 @@ import { Database } from "bun:sqlite";
 
 // generate some data
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 
 // compile the prepared statement
 const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
@@ -3304,9 +3355,7 @@ Creating a table:
 import { Database } from "bun:sqlite";
 
 let db = new Database();
-db.exec(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 ```
 
 Inserting one row:
@@ -3315,9 +3364,7 @@ Inserting one row:
 import { Database } from "bun:sqlite";
 
 let db = new Database();
-db.exec(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.exec("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 
 // insert one row
 db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
@@ -3337,12 +3384,10 @@ Creates a function that always runs inside a transaction. When the function is i
 // setup
 import { Database } from "bun:sqlite";
 const db = Database.open(":memory:");
-db.exec(
-  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
-);
+db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
 
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
-const insertMany = db.transaction((cats) => {
+const insertMany = db.transaction(cats => {
   for (const cat of cats) insert.run(cat);
 });
 
@@ -3359,21 +3404,15 @@ Transaction functions can be called from inside other transaction functions. Whe
 // setup
 import { Database } from "bun:sqlite";
 const db = Database.open(":memory:");
-db.exec(
-  "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);",
-);
-db.exec(
-  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)",
-);
-const newExpense = db.prepare(
-  "INSERT INTO expenses (note, dollars) VALUES (?, ?)",
-);
+db.exec("CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);");
+db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)");
+const newExpense = db.prepare("INSERT INTO expenses (note, dollars) VALUES (?, ?)");
 const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
-const insertMany = db.transaction((cats) => {
+const insertMany = db.transaction(cats => {
   for (const cat of cats) insert.run(cat);
 });
 
-const adopt = db.transaction((cats) => {
+const adopt = db.transaction(cats => {
   newExpense.run("adoption fees", 20);
   insertMany(cats); // nested transaction
 });
@@ -3408,9 +3447,7 @@ SQLite has a built-in way to [serialize](https://www.sqlite.org/c3ref/serialize.
 let db = new Database();
 
 // write some data
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
@@ -3486,9 +3523,7 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)");
 db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
@@ -3514,16 +3549,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3547,16 +3576,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3590,16 +3613,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3629,16 +3646,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object (TODO: use a better example query)
 let statement = db.query("SELECT * FROM foo");
@@ -3662,16 +3673,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object
 let statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3691,16 +3696,10 @@ import { Database } from "bun:sqlite";
 
 // setup
 let db = new Database();
-db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)",
-);
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)");
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
 db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
-db.run(
-  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
-  "Welcome to bun!!!!",
-  2,
-);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!!!!", 2);
 
 // Statement object
 const statement = db.query("SELECT * FROM foo WHERE count = ?");
@@ -3974,11 +3973,7 @@ const lib = linkSymbols({
   },
 });
 
-const [major, minor, patch] = [
-  lib.symbols.getMajor(),
-  lib.symbols.getMinor(),
-  lib.symbols.getPatch(),
-];
+const [major, minor, patch] = [lib.symbols.getMajor(), lib.symbols.getMinor(), lib.symbols.getPatch()];
 ```
 
 #### Callbacks (`JSCallback`)
@@ -3998,13 +3993,10 @@ const {
   },
 });
 
-const searchIterator = new JSCallback(
-  (ptr, length) => /hello/.test(new CString(ptr, length)),
-  {
-    returns: "bool",
-    args: ["ptr", "usize"],
-  },
-);
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+  returns: "bool",
+  args: ["ptr", "usize"],
+});
 
 const str = Buffer.from("wwutwutwutwutwutwutwutwutwutwutut\0", "utf8");
 if (search(ptr(str), searchIterator)) {
@@ -4023,7 +4015,7 @@ When you're done with a JSCallback, you should call `close()` to free the memory
 For a slight performance boost, directly pass `JSCallback.prototype.ptr` instead of the `JSCallback` object:
 
 ```ts
-const onResolve = new JSCallback((arg) => arg === 42, {
+const onResolve = new JSCallback(arg => arg === 42, {
   returns: "bool",
   args: ["i32"],
 });
@@ -5158,6 +5150,7 @@ On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 #### Install Zig (macOS)
 
 Install the version of Zig referenced in the [`Dockerfile`](./Dockerfile) using [zigup](https://github.com/marler8997/zigup). For example:
+
 ```bash
 zigup 0.11.0-dev.1393+38eebf3c4
 ```

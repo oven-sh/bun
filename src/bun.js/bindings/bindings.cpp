@@ -3799,7 +3799,10 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
 
 extern "C" JSC__JSValue JSC__AbortSignal__create(JSC__JSGlobalObject* globalObject) {
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
-    return JSC::JSValue::encode(WebCore::JSAbortSignal::getConstructor(JSC::getVM(globalObject), thisObject));
+    auto* context = thisObject->scriptExecutionContext();
+    auto abortSignal = WebCore::AbortSignal::create(context);
+
+    return JSValue::encode(toJSNewlyCreated<IDLInterface<JSC__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(abortSignal)));
 }
 extern "C" JSC__JSValue JSC__AbortSignal__toJS(JSC__AbortSignal* arg0, JSC__JSGlobalObject* globalObject) {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);

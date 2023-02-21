@@ -2354,6 +2354,23 @@ bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     return false;
 }
 
+bool JSC__JSValue__isRegex(JSC__JSValue JSValue0, JSC__JSGlobalObject* global)
+{
+    JSC::VM& vm = global->vm();
+
+    JSValue value = JSValue::decode(JSValue0);
+    if (value.isUndefinedOrNull() || !value || !value.isObject() || !value.isCell()) {
+        return false;
+    }
+
+    JSC::RegExpObject* regex = jsDynamicCast<JSC::RegExpObject*>(value.asCell());
+    if (!regex) {
+        return false;
+    }
+
+    return regex->structure()->typeInfo().type() == JSC::RegExpObjectType;
+}
+
 bool JSC__JSValue__isIterable(JSC__JSValue JSValue, JSC__JSGlobalObject* global)
 {
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));

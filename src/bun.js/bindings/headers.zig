@@ -231,6 +231,7 @@ pub extern fn JSC__JSValue__isIterable(JSValue0: JSC__JSValue, arg1: *bindings.J
 pub extern fn JSC__JSValue__isNumber(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isObject(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isPrimitive(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__isRegex(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isSameValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isString(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isSymbol(JSValue0: JSC__JSValue) bool;

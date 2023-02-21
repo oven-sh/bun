@@ -2984,6 +2984,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__isBuffer(global, value);
     }
 
+    pub fn isRegex(value: JSValue, global: *JSGlobalObject) bool {
+        return cppFn("isRegex", .{ value, global });
+    }
+
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
             return null;
@@ -3866,6 +3870,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "isRegex",
     };
 };
 

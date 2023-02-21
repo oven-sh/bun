@@ -968,6 +968,7 @@ pub const ZigConsoleClient = struct {
                 true,
                 true,
                 false,
+                false,
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;
@@ -1017,6 +1018,7 @@ pub const ZigConsoleClient = struct {
         add_newline: bool,
         flush: bool,
         order_properties: bool,
+        quote_strings: bool,
     ) void {
         var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
@@ -1028,7 +1030,12 @@ pub const ZigConsoleClient = struct {
         }
 
         if (len == 1) {
-            fmt = ZigConsoleClient.Formatter{ .remaining_values = &[_]JSValue{}, .globalThis = global, .ordered_properties = order_properties };
+            fmt = ZigConsoleClient.Formatter{
+                .remaining_values = &[_]JSValue{},
+                .globalThis = global,
+                .ordered_properties = order_properties,
+                .quote_strings = quote_strings,
+            };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
             var unbuffered_writer = if (comptime Writer != RawWriter)
@@ -1101,7 +1108,12 @@ pub const ZigConsoleClient = struct {
         }
 
         var this_value: JSValue = vals[0];
-        fmt = ZigConsoleClient.Formatter{ .remaining_values = vals[0..len][1..], .globalThis = global, .ordered_properties = order_properties };
+        fmt = ZigConsoleClient.Formatter{
+            .remaining_values = vals[0..len][1..],
+            .globalThis = global,
+            .ordered_properties = order_properties,
+            .quote_strings = quote_strings,
+        };
         var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
         var any = false;

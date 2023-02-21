@@ -126,13 +126,8 @@ pub fn diffLines(
         @intCast(u64, std.time.milliTimestamp()) + dmp.diff_timeout;
 
     var a = try diffLinesToChars(allocator, text1_in, text2_in);
-    var text1 = a.chars_1;
-    var text2 = a.chars_2;
-    var line_array = a.line_array;
-
-    var diffs = try dmp.diffInternal(allocator, text1, text2, false, deadline);
-
-    try diffCharsToLines(allocator, diffs.items, line_array.items);
+    var diffs = try dmp.diffInternal(allocator, a.chars_1, a.chars_2, false, deadline);
+    try diffCharsToLines(allocator, diffs.items, a.line_array.items);
 
     return diffs;
 }

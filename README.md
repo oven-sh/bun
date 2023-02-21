@@ -5092,6 +5092,7 @@ bun also statically links these libraries:
 - [`uSockets`](https://github.com/uNetworking/uSockets), which is Apache 2.0 licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
 - [`c-ares`](https://github.com/c-ares/c-ares), which is MIT licensed
+- [`diffz`](https://github.com/ziglibs/diffz), which is MIT licensed
 - `libicu` 72, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
 - WASI implementation from [`wasi-js`](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js), which is BSD 3 clause licensed. Note that wasi-js is originally based on [wasmer-js](https://github.com/wasmerio/wasmer-js), which is MIT licensed. wasmer-js was based on [node-wasi](https://github.com/devsnek/node-wasi) by Gus Caplan (also MIT licensed). You can [read more about the history here](https://github.com/sagemathinc/cowasm/tree/main/core/wasi-js#history).

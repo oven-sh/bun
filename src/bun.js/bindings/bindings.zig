@@ -3055,6 +3055,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__isBuffer(global, value);
     }
 
+    pub fn isRegExp(this: JSValue) bool {
+        return this.jsType() == .RegExpObject;
+    }
+
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
             return null;
@@ -3655,8 +3659,10 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
-        if ((this.isString() and other.isString()) or (this.jsType() == .RegExpObject and other.jsType() == .RegExpObject) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isString() and other.isString()) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isRegExp() and other.isObject()) or (this.isObject() and other.isRegExp())) return .character;
         if (this.isObject() and other.isObject()) return .line;
+
         return .none;
     }
 

@@ -950,6 +950,11 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
+        if (this.hasSignalAborted()) |reason| {
+            reason.ensureStillAlive();
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, reason);
+        }
+
         if (this.exit_code) |code| {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
         }
@@ -965,12 +970,12 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.exit_code) |code| {
-            return JSC.JSValue.jsNumber(code);
-        }
         if (this.hasSignalAborted()) |reason| {
             reason.ensureStillAlive();
             return reason;
+        }
+        if (this.exit_code) |code| {
+            return JSC.JSValue.jsNumber(code);
         }
         return JSC.JSValue.jsNull();
     }
@@ -1475,8 +1480,12 @@ pub const Subprocess = struct {
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
         }
+        if (subprocess.hasSignalAborted()) |reason| {
+            js_exitCode = reason;
+            reason.ensureStillAlive();
+            subprocess.deinitSignal();
+        }
 
-        // subprocess.wait(true);
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);

@@ -255,6 +255,38 @@ for (let [gcTick, label] of [
         await prom;
       });
 
+      it("AbortController.abort() works", async () => {
+        const controller = new AbortController();
+        const process = Bun.spawn({
+          cmd: ["bash", "-c", "sleep 2"],
+          stdout: "pipe",
+          signal: controller.signal
+        });
+        gcTick();
+        await Bun.sleep(500);
+        controller.abort();
+        await process.exited;
+        expect(process.exitCode).toBeTruthy(process.exitCode instanceof DOMException);
+        expect(process.exitCode.name).toBe("AbortError");
+        expect(process.exitCode.message).toBe("The operation was aborted.");
+      });
+
+      it("AbortController.abort() sync works", async () => {
+        const controller = new AbortController();
+        controller.abort(); //is sync so will only abort if already start aborted
+        const process = Bun.spawnSync({
+          cmd: ["bash", "-c", "sleep 2"],
+          stdout: "pipe",
+          signal: controller.signal
+        });
+        gcTick();
+        await process.exited;
+        expect(process.exitCode).toBeTruthy(process.exitCode instanceof DOMException);
+        expect(process.exitCode.name).toBe("AbortError");
+        expect(process.exitCode.message).toBe("The operation was aborted.");
+      });
+
+
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["bash", import.meta.dir + "/bash-echo.sh"],

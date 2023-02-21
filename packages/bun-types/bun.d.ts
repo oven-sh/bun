@@ -3043,7 +3043,7 @@ declare module "bun" {
      *
      * If the process hasn't exited yet, this will return `null`
      */
-    readonly exitCode: number | null;
+    readonly exitCode: number | DOMException | null;
 
     /**
      * Synchronously get the signal code of the process

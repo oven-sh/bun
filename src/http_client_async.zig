@@ -1067,7 +1067,7 @@ pub fn hasSignalAborted(this: *HTTPClient) ?JSC.JSValue {
 }
 
 pub fn deinitSignal(this: *HTTPClient) void {
-     if (this.signal != null) {
+    if (this.signal != null) {
         var signal = this.signal.?;
         const ctx = bun.cast(*anyopaque, this);
         signal.cleanNativeBindings(ctx);
@@ -1840,7 +1840,6 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("closeAndFail", .{});
-    this.fail(err, null);
     if (!socket.isClosed()) {
         socket.ext(**anyopaque).?.* = bun.cast(
             **anyopaque,
@@ -1848,6 +1847,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
         );
         socket.close(0, null);
     }
+    this.fail(err, null);
 }
 
 fn startProxySendHeaders(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
@@ -2140,7 +2140,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
 pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     log("closeAndAbort", .{});
-    this.fail(error.Aborted, reason);
     if (!socket.isClosed()) {
         socket.ext(**anyopaque).?.* = bun.cast(
             **anyopaque,
@@ -2148,6 +2147,7 @@ pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bo
         );
         socket.close(0, null);
     }
+    this.fail(error.Aborted, reason);
 }
 
 fn fail(this: *HTTPClient, err: anyerror, reason: ?JSC.JSValue) void {

@@ -294,8 +294,177 @@ pub const Os = struct {
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        // TODO:
-        return JSC.JSValue.createEmptyObject(globalThis, 0);
+        const c = @cImport({
+            @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
+            @cInclude("net/if.h");  // IFF_RUNNING, IFF_UP
+
+            // Link-layer socket definition for physical address information
+            //@cInclude("linux/if_packet.h");
+        });
+
+        // getifaddrs returns a linked list
+        var interface_start: ?*c.ifaddrs = null;
+        if (c.getifaddrs(&interface_start) != 0) {
+            //TODO error
+        }
+        defer c.freeifaddrs(interface_start);
+
+
+        const helpers = struct {
+            // We'll skip interfaces that aren't actually available
+            pub fn skip(iface: *c.ifaddrs) bool {
+                // Skip interfaces that aren't actually available
+                if (iface.ifa_flags & c.IFF_RUNNING == 0) return true;
+                if (iface.ifa_flags & c.IFF_UP == 0) return true;
+                if (iface.ifa_addr == null) return true;
+
+                return false;
+            }
+
+            // We won't actually return PACKET interfaces but we need them for
+            //  extracting the MAC address
+            pub fn isPhysical(iface: *c.ifaddrs) bool {
+                return iface.ifa_addr.*.sa_family == std.os.AF.PACKET;
+            }
+
+            pub fn isLoopback(iface: *c.ifaddrs) bool {
+                return iface.ifa_flags & c.IFF_LOOPBACK == c.IFF_LOOPBACK;
+            }
+        };
+
+
+        // The list currently contains entries for physical-level interfaces (family == AF_PACKET)
+        //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
+        //  but need the physical entries to determine MAC address.
+        // So, on our first pass through the linked list we'll count the number of
+        //  INET interfaces only.
+        var num_inet_interfaces: usize = 0;
+        var it = interface_start;
+        while (it) |iface| : (it = iface.ifa_next) {
+            if (helpers.skip(iface) or helpers.isPhysical(iface)) continue;
+            num_inet_interfaces += 1;
+        }
+
+        var ret = JSC.JSValue.createEmptyObject(globalThis, 8);
+
+        // Second pass through, populate each interface object
+        it = interface_start;
+        while (it) |iface| : (it = iface.ifa_next) {
+            if (helpers.skip(iface) or helpers.isPhysical(iface)) continue;
+
+            const interface_name = std.mem.span(iface.ifa_name);
+            const addr = std.net.Address{ .any = @bitCast(std.os.sockaddr, iface.ifa_addr.*) };
+            const netmask = std.net.Address{ .any = @bitCast(std.os.sockaddr, iface.ifa_netmask.*) };
+
+            var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
+
+            // address <string> The assigned IPv4 or IPv6 address
+            {
+                var buf: [80]u8 = undefined;
+                const str = formatAddress(addr, &buf, false) catch unreachable;
+                interface.put(globalThis, JSC.ZigString.static("address"),
+                                          JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
+            }
+
+            // netmask <string> The IPv4 or IPv6 network mask
+            {
+                var buf: [80]u8 = undefined;
+                const str = formatAddress(netmask, &buf, false) catch unreachable;
+                interface.put(globalThis, JSC.ZigString.static("netmask"),
+                                          JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
+            }
+
+            // family <string> Either IPv4 or IPv6
+            interface.put(globalThis, JSC.ZigString.static("family"),
+                (switch (addr.any.family) {
+                    std.os.AF.INET => JSC.ZigString.static("IPv4"),
+                    std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                    else => JSC.ZigString.static("unknown"),
+                }).toValue(globalThis)
+            );
+
+            // mac <string> The MAC address of the network interface
+            {
+                // We need to search for the physical interface whose name matches this one
+                var phys_it = interface_start;
+                const maybe_phys_addr = while (phys_it) |phys_iface| : (phys_it = phys_iface.ifa_next) {
+                    if (helpers.skip(phys_iface) or !helpers.isPhysical(phys_iface)) continue;
+
+                    const phys_name = std.mem.span(phys_iface.ifa_name);
+                    if (!std.mem.startsWith(u8, phys_name, interface_name)) continue;
+                    if (phys_name.len > interface_name.len and phys_name[interface_name.len] != ':') continue;
+
+                    // This is the correct physical interface entry for the current interface,
+                    //  cast to a link-layer socket address
+                    break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, phys_iface.ifa_addr));
+                } else null;
+
+                if (maybe_phys_addr) |phys_addr| {
+                    // Encode its physical address.  We need 2*6 bytes for the
+                    //  hex characters and 5 for the colon separators
+                    var mac_buf: [17]u8 = undefined;
+                    const mac = std.fmt.bufPrint(&mac_buf,
+                        "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}",
+                        .{
+                            phys_addr.addr[0],
+                            phys_addr.addr[1],
+                            phys_addr.addr[2],
+                            phys_addr.addr[3],
+                            phys_addr.addr[4],
+                            phys_addr.addr[5],
+                        }
+                    ) catch unreachable;
+                    interface.put(globalThis, JSC.ZigString.static("mac"),
+                                              JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                }
+            }
+
+            // internal <boolean> true if the network interface is a loopback or similar interface that is not remotely accessible; otherwise false
+            interface.put(globalThis, JSC.ZigString.static("internal"),
+                                      JSC.JSValue.jsBoolean(helpers.isLoopback(iface)));
+
+            // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
+            if (addr.any.family == std.os.AF.INET6) {
+                const as_in6 = @ptrCast(*std.os.sockaddr.in6, @alignCast(@alignOf(*std.os.sockaddr.in6), iface.ifa_addr));
+                interface.put(globalThis, JSC.ZigString.static("scope_id"),
+                                          JSC.JSValue.jsNumber(as_in6.scope_id));
+            }
+
+            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
+            //TODO https://github.com/nodejs/node/pull/14307/files
+
+            // Does this entry already exist?
+            if (ret.get(globalThis, interface_name)) |array| {
+                // Add this interface entry to the existing array
+                const next_index = @intCast(u32, array.getLengthOfArray(globalThis));
+                array.putIndex(globalThis, next_index, interface);
+            } else {
+                // Add it as an array with this interface as a member
+                const member_name = JSC.ZigString.init(interface_name);
+                var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+                array.putIndex(globalThis, 0, interface);
+                ret.put(globalThis, &member_name, array);
+            }
+        }
+
+        return ret;
+    }
+
+    fn formatAddress(address: std.net.Address, into: []u8) ![]u8 {
+        // Implementation note: we don't use address.format here because it
+        //  differs in a number of ways from the Node implementation:
+        // * address.format includes ":port"
+        // * address.format brackets IPv6 addresses
+        // * Ip6Address formatting appears to be just wrong in current std
+        if (address.family == std.os.AF.INET) {
+            const bytes = @ptrCast(*const [4]u8, &address.sa.addr);
+            return try std.fmt.bufPrint(&into, "{}.{}.{}.{}", .{ bytes[0], bytes[1], bytes[2], bytes[3] });
+        } else if (address.family != std.os.AF.INET6) {
+            return error.unsupported_family;
+        }
+
+        // Formatting IPv6 is quite a bit more involved
+
     }
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

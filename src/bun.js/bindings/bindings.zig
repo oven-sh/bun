@@ -3651,6 +3651,19 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    pub const DiffMethod = enum(u8) {
+        none,
+        character,
+        word,
+        line,
+    };
+
+    pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
+        if ((this.isString() and other.isString()) or (this.isRegex(global) and other.isRegex(global)) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if (this.isObject() and other.isObject()) return .line;
+        return .none;
+    }
+
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
             this,

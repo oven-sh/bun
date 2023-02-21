@@ -136,87 +136,83 @@ pub const DiffFormatter = struct {
         const delete_fmt = "<red>{s}<r>";
         const insert_fmt = "<green>{s}<r>";
 
-        const should_character_diff: bool = (this.received.isString() and this.expected.isString()) or
-            (this.received.isBuffer(this.globalObject) and this.expected.isBuffer(this.globalObject)) or
-            (this.received.isRegex(this.globalObject) and this.expected.isRegex(this.globalObject));
-
-        if (should_character_diff) {
-            var dmp = DiffMatchPatch.default;
-            dmp.diff_timeout = 200;
-            var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
-            defer diffs.deinit(default_allocator);
-
-            try writer.writeAll(Output.prettyFmt("Expected: ", true));
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .delete => continue,
-                    .insert => try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text}),
-                    .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+        switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
+            .none => {
+                const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+                if (Output.enable_ansi_colors) {
+                    try writer.print(Output.prettyFmt(fmt, true), .{
+                        this.expected.toFmt(this.globalObject, &formatter),
+                        this.received.toFmt(this.globalObject, &formatter),
+                    });
+                    return;
                 }
-            }
 
-            try writer.writeAll(Output.prettyFmt("\nReceived: ", true));
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .insert => continue,
-                    .delete => try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text}),
-                    .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                try writer.print(Output.prettyFmt(fmt, true), .{
+                    this.expected.toFmt(this.globalObject, &formatter),
+                    this.received.toFmt(this.globalObject, &formatter),
+                });
+                return;
+            },
+            .character => {
+                var dmp = DiffMatchPatch.default;
+                dmp.diff_timeout = 200;
+                var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
+                defer diffs.deinit(default_allocator);
+
+                try writer.writeAll(Output.prettyFmt("Expected: ", true));
+                for (diffs.items) |df| {
+                    switch (df.operation) {
+                        .delete => continue,
+                        .insert => try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text}),
+                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                    }
                 }
-            }
 
-            return;
-        }
-
-        if (this.received.isObject() and this.expected.isObject()) {
-            var dmp = DiffMatchPatch.default;
-            dmp.diff_timeout = 200;
-            var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-            defer diffs.deinit(default_allocator);
-
-            var insert_count: usize = 0;
-            var delete_count: usize = 0;
-
-            for (diffs.items) |df| {
-                switch (df.operation) {
-                    .equal => {
-                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                    },
-                    .insert => {
-                        for (df.text) |c| {
-                            if (c == '\n') insert_count += 1;
-                        }
-                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                    },
-                    .delete => {
-                        for (df.text) |c| {
-                            if (c == '\n') delete_count += 1;
-                        }
-                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                    },
+                try writer.writeAll(Output.prettyFmt("\nReceived: ", true));
+                for (diffs.items) |df| {
+                    switch (df.operation) {
+                        .insert => continue,
+                        .delete => try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text}),
+                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                    }
                 }
-            }
+                return;
+            },
+            .line => {
+                var dmp = DiffMatchPatch.default;
+                dmp.diff_timeout = 200;
+                var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+                defer diffs.deinit(default_allocator);
 
-            try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-            try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
-            return;
-        }
+                var insert_count: usize = 0;
+                var delete_count: usize = 0;
 
-        // don't diff
-        if (Output.enable_ansi_colors) {
-            try writer.writeAll(Output.prettyFmt("Expected: <green>", true));
-        } else {
-            try writer.writeAll("Expected: ");
-        }
-        try writer.writeAll(expected_slice);
-        if (Output.enable_ansi_colors) {
-            try writer.writeAll(Output.prettyFmt("<r>\nReceived: <red>", true));
-        } else {
-            try writer.writeAll("\nReceived: ");
-        }
-        try writer.writeAll(received_slice);
+                for (diffs.items) |df| {
+                    switch (df.operation) {
+                        .equal => {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                        },
+                        .insert => {
+                            for (df.text) |c| {
+                                if (c == '\n') insert_count += 1;
+                            }
+                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                        },
+                        .delete => {
+                            for (df.text) |c| {
+                                if (c == '\n') delete_count += 1;
+                            }
+                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                        },
+                    }
+                }
 
-        if (Output.enable_ansi_colors) {
-            try writer.writeAll("<r>");
+                try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                return;
+            },
+            .word => {},
         }
         return;
     }
@@ -1902,6 +1898,16 @@ pub const Expect = struct {
         // did not throw
         var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const received_line = "Received function did not throw\n";
+
+        if (expected_value.isEmpty()) {
+            const fmt = comptime getSignature("toThrow", "", false) ++ "\n\n" ++ received_line;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            return .zero;
+        }
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;

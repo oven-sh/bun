@@ -211,12 +211,12 @@ pub const ZigString = extern struct {
 
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
-        if(maxlen == 0){
+        if (maxlen == 0) {
             len = this.len;
-        }else {
+        } else {
             len = @max(this.len, maxlen);
         }
-        
+
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -3055,10 +3055,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__isBuffer(global, value);
     }
 
-    pub fn isRegex(value: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("isRegex", .{ value, global });
-    }
-
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
             return null;
@@ -3659,7 +3655,7 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
-        if ((this.isString() and other.isString()) or (this.isRegex(global) and other.isRegex(global)) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isString() and other.isString()) or (this.jsType() == .RegExpObject and other.jsType() == .RegExpObject) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
         if (this.isObject() and other.isObject()) return .line;
         return .none;
     }
@@ -3954,7 +3950,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
-        "isRegex",
     };
 };
 

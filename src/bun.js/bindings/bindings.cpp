@@ -97,9 +97,7 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
     auto& internalHeaders = headers->internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(
-            value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()
-        ));
+        res->writeHeader(std::string_view("set-cookie", 10), std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.commonHeaders()) {
@@ -107,8 +105,7 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length())
-        );
+            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
@@ -116,8 +113,7 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         auto& value = header.value;
         res->writeHeader(
             std::string_view(name.is8Bit() ? reinterpret_cast<const char*>(name.characters8()) : name.utf8().data(), name.length()),
-            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length())
-        );
+            std::string_view(value.is8Bit() ? reinterpret_cast<const char*>(value.characters8()) : value.utf8().data(), value.length()));
     }
 }
 
@@ -718,12 +714,11 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
     return new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 }
 void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigString* arg1, const ZigString* arg2,
-                                   JSC__JSGlobalObject* lexicalGlobalObject)
+    JSC__JSGlobalObject* lexicalGlobalObject)
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
-        headers->append(Zig::toString(*arg1), Zig::toString(*arg2))
-    );
+        headers->append(Zig::toString(*arg1), Zig::toString(*arg2)));
 }
 WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* vm)
 {
@@ -752,8 +747,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
         //  ExceptionOr<void>.  So we need to check for the exception and, if set,
         //  translate it to JSValue and throw it.
         WebCore::propagateException(*lexicalGlobalObject, throwScope,
-            headers->fill(WTFMove(init.value()))
-        );
+            headers->fill(WTFMove(init.value())));
     }
     return headers;
 }
@@ -770,8 +764,7 @@ JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__J
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     WebCore::propagateException(*arg1, throwScope,
-        clone->fill(*headers)
-    );
+        clone->fill(*headers));
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTFMove(clone)));
 }
 
@@ -780,8 +773,7 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     WebCore::propagateException(*lexicalGlobalObject, throwScope,
-        clone->fill(*headers)
-    );
+        clone->fill(*headers));
     return clone;
 }
 
@@ -936,9 +928,8 @@ JSC__JSValue WebCore__FetchHeaders__createValue(JSC__JSGlobalObject* arg0, Strin
     }
 
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
-    WebCore::propagateException(*arg0, throwScope, 
-        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)))
-    );
+    WebCore::propagateException(*arg0, throwScope,
+        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs))));
     pairs.releaseBuffer();
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg0, reinterpret_cast<Zig::GlobalObject*>(arg0), WTFMove(headers)));
 }
@@ -965,15 +956,13 @@ void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     WebCore::propagateException(*global, throwScope,
-        headers->set(Zig::toString(*arg1), Zig::toString(*arg2))
-    );
+        headers->set(Zig::toString(*arg1), Zig::toString(*arg2)));
 }
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1, JSC__JSGlobalObject* global)
 {
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     WebCore::propagateException(*global, throwScope,
-        headers->remove(Zig::toString(*arg1))
-    );
+        headers->remove(Zig::toString(*arg1)));
 }
 
 void WebCore__FetchHeaders__fastRemove_(WebCore__FetchHeaders* headers, unsigned char headerName)
@@ -2418,23 +2407,6 @@ bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     return false;
 }
 
-bool JSC__JSValue__isRegex(JSC__JSValue JSValue0, JSC__JSGlobalObject* global)
-{
-    JSC::VM& vm = global->vm();
-
-    JSValue value = JSValue::decode(JSValue0);
-    if (value.isUndefinedOrNull() || !value || !value.isObject() || !value.isCell()) {
-        return false;
-    }
-
-    JSC::RegExpObject* regex = jsDynamicCast<JSC::RegExpObject*>(value.asCell());
-    if (!regex) {
-        return false;
-    }
-
-    return regex->structure()->typeInfo().type() == JSC::RegExpObjectType;
-}
-
 bool JSC__JSValue__isIterable(JSC__JSValue JSValue, JSC__JSGlobalObject* global)
 {
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
@@ -3847,39 +3819,44 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue4));
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1) {
+extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1)
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->signalAbort(JSC::JSValue::decode(JSValue1));
     return arg0;
 }
 
-extern "C" bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0) {
+extern "C" bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0)
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     return abortSignal->aborted();
 }
 
-extern "C" JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0) {
+extern "C" JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0)
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     return JSC::JSValue::encode(abortSignal->reason().getValue());
 }
 
-
-extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0) {
+extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0)
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->ref();
     return arg0;
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0) {
+extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0)
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
     return arg0;
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason)) {
+extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason))
+{
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
-    
-    if(abortSignal->aborted()){
+
+    if (abortSignal->aborted()) {
         callback(ctx, JSC::JSValue::encode(abortSignal->reason().getValue()));
         return arg0;
     }
@@ -3910,7 +3887,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* mess
     error->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(vm, ABORT_ERROR_NAME)),
-    0);
+        0);
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);
@@ -3932,7 +3909,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* me
     error->putDirect(
         vm, vm.propertyNames->name,
         JSC::JSValue(JSC::jsOwnedString(vm, TIMEOUT_ERROR_NAME)),
-    0);
+        0);
 
     if (code.len > 0) {
         auto clientData = WebCore::clientData(vm);

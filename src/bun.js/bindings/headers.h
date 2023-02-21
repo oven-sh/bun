@@ -327,7 +327,6 @@ CPP_DECL bool JSC__JSValue__isIterable(JSC__JSValue JSValue0, JSC__JSGlobalObjec
 CPP_DECL bool JSC__JSValue__isNumber(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isObject(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isPrimitive(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isRegex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__isString(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isSymbol(JSC__JSValue JSValue0);

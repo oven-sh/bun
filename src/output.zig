@@ -458,9 +458,11 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         switch (c) {
             '\\' => {
                 i += 1;
-                if (fmt.len < i) {
+                if (i < fmt.len) {
                     switch (fmt[i]) {
                         '<', '>' => {
+                            new_fmt[new_fmt_i] = fmt[i];
+                            new_fmt_i += 1;
                             i += 1;
                         },
                         else => {
@@ -468,6 +470,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                             new_fmt_i += 1;
                             new_fmt[new_fmt_i] = fmt[i];
                             new_fmt_i += 1;
+                            i += 1;
                         },
                     }
                 }

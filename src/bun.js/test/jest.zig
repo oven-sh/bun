@@ -203,17 +203,21 @@ pub const DiffFormatter = struct {
 
         // don't diff
         if (Output.enable_ansi_colors) {
-            try writer.writeAll(Output.prettyFmt("<green>Expected<r>: ", true));
+            try writer.writeAll(Output.prettyFmt("Expected: <green>", true));
         } else {
             try writer.writeAll("Expected: ");
         }
         try writer.writeAll(expected_slice);
         if (Output.enable_ansi_colors) {
-            try writer.writeAll(Output.prettyFmt("\n<red>Received<r>: ", true));
+            try writer.writeAll(Output.prettyFmt("<r>\nReceived: <red>", true));
         } else {
             try writer.writeAll("\nReceived: ");
         }
         try writer.writeAll(received_slice);
+
+        if (Output.enable_ansi_colors) {
+            try writer.writeAll("<r>");
+        }
         return;
     }
 };
@@ -502,41 +506,62 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        const label = brk: {
-            if (not) {
-                const not_label_fmt = "<d>expect(<r><red>received<r><d>).<r>not<d>.<r>toBe<d>(<r><green>expected<r><d>)<r>";
-                if (Output.enable_ansi_colors) {
-                    break :brk Output.prettyFmt(not_label_fmt, true);
-                }
-                break :brk Output.prettyFmt(not_label_fmt, false);
-            }
-            const label_fmt = "<d>expect(<r><red>received<r><d>).<r>toBe<d>(<r><green>expected<r><d>)<r>";
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        if (not) {
+            const signature = comptime getSignature("toBe", "<green>expected<r>", true);
+            const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
             if (Output.enable_ansi_colors) {
-                break :brk Output.prettyFmt(label_fmt, true);
+                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
+                return .zero;
             }
-            break :brk Output.prettyFmt(label_fmt, false);
-        };
+            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
 
-        globalObject.throw("{s}\n\n{any}\n", .{
-            label,
-            DiffFormatter{
+        const signature = comptime getSignature("toBe", "<green>expected<r>", false);
+        if (left.deepEquals(right, globalObject) or left.strictDeepEquals(right, globalObject)) {
+            const fmt = signature ++
+                "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" ++
+                "\n\nExpected: <green>{any}<r>\n" ++
+                "Received: serializes to the same string\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{right.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{right.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        if (right.isString() and left.isString()) {
+            const diff_format = DiffFormatter{
                 .expected = right,
                 .received = left,
                 .globalObject = globalObject,
                 .not = not,
-            },
-        });
+            };
+            const fmt = signature ++ "\n\n{any}\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            return .zero;
+        }
 
+        const fmt = signature ++ "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n";
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{
+                right.toFmt(globalObject, &formatter),
+                left.toFmt(globalObject, &formatter),
+            });
+            return .zero;
+        }
+        globalObject.throw(Output.prettyFmt(fmt, false), .{
+            right.toFmt(globalObject, &formatter),
+            left.toFmt(globalObject, &formatter),
+        });
         return .zero;
     }
-
-    // pub fn getSignatureWithArgs(comptime matcher_name: string, comptime not: bool, comptime args: string) string {
-    //     const received = "<d>expect(<r><red>received<r><d>).<r>";
-    //     comptime if (not) {
-    //         return received ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
-    //     };
-    //     return received ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
-    // }
 
     pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
         const received = "<d>expect(<r><red>received<r><d>).<r>";

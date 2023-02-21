@@ -55,6 +55,7 @@ typedef void* JSClassRef;
  typedef bJSC__JSObject JSC__JSObject; // JSC::JSObject
   typedef WebSocketClient WebSocketClient;
   typedef WebSocketHTTPSClient WebSocketHTTPSClient;
+ typedef struct JSC__AbortSignal JSC__AbortSignal; // JSC::AbortSignal
   typedef JSClassRef JSClassRef;
  typedef bJSC__VM JSC__VM; // JSC::VM
   typedef Bun__ArrayBuffer Bun__ArrayBuffer;
@@ -85,6 +86,7 @@ typedef void* JSClassRef;
     class JSGlobalObject;
     class JSPromise;
     class Exception;
+    class AbortSignal;
     class JSString;
     class JSInternalPromise;
     class CatchScope;
@@ -116,6 +118,7 @@ typedef void* JSClassRef;
   using JSC__JSGlobalObject = JSC::JSGlobalObject;
   using JSC__JSPromise = JSC::JSPromise;
   using JSC__Exception = JSC::Exception;
+  using JSC__AbortSignal = JSC::AbortSignal;
   using JSC__JSString = JSC::JSString;
   using JSC__JSInternalPromise = JSC::JSInternalPromise;
   using JSC__CatchScope = JSC::CatchScope;
@@ -160,10 +163,10 @@ CPP_DECL WebCore__DOMFormData* WebCore__DOMFormData__fromJS(JSC__JSValue JSValue
 
 #pragma mark - WebCore::FetchHeaders
 
-CPP_DECL void WebCore__FetchHeaders__append(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2);
+CPP_DECL void WebCore__FetchHeaders__append(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* arg3);
 CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* arg0);
+CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* arg0, StringPointer* arg1, StringPointer* arg2, unsigned char* arg3);
 CPP_DECL void WebCore__FetchHeaders__count(WebCore__FetchHeaders* arg0, uint32_t* arg1, uint32_t* arg2);
 CPP_DECL WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty();
@@ -175,10 +178,10 @@ CPP_DECL void WebCore__FetchHeaders__deref(WebCore__FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore__FetchHeaders* arg0, unsigned char arg1, ZigString* arg2);
 CPP_DECL bool WebCore__FetchHeaders__fastHas_(WebCore__FetchHeaders* arg0, unsigned char arg1);
 CPP_DECL void WebCore__FetchHeaders__fastRemove_(WebCore__FetchHeaders* arg0, unsigned char arg1);
-CPP_DECL void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* arg0, const ZigString* arg1, ZigString* arg2);
-CPP_DECL bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* arg0, const ZigString* arg1);
-CPP_DECL void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2);
-CPP_DECL void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* arg0, const ZigString* arg1);
+CPP_DECL void WebCore__FetchHeaders__get_(WebCore__FetchHeaders* arg0, const ZigString* arg1, ZigString* arg2, JSC__JSGlobalObject* arg3);
+CPP_DECL bool WebCore__FetchHeaders__has(WebCore__FetchHeaders* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
+CPP_DECL void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* arg0, const ZigString* arg1, const ZigString* arg2, JSC__JSGlobalObject* arg3);
+CPP_DECL void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool arg1, void* arg2);
 CPP_DECL JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0, JSC__JSGlobalObject* arg1);
@@ -201,6 +204,18 @@ CPP_DECL void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObjec
 
 CPP_DECL JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, const unsigned char* arg5, size_t arg6, JSC__JSValue JSValue7, JSC__JSValue* arg8);
 CPP_DECL JSC__JSInternalPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* arg0, const ZigString* arg1);
+
+#pragma mark - JSC::AbortSignal
+
+CPP_DECL bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0);
+CPP_DECL JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0);
+CPP_DECL JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC__JSValue JSValue1)) __attribute__((nonnull (2)));
+CPP_DECL JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
+CPP_DECL JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
+CPP_DECL JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue JSValue0);
+CPP_DECL JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0);
+CPP_DECL JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1);
+CPP_DECL JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0);
 
 #pragma mark - JSC::JSPromise
 

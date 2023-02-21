@@ -180,7 +180,7 @@ pub const PluginRunner = struct {
             JSC.ZigString.init("");
         const on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
-            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0),
+            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0, 0),
             JSC.ZigString.init(importer),
             target,
         ) orelse return null;
@@ -514,7 +514,12 @@ pub const Bundler = struct {
                 var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
 
                 // Process always has highest priority.
+                const was_production = this.options.production;
                 this.env.loadProcess();
+                if (!was_production and this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
+
                 if (this.options.production) {
                     try this.env.load(&this.fs.fs, dir, false);
                 } else {
@@ -523,6 +528,9 @@ pub const Bundler = struct {
             },
             .disable => {
                 this.env.loadProcess();
+                if (this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
             },
             else => {},
         }

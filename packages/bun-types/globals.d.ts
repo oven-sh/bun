@@ -1954,6 +1954,23 @@ interface AbortSignal extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+
+  /**
+   * Create an AbortSignal which times out after milliseconds
+   *
+   * @param milliseconds the number of milliseconds to delay until {@link AbortSignal.prototype.signal()} is called
+   *
+   * @example
+   *
+   * ## Timeout a `fetch()` request
+   *
+   * ```ts
+   * await fetch("https://example.com", {
+   *    signal: AbortSignal.timeout(100)
+   * })
+   * ```
+   */
+  timeout(milliseconds: number): AbortSignal;
 }
 
 declare var AbortSignal: {

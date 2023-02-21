@@ -123,7 +123,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor:
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
 
-    auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+    auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>();
 
     if (argument0.value() && !argument0.value().isUndefined()) {
         if (auto* existingJsFetchHeaders = jsDynamicCast<JSFetchHeaders*>(argument0.value())) {
@@ -135,7 +135,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor:
             RETURN_IF_EXCEPTION(throwScope, {});
             return JSValue::encode(jsValue);
         }
-        init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, argument0.value()));
+        init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLDOMString>>, IDLRecord<IDLDOMString, IDLDOMString>>>(*lexicalGlobalObject, argument0.value()));
     }
 
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
@@ -199,7 +199,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
         return JSValue::encode(jsUndefined());
     }
 
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
 
     auto& impl = castedThis->wrapped();
@@ -371,10 +371,10 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_appendBody(JSC
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, argument0.value());
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto value = convert<IDLByteString>(*lexicalGlobalObject, argument1.value());
+    auto value = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
 }
@@ -477,7 +477,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_deleteBody(JSC
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, argument0.value());
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name)); })));
 }
@@ -497,9 +497,9 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_getBody(JSC::J
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, argument0.value());
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLByteString>>(*lexicalGlobalObject, throwScope, impl.get(WTFMove(name)))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLDOMString>>(*lexicalGlobalObject, throwScope, impl.get(WTFMove(name)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_get, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -517,7 +517,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_hasBody(JSC::J
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, argument0.value());
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name)))));
 }
@@ -537,10 +537,10 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_setBody(JSC::J
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto name = convert<IDLByteString>(*lexicalGlobalObject, argument0.value());
+    auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto value = convert<IDLByteString>(*lexicalGlobalObject, argument1.value());
+    auto value = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(value)); })));
 }
@@ -552,8 +552,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set, (JSGlobalObject * 
 
 struct FetchHeadersIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
-    using KeyType = IDLByteString;
-    using ValueType = IDLByteString;
+    using KeyType = IDLDOMString;
+    using ValueType = IDLDOMString;
 };
 
 using FetchHeadersIteratorBase = JSDOMIteratorBase<JSFetchHeaders, FetchHeadersIteratorTraits>;

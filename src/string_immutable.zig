@@ -94,13 +94,15 @@ pub inline fn isNPMPackageName(target: string) bool {
     if (target.len > 214) return false;
 
     const scoped = switch (target[0]) {
-        'a'...'z', '0'...'9', '$', '-' => false,
+        // Old packages may have capital letters
+        'A'...'Z', 'a'...'z', '0'...'9', '$', '-' => false,
         '@' => true,
         else => return false,
     };
     var slash_index: usize = 0;
     for (target[1..]) |c, i| {
         switch (c) {
+            // Old packages may have capital letters
             'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
             '/' => {
                 if (!scoped) return false;
@@ -301,6 +303,14 @@ pub const StringOrTinyString = struct {
         }
 
         return StringOrTinyString.init(try appendy.append(string, stringy));
+    }
+
+    pub fn initLowerCaseAppendIfNeeded(stringy: string, comptime Appender: type, appendy: Appender) !StringOrTinyString {
+        if (stringy.len <= StringOrTinyString.Max) {
+            return StringOrTinyString.initLowerCase(stringy);
+        }
+
+        return StringOrTinyString.init(try appendy.appendLowerCase(string, stringy));
     }
 
     pub fn init(stringy: string) StringOrTinyString {
@@ -1133,7 +1143,6 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
                 else => return out,
             }
         } else null;
-
         var output = output_ orelse fallback: {
             var list = try std.ArrayList(u16).initCapacity(allocator, i + 2);
             list.items.len = i;
@@ -1730,48 +1739,40 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
 
     const latin1_last = latin1.ptr + latin1.len;
     if (latin1.ptr != latin1_last) {
-        const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
+
         // reference the pointer directly because it improves codegen
         var ptr = latin1.ptr;
-        const latin1_vec_end = ptr + wrapped_len;
 
-        while (ptr != latin1_vec_end) {
-            const vec: AsciiVector = ptr[0..ascii_vector_size].*;
-
-            if (@reduce(.Max, vec) > 127) {
-                const Int = u64;
-                const size = @sizeOf(Int);
-
-                const bytes = [2]Int{
-                    @bitCast(Int, ptr[0..size].*) & 0x8080808080808080,
-                    @bitCast(Int, ptr[size .. 2 * size].*) & 0x8080808080808080,
-                };
-
-                total_non_ascii_count += @popCount(bytes[0]) + @popCount(bytes[1]);
+        if (comptime Environment.enableSIMD) {
+            const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
+            const latin1_vec_end = ptr + wrapped_len;
+            while (ptr != latin1_vec_end) {
+                const vec: AsciiVector = ptr[0..ascii_vector_size].*;
+                const cmp = vec & @splat(ascii_vector_size, @as(u8, 0x80));
+                total_non_ascii_count += @reduce(.Add, cmp);
+                ptr += ascii_vector_size;
+            }
+        } else {
+            while (@ptrToInt(ptr + 8) < @ptrToInt(latin1_last)) {
+                if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+                const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
+                total_non_ascii_count += @popCount(bytes);
+                ptr += 8;
             }
 
-            ptr += ascii_vector_size;
-        }
+            if (@ptrToInt(ptr + 4) < @ptrToInt(latin1_last)) {
+                if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+                const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
+                total_non_ascii_count += @popCount(bytes);
+                ptr += 4;
+            }
 
-        if (@ptrToInt(ptr + 8) < @ptrToInt(latin1_last)) {
-            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
-            const bytes = @bitCast(u64, ptr[0..8].*) & 0x8080808080808080;
-            total_non_ascii_count += @popCount(bytes);
-            ptr += 8;
-        }
-
-        if (@ptrToInt(ptr + 4) < @ptrToInt(latin1_last)) {
-            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
-            const bytes = @bitCast(u32, ptr[0..4].*) & 0x80808080;
-            total_non_ascii_count += @popCount(bytes);
-            ptr += 4;
-        }
-
-        if (@ptrToInt(ptr + 2) < @ptrToInt(latin1_last)) {
-            if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
-            const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
-            total_non_ascii_count += @popCount(bytes);
-            ptr += 2;
+            if (@ptrToInt(ptr + 2) < @ptrToInt(latin1_last)) {
+                if (comptime Environment.allow_assert) std.debug.assert(@ptrToInt(ptr) <= @ptrToInt(latin1_last) and @ptrToInt(ptr) >= @ptrToInt(latin1_.ptr));
+                const bytes = @bitCast(u16, ptr[0..2].*) & 0x8080;
+                total_non_ascii_count += @popCount(bytes);
+                ptr += 2;
+            }
         }
 
         while (ptr != latin1_last) {

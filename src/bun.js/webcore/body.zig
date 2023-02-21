@@ -128,11 +128,11 @@ pub const Body = struct {
         status_code: u16,
         method: Method = Method.GET,
 
-        pub fn clone(this: Init, _: *JSGlobalObject) Init {
+        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
             var that = this;
             var headers = this.headers;
             if (headers) |head| {
-                that.headers = head.cloneThis();
+                that.headers = head.cloneThis(ctx);
             }
 
             return that;
@@ -149,7 +149,7 @@ pub const Body = struct {
                 // we can skip calling JS getters
                 if (response_init.as(Request)) |req| {
                     if (req.headers) |headers| {
-                        result.headers = headers.cloneThis();
+                        result.headers = headers.cloneThis(ctx);
                     }
 
                     result.method = req.method;
@@ -163,7 +163,7 @@ pub const Body = struct {
 
             if (response_init.fastGet(ctx, .headers)) |headers| {
                 if (headers.as(FetchHeaders)) |orig| {
-                    result.headers = orig.cloneThis();
+                    result.headers = orig.cloneThis(ctx);
                 } else {
                     result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
                 }

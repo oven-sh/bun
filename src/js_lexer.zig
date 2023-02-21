@@ -1480,6 +1480,22 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
+                                            // if (comptime Environment.enableSIMD) {
+                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
+                                            // if (lexer.code_point < 128) {
+                                            //     const remainder = lexer.source.contents[lexer.current..];
+                                            //     if (remainder.len >= 4096) {
+                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
+                                            //             lexer.step();
+                                            //             continue;
+                                            //         };
+                                            //         lexer.end = lexer.current -| 1;
+                                            //         lexer.step();
+                                            //         continue;
+                                            //     }
+                                            // }
+                                            // }
+
                                             lexer.step();
                                         },
                                     }
@@ -3000,6 +3016,41 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
     }
 
     return true;
+}
+
+fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
+    var text = text_;
+    const star = @splat(strings.ascii_vector_size, @as(u8, '*'));
+    const carriage = @splat(strings.ascii_vector_size, @as(u8, '\r'));
+    const newline = @splat(strings.ascii_vector_size, @as(u8, '\n'));
+    const V1x16 = strings.AsciiVectorU1;
+
+    const text_end_len = text.len & ~(@as(usize, strings.ascii_vector_size) - 1);
+    std.debug.assert(text_end_len % strings.ascii_vector_size == 0);
+    std.debug.assert(text_end_len <= text.len);
+
+    const text_end_ptr = text.ptr + text_end_len;
+
+    while (text_end_ptr != text.ptr) {
+        const vec: strings.AsciiVector = text.ptr[0..strings.ascii_vector_size].*;
+
+        const any_significant =
+            @bitCast(V1x16, vec > strings.max_16_ascii) |
+            @bitCast(V1x16, star == vec) |
+            @bitCast(V1x16, carriage == vec) |
+            @bitCast(V1x16, newline == vec);
+
+        if (@reduce(.Max, any_significant) > 0) {
+            const bitmask = @bitCast(u16, any_significant);
+            const first = @ctz(bitmask);
+            std.debug.assert(first < strings.ascii_vector_size);
+            std.debug.assert(text.ptr[first] == '*' or text.ptr[first] == '\r' or text.ptr[first] == '\n' or text.ptr[first] > 127);
+            return @truncate(u32, first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr)));
+        }
+        text.ptr += strings.ascii_vector_size;
+    }
+
+    return @truncate(u32, @ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
 }
 
 fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usize {

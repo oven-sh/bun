@@ -72,3 +72,20 @@ describe("Web Crypto", () => {
     expect(isSigValid).toBe(true);
   });
 });
+
+describe("Ed25519", () => {
+  describe("generateKey", () => {
+    it("should return CryptoKeys without namedCurve in algorithm field", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      expect(publicKey.algorithm!.name).toBe("Ed25519");
+      // @ts-ignore
+      expect(publicKey.algorithm!.namedCurve).toBe(undefined);
+      expect(privateKey.algorithm!.name).toBe("Ed25519");
+      // @ts-ignore
+      expect(privateKey.algorithm!.namedCurve).toBe(undefined);
+    });
+  });
+});

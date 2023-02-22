@@ -444,7 +444,6 @@ pub const ServerConfig = struct {
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
-            
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
@@ -1013,7 +1012,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request_js.as(Request)) |req| {
                         if (req.signal) |signal| {
                             // if signal is not aborted, abort the signal
-                            if(!signal.aborted()){
+                            if (!signal.aborted()) {
                                 const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                                 reason.ensureStillAlive();
                                 _ = signal.signal(reason);

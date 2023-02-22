@@ -243,10 +243,11 @@ pub fn inspect(
         Writer,
         Writer,
         writer,
-        false,
-        false,
-        false,
-        false,
+        .{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+        },
     );
     buffered_writer.flush() catch {
         return JSC.C.JSValueMakeUndefined(ctx);

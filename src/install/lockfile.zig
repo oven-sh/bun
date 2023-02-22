@@ -698,15 +698,15 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         const res_list = slice.items(.resolutions)[0];
         const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
+        const string_buf = new.buffers.string_bytes.items;
 
         for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
-                const name_hash = String.Builder.stringHash(update.name);
                 for (root_deps) |dep, i| {
-                    if (dep.name_hash == name_hash) {
+                    if (update.matches(dep, string_buf)) {
                         const package_id = resolved_ids[i];
                         if (package_id > new.packages.len) continue;
-                        update.version_buf = new.buffers.string_bytes.items;
+                        update.version_buf = string_buf;
                         update.version = dep.version;
                         update.resolution = resolutions[package_id];
                         update.resolved_name = names[package_id];
@@ -988,10 +988,9 @@ pub const Printer = struct {
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        const name_hash = dependency.name_hash;
                         for (this.updates) |update, update_id| {
                             if (update.failed) return;
-                            if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                            if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
                                     id_map[update_id] = @truncate(DependencyID, dep_id);
                                 }
@@ -1027,11 +1026,9 @@ pub const Printer = struct {
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        const name_hash = dependency.name_hash;
                         for (this.updates) |update, update_id| {
                             if (update.failed) return;
-
-                            if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                            if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
                                     id_map[update_id] = @truncate(DependencyID, dep_id);
                                 }
@@ -1356,14 +1353,24 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                     else
                         remote_features,
                 )) continue;
-                if (log_level != .silent)
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
+                if (log_level != .silent) {
+                    if (failed_dep.name.isEmpty()) {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
+                            .{
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    } else {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
+                            .{
+                                failed_dep.name.slice(string_buf),
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    }
+                }
                 // track this so we can log each failure instead of just the first
                 any_failed = true;
             }

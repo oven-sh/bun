@@ -96,7 +96,6 @@ pub const DiffFormatter = struct {
                 false,
                 false,
                 true,
-                true,
             );
             buffered_writer.flush() catch unreachable;
 
@@ -113,7 +112,6 @@ pub const DiffFormatter = struct {
                 false,
                 false,
                 false,
-                true,
                 true,
             );
             buffered_writer.flush() catch unreachable;
@@ -132,14 +130,10 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        const equal_fmt = "<d>  {s}<r>";
-        const delete_fmt = "<red>+ {s}<r>";
-        const insert_fmt = "<green>- {s}<r>";
-
         switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         this.expected.toFmt(this.globalObject, &formatter),
@@ -159,6 +153,10 @@ pub const DiffFormatter = struct {
                 dmp.diff_timeout = 200;
                 var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
                 defer diffs.deinit(default_allocator);
+
+                const equal_fmt = "<d>{s}<r>";
+                const delete_fmt = "<red>{s}<r>";
+                const insert_fmt = "<green>{s}<r>";
 
                 try writer.writeAll("Expected: ");
                 for (diffs.items) |df| {
@@ -208,6 +206,10 @@ pub const DiffFormatter = struct {
                 dmp.diff_timeout = 200;
                 var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
                 defer diffs.deinit(default_allocator);
+
+                const equal_fmt = "<d>  {s}<r>";
+                const delete_fmt = "<red>+ {s}<r>";
+                const insert_fmt = "<green>- {s}<r>";
 
                 var insert_count: usize = 0;
                 var delete_count: usize = 0;
@@ -562,7 +564,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
             const signature = comptime getSignature("toBe", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
@@ -657,20 +659,20 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         if (!value.isObject() and !value.isString()) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
             return .zero;
         }
 
         if (!expected.isNumber()) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
             return .zero;
         }
 
         const expected_length: f64 = expected.asNumber();
         if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
             return .zero;
         }
@@ -686,11 +688,11 @@ pub const Expect = struct {
             const length_value: JSValue = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
 
             if (length_value.isEmpty()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
                 globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
                 return .zero;
             } else if (!length_value.isNumber()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
                 globalObject.throw("Received value has non-number length property: {any}", .{length_value.toFmt(globalObject, &fmt)});
                 return .zero;
             }
@@ -786,7 +788,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
@@ -839,7 +841,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -883,7 +885,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -931,7 +933,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -974,7 +976,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -1017,7 +1019,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -1063,7 +1065,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -1251,7 +1253,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
             if (expected_property != null) {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
@@ -1387,7 +1389,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1470,7 +1472,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1550,7 +1552,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1630,7 +1632,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1673,7 +1675,7 @@ pub const Expect = struct {
         const expected_value: JSValue = if (arguments.len > 0) brk: {
             const value = arguments[0];
             if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
                 globalObject.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalObject, &fmt)});
                 return .zero;
             }
@@ -1729,7 +1731,7 @@ pub const Expect = struct {
             if (!did_throw) return thisValue;
 
             const result: JSValue = result_.?;
-            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
             if (expected_value.isEmpty()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
@@ -1846,7 +1848,7 @@ pub const Expect = struct {
                 }
 
                 // error: message from received error does not match expected string
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
                 if (_received_message) |received_message| {
                     const expected_value_fmt = expected_value.toFmt(globalObject, &formatter);
@@ -1879,7 +1881,7 @@ pub const Expect = struct {
                 }
 
                 // error: message from received error does not match expected error message.
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
 
                 if (_received_message) |received_message| {
                     const expected_fmt = expected_message.toFmt(globalObject, &formatter);
@@ -1909,7 +1911,7 @@ pub const Expect = struct {
             if (result.isInstanceOf(globalObject, expected_value)) return thisValue;
 
             // error: received error not instance of received error constructor
-            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
             var expected_class = ZigString.Empty;
             var received_class = ZigString.Empty;
             expected_value.getClassName(globalObject, &expected_class);
@@ -1956,7 +1958,7 @@ pub const Expect = struct {
         }
 
         // did not throw
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         const received_line = "Received function did not throw\n";
 
         if (expected_value.isEmpty()) {

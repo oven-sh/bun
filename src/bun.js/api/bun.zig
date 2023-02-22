@@ -247,7 +247,6 @@ pub fn inspect(
         false,
         false,
         false,
-        false,
     );
     buffered_writer.flush() catch {
         return JSC.C.JSValueMakeUndefined(ctx);

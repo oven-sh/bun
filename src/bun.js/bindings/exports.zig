@@ -968,7 +968,6 @@ pub const ZigConsoleClient = struct {
                 true,
                 true,
                 false,
-                false,
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;
@@ -1018,7 +1017,6 @@ pub const ZigConsoleClient = struct {
         add_newline: bool,
         flush: bool,
         order_properties: bool,
-        quote_strings: bool,
     ) void {
         var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
@@ -1034,7 +1032,6 @@ pub const ZigConsoleClient = struct {
                 .remaining_values = &[_]JSValue{},
                 .globalThis = global,
                 .ordered_properties = order_properties,
-                .quote_strings = quote_strings,
             };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
@@ -1112,7 +1109,6 @@ pub const ZigConsoleClient = struct {
             .remaining_values = vals[0..len][1..],
             .globalThis = global,
             .ordered_properties = order_properties,
-            .quote_strings = quote_strings,
         };
         var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
@@ -1893,6 +1889,7 @@ pub const ZigConsoleClient = struct {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
 
+                    if (jsType != .RegExpObject) writer.writeAll("\"");
                     if (str.is16Bit()) {
                         // streaming print
                         writer.print("{s}", .{str});
@@ -1907,6 +1904,7 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll(buf);
                         }
                     }
+                    if (jsType != .RegExpObject) writer.writeAll("\"");
 
                     if (jsType == .RegExpObject and enable_ansi_colors) {
                         writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});

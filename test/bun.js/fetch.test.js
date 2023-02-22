@@ -48,9 +48,67 @@ afterAll(() => {
   server.stop();
 });
 
-describe("AbortSignalDirectTest", () => {
-  const body = new Uint8Array(1024 * 1024 * 2);
-  crypto.getRandomValues(body);
+const payload = new Uint8Array(1024 * 1024 * 2);
+crypto.getRandomValues(payload);
+
+describe("AbortSignalStreamTest", () => {
+
+  const port = 64322;
+  async function abortOnStage(body, stage, port) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = Bun.serve({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
+
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.close();
+                    return;
+                  }
+                  controller.enqueue(value);
+                }
+              },
+            }),
+          );
+        },
+        port,
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${port}`, { method: "POST", body, signal: signal }).then((res) => res.arrayBuffer());
+
+      } catch (ex) {
+        error = ex;
+      }
+      server.stop();
+      expect(error).toBeTruthy(error instanceof DOMException);
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(payload, i, port + i);
+    })();
+  }
+})
+
+describe("AbortSignalDirectStreamTest", () => {
   const port = 64322;
   async function abortOnStage(body, stage, port) {
     let error = undefined;
@@ -102,10 +160,11 @@ describe("AbortSignalDirectTest", () => {
 
   for (let i = 1; i < 7; i++) {
     it(`Abort after ${i} chunks`, async () => {
-      await abortOnStage(body, i, port + i);
+      await abortOnStage(payload, i, port + i);
     })();
   }
 })
+
 describe("AbortSignal", () => {
   it("AbortError", async () => {
     let name;

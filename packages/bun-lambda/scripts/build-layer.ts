@@ -28,6 +28,20 @@ export class BuildCommand extends Command {
       exists: false,
       default: async () => "bun-lambda-layer.zip",
     }),
+    layer: Flags.string({
+      description: "The name of the Lambda layer.",
+      multiple: true,
+      default: ["bun"],
+    }),
+    region: Flags.string({
+      description: "The region to publish the layer.",
+      multiple: true,
+      default: [],
+    }),
+    public: Flags.boolean({
+      description: "If the layer should be public.",
+      default: false,
+    }),
   };
 
   async run() {

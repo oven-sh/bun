@@ -1,27 +1,8 @@
-import { Flags } from "@oclif/core";
 import { spawnSync } from "node:child_process";
 import { BuildCommand } from "./build-layer";
 
 export class PublishCommand extends BuildCommand {
   static summary = "Publish a custom Lambda layer for Bun.";
-
-  static flags = {
-    ...BuildCommand.flags,
-    layer: Flags.string({
-      description: "The name of the Lambda layer.",
-      multiple: true,
-      default: ["bun"],
-    }),
-    region: Flags.string({
-      description: "The region to publish the layer.",
-      multiple: true,
-      default: [],
-    }),
-    public: Flags.boolean({
-      description: "If the layer should be public.",
-      default: false,
-    }),
-  };
 
   #aws(args: string[]): string {
     this.debug("$", "aws", ...args);
@@ -45,40 +26,62 @@ export class PublishCommand extends BuildCommand {
     } catch (error) {
       this.debug(error);
       this.error(
-        "Please install the `aws` CLI to continue: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
+        "Install the `aws` CLI to continue: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html",
         { exit: 1 },
       );
     }
-    const { layer, region, arch, output } = flags;
-    if (!region.length) {
-      region.push(this.#aws(["configure", "get", "region"]));
+    const { layer, region, arch, output, public: isPublic } = flags;
+    if (region.includes("*")) {
+      // prettier-ignore
+      const result = this.#aws([
+        "ec2",
+        "describe-regions",
+        "--query", "Regions[].RegionName",
+        "--output", "json"
+      ]);
+      region.length = 0;
+      for (const name of JSON.parse(result)) {
+        region.push(name);
+      }
+    } else if (!region.length) {
+      // prettier-ignore
+      region.push(this.#aws([
+        "configure",
+        "get",
+        "region"
+      ]));
     }
     this.log("Publishing...");
     for (const regionName of region) {
       for (const layerName of layer) {
+        // prettier-ignore
         const result = this.#aws([
           "lambda",
           "publish-layer-version",
-          "--layer-name",
-          layerName,
-          "--region",
-          regionName,
-          "--description",
-          "Bun is an incredibly fast JavaScript runtime, bundler, transpiler, and package manager.",
-          "--license-info",
-          "MIT",
-          "--compatible-architectures",
-          arch === "x64" ? "x86_64" : "arm64",
-          "--compatible-runtimes",
-          "provided.al2",
-          "provided",
-          "--zip-file",
-          `fileb://${output}`,
-          "--output",
-          "json",
+          "--layer-name", layerName,
+          "--region", regionName,
+          "--description", "Bun is an incredibly fast JavaScript runtime, bundler, transpiler, and package manager.",
+          "--license-info", "MIT",
+          "--compatible-architectures", arch === "x64" ? "x86_64" : "arm64",
+          "--compatible-runtimes", "provided.al2", "provided",
+          "--zip-file", `fileb://${output}`,
+          "--output", "json",
         ]);
         const { LayerVersionArn } = JSON.parse(result);
         this.log("Published", LayerVersionArn);
+        if (isPublic) {
+          // prettier-ignore
+          this.#aws([
+            "lambda",
+            "add-layer-version-permission",
+            "--layer-name", layerName,
+            "--region", regionName,
+            "--version-number", LayerVersionArn.split(":").pop(),
+            "--statement-id", `${layerName}-public`,
+            "--action", "lambda:GetLayerVersion",
+            "--principal", "*",
+          ]);
+        }
       }
     }
     this.log("Done");

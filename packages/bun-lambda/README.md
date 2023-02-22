@@ -19,8 +19,8 @@ Builds a Lambda layer for Bun and saves it to a `.zip` file.
 
 | Flag        | Description                                                          | Default                |
 | ----------- | -------------------------------------------------------------------- | ---------------------- |
-| `--arch`    | The architecture to support, either: "x64" or "aarch64"              | aarch64                |
-| `--release` | The release of Bun, can be: "latest", "canary", or a release "x.y.z" | latest                 |
+| `--arch`    | The architecture, either: "x64" or "aarch64"                         | aarch64                |
+| `--release` | The release of Bun, either: "latest", "canary", or a release "x.y.z" | latest                 |
 | `--output`  | The path to write the layer as a `.zip`.                             | ./bun-lambda-layer.zip |
 
 Example:
@@ -36,11 +36,11 @@ bun run build-layer -- \
 
 Builds a Lambda layer for Bun then publishes it to your AWS account.
 
-| Flag       | Description                      | Default |
-| ---------- | -------------------------------- | ------- |
-| `--layer`  | The name of the layer.           | bun     |
-| `--region` | The region to publish the layer. |         |
-| `--public` | If the layer should be public.   | false   |
+| Flag       | Description                               | Default |
+| ---------- | ----------------------------------------- | ------- |
+| `--layer`  | The layer name.                           | bun     |
+| `--region` | The region name, or "\*" for all regions. |         |
+| `--public` | If the layer should be public.            | false   |
 
 Example:
 
@@ -58,10 +58,35 @@ Once you publish the layer to your AWS account, you can create a Lambda function
 
 Here's an example function that can run on Lambda using the layer for Bun:
 
+### HTTP events
+
+When an event is triggered from [API Gateway](https://docs.aws.amazon.com/lambda/latest/dg/services-apigateway.html), the layer transforms the event payload into a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request). This means you can test your Lambda function locally using `bun run`, without any code changes.
+
 ```ts
 export default {
   async fetch(request: Request): Promise<Response> {
-    return new Response("Hello from Lambda!");
+    console.log(request.headers.get("x-amzn-function-arn"));
+    // ...
+    return new Response("Hello from Lambda!", {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain",
+      },
+    });
+  },
+};
+```
+
+### Non-HTTP events
+
+For non-HTTP events — S3, SQS, EventBridge, etc. — the event payload is the body of the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request).
+
+```ts
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const event = await request.json();
+    // ...
+    return new Response();
   },
 };
 ```

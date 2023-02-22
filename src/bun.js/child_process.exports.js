@@ -6,8 +6,46 @@ const {
 const {
   constants: { signals },
 } = import.meta.require("node:os");
+const { promisify } = import.meta.require("node:util");
 
 const { ArrayBuffer } = import.meta.primordials;
+
+var Uint8Array = globalThis.Uint8Array;
+var String = globalThis.String;
+var Object = globalThis.Object;
+var Buffer = globalThis.Buffer;
+var Promise = globalThis.Promise;
+
+var PromiseAll = Promise.all;
+
+var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+var ObjectCreate = Object.create;
+var ObjectAssign = Object.assign;
+var ObjectDefineProperty = Object.defineProperty;
+var BufferConcat = Buffer.concat;
+var BufferIsEncoding = Buffer.isEncoding;
+
+var kEmptyObject = ObjectCreate(null);
+
+var ArrayPrototypePush = Array.prototype.push;
+var ArrayPrototypeReduce = Array.prototype.reduce;
+var ArrayPrototypeFilter = Array.prototype.filter;
+var ArrayPrototypeJoin = Array.prototype.join;
+var ArrayPrototypeMap = Array.prototype.map;
+var ArrayPrototypeIncludes = Array.prototype.includes;
+var ArrayPrototypeSlice = Array.prototype.slice;
+var ArrayPrototypeUnshift = Array.prototype.unshift;
+var ArrayIsArray = Array.isArray;
+
+// var ArrayBuffer = ArrayBuffer;
+var ArrayBufferIsView = ArrayBuffer.isView;
+
+var NumberIsInteger = Number.isInteger;
+var MathAbs = Math.abs;
+
+var StringPrototypeToUpperCase = String.prototype.toUpperCase;
+var StringPrototypeIncludes = String.prototype.includes;
+var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
@@ -34,9 +72,8 @@ if (__TRACK_STDIO__) {
 // 3. ChildProcess "class"
 // 4. ChildProcess helpers
 // 5. Validators
-// 6. Primordials
-// 7. Random utilities
-// 8. Node errors / error polyfills
+// 6. Random utilities
+// 7. Node errors / error polyfills
 
 // TODO:
 // Port rest of node tests
@@ -456,6 +493,35 @@ export function exec(command, options, callback) {
   return execFile(opts.file, opts.options, opts.callback);
 }
 
+const customPromiseExecFunction = orig => {
+  return (...args) => {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+
+    promise.child = orig(...args, (err, stdout, stderr) => {
+      if (err !== null) {
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      } else {
+        resolve({ stdout, stderr });
+      }
+    });
+
+    return promise;
+  };
+};
+
+ObjectDefineProperty(exec, promisify.custom, {
+  __proto__: null,
+  enumerable: false,
+  value: customPromiseExecFunction(exec),
+});
+
 /**
  * Spawns a new process synchronously using the given `file`.
  * @param {string} file
@@ -685,7 +751,7 @@ function normalizeExecFileArgs(file, args, options, callback) {
   }
 
   if (options == null) {
-    options = {};
+    options = kEmptyObject;
   }
 
   if (callback != null) {
@@ -1439,49 +1505,12 @@ function getValidatedPath(fileURLOrPath, propName = "path") {
   return path;
 }
 
-//------------------------------------------------------------------------------
-// Section 6. Primordials
-//------------------------------------------------------------------------------
-var Uint8Array = globalThis.Uint8Array;
-var String = globalThis.String;
-var Object = globalThis.Object;
-var Buffer = globalThis.Buffer;
-var Promise = globalThis.Promise;
-
-var PromiseAll = Promise.all;
-
-var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-var ObjectCreate = Object.create;
-var ObjectAssign = Object.assign;
-var BufferConcat = Buffer.concat;
-var BufferIsEncoding = Buffer.isEncoding;
-
-var ArrayPrototypePush = Array.prototype.push;
-var ArrayPrototypeReduce = Array.prototype.reduce;
-var ArrayPrototypeFilter = Array.prototype.filter;
-var ArrayPrototypeJoin = Array.prototype.join;
-var ArrayPrototypeMap = Array.prototype.map;
-var ArrayPrototypeIncludes = Array.prototype.includes;
-var ArrayPrototypeSlice = Array.prototype.slice;
-var ArrayPrototypeUnshift = Array.prototype.unshift;
-var ArrayIsArray = Array.isArray;
-
-// var ArrayBuffer = ArrayBuffer;
-var ArrayBufferIsView = ArrayBuffer.isView;
-
-var NumberIsInteger = Number.isInteger;
-var MathAbs = Math.abs;
-
-var StringPrototypeToUpperCase = String.prototype.toUpperCase;
-var StringPrototypeIncludes = String.prototype.includes;
-var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
-
 function isUint8Array(value) {
   return typeof value === "object" && value !== null && value instanceof Uint8Array;
 }
 
 //------------------------------------------------------------------------------
-// Section 7. Random utilities
+// Section 6. Random utilities
 //------------------------------------------------------------------------------
 
 function isURLInstance(fileURLOrPath) {
@@ -1494,7 +1523,7 @@ function toPathIfFileURL(fileURLOrPath) {
 }
 
 //------------------------------------------------------------------------------
-// Section 8. Node errors / error polyfills
+// Section 7. Node errors / error polyfills
 //------------------------------------------------------------------------------
 var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;

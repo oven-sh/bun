@@ -34,8 +34,6 @@ const HeaderBuilder = @import("bun").HTTP.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../url.zig").URL;
 const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
 const HTTPChannel = @import("bun").HTTP.HTTPChannel;
@@ -600,14 +598,27 @@ const Task = struct {
             },
             .git_clone => {
                 const manager = this.package_manager;
-                const dir = Repository.download(
+                const name = this.request.git_clone.name.slice();
+                const url = this.request.git_clone.url.slice();
+                const dir = brk: {
+                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
+                        manager.allocator,
+                        manager.env,
+                        manager.log,
+                        manager.getCacheDirectory().dir,
+                        this.id,
+                        name,
+                        https,
+                    ) catch null;
+                    break :brk null;
+                } orelse Repository.download(
                     manager.allocator,
                     manager.env,
                     manager.log,
                     manager.getCacheDirectory().dir,
                     this.id,
-                    this.request.git_clone.name.slice(),
-                    this.request.git_clone.url.slice(),
+                    name,
+                    url,
                 ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
@@ -1907,7 +1918,8 @@ pub const PackageManager = struct {
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
             if (elapsed > std.time.ns_per_ms * 100) {
-                var cache_dir_path = bun.getFdPath(cache_directory.dir.fd, &path_buf) catch "it's";
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cache_dir_path = bun.getFdPath(cache_directory.dir.fd, &path_buf) catch "it";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                     .{cache_dir_path},
@@ -2379,21 +2391,33 @@ pub const PackageManager = struct {
     const SuccessFn = *const fn (*PackageManager, DependencyID, PackageID) void;
     const FailFn = *const fn (*PackageManager, *const Dependency, PackageID, anyerror) void;
     fn assignResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
+        const buffers = &this.lockfile.buffers;
         if (comptime Environment.allow_assert) {
-            std.debug.assert(dependency_id < this.lockfile.buffers.resolutions.items.len);
+            std.debug.assert(dependency_id < buffers.resolutions.items.len);
             std.debug.assert(package_id < this.lockfile.packages.len);
-            std.debug.assert(this.lockfile.buffers.resolutions.items[dependency_id] == invalid_package_id);
+            std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
-        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+        buffers.resolutions.items[dependency_id] = package_id;
+        var dep = &buffers.dependencies.items[dependency_id];
+        if (dep.name.isEmpty()) {
+            dep.name = this.lockfile.packages.items(.name)[package_id];
+            dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
+        }
     }
 
     fn assignRootResolution(this: *PackageManager, dependency_id: DependencyID, package_id: PackageID) void {
+        const buffers = &this.lockfile.buffers;
         if (comptime Environment.allow_assert) {
-            std.debug.assert(dependency_id < this.lockfile.buffers.resolutions.items.len);
+            std.debug.assert(dependency_id < buffers.resolutions.items.len);
             std.debug.assert(package_id < this.lockfile.packages.len);
-            std.debug.assert(this.lockfile.buffers.resolutions.items[dependency_id] == invalid_package_id);
+            std.debug.assert(buffers.resolutions.items[dependency_id] == invalid_package_id);
         }
-        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+        buffers.resolutions.items[dependency_id] = package_id;
+        var dep = &buffers.dependencies.items[dependency_id];
+        if (dep.name.isEmpty()) {
+            dep.name = this.lockfile.packages.items(.name)[package_id];
+            dep.name_hash = this.lockfile.packages.items(.name_hash)[package_id];
+        }
     }
 
     fn getOrPutResolvedPackage(
@@ -5478,6 +5502,13 @@ pub const PackageManager = struct {
 
         pub const Array = std.BoundedArray(UpdateRequest, 64);
 
+        pub inline fn matches(this: PackageManager.UpdateRequest, dependency: Dependency, string_buf: []const u8) bool {
+            return this.name_hash == if (this.name.len == 0)
+                String.Builder.stringHash(dependency.version.literal.slice(string_buf))
+            else
+                dependency.name_hash;
+        }
+
         pub fn parse(
             allocator: std.mem.Allocator,
             log: *logger.Log,
@@ -5492,7 +5523,7 @@ pub const PackageManager = struct {
                 var input = std.mem.trim(u8, positional, " \n\r\t");
                 switch (op) {
                     .link, .unlink => if (!strings.hasPrefixComptime(input, "link:")) {
-                        input = std.fmt.allocPrint(allocator, "link:{s}", .{input}) catch unreachable;
+                        input = std.fmt.allocPrint(allocator, "{0s}@link:{0s}", .{input}) catch unreachable;
                     },
                     else => {},
                 }
@@ -5526,6 +5557,19 @@ pub const PackageManager = struct {
                     });
                     Global.crash();
                 };
+                if (alias != null and version.tag == .git) {
+                    if (Dependency.parseWithOptionalTag(
+                        allocator,
+                        placeholder,
+                        input,
+                        null,
+                        &SlicedString.init(input, input),
+                        log,
+                    )) |ver| {
+                        alias = null;
+                        version = ver;
+                    }
+                }
                 if (switch (version.tag) {
                     .dist_tag => version.value.dist_tag.name.eql(placeholder, input, input),
                     .npm => version.value.npm.name.eql(placeholder, input, input),
@@ -5538,18 +5582,16 @@ pub const PackageManager = struct {
                 }
 
                 var request = UpdateRequest{
-                    .name = allocator.dupe(u8, alias orelse switch (version.tag) {
-                        .dist_tag => version.value.dist_tag.name,
-                        .github => version.value.github.repo,
-                        .npm => version.value.npm.name,
-                        .symlink => version.value.symlink,
-                        else => version.literal,
-                    }.slice(input)) catch unreachable,
-                    .is_aliased = alias != null,
                     .version = version,
                     .version_buf = input,
                 };
-                request.name_hash = String.Builder.stringHash(request.name);
+                if (alias) |name| {
+                    request.is_aliased = true;
+                    request.name = allocator.dupe(u8, name) catch unreachable;
+                    request.name_hash = String.Builder.stringHash(name);
+                } else {
+                    request.name_hash = String.Builder.stringHash(version.literal.slice(input));
+                }
 
                 for (update_requests.constSlice()) |*prev| {
                     if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
@@ -6924,10 +6966,10 @@ pub const PackageManager = struct {
                 _ = manager.getTemporaryDirectory();
             }
             manager.enqueueDependencyList(root.dependencies, true);
+        } else {
+            // Anything that needs to be downloaded from an update needs to be scheduled here
+            manager.drainDependencyList();
         }
-
-        // Anything that needs to be downloaded from an update needs to be scheduled here
-        manager.drainDependencyList();
 
         if (manager.pending_tasks > 0) {
             if (root.dependencies.len > 0) {

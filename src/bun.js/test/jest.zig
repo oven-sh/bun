@@ -96,7 +96,6 @@ pub const DiffFormatter = struct {
                 false,
                 false,
                 true,
-                true,
             );
             buffered_writer.flush() catch unreachable;
 
@@ -113,7 +112,6 @@ pub const DiffFormatter = struct {
                 false,
                 false,
                 false,
-                true,
                 true,
             );
             buffered_writer.flush() catch unreachable;
@@ -132,14 +130,10 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        const equal_fmt = "<d>{s}<r>";
-        const delete_fmt = "<red>{s}<r>";
-        const insert_fmt = "<green>{s}<r>";
-
         switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         this.expected.toFmt(this.globalObject, &formatter),
@@ -160,21 +154,49 @@ pub const DiffFormatter = struct {
                 var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
                 defer diffs.deinit(default_allocator);
 
-                try writer.writeAll(Output.prettyFmt("Expected: ", true));
+                const equal_fmt = "<d>{s}<r>";
+                const delete_fmt = "<red>{s}<r>";
+                const insert_fmt = "<green>{s}<r>";
+
+                try writer.writeAll("Expected: ");
                 for (diffs.items) |df| {
                     switch (df.operation) {
                         .delete => continue,
-                        .insert => try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text}),
-                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                        .insert => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
                 }
 
-                try writer.writeAll(Output.prettyFmt("\nReceived: ", true));
+                try writer.writeAll("\nReceived: ");
                 for (diffs.items) |df| {
                     switch (df.operation) {
                         .insert => continue,
-                        .delete => try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text}),
-                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                        .delete => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
                 }
                 return;
@@ -185,34 +207,74 @@ pub const DiffFormatter = struct {
                 var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
                 defer diffs.deinit(default_allocator);
 
+                const equal_fmt = "<d>  {s}<r>";
+                const delete_fmt = "<red>+ {s}<r>";
+                const insert_fmt = "<green>- {s}<r>";
+
                 var insert_count: usize = 0;
                 var delete_count: usize = 0;
 
                 for (diffs.items) |df| {
+                    var prev: usize = 0;
+                    var curr: usize = 0;
                     switch (df.operation) {
                         .equal => {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
+                            }
                         },
                         .insert => {
-                            for (df.text) |c| {
-                                if (c == '\n') insert_count += 1;
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    insert_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
                             }
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
                         },
                         .delete => {
-                            for (df.text) |c| {
-                                if (c == '\n') delete_count += 1;
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    delete_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
                             }
-                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
                         },
                     }
                 }
 
-                try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                if (Output.enable_ansi_colors) {
+                    try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                    return;
+                }
+                try writer.print("\n\n- Expected  - {d}\n", .{insert_count});
+                try writer.print("+ Received  + {d}", .{delete_count});
                 return;
             },
-            .word => {},
+            .word => {
+                // not implemented
+                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
+            },
         }
         return;
     }
@@ -502,7 +564,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
             const signature = comptime getSignature("toBe", "<green>expected<r>", true);
             const fmt = signature ++ "\n\nExpected: not <green>{any}<r>\n";
@@ -1191,7 +1253,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
         if (not) {
             if (expected_property != null) {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);

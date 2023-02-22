@@ -938,7 +938,7 @@ pub const Command = struct {
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
+            RootCommandMatcher.case(TestCommand.name), RootCommandMatcher.case(TestCommand.old_name) => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 

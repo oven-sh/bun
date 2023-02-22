@@ -342,11 +342,16 @@ const Scanner = struct {
 };
 
 pub const TestCommand = struct {
-    pub const name = "wiptest";
+    pub const name = "test";
+    pub const old_name = "wiptest";
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
         // print the version so you know its doing stuff if it takes a sec
-        Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        if (strings.eqlComptime(ctx.positionals[0], old_name)) {
+            Output.prettyErrorln("<r><b>bun wiptest <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        } else {
+            Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        }
         Output.flush();
 
         var env_loader = brk: {

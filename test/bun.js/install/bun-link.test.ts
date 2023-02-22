@@ -50,7 +50,7 @@ it("should link package", async () => {
   const err1 = await new Response(stderr1).text();
   expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout1).toBeDefined();
-  expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
+  expect(await new Response(stdout1).text()).toContain(`Success! Registered \\"${link_name}\\"`);
   expect(await exited1).toBe(0);
 
   const {
@@ -152,7 +152,7 @@ it("should link scoped package", async () => {
   const err1 = await new Response(stderr1).text();
   expect(err1.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual(["bun link", ""]);
   expect(stdout1).toBeDefined();
-  expect(await new Response(stdout1).text()).toContain(`Success! Registered "${link_name}"`);
+  expect(await new Response(stdout1).text()).toContain(`Success! Registered \\"${link_name}\\"`);
   expect(await exited1).toBe(0);
 
   const {

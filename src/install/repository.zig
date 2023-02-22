@@ -1,6 +1,7 @@
 const bun = @import("bun");
 const Global = bun.Global;
-const Output = bun.Output;
+const logger = bun.logger;
+const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
 const FileSystem = @import("../fs.zig").FileSystem;
@@ -12,6 +13,7 @@ const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
+const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 
 threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -80,11 +82,14 @@ pub const Repository = extern struct {
             if (Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
+            const repo = formatter.repository.repo.slice(formatter.buf);
             if (!formatter.repository.owner.isEmpty()) {
                 try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
                 try writer.writeAll("/");
+            } else if (Dependency.isSCPLikePath(repo)) {
+                try writer.writeAll("ssh://");
             }
-            try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
+            try writer.writeAll(repo);
 
             if (!formatter.repository.resolved.isEmpty()) {
                 try writer.writeAll("#");
@@ -116,9 +121,26 @@ pub const Repository = extern struct {
         return error.InstallFailed;
     }
 
+    pub fn tryHTTPS(url: string) ?string {
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            final_path_buf[0.."https".len].* = "https".*;
+            std.mem.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
+            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+        }
+        if (Dependency.isSCPLikePath(url)) {
+            final_path_buf[0.."https://".len].* = "https://".*;
+            var rest = final_path_buf["https://".len..];
+            std.mem.copy(u8, rest, url);
+            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
+            return final_path_buf[0..(url.len + "https://".len)];
+        }
+        return null;
+    }
+
     pub fn download(
         allocator: std.mem.Allocator,
         env: *DotEnv.Loader,
+        log: *logger.Log,
         cache_dir: std.fs.Dir,
         task_id: u64,
         name: string,
@@ -130,9 +152,13 @@ pub const Repository = extern struct {
 
         return if (cache_dir.openDirZ(folder_name, .{}, true)) |dir| fetch: {
             _ = exec(allocator, env, dir, &[_]string{ "git", "fetch", "--quiet" }) catch |err| {
-                Output.prettyErrorln("<r><red>Error<r> \"git fetch\" failed for {s}", .{
-                    name,
-                });
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "\"git fetch\" for \"{s}\" failed",
+                    .{name},
+                ) catch unreachable;
                 return err;
             };
             break :fetch dir;
@@ -147,16 +173,27 @@ pub const Repository = extern struct {
                 url,
                 folder_name,
             }) catch |err| {
-                Output.prettyErrorln("<r><red>Error<r> \"git clone\" failed for {s}", .{
-                    name,
-                });
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "\"git clone\" for \"{s}\" failed",
+                    .{name},
+                ) catch unreachable;
                 return err;
             };
             break :clone try cache_dir.openDirZ(folder_name, .{}, true);
         };
     }
 
-    pub fn findCommit(allocator: std.mem.Allocator, env: *DotEnv.Loader, repo_dir: std.fs.Dir, name: string, committish: string) !string {
+    pub fn findCommit(
+        allocator: std.mem.Allocator,
+        env: *DotEnv.Loader,
+        log: *logger.Log,
+        repo_dir: std.fs.Dir,
+        name: string,
+        committish: string,
+    ) !string {
         return std.mem.trim(u8, exec(
             allocator,
             env,
@@ -166,10 +203,13 @@ pub const Repository = extern struct {
             else
                 &[_]string{ "git", "log", "--format=%H", "-1" },
         ) catch |err| {
-            Output.prettyErrorln("\n<r><red>Error<r> no commit matching \"{s}\" found for \"{s}\" (but repository exists)", .{
-                committish,
-                name,
-            });
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                allocator,
+                "no commit matching \"{s}\" found for \"{s}\" (but repository exists)",
+                .{ committish, name },
+            ) catch unreachable;
             return err;
         }, " \t\r\n");
     }
@@ -177,6 +217,7 @@ pub const Repository = extern struct {
     pub fn checkout(
         allocator: std.mem.Allocator,
         env: *DotEnv.Loader,
+        log: *logger.Log,
         cache_dir: std.fs.Dir,
         repo_dir: std.fs.Dir,
         name: string,
@@ -196,18 +237,26 @@ pub const Repository = extern struct {
                 try bun.getFdPath(repo_dir.fd, &final_path_buf),
                 folder_name,
             }) catch |err| {
-                Output.prettyErrorln("<r><red>Error<r> \"git clone\" failed for {s}", .{
-                    name,
-                });
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "\"git clone\" for \"{s}\" failed",
+                    .{name},
+                ) catch unreachable;
                 return err;
             };
 
             var dir = try cache_dir.openDirZ(folder_name, .{}, true);
 
             _ = exec(allocator, env, dir, &[_]string{ "git", "checkout", "--quiet", resolved }) catch |err| {
-                Output.prettyErrorln("<r><red>Error<r> \"git checkout\" failed for {s}", .{
-                    name,
-                });
+                log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "\"git checkout\" for \"{s}\" failed",
+                    .{name},
+                ) catch unreachable;
                 return err;
             };
             dir.deleteTree(".git") catch {};
@@ -225,11 +274,14 @@ pub const Repository = extern struct {
         defer package_dir.close();
 
         const json_file = package_dir.openFileZ("package.json", .{ .mode = .read_only }) catch |err| {
-            Output.prettyErrorln("<r><red>Error {s}<r> failed to open package.json for {s}", .{
-                @errorName(err),
-                name,
-            });
-            Global.crash();
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                allocator,
+                "\"package.json\" for \"{s}\" failed to open: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
         };
         defer json_file.close();
         const json_stat = try json_file.stat();
@@ -240,14 +292,14 @@ pub const Repository = extern struct {
             json_file.handle,
             &json_path_buf,
         ) catch |err| {
-            Output.prettyErrorln(
-                "<r><red>Error {s}<r> failed to open package.json for {s}",
-                .{
-                    @errorName(err),
-                    name,
-                },
-            );
-            Global.crash();
+            log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                allocator,
+                "\"package.json\" for \"{s}\" failed to resolve: {s}",
+                .{ name, @errorName(err) },
+            ) catch unreachable;
+            return error.InstallFailed;
         };
 
         const ret_json_path = try FileSystem.instance.dirname_store.append(@TypeOf(json_path), json_path);

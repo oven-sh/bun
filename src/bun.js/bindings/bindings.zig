@@ -211,12 +211,12 @@ pub const ZigString = extern struct {
 
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
-        if(maxlen == 0){
+        if (maxlen == 0) {
             len = this.len;
-        }else {
+        } else {
             len = @max(this.len, maxlen);
         }
-        
+
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -2927,6 +2927,15 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("forEachProperty", .{ this, globalThis, ctx, callback });
     }
 
+    pub fn forEachPropertyOrdered(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: PropertyIteratorFn,
+    ) void {
+        cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
@@ -3060,6 +3069,10 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
         JSC.markBinding(@src());
         return JSBuffer__isBuffer(global, value);
+    }
+
+    pub fn isRegExp(this: JSValue) bool {
+        return this.jsType() == .RegExpObject;
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
@@ -3654,6 +3667,21 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("strictDeepEquals", .{ this, other, global });
     }
 
+    pub const DiffMethod = enum(u8) {
+        none,
+        character,
+        word,
+        line,
+    };
+
+    pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
+        if ((this.isString() and other.isString()) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isRegExp() and other.isObject()) or (this.isObject() and other.isRegExp())) return .character;
+        if (this.isObject() and other.isObject()) return .line;
+
+        return .none;
+    }
+
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
             this,
@@ -3868,6 +3896,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "fastGet_",
         "forEach",
         "forEachProperty",
+        "forEachPropertyOrdered",
         "fromEntries",
         "fromInt64NoTruncate",
         "fromUInt64NoTruncate",

@@ -1253,6 +1253,11 @@ pub const BundleOptions = struct {
     inlining: bool = false,
     minify_whitespace: bool = false,
 
+    pub fn setProduction(this: *BundleOptions, value: bool) void {
+        this.production = value;
+        this.jsx.development = !value;
+    }
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {

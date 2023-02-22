@@ -132,9 +132,9 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        const equal_fmt = "<d>{s}<r>";
-        const delete_fmt = "<red>{s}<r>";
-        const insert_fmt = "<green>{s}<r>";
+        const equal_fmt = "<d>  {s}<r>";
+        const delete_fmt = "<red>+ {s}<r>";
+        const insert_fmt = "<green>- {s}<r>";
 
         switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
             .none => {
@@ -160,21 +160,45 @@ pub const DiffFormatter = struct {
                 var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
                 defer diffs.deinit(default_allocator);
 
-                try writer.writeAll(Output.prettyFmt("Expected: ", true));
+                try writer.writeAll("Expected: ");
                 for (diffs.items) |df| {
                     switch (df.operation) {
                         .delete => continue,
-                        .insert => try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text}),
-                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                        .insert => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
                 }
 
-                try writer.writeAll(Output.prettyFmt("\nReceived: ", true));
+                try writer.writeAll("\nReceived: ");
                 for (diffs.items) |df| {
                     switch (df.operation) {
                         .insert => continue,
-                        .delete => try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text}),
-                        .equal => try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text}),
+                        .delete => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
                 }
                 return;
@@ -189,30 +213,66 @@ pub const DiffFormatter = struct {
                 var delete_count: usize = 0;
 
                 for (diffs.items) |df| {
+                    var prev: usize = 0;
+                    var curr: usize = 0;
                     switch (df.operation) {
                         .equal => {
-                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
+                            }
                         },
                         .insert => {
-                            for (df.text) |c| {
-                                if (c == '\n') insert_count += 1;
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    insert_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
                             }
-                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
                         },
                         .delete => {
-                            for (df.text) |c| {
-                                if (c == '\n') delete_count += 1;
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    delete_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
                             }
-                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
                         },
                     }
                 }
 
-                try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                if (Output.enable_ansi_colors) {
+                    try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                    return;
+                }
+                try writer.print("\n\n- Expected  - {d}\n", .{insert_count});
+                try writer.print("+ Received  + {d}", .{delete_count});
                 return;
             },
-            .word => {},
+            .word => {
+                // not implemented
+                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
+            },
         }
         return;
     }
@@ -597,20 +657,20 @@ pub const Expect = struct {
         value.ensureStillAlive();
 
         if (!value.isObject() and !value.isString()) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
             return .zero;
         }
 
         if (!expected.isNumber()) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
             return .zero;
         }
 
         const expected_length: f64 = expected.asNumber();
         if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalObject, &fmt)});
             return .zero;
         }
@@ -626,11 +686,11 @@ pub const Expect = struct {
             const length_value: JSValue = value.getIfPropertyExistsImpl(globalObject, "length", "length".len);
 
             if (length_value.isEmpty()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
                 globalObject.throw("Received value does not have a length property: {any}", .{value.toFmt(globalObject, &fmt)});
                 return .zero;
             } else if (!length_value.isNumber()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
                 globalObject.throw("Received value has non-number length property: {any}", .{length_value.toFmt(globalObject, &fmt)});
                 return .zero;
             }
@@ -726,7 +786,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = expected.toFmt(globalObject, &formatter);
         if (not) {
@@ -779,7 +839,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -823,7 +883,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -871,7 +931,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -914,7 +974,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -957,7 +1017,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -1003,7 +1063,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
@@ -1327,7 +1387,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1410,7 +1470,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1490,7 +1550,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1570,7 +1630,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const value_fmt = value.toFmt(globalObject, &formatter);
         const expected_fmt = other_value.toFmt(globalObject, &formatter);
         if (not) {
@@ -1613,7 +1673,7 @@ pub const Expect = struct {
         const expected_value: JSValue = if (arguments.len > 0) brk: {
             const value = arguments[0];
             if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
-                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
                 globalObject.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalObject, &fmt)});
                 return .zero;
             }
@@ -1669,7 +1729,7 @@ pub const Expect = struct {
             if (!did_throw) return thisValue;
 
             const result: JSValue = result_.?;
-            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
             if (expected_value.isEmpty()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
@@ -1786,7 +1846,7 @@ pub const Expect = struct {
                 }
 
                 // error: message from received error does not match expected string
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
                 if (_received_message) |received_message| {
                     const expected_value_fmt = expected_value.toFmt(globalObject, &formatter);
@@ -1819,7 +1879,7 @@ pub const Expect = struct {
                 }
 
                 // error: message from received error does not match expected error message.
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
 
                 if (_received_message) |received_message| {
                     const expected_fmt = expected_message.toFmt(globalObject, &formatter);
@@ -1849,7 +1909,7 @@ pub const Expect = struct {
             if (result.isInstanceOf(globalObject, expected_value)) return thisValue;
 
             // error: received error not instance of received error constructor
-            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
             var expected_class = ZigString.Empty;
             var received_class = ZigString.Empty;
             expected_value.getClassName(globalObject, &expected_class);
@@ -1896,7 +1956,7 @@ pub const Expect = struct {
         }
 
         // did not throw
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
         const received_line = "Received function did not throw\n";
 
         if (expected_value.isEmpty()) {

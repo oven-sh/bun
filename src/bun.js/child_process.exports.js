@@ -8,15 +8,7 @@ const {
 } = import.meta.require("node:os");
 const { promisify } = import.meta.require("node:util");
 
-const { ArrayBuffer } = import.meta.primordials;
-
-var Uint8Array = globalThis.Uint8Array;
-var String = globalThis.String;
-var Object = globalThis.Object;
-var Buffer = globalThis.Buffer;
-var Promise = globalThis.Promise;
-
-var PromiseAll = Promise.all;
+const { ArrayBuffer, Uint8Array, String, Object, Buffer, Promise } = import.meta.primordials;
 
 var ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 var ObjectCreate = Object.create;

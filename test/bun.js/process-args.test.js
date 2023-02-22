@@ -1,10 +1,11 @@
 import { spawn } from "bun";
 import { test, expect } from "bun:test";
+import { bunExe } from "./bunExe";
 
 test("args exclude run", async () => {
   const arg0 = process.argv[0];
   const arg1 = import.meta.dir + "/print-process-args.js";
-  const exe = process.versions.bun.includes("debug") ? "bun-debug" : "bun";
+  const exe = bunExe();
   const { stdout: s1 } = spawn([exe, "print-process-args.js"], {
     cwd: import.meta.dir,
     env: { BUN_DEBUG_QUIET_LOGS: "1" },

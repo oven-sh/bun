@@ -2,6 +2,7 @@ import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick } from "./gc";
 import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
+import { bunEnv } from "./bunEnv";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],

@@ -967,6 +967,8 @@ pub const ZigConsoleClient = struct {
                 enable_colors,
                 true,
                 true,
+                false,
+                false,
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;
@@ -1015,6 +1017,8 @@ pub const ZigConsoleClient = struct {
         enable_colors: bool,
         add_newline: bool,
         flush: bool,
+        order_properties: bool,
+        quote_strings: bool,
     ) void {
         var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
@@ -1026,7 +1030,12 @@ pub const ZigConsoleClient = struct {
         }
 
         if (len == 1) {
-            fmt = ZigConsoleClient.Formatter{ .remaining_values = &[_]JSValue{}, .globalThis = global };
+            fmt = ZigConsoleClient.Formatter{
+                .remaining_values = &[_]JSValue{},
+                .globalThis = global,
+                .ordered_properties = order_properties,
+                .quote_strings = quote_strings,
+            };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
             var unbuffered_writer = if (comptime Writer != RawWriter)
@@ -1099,7 +1108,12 @@ pub const ZigConsoleClient = struct {
         }
 
         var this_value: JSValue = vals[0];
-        fmt = ZigConsoleClient.Formatter{ .remaining_values = vals[0..len][1..], .globalThis = global };
+        fmt = ZigConsoleClient.Formatter{
+            .remaining_values = vals[0..len][1..],
+            .globalThis = global,
+            .ordered_properties = order_properties,
+            .quote_strings = quote_strings,
+        };
         var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
         var any = false;
@@ -1163,6 +1177,7 @@ pub const ZigConsoleClient = struct {
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
+        ordered_properties: bool = false,
 
         pub fn goodTimeForANewLine(this: *@This()) bool {
             if (this.estimated_line_length > 80) {
@@ -1372,10 +1387,6 @@ pub const ZigConsoleClient = struct {
                         if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
                             return .{ .tag = .JSX, .cell = js_type };
                         }
-                    }
-
-                    if (value.as(JSC.DOMURL) != null) {
-                        return .{ .tag = .String, .cell = js_type };
                     }
                 }
 
@@ -2545,7 +2556,11 @@ pub const ZigConsoleClient = struct {
                         .parent = value,
                     };
 
-                    value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+                    if (this.ordered_properties) {
+                        value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+                    } else {
+                        value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+                    }
 
                     if (iter.i == 0) {
                         if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))

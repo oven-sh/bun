@@ -29,10 +29,7 @@ import fs, {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  ReadStream as ReadStream_,
-  WriteStream as WriteStream_,
-} from "../fixtures/export-lazy-fs-streams/export-from";
+import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "../fixtures/export-lazy-fs-streams/export-from";
 import {
   ReadStream as ReadStreamStar_,
   WriteStream as WriteStreamStar_,
@@ -42,6 +39,10 @@ const Buffer = globalThis.Buffer || Uint8Array;
 
 if (!import.meta.dir) {
   import.meta.dir = ".";
+}
+
+function mkdirForce(path) {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
 describe("copyFileSync", () => {
@@ -624,16 +625,16 @@ describe("fs.WriteStream", () => {
     expect(stream instanceof fs.WriteStream).toBe(true);
   });
 
-  it("should be able to write to a file", (done) => {
+  it("should be able to write to a file", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
-    mkdirSync(pathToDir);
-    const path = `${pathToDir}/fs-writestream-test.txt`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-writestream-test.txt`);
 
     const stream = new fs.WriteStream(path, { flags: "w+" });
     stream.write("Test file written successfully");
     stream.end();
 
-    stream.on("error", (e) => {
+    stream.on("error", e => {
       done(e instanceof Error ? e : new Error(e));
     });
 
@@ -671,16 +672,16 @@ describe("fs.WriteStream", () => {
     expect(stream instanceof fs.WriteStream).toBe(true);
   });
 
-  it("should be able to write to a file with re-exported WriteStream", (done) => {
+  it("should be able to write to a file with re-exported WriteStream", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
-    mkdirSync(pathToDir);
-    const path = `${pathToDir}/fs-writestream-re-exported-test.txt`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-writestream-re-exported-test.txt`);
 
     const stream = new WriteStream_(path, { flags: "w+" });
     stream.write("Test file written successfully");
     stream.end();
 
-    stream.on("error", (e) => {
+    stream.on("error", e => {
       done(e instanceof Error ? e : new Error(e));
     });
 
@@ -701,10 +702,10 @@ describe("fs.ReadStream", () => {
     expect(stream instanceof fs.ReadStream).toBe(true);
   });
 
-  it("should be able to read from a file", (done) => {
+  it("should be able to read from a file", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
-    mkdirSync(pathToDir);
-    const path = `${pathToDir}fs-readstream-test.txt`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-readstream-test.txt`);
 
     writeFileSync(path, "Test file written successfully", {
       encoding: "utf8",
@@ -713,13 +714,13 @@ describe("fs.ReadStream", () => {
 
     const stream = new fs.ReadStream(path);
     stream.setEncoding("utf8");
-    stream.on("error", (e) => {
+    stream.on("error", e => {
       done(e instanceof Error ? e : new Error(e));
     });
 
     let data = "";
 
-    stream.on("data", (chunk) => {
+    stream.on("data", chunk => {
       data += chunk;
     });
 
@@ -757,10 +758,10 @@ describe("fs.ReadStream", () => {
     expect(stream instanceof fs.ReadStream).toBe(true);
   });
 
-  it("should be able to read from a file, with re-exported ReadStream", (done) => {
+  it("should be able to read from a file, with re-exported ReadStream", done => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
-    mkdirSync(pathToDir);
-    const path = `${pathToDir}fs-readstream-re-exported-test.txt`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-readstream-re-exported-test.txt`);
 
     writeFileSync(path, "Test file written successfully", {
       encoding: "utf8",
@@ -769,13 +770,13 @@ describe("fs.ReadStream", () => {
 
     const stream = new ReadStream_(path);
     stream.setEncoding("utf8");
-    stream.on("error", (e) => {
+    stream.on("error", e => {
       done(e instanceof Error ? e : new Error(e));
     });
 
     let data = "";
 
-    stream.on("data", (chunk) => {
+    stream.on("data", chunk => {
       data += chunk;
     });
 

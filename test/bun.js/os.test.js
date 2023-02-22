@@ -116,7 +116,21 @@ it("networkInterfaces", () => {
 });
 
 it("machine", () => {
-  expect(os.machine().length > 1).toBe(true);
+  const possibleValues = [
+    "arm",
+    "arm64",
+    "aarch64",
+    "mips",
+    "mips64",
+    "ppc64",
+    "ppc64le",
+    "s390",
+    "s390x",
+    "i386",
+    "i686",
+    "x86_64",
+  ];
+  expect(possibleValues.includes(os.machine())).toBe(true);
 });
 
 it("EOL", () => {

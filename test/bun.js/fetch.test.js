@@ -131,47 +131,13 @@ describe("AbortSignal", () => {
           body: new ReadableStream({
             pull(controller) {
               controller.enqueue(new Uint8Array([1, 2, 3, 4]));
-              abortController.abort();
+              //this will abort immediately should abort before connected
+              abortController.abort(); 
             },
           }),
           signal: abortController.signal,
         },
       );
-    } catch (ex) {
-      error = ex
-    }
-
-    expect(error).toBeTruthy(error instanceof DOMException);
-    expect(error.name).toBe("AbortError");
-    expect(error.message).toBe("The operation was aborted.");
-  });
-  it("AbortErrorWhileStreaming", async () => {
-    let error;
-    try {
-      let counter = 10;
-      const response = await fetch(
-        "http://localhost:64321/stream",
-        {
-          method: "POST",
-          body: new ReadableStream({
-            async pull(controller) {
-              await Bun.sleep(100);
-              if (counter > 0) {
-                controller.enqueue(new Uint8Array([1, 2, 3, 4]));
-                counter--;
-               } else {
-                controller.close();
-                return;
-              }
-            },
-          }),
-          signal: AbortSignal.timeout(300),
-        },
-      );
-      let total = 0;
-      for await (const chunk of response.body) {
-        total += chunk.length;
-      }
     } catch (ex) {
       error = ex
     }

@@ -755,32 +755,26 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
-
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::JSValue job = callFrame->argument(0);
+    JSC::JSValue num = callFrame->argument(1);
+    JSC::JSValue arguments = {};
+    size_t argumentCount = callFrame->argumentCount();
+    switch (argumentCount) {
+    case 0: {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::throwTypeError(globalObject, scope, "setTimeout requires 1 argument (a function)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
-
-    JSC::JSValue job = callFrame->argument(0);
-
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
+    case 1: {
+        num = jsNumber(0);
+        break;
+    }
+    case 2: {
+        break;
     }
 
-    if (callFrame->argumentCount() == 1) {
-        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {});
-        return JSC::JSValue::encode(JSC::jsNumber(Bun__Timer__getNextID()));
-    }
-
-    JSC::JSValue num = callFrame->argument(1);
-    JSC::JSValue arguments = {};
-    size_t argumentCount = callFrame->argumentCount() - 2;
-    if (argumentCount > 0) {
-        JSC::ObjectInitializationScope initializationScope(globalObject->vm());
+    default: {
+        JSC::ObjectInitializationScope initializationScope(vm);
         JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
             initializationScope, nullptr,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
@@ -797,6 +791,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
         }
         arguments = JSValue(argumentsArray);
     }
+    }
+
+    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
@@ -843,27 +845,26 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
-
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "setInterval requires 2 arguments (a function)"_s);
-        return JSC::JSValue::encode(JSC::JSValue {});
-    }
-
     JSC::JSValue job = callFrame->argument(0);
-
-    if (!job.isObject() || !job.getObject()->isCallable()) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
+    JSC::JSValue num = callFrame->argument(1);
+    JSC::JSValue arguments = {};
+    size_t argumentCount = callFrame->argumentCount();
+    switch (argumentCount) {
+    case 0: {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::throwTypeError(globalObject, scope, "setInterval requires 1 argument (a function)"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
+    case 1: {
+        num = jsNumber(0);
+        break;
+    }
+    case 2: {
+        break;
+    }
 
-    JSC::JSValue num = callFrame->argument(1);
-
-    JSC::JSValue arguments = {};
-    size_t argumentCount = callFrame->argumentCount() - 2;
-    if (argumentCount > 0) {
-        JSC::ObjectInitializationScope initializationScope(globalObject->vm());
+    default: {
+        JSC::ObjectInitializationScope initializationScope(vm);
         JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(
             initializationScope, nullptr,
             globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
@@ -880,8 +881,15 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
         }
         arguments = JSValue(argumentsArray);
     }
-    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job),
-        JSC::JSValue::encode(num), JSValue::encode(arguments));
+    }
+
+    if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
 static JSC_DEFINE_HOST_FUNCTION(functionClearInterval,

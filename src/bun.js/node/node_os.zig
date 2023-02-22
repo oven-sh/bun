@@ -231,7 +231,7 @@ pub const Os = struct {
         }
         //NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
-        // value.
+        // model name.
         const model_name = JSC.ZigString.init(std.mem.span(&model_name_buf)).withEncoding().toValueGC(globalThis);
 
 
@@ -247,7 +247,7 @@ pub const Os = struct {
         }
 
 
-        // Get the multiplier
+        // Get the multiplier; this is the number of ms/tick
         const unistd = @cImport({@cInclude("unistd.h");});
         const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
         const multiplier = 1000 / @intCast(u64, ticks);

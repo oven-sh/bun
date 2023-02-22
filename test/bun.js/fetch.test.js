@@ -48,7 +48,64 @@ afterAll(() => {
   server.stop();
 });
 
+describe("AbortSignalDirectTest", () => {
+  const body = new Uint8Array(1024 * 1024 * 2);
+  crypto.getRandomValues(body);
+  const port = 64322;
+  async function abortOnStage(body, stage, port) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = Bun.serve({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
 
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.end();
+                    return;
+                  }
+                  controller.write(value);
+                }
+              },
+            }),
+          );
+        },
+        port,
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${port}`, { method: "POST", body, signal: signal }).then((res) => res.arrayBuffer());
+
+      } catch (ex) {
+        error = ex;
+      }
+      server.stop();
+      expect(error).toBeTruthy(error instanceof DOMException);
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(body, i, port + i);
+    })();
+  }
+})
 describe("AbortSignal", () => {
   it("AbortError", async () => {
     let name;
@@ -132,7 +189,7 @@ describe("AbortSignal", () => {
             pull(controller) {
               controller.enqueue(new Uint8Array([1, 2, 3, 4]));
               //this will abort immediately should abort before connected
-              abortController.abort(); 
+              abortController.abort();
             },
           }),
           signal: abortController.signal,

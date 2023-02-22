@@ -1087,6 +1087,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
+                    if (req.signal) |signal| {
+                        // if signal is not aborted, abort the signal
+                        if (!signal.aborted()) {
+                            const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                            reason.ensureStillAlive();
+                            _ = signal.signal(reason);
+                        }
+                    }
                     // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
                         req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);

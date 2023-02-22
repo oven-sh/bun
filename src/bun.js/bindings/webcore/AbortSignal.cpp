@@ -118,7 +118,7 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
 void AbortSignal::cleanNativeBindings(void* ref) {
     auto callbacks = std::exchange(m_native_callbacks, {});
 
-    callbacks.removeLastMatching([=](auto callback){
+    callbacks.removeAllMatching([=](auto callback){
         const auto [ ctx, func ] = callback;
         return ctx == ref;
     });

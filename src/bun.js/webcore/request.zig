@@ -221,18 +221,18 @@ pub const Request = struct {
 
     pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         // Already have an C++ instance
-        if(this.signal) |signal| {
+        if (this.signal) |signal| {
             return signal.toJS(globalThis);
         } else {
             //Lazy create default signal
             const js_signal = AbortSignal.create(globalThis);
             js_signal.ensureStillAlive();
             if (AbortSignal.fromJS(js_signal)) |signal| {
-                this.signal = signal;
+                this.signal = signal.ref();
             }
             return js_signal;
         }
-    } 
+    }
 
     pub fn getMethod(
         this: *Request,
@@ -271,9 +271,9 @@ pub const Request = struct {
         }
 
         this.body.deinit();
-        if(this.signal) |signal| {
-           _ = signal.unref();
-           this.signal = null;
+        if (this.signal) |signal| {
+            _ = signal.unref();
+            this.signal = null;
         }
 
         bun.default_allocator.destroy(this);
@@ -440,10 +440,10 @@ pub const Request = struct {
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
                         signal_.ensureStillAlive();
-                        request.signal = signal;
-                        _ = signal.ref();
-                        
+                        request.signal = signal.ref();
                     } else {
+                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
+
                         if (request.headers) |head| {
                             head.deref();
                         }
@@ -544,9 +544,8 @@ pub const Request = struct {
             this.headers = req.headers.?.cloneThis(globalThis).?;
         }
 
-        if(this.signal) |signal| {
-            _ = signal.ref();
-            req.signal = signal;
+        if (this.signal) |signal| {
+            req.signal = signal.ref();
         }
     }
 

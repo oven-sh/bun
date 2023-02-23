@@ -358,7 +358,7 @@ pub const Os = struct {
         while (it) |iface| : (it = iface.ifa_next) {
             if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
-            const interface_name = std.mem.span(iface.ifa_name);
+            const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
             const addr = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_addr)));
             const netmask = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_netmask)));
 
@@ -420,7 +420,7 @@ pub const Os = struct {
                 const maybe_ll_addr = while (ll_it) |ll_iface| : (ll_it = ll_iface.ifa_next) {
                     if (helpers.skip(ll_iface) or !helpers.isLinkLayer(ll_iface)) continue;
 
-                    const ll_name = std.mem.span(ll_iface.ifa_name);
+                    const ll_name = std.mem.sliceTo(ll_iface.ifa_name, 0);
                     if (!std.mem.startsWith(u8, ll_name, interface_name)) continue;
                     if (ll_name.len > interface_name.len and ll_name[interface_name.len] != ':') continue;
 

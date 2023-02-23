@@ -556,7 +556,7 @@ pub const processor_flavor_t = c_int;
 pub const PROCESSOR_CPU_LOAD_INFO: processor_flavor_t = 2;
 // https://opensource.apple.com/source/xnu/xnu-792/osfmk/mach/machine.h.auto.html
 pub const CPU_STATE_MAX = 4;
-pub const processor_cpu_load_info = struct {
+pub const processor_cpu_load_info = extern struct {
     cpu_ticks: [CPU_STATE_MAX]c_ulong,
 };
 pub const PROCESSOR_CPU_LOAD_INFO_COUNT = @as(std.c.mach_msg_type_number_t,

@@ -296,7 +296,7 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 ```
 
 {% callout %}
-**Blob support** — Bun doesn't support globs for workspace names yet, but this is coming soon!
+**Glob support** — Bun doesn't support globs for workspace names yet, but this is coming soon!
 {% /callout %}
 
 This has a couple major benefits.

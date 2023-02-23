@@ -21,7 +21,7 @@ The `bun` command-line tool also implements an npm-compatible package manager, t
 {% arrowbutton href="/docs/cli/test" text="Write and run tests" /%}
 {% /block %}
 
-## On runtimes
+## What is a runtime?
 
 JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google) and JavaScriptCore (developed by Apple). Both are open source.
 

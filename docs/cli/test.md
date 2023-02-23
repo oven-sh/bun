@@ -88,8 +88,8 @@ Alternatively, use the `done` callback to signal completion. If you include the 
 ```ts
 import { expect, test } from "bun:test";
 
-test("2 * 2", (done) => {
-  Promise.resolve(2 * 2).then((done) => {
+test("2 * 2", done => {
+  Promise.resolve(2 * 2).then(done => {
     expect(result).toEqual(4);
     done();
   });
@@ -112,7 +112,7 @@ afterEach(() => {
 // tests...
 ```
 
-Perform per-file setup and teardown logic with `beforeAll` and `afterAll`.
+Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the `*scope* is the current file; in a `describe` block, the scope is the block itself.
 
 ```ts
 import { expect, test, beforeAll, afterAll } from "bun:test";

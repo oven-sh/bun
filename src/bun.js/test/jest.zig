@@ -86,7 +86,7 @@ pub const DiffFormatter = struct {
 
             const fmt_options = JSC.ZigConsoleClient.FormatOptions{
                 .enable_colors = false,
-                .add_newline = true,
+                .add_newline = false,
                 .flush = false,
                 .ordered_properties = true,
                 .quote_strings = true,

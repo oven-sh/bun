@@ -1,5 +1,14 @@
 import { it, expect, describe } from "bun:test";
 
+it("Timeout", () => {
+  const id = setTimeout(() => {}, 0);
+  expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);
+
+  const id2 = setInterval(() => {}, 1);
+  id2.unref();
+  expect(Bun.inspect(id2)).toBe(`Timeout (#${+id2}, repeats)`);
+});
+
 it("when prototype defines the same property, don't print the same property twice", () => {
   var base = {
     foo: "123",

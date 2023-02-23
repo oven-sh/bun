@@ -12,6 +12,7 @@ const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
+const AbortSignal = JSC.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = @import("bun").Output;
@@ -57,6 +58,7 @@ pub const Request = struct {
     url_was_allocated: bool = false,
 
     headers: ?*FetchHeaders = null,
+    signal: ?*AbortSignal = null,
     body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
@@ -217,6 +219,21 @@ pub const Request = struct {
         return ZigString.Empty.toValueGC(globalThis);
     }
 
+    pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        // Already have an C++ instance
+        if (this.signal) |signal| {
+            return signal.toJS(globalThis);
+        } else {
+            //Lazy create default signal
+            const js_signal = AbortSignal.create(globalThis);
+            js_signal.ensureStillAlive();
+            if (AbortSignal.fromJS(js_signal)) |signal| {
+                this.signal = signal.ref();
+            }
+            return js_signal;
+        }
+    }
+
     pub fn getMethod(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -243,7 +260,7 @@ pub const Request = struct {
         return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
     }
 
-    pub fn finalize(this: *Request) callconv(.C) void {
+    pub fn finalizeWithoutDeinit(this: *Request) void {
         if (this.headers) |headers| {
             headers.deref();
             this.headers = null;
@@ -254,7 +271,14 @@ pub const Request = struct {
         }
 
         this.body.deinit();
+        if (this.signal) |signal| {
+            _ = signal.unref();
+            this.signal = null;
+        }
+    }
 
+    pub fn finalize(this: *Request) callconv(.C) void {
+        this.finalizeWithoutDeinit();
         bun.default_allocator.destroy(this);
     }
 
@@ -381,10 +405,7 @@ pub const Request = struct {
                         if (Body.Value.fromJS(globalThis, body_)) |body| {
                             request.body = body;
                         } else {
-                            if (request.headers) |head| {
-                                head.deref();
-                            }
-
+                            request.finalizeWithoutDeinit();
                             return null;
                         }
                     }
@@ -398,6 +419,19 @@ pub const Request = struct {
                 }
             },
             else => {
+                if (arguments[1].get(globalThis, "signal")) |signal_| {
+                    if (AbortSignal.fromJS(signal_)) |signal| {
+                        //Keep it alive
+                        signal_.ensureStillAlive();
+                        request.signal = signal.ref();
+                    } else {
+                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
+
+                        request.finalizeWithoutDeinit();
+                        return null;
+                    }
+                }
+
                 if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1], arguments[1].jsType()) catch null) |req_init| {
                     request.headers = req_init.headers;
                     request.method = req_init.method;
@@ -407,10 +441,7 @@ pub const Request = struct {
                     if (Body.Value.fromJS(globalThis, body_)) |body| {
                         request.body = body;
                     } else {
-                        if (request.headers) |head| {
-                            head.deref();
-                        }
-
+                        request.finalizeWithoutDeinit();
                         return null;
                     }
                 }
@@ -505,6 +536,10 @@ pub const Request = struct {
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
             this.headers = req.headers.?.cloneThis(globalThis).?;
+        }
+
+        if (this.signal) |signal| {
+            req.signal = signal.ref();
         }
     }
 

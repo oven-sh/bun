@@ -211,12 +211,12 @@ pub const ZigString = extern struct {
 
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
-        if(maxlen == 0){
+        if (maxlen == 0) {
             len = this.len;
-        }else {
+        } else {
             len = @max(this.len, maxlen);
         }
-        
+
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -1690,6 +1690,26 @@ pub const AbortSignal = extern opaque {
     pub const name = "JSC::AbortSignal";
     pub const namespace = "JSC";
 
+    pub fn listen(
+        this: *AbortSignal,
+        comptime Context: type,
+        ctx: *Context,
+        comptime cb: *const fn (*Context, JSValue) void,
+    ) *AbortSignal {
+        const Wrapper = struct {
+            const call = cb;
+            pub fn callback(
+                ptr: ?*anyopaque,
+                reason: JSValue,
+            ) callconv(.C) void {
+                var val = bun.cast(*Context, ptr.?);
+                call(val, reason);
+            }
+        };
+
+        return this.addListener(@ptrCast(?*anyopaque, ctx), Wrapper.callback);
+    }
+
     pub fn addListener(
         this: *AbortSignal,
         ctx: ?*anyopaque,
@@ -1697,6 +1717,11 @@ pub const AbortSignal = extern opaque {
     ) *AbortSignal {
         return cppFn("addListener", .{ this, ctx, callback });
     }
+
+    pub fn cleanNativeBindings(this: *AbortSignal, ctx: ?*anyopaque) void {
+        return cppFn("cleanNativeBindings", .{ this, ctx });
+    }
+
     pub fn signal(
         this: *AbortSignal,
         reason: JSValue,
@@ -1704,10 +1729,12 @@ pub const AbortSignal = extern opaque {
         return cppFn("signal", .{ this, reason });
     }
 
+    /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(this: *AbortSignal) bool {
         return cppFn("aborted", .{this});
     }
 
+    /// This function is not threadsafe. JSValue cannot safely be passed between threads.
     pub fn abortReason(this: *AbortSignal) JSValue {
         return cppFn("abortReason", .{this});
     }
@@ -1728,6 +1755,14 @@ pub const AbortSignal = extern opaque {
         return cppFn("fromJS", .{value});
     }
 
+    pub fn toJS(this: *AbortSignal, global: *JSGlobalObject) JSValue {
+        return cppFn("toJS", .{ this, global });
+    }
+
+    pub fn create(global: *JSGlobalObject) JSValue {
+        return cppFn("create", .{global});
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -1736,17 +1771,7 @@ pub const AbortSignal = extern opaque {
         return cppFn("createTimeoutError", .{ message, code, global });
     }
 
-    pub const Extern = [_][]const u8{
-        "createAbortError",
-        "createTimeoutError",
-        "ref",
-        "unref",
-        "signal",
-        "abortReason",
-        "aborted",
-        "addListener",
-        "fromJS",
-    };
+    pub const Extern = [_][]const u8{ "createAbortError", "createTimeoutError", "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
 };
 
 pub const JSPromise = extern struct {
@@ -2911,6 +2936,15 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("forEachProperty", .{ this, globalThis, ctx, callback });
     }
 
+    pub fn forEachPropertyOrdered(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: PropertyIteratorFn,
+    ) void {
+        cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             ZigString => this.getZigString(globalThis),
@@ -3044,6 +3078,10 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
         JSC.markBinding(@src());
         return JSBuffer__isBuffer(global, value);
+    }
+
+    pub fn isRegExp(this: JSValue) bool {
+        return this.jsType() == .RegExpObject;
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
@@ -3538,14 +3576,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("eqlCell", .{ this, other });
     }
 
-    pub const BuiltinName = enum(u8) {
-        method,
-        headers,
-        status,
-        url,
-        body,
-        data,
-    };
+    pub const BuiltinName = enum(u8) { method, headers, status, url, body, data };
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
@@ -3636,6 +3667,21 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return cppFn("strictDeepEquals", .{ this, other, global });
+    }
+
+    pub const DiffMethod = enum(u8) {
+        none,
+        character,
+        word,
+        line,
+    };
+
+    pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
+        if ((this.isString() and other.isString()) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isRegExp() and other.isObject()) or (this.isObject() and other.isRegExp())) return .character;
+        if (this.isObject() and other.isObject()) return .line;
+
+        return .none;
     }
 
     pub fn asString(this: JSValue) *JSString {
@@ -3852,6 +3898,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "fastGet_",
         "forEach",
         "forEachProperty",
+        "forEachPropertyOrdered",
         "fromEntries",
         "fromInt64NoTruncate",
         "fromUInt64NoTruncate",

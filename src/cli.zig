@@ -938,12 +938,12 @@ pub const Command = struct {
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case(TestCommand.name) => .TestCommand,
+            RootCommandMatcher.case(TestCommand.name), RootCommandMatcher.case(TestCommand.old_name) => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
-            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
+            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("run") => .RunCommand,

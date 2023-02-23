@@ -623,6 +623,12 @@ pub const Fetch = struct {
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
 
+        signal: ?*JSC.AbortSignal = null,
+        aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+
+        // must be stored because AbortSignal stores reason weakly
+        abort_reason: JSValue = JSValue.zero,
+
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
         }
@@ -641,6 +647,14 @@ pub const Fetch = struct {
             this.result.deinitMetadata();
             this.response_buffer.deinit();
             this.request_body.detach();
+
+            if (this.abort_reason != .zero) this.abort_reason.unprotect();
+
+            if (this.signal) |signal| {
+                signal.cleanNativeBindings(this);
+                _ = signal.unref();
+                this.signal = null;
+            }
         }
 
         pub fn deinit(this: *FetchTasklet) void {
@@ -672,7 +686,7 @@ pub const Fetch = struct {
                 true => this.onResolve(),
                 false => this.onReject(),
             };
-
+            result.ensureStillAlive();
             this.clearData();
 
             promise_value.ensureStillAlive();
@@ -688,29 +702,23 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
+            if (this.signal) |signal| {
+                _ = signal.unref();
+                this.signal = null;
+            }
+
+            if (!this.abort_reason.isEmptyOrUndefinedOrNull()) {
+                return this.abort_reason;
+            }
+
             if (this.result.isTimeout()) {
-                //Timeout with reason
-                if (this.result.reason) |exception| {
-                    if (!exception.isEmptyOrUndefinedOrNull()) {
-                        return exception;
-                    }
-                }
-                //Timeout without reason
-                const exception = JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
-                return exception;
+                // Timeout without reason
+                return JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
             }
 
             if (this.result.isAbort()) {
-                //Abort can be TimeoutError (AbortSignal.timeout(ms)) or AbortError so we need to detect
-                if (this.result.reason) |exception| {
-                    if (!exception.isEmptyOrUndefinedOrNull()) {
-                        return exception;
-                    }
-                }
-
-                //Abort without reason
-                const exception = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
-                return exception;
+                // Abort without reason
+                return JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
             const fetch_error = JSC.SystemError{
@@ -793,6 +801,7 @@ pub const Fetch = struct {
                 .request_headers = fetch_options.headers,
                 .ref = JSC.napi.Ref.create(globalThis, promise),
                 .url_proxy_buffer = fetch_options.url_proxy_buffer,
+                .signal = fetch_options.signal,
             };
 
             if (fetch_tasklet.request_body.store()) |store| {
@@ -808,12 +817,24 @@ pub const Fetch = struct {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
             }
 
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(allocator, fetch_options.method, fetch_options.url, fetch_options.headers.entries, fetch_options.headers.buf.items, &fetch_tasklet.response_buffer, fetch_tasklet.request_body.slice(), fetch_options.timeout, HTTPClient.HTTPClientResult.Callback.New(
-                *FetchTasklet,
-                FetchTasklet.callback,
-            ).init(
-                fetch_tasklet,
-            ), proxy, fetch_options.signal);
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
+                allocator,
+                fetch_options.method,
+                fetch_options.url,
+                fetch_options.headers.entries,
+                fetch_options.headers.buf.items,
+                &fetch_tasklet.response_buffer,
+                fetch_tasklet.request_body.slice(),
+                fetch_options.timeout,
+                HTTPClient.HTTPClientResult.Callback.New(
+                    *FetchTasklet,
+                    FetchTasklet.callback,
+                ).init(
+                    fetch_tasklet,
+                ),
+                proxy,
+                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
+            );
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -822,10 +843,35 @@ pub const Fetch = struct {
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
             fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
+
+            if (fetch_tasklet.signal) |signal| {
+                fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
+            }
             return fetch_tasklet;
         }
 
-        const FetchOptions = struct { method: Method, headers: Headers, body: AnyBlob, timeout: usize, disable_timeout: bool, disable_keepalive: bool, url: ZigURL, verbose: bool = false, follow_redirects: bool = true, proxy: ?ZigURL = null, url_proxy_buffer: []const u8 = "", signal: ?*JSC.AbortSignal = null, globalThis: ?*JSGlobalObject };
+        pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
+            reason.ensureStillAlive();
+            this.abort_reason = reason;
+            reason.protect();
+            this.aborted.store(true, .Monotonic);
+        }
+
+        const FetchOptions = struct {
+            method: Method,
+            headers: Headers,
+            body: AnyBlob,
+            timeout: usize,
+            disable_timeout: bool,
+            disable_keepalive: bool,
+            url: ZigURL,
+            verbose: bool = false,
+            follow_redirects: bool = true,
+            proxy: ?ZigURL = null,
+            url_proxy_buffer: []const u8 = "",
+            signal: ?*JSC.AbortSignal = null,
+            globalThis: ?*JSGlobalObject,
+        };
 
         pub fn queue(
             allocator: std.mem.Allocator,
@@ -1015,6 +1061,10 @@ pub const Fetch = struct {
                 // no proxy only url
                 url = ZigURL.parse(getAllocator(ctx).dupe(u8, request.url) catch unreachable);
                 url_proxy_buffer = url.href;
+                if (request.signal) |signal_| {
+                    _ = signal_.ref();
+                    signal = signal_;
+                }
             }
         } else if (first_arg.toStringOrNull(globalThis)) |jsstring| {
             if (arguments.len >= 2) {
@@ -1201,9 +1251,23 @@ pub const Fetch = struct {
         _ = FetchTasklet.queue(
             default_allocator,
             globalThis,
-            .{ .method = method, .url = url, .headers = headers orelse Headers{
-                .allocator = bun.default_allocator,
-            }, .body = body, .timeout = std.time.ns_per_hour, .disable_keepalive = disable_keepalive, .disable_timeout = disable_timeout, .follow_redirects = follow_redirects, .verbose = verbose, .proxy = proxy, .url_proxy_buffer = url_proxy_buffer, .signal = signal, .globalThis = globalThis },
+            .{
+                .method = method,
+                .url = url,
+                .headers = headers orelse Headers{
+                    .allocator = bun.default_allocator,
+                },
+                .body = body,
+                .timeout = std.time.ns_per_hour,
+                .disable_keepalive = disable_keepalive,
+                .disable_timeout = disable_timeout,
+                .follow_redirects = follow_redirects,
+                .verbose = verbose,
+                .proxy = proxy,
+                .url_proxy_buffer = url_proxy_buffer,
+                .signal = signal,
+                .globalThis = globalThis,
+            },
             promise_val,
         ) catch unreachable;
         return promise_val.asRef();

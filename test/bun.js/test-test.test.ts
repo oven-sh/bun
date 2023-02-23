@@ -239,11 +239,9 @@ test("deepEquals throw getters", () => {
     }
   }
 
-  try {
+  expect(() => {
     expect(new B()).not.toEqual(new C());
-  } catch (e) {
-    expect(e.message).toContain("b");
-  }
+  }).toThrow();
 
   let o = [
     {

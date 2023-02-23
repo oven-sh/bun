@@ -7,26 +7,24 @@ it("JSON strings escaped properly", async () => {
   const testDir = import.meta.dir + "/repro_631/";
 
   // Clean up from prior runs if necessary
-  rmSync(testDir, { recursive: true });
+  rmSync(testDir, { recursive: true, force: true });
 
   // Create a directory with our test package file
-  mkdirSync(testDir);
+  mkdirSync(testDir, { recursive: true });
   writeFileSync(testDir + "package.json", String.raw`{"testRegex":"\\a\n\\b\\"}`);
 
   // Attempt to add a package, causing the package file to be parsed, modified,
   //  written, and reparsed.  This verifies that escaped backslashes in JSON
   //  survive the roundtrip
-  const {exitCode, stderr} = Bun.spawnSync({
+  const { exitCode, stderr } = Bun.spawnSync({
     cmd: [bunExe(), "add", "left-pad"],
     env: bunEnv,
-    cwd: testDir
+    cwd: testDir,
   });
-  console.log(stderr.toString());
   expect(exitCode).toBe(0);
 
   const packageContents = readFileSync(testDir + "package.json", { encoding: "utf8" });
-  expect(packageContents).toBe(String.raw
-`{
+  expect(packageContents).toBe(String.raw`{
   "testRegex": "\\a\n\\b\\",
   "dependencies": {
     "left-pad": "^1.3.0"
@@ -35,4 +33,4 @@ it("JSON strings escaped properly", async () => {
 
   //// If successful clean up test artifacts
   rmSync(testDir, { recursive: true });
-})
+});

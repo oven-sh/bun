@@ -1,6 +1,7 @@
 const bun = @import("bun");
 const Global = bun.Global;
 const logger = bun.logger;
+const Dependency = @import("./dependency.zig");
 const DotEnv = @import("../env_loader.zig");
 const Environment = @import("../env.zig");
 const FileSystem = @import("../fs.zig").FileSystem;
@@ -12,6 +13,7 @@ const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
+const strings = @import("../string_immutable.zig");
 const GitSHA = String;
 
 threadlocal var final_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
@@ -80,11 +82,14 @@ pub const Repository = extern struct {
             if (Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
+            const repo = formatter.repository.repo.slice(formatter.buf);
             if (!formatter.repository.owner.isEmpty()) {
                 try writer.writeAll(formatter.repository.owner.slice(formatter.buf));
                 try writer.writeAll("/");
+            } else if (Dependency.isSCPLikePath(repo)) {
+                try writer.writeAll("ssh://");
             }
-            try writer.writeAll(formatter.repository.repo.slice(formatter.buf));
+            try writer.writeAll(repo);
 
             if (!formatter.repository.resolved.isEmpty()) {
                 try writer.writeAll("#");
@@ -114,6 +119,22 @@ pub const Repository = extern struct {
             else => {},
         }
         return error.InstallFailed;
+    }
+
+    pub fn tryHTTPS(url: string) ?string {
+        if (strings.hasPrefixComptime(url, "ssh://")) {
+            final_path_buf[0.."https".len].* = "https".*;
+            std.mem.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
+            return final_path_buf[0..(url.len - "ssh".len + "https".len)];
+        }
+        if (Dependency.isSCPLikePath(url)) {
+            final_path_buf[0.."https://".len].* = "https://".*;
+            var rest = final_path_buf["https://".len..];
+            std.mem.copy(u8, rest, url);
+            if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
+            return final_path_buf[0..(url.len + "https://".len)];
+        }
+        return null;
     }
 
     pub fn download(

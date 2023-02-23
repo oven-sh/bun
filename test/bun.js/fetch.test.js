@@ -1,72 +1,306 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, test, beforeEach } from "bun:test";
 import fs, { chmodSync, unlinkSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gc, withoutAggressiveGC } from "./gc";
+
+const sleep = countdown => {
+  return Bun.sleep(countdown);
+};
 
 const exampleFixture = fs.readFileSync(
   import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) + "/fetch.js.txt",
   "utf8",
 );
 
-let server ;
-beforeAll(() => {
-  server = Bun.serve({
-    async fetch(){
-      await Bun.sleep(2000);
-      return new Response("Hello")
-    },
-    port: 64321
+var cachedServer;
+function getServer({ port, ...rest }) {
+  return (cachedServer = Bun.serve({
+    ...rest,
+    port: 0,
+  }));
+}
+
+afterEach(() => {
+  cachedServer?.stop?.(true);
+});
+
+const payload = new Uint8Array(1024 * 1024 * 2);
+crypto.getRandomValues(payload);
+
+describe("AbortSignalStreamTest", async () => {
+  async function abortOnStage(body, stage) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = getServer({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
+
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.close();
+                    return;
+                  }
+                  controller.enqueue(value);
+                }
+              },
+            }),
+          );
+        },
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
+          res.arrayBuffer(),
+        );
+      } catch (ex) {
+        error = ex;
+      }
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+      expect(error instanceof DOMException).toBeTruthy();
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(payload, i);
+    });
+  }
+});
+
+describe("AbortSignalDirectStreamTest", () => {
+  async function abortOnStage(body, stage) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = getServer({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
+
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.end();
+                    return;
+                  }
+                  controller.write(value);
+                }
+              },
+            }),
+          );
+        },
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
+          res.arrayBuffer(),
+        );
+      } catch (ex) {
+        error = ex;
+      }
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+      expect(error instanceof DOMException).toBeTruthy();
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(payload, i);
+    });
+  }
+});
+
+describe("AbortSignal", () => {
+  var server;
+  beforeEach(() => {
+    server = getServer({
+      async fetch(request) {
+        if (request.url.endsWith("/nodelay")) {
+          return new Response("Hello");
+        }
+        if (request.url.endsWith("/stream")) {
+          const reader = request.body.getReader();
+          const body = new ReadableStream({
+            async pull(controller) {
+              if (!reader) controller.close();
+              const { done, value } = await reader.read();
+              // When no more data needs to be consumed, close the stream
+              if (done) {
+                controller.close();
+                return;
+              }
+              // Enqueue the next data chunk into our target stream
+              controller.enqueue(value);
+            },
+          });
+          return new Response(body);
+        }
+        if (request.method.toUpperCase() === "POST") {
+          const body = await request.text();
+          return new Response(body);
+        }
+        await sleep(15);
+        return new Response("Hello");
+      },
+    });
   });
-  
-});
-afterAll(() => {
-  server.stop();
-});
-
-
-describe("AbortSignal", ()=> {
-  it("AbortError", async ()=> {
+  it("AbortError", async () => {
     let name;
     try {
       var controller = new AbortController();
       const signal = controller.signal;
 
-      async function manualAbort(){
-        await Bun.sleep(10);
+      async function manualAbort() {
+        await sleep(1);
         controller.abort();
       }
-      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
-    } catch (error){
+      await Promise.all([
+        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
+        manualAbort(),
+      ]);
+    } catch (error) {
       name = error.name;
     }
     expect(name).toBe("AbortError");
-  })
-  it("AbortErrorWithReason", async ()=> {
+  });
+
+  it("AbortAfterFinish", async () => {
+    let error = undefined;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+
+      await fetch(`http://127.0.0.1:${server.port}/nodelay`, { signal: signal }).then(res => res.text());
+      controller.abort();
+    } catch (ex) {
+      error = ex;
+    }
+    expect(error).toBeUndefined();
+  });
+
+  it("AbortErrorWithReason", async () => {
     let reason;
     try {
       var controller = new AbortController();
       const signal = controller.signal;
-      async function manualAbort(){
-        await Bun.sleep(10);
+
+      async function manualAbort() {
+        await sleep(10);
         controller.abort("My Reason");
       }
-      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
-    } catch (error){
-        reason = error
+      await Promise.all([
+        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
+        manualAbort(),
+      ]);
+    } catch (error) {
+      reason = error;
     }
     expect(reason).toBe("My Reason");
-  })
-  it("TimeoutError", async ()=> {
+  });
+
+  it("AbortErrorEventListener", async () => {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      var eventSignal = undefined;
+      signal.addEventListener("abort", ev => {
+        eventSignal = ev.currentTarget;
+      });
+
+      async function manualAbort() {
+        await sleep(10);
+        controller.abort();
+      }
+      await Promise.all([
+        fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
+        manualAbort(),
+      ]);
+    } catch (error) {
+      name = error.name;
+    }
+    expect(eventSignal).toBeDefined();
+    expect(eventSignal.reason.name).toBe(name);
+    expect(eventSignal.aborted).toBe(true);
+  });
+
+  it("AbortErrorWhileUploading", async () => {
+    const abortController = new AbortController();
+    let error;
+    try {
+      await fetch(`http://localhost:${server.port}`, {
+        method: "POST",
+        body: new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+            //this will abort immediately should abort before connected
+            abortController.abort();
+          },
+        }),
+        signal: abortController.signal,
+      });
+    } catch (ex) {
+      error = ex;
+    }
+
+    expect(error.name).toBe("AbortError");
+    expect(error.message).toBe("The operation was aborted.");
+    expect(error instanceof DOMException).toBeTruthy();
+  });
+
+  it("TimeoutError", async () => {
     let name;
     try {
       const signal = AbortSignal.timeout(10);
-      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text());
-    } catch (error){
+      await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
+    } catch (error) {
       name = error.name;
     }
     expect(name).toBe("TimeoutError");
-  })
-})
+  });
+  it("Request", async () => {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
+      async function manualAbort() {
+        await sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
+    } catch (error) {
+      name = error.name;
+    }
+    expect(name).toBe("AbortError");
+  });
+});
 
 describe("Headers", () => {
   it(".toJSON", () => {
@@ -192,8 +426,7 @@ describe("fetch", () => {
   }
 
   it(`"redirect: "manual"`, async () => {
-    const server = Bun.serve({
-      port: 4082,
+    const server = getServer({
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -209,12 +442,10 @@ describe("fetch", () => {
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://example.com");
     expect(response.redirected).toBe(true);
-    server.stop();
   });
 
   it(`"redirect: "follow"`, async () => {
-    const server = Bun.serve({
-      port: 4083,
+    const server = getServer({
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -230,12 +461,10 @@ describe("fetch", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("location")).toBe(null);
     expect(response.redirected).toBe(true);
-    server.stop();
   });
 
   it("provide body", async () => {
-    const server = Bun.serve({
-      port: 4084,
+    const server = getServer({
       fetch(req) {
         return new Response(req.body);
       },
@@ -252,10 +481,8 @@ describe("fetch", () => {
       await fetch(url, { body: "buntastic" });
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof TypeError).toBe(true);
+      expect(exception.name).toBe("TypeError");
     }
-
-    server.stop();
   });
 });
 
@@ -732,9 +959,13 @@ describe("Request", () => {
       body: "<div>hello</div>",
     });
     gc();
+    expect(body.signal).toBeDefined();
+    gc();
     expect(body.headers.get("content-type")).toBe("text/html; charset=utf-8");
     gc();
     var clone = body.clone();
+    gc();
+    expect(clone.signal).toBeDefined();
     gc();
     body.headers.set("content-type", "text/plain");
     gc();
@@ -743,7 +974,31 @@ describe("Request", () => {
     expect(body.headers.get("content-type")).toBe("text/plain");
     gc();
     expect(await clone.text()).toBe("<div>hello</div>");
+  });
+
+  it("signal", async () => {
     gc();
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal });
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+  });
+
+  it("cloned signal", async () => {
+    gc();
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal });
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+    gc();
+    const cloned = req.clone();
+    expect(cloned.signal.aborted).toBe(true);
   });
 
   testBlobInterface(data => new Request("https://hello.com", { body: data }), true);

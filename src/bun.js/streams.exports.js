@@ -2330,6 +2330,8 @@ var require_from = __commonJS({
   },
 });
 
+var _ReadableFromWeb;
+
 // node_modules/readable-stream/lib/internal/streams/readable.js
 var require_readable = __commonJS({
   "node_modules/readable-stream/lib/internal/streams/readable.js"(exports, module) {
@@ -2593,6 +2595,7 @@ var require_readable = __commonJS({
     }
 
     module.exports = Readable;
+    _ReadableFromWeb = ReadableFromWeb;
 
     var { addAbortSignal } = require_add_abort_signal();
     var eos = require_end_of_stream();
@@ -5628,6 +5631,7 @@ var NativeWritable = class NativeWritable extends Writable {
 
 const stream_exports = require_ours();
 stream_exports[Symbol.for("CommonJS")] = 0;
+stream_exports[Symbol.for("::bunternal::")] = { _ReadableFromWeb };
 export default stream_exports;
 export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
 export var _isUint8Array = stream_exports._isUint8Array;

@@ -2,6 +2,33 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "Timeout",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+      },
+      ["@@toPrimitive"]: {
+        fn: "toPrimitive",
+        length: 1,
+      },
+    },
+  }),
+  define({
     name: "Stats",
     construct: true,
     finalize: true,

@@ -734,3 +734,21 @@ pub const RemoveFileFlags = struct {
 };
 pub const removefile_state_t = opaque {};
 pub extern fn removefileat(fd: c_int, path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
+
+// As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers
+pub const ifaddrs = extern struct {
+	ifa_next: ?*ifaddrs,
+	ifa_name: [*:0]u8,
+	ifa_flags: c_uint,
+	ifa_addr: ?*std.os.sockaddr,
+	ifa_netmask: ?*std.os.sockaddr,
+	ifa_dstaddr: ?*std.os.sockaddr,
+	ifa_data: *void,
+};
+pub extern fn getifaddrs(*?*ifaddrs) c_int;
+pub extern fn freeifaddrs(?*ifaddrs) void;
+
+const net_if_h = @cImport({ @cInclude("net/if.h"); });
+pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
+pub const IFF_UP = net_if_h.IFF_UP;
+pub const IFF_LOOPBACK = net_if_h.IFF_LOOPBACK;

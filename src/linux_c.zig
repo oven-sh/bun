@@ -480,3 +480,15 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
 }
 
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usize, flags: u32) isize;
+
+
+const net_c = @cImport({
+    @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
+    @cInclude("net/if.h");  // IFF_RUNNING, IFF_UP
+});
+pub const ifaddrs = net_c.ifaddrs;
+pub const getifaddrs = net_c.getifaddrs;
+pub const freeifaddrs = net_c.freeifaddrs;
+pub const IFF_RUNNING = net_c.IFF_RUNNING;
+pub const IFF_UP = net_c.IFF_UP;
+pub const IFF_LOOPBACK = net_c.IFF_LOOPBACK;

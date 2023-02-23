@@ -1697,6 +1697,11 @@ pub const AbortSignal = extern opaque {
     ) *AbortSignal {
         return cppFn("addListener", .{ this, ctx, callback });
     }
+
+    pub fn cleanNativeBindings(this: *AbortSignal, ctx: ?*anyopaque) void {
+        return cppFn("cleanNativeBindings", .{ this, ctx });
+    }
+
     pub fn signal(
         this: *AbortSignal,
         reason: JSValue,
@@ -1728,6 +1733,14 @@ pub const AbortSignal = extern opaque {
         return cppFn("fromJS", .{value});
     }
 
+    pub fn toJS(this: *AbortSignal, global: *JSGlobalObject) JSValue {
+        return cppFn("toJS", .{this, global});
+    }
+
+    pub fn create(global: *JSGlobalObject) JSValue {
+        return cppFn("create", .{ global });
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -1739,6 +1752,7 @@ pub const AbortSignal = extern opaque {
     pub const Extern = [_][]const u8{
         "createAbortError",
         "createTimeoutError",
+        "create",
         "ref",
         "unref",
         "signal",
@@ -1746,6 +1760,8 @@ pub const AbortSignal = extern opaque {
         "aborted",
         "addListener",
         "fromJS",
+        "toJS",
+        "cleanNativeBindings"
     };
 };
 
@@ -3557,7 +3573,7 @@ pub const JSValue = enum(JSValueReprInt) {
         status,
         url,
         body,
-        data,
+        data
     };
 
     // intended to be more lightweight than ZigString

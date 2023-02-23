@@ -1680,6 +1680,28 @@ pub const JSRequest = struct {
         return result;
     }
 
+    extern fn RequestPrototype__signalSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn RequestPrototype__signalGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.signal` setter
+    /// This value will be visited by the garbage collector.
+    pub fn signalSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__signalSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Request.signal` getter
+    /// This value will be visited by the garbage collector.
+    pub fn signalGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__signalGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn RequestPrototype__urlGetCachedValue(JSC.JSValue) JSC.JSValue;
@@ -1799,6 +1821,9 @@ pub const JSRequest = struct {
         if (@TypeOf(Request.getReferrerPolicy) != GetterType)
             @compileLog("Expected Request.getReferrerPolicy to be a getter");
 
+        if (@TypeOf(Request.getSignal) != GetterType)
+            @compileLog("Expected Request.getSignal to be a getter");
+
         if (@TypeOf(Request.getText) != CallbackType)
             @compileLog("Expected Request.getText to be a callback but received " ++ @typeName(@TypeOf(Request.getText)));
         if (@TypeOf(Request.getUrl) != GetterType)
@@ -1825,6 +1850,7 @@ pub const JSRequest = struct {
             @export(Request.getRedirect, .{ .name = "RequestPrototype__getRedirect" });
             @export(Request.getReferrer, .{ .name = "RequestPrototype__getReferrer" });
             @export(Request.getReferrerPolicy, .{ .name = "RequestPrototype__getReferrerPolicy" });
+            @export(Request.getSignal, .{ .name = "RequestPrototype__getSignal" });
             @export(Request.getText, .{ .name = "RequestPrototype__getText" });
             @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
         }

@@ -8,64 +8,289 @@ const exampleFixture = fs.readFileSync(
   "utf8",
 );
 
-let server ;
+let server;
 beforeAll(() => {
   server = Bun.serve({
-    async fetch(){
+    async fetch(request) {
+
+      if (request.url.endsWith("/nodelay")) {
+        return new Response("Hello")
+      }
+      if (request.url.endsWith("/stream")) {
+        const reader = request.body.getReader();
+        const body = new ReadableStream({
+          async pull(controller) {
+            if (!reader) controller.close();
+            const { done, value } = await reader.read();
+            // When no more data needs to be consumed, close the stream
+            if (done) {
+              controller.close();
+              return;
+            }
+            // Enqueue the next data chunk into our target stream
+            controller.enqueue(value);
+          }
+        });
+        return new Response(body);
+      }
+      if ((request.method).toUpperCase() === "POST") {
+        const body = await request.text();
+        return new Response(body);
+      }
       await Bun.sleep(2000);
       return new Response("Hello")
     },
     port: 64321
   });
-  
+
 });
 afterAll(() => {
   server.stop();
 });
 
+const payload = new Uint8Array(1024 * 1024 * 2);
+crypto.getRandomValues(payload);
 
-describe("AbortSignal", ()=> {
-  it("AbortError", async ()=> {
+describe("AbortSignalStreamTest",async () => {
+
+  const port = 84322;
+  async function abortOnStage(body, stage, port) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = Bun.serve({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
+
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.close();
+                    return;
+                  }
+                  controller.enqueue(value);
+                }
+              },
+            }),
+          );
+        },
+        port,
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${port}`, { method: "POST", body, signal: signal }).then((res) => res.arrayBuffer());
+
+      } catch (ex) {
+        error = ex;
+        
+      }
+      server.stop();
+      expect(error instanceof DOMException).toBeTruthy();
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    await it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(payload, i, port + i);
+    })();
+  }
+})
+
+describe("AbortSignalDirectStreamTest", () => {
+  const port = 74322;
+  async function abortOnStage(body, stage, port) {
+    let error = undefined;
+    var abortController = new AbortController();
+    {
+      const server = Bun.serve({
+        async fetch(request) {
+          let chunk_count = 0;
+          const reader = request.body.getReader();
+          return Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                while (true) {
+                  chunk_count++;
+
+                  const { done, value } = await reader.read();
+                  if (chunk_count == stage) {
+                    abortController.abort();
+                  }
+
+                  if (done) {
+                    controller.end();
+                    return;
+                  }
+                  controller.write(value);
+                }
+              },
+            }),
+          );
+        },
+        port,
+      });
+
+      try {
+        const signal = abortController.signal;
+
+        await fetch(`http://127.0.0.1:${port}`, { method: "POST", body, signal: signal }).then((res) => res.arrayBuffer());
+
+      } catch (ex) {
+        error = ex;
+      }
+      server.stop();
+      expect(error instanceof DOMException).toBeTruthy();
+      expect(error.name).toBe("AbortError");
+      expect(error.message).toBe("The operation was aborted.");
+    }
+  }
+
+  for (let i = 1; i < 7; i++) {
+    await it(`Abort after ${i} chunks`, async () => {
+      await abortOnStage(payload, i, port + i);
+    })();
+  }
+})
+
+describe("AbortSignal", () => {
+  it("AbortError", async () => {
     let name;
     try {
       var controller = new AbortController();
       const signal = controller.signal;
 
-      async function manualAbort(){
+      async function manualAbort() {
         await Bun.sleep(10);
         controller.abort();
       }
-      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
-    } catch (error){
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text()), manualAbort()]);
+    } catch (error) {
       name = error.name;
     }
     expect(name).toBe("AbortError");
   })
-  it("AbortErrorWithReason", async ()=> {
+
+  it("AbortAfterFinish", async () => {
+    let error = undefined;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+
+      await fetch("http://127.0.0.1:64321/nodelay", { signal: signal }).then((res) => res.text())
+      controller.abort();
+    } catch (ex) {
+      error = ex;
+    }
+    expect(error).toBeUndefined();
+  })
+
+  it("AbortErrorWithReason", async () => {
     let reason;
     try {
       var controller = new AbortController();
       const signal = controller.signal;
-      async function manualAbort(){
+      async function manualAbort() {
         await Bun.sleep(10);
         controller.abort("My Reason");
       }
-      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text()), manualAbort()]);
-    } catch (error){
-        reason = error
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text()), manualAbort()]);
+    } catch (error) {
+      reason = error
     }
     expect(reason).toBe("My Reason");
   })
-  it("TimeoutError", async ()=> {
+
+  it("AbortErrorEventListener", async () => {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      var eventSignal = undefined;
+      signal.addEventListener("abort", (ev) => {
+        eventSignal = ev.currentTarget;
+      });
+
+      async function manualAbort() {
+        await Bun.sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text()), manualAbort()]);
+    } catch (error) {
+      name = error.name;
+    }
+    expect(eventSignal).toBeDefined();
+    expect(eventSignal.reason.name).toBe(name);
+    expect(eventSignal.aborted).toBe(true);
+  })
+
+  it("AbortErrorWhileUploading", async () => {
+    const abortController = new AbortController();
+    let error;
+    try {
+      await fetch(
+        "http://localhost:64321",
+        {
+          method: "POST",
+          body: new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+              //this will abort immediately should abort before connected
+              abortController.abort();
+            },
+          }),
+          signal: abortController.signal,
+        },
+      );
+    } catch (ex) {
+      error = ex
+    }
+
+    expect(error instanceof DOMException).toBeTruthy();
+    expect(error.name).toBe("AbortError");
+    expect(error.message).toBe("The operation was aborted.");
+  });
+
+  it("TimeoutError", async () => {
     let name;
     try {
       const signal = AbortSignal.timeout(10);
-      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res)=> res.text());
-    } catch (error){
+      await fetch("http://127.0.0.1:64321", { signal: signal }).then((res) => res.text());
+    } catch (error) {
       name = error.name;
     }
     expect(name).toBe("TimeoutError");
   })
+  it("Request", async () => {
+    let name;
+    try {
+      var controller = new AbortController();
+      const signal = controller.signal;
+      const request = new Request("http://127.0.0.1:64321", { signal });
+      async function manualAbort() {
+        await Bun.sleep(10);
+        controller.abort();
+      }
+      await Promise.all([fetch(request).then((res) => res.text()), manualAbort()]);
+    } catch (error) {
+      name = error.name
+    }
+    expect(name).toBe("AbortError");
+  })
+
 })
 
 describe("Headers", () => {
@@ -296,33 +521,31 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(
-          new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
-        );
-        if (withGC) gc();
-        var failed = false;
-        try {
-          await response.json();
-        } catch (e) {
-          failed = true;
-        }
-        expect(failed).toBe(true);
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(
+            new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
+          );
+          if (withGC) gc();
+          var failed = false;
+          try {
+            await response.json();
+          } catch (e) {
+            failed = true;
+          }
+          expect(failed).toBe(true);
+          if (withGC) gc();
+        });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -332,15 +555,14 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
-        expect(await response.text()).toBe(JSON.stringify(jsonObject));
-        if (withGC) gc();
-      });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
+          expect(await response.text()).toBe(JSON.stringify(jsonObject));
+          if (withGC) gc();
+        });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -365,30 +587,29 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
-        withGC ? " (with gc) " : ""
-      }`, async () => {
-        if (withGC) gc();
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""
+        }`, async () => {
+          if (withGC) gc();
 
-        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-        if (withGC) gc();
+          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+          if (withGC) gc();
 
-        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
-        if (withGC) gc();
+          const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+          if (withGC) gc();
 
-        const compare = new Uint8Array(await response.arrayBuffer());
-        if (withGC) gc();
+          const compare = new Uint8Array(await response.arrayBuffer());
+          if (withGC) gc();
 
-        withoutAggressiveGC(() => {
-          for (let i = 0; i < compare.length; i++) {
-            if (withGC) gc();
+          withoutAggressiveGC(() => {
+            for (let i = 0; i < compare.length; i++) {
+              if (withGC) gc();
 
-            expect(compare[i]).toBe(bytes[i]);
-            if (withGC) gc();
-          }
+              expect(compare[i]).toBe(bytes[i]);
+              if (withGC) gc();
+            }
+          });
+          if (withGC) gc();
         });
-        if (withGC) gc();
-      });
 
       hasBlobFn &&
         it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${withGC ? " (with gc) " : ""}`, async () => {
@@ -445,7 +666,7 @@ describe("Bun.file", () => {
   it("size is Infinity on a fifo", () => {
     try {
       unlinkSync("/tmp/test-fifo");
-    } catch (e) {}
+    } catch (e) { }
     mkfifo("/tmp/test-fifo");
 
     const { size } = Bun.file("/tmp/test-fifo");
@@ -463,14 +684,14 @@ describe("Bun.file", () => {
     beforeAll(async () => {
       try {
         unlinkSync("/tmp/my-new-file");
-      } catch {}
+      } catch { }
       await Bun.write("/tmp/my-new-file", "hey");
       chmodSync("/tmp/my-new-file", 0o000);
     });
     afterAll(() => {
       try {
         unlinkSync("/tmp/my-new-file");
-      } catch {}
+      } catch { }
     });
 
     forEachMethod(m => () => {
@@ -483,7 +704,7 @@ describe("Bun.file", () => {
     beforeAll(() => {
       try {
         unlinkSync("/tmp/does-not-exist");
-      } catch {}
+      } catch { }
     });
 
     forEachMethod(m => async () => {
@@ -732,9 +953,13 @@ describe("Request", () => {
       body: "<div>hello</div>",
     });
     gc();
+    expect(body.signal).toBeDefined();
+    gc();
     expect(body.headers.get("content-type")).toBe("text/html; charset=utf-8");
     gc();
     var clone = body.clone();
+    gc();
+    expect(clone.signal).toBeDefined();
     gc();
     body.headers.set("content-type", "text/plain");
     gc();
@@ -743,8 +968,32 @@ describe("Request", () => {
     expect(body.headers.get("content-type")).toBe("text/plain");
     gc();
     expect(await clone.text()).toBe("<div>hello</div>");
-    gc();
   });
+
+  it("signal", async () => {
+    gc();
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal })
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+  })
+
+  it("cloned signal", async () => {
+    gc();
+    const controller = new AbortController();
+    const req = new Request("https://hello.com", { signal: controller.signal })
+    expect(req.signal.aborted).toBe(false);
+    gc();
+    controller.abort();
+    gc();
+    expect(req.signal.aborted).toBe(true);
+    gc();
+    const cloned = req.clone();
+    expect(cloned.signal.aborted).toBe(true);
+  })
 
   testBlobInterface(data => new Request("https://hello.com", { body: data }), true);
 });

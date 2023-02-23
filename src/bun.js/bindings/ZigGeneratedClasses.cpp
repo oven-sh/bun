@@ -6201,6 +6201,9 @@ JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__referrerGetterWrap);
 extern "C" JSC::EncodedJSValue RequestPrototype__getReferrerPolicy(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
 JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__referrerPolicyGetterWrap);
 
+extern "C" JSC::EncodedJSValue RequestPrototype__getSignal(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(RequestPrototype__signalGetterWrap);
+
 extern "C" EncodedJSValue RequestPrototype__getText(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(RequestPrototype__textCallback);
 
@@ -6227,6 +6230,7 @@ static const HashTableValue JSRequestPrototypeTableValues[] = {
     { "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__redirectGetterWrap, 0 } },
     { "referrer"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__referrerGetterWrap, 0 } },
     { "referrerPolicy"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__referrerPolicyGetterWrap, 0 } },
+    { "signal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__signalGetterWrap, 0 } },
     { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__textCallback, 0 } },
     { "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__urlGetterWrap, 0 } }
 };
@@ -6507,6 +6511,37 @@ JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__referrerPolicyGetterWrap, (JSGlobalOb
     RELEASE_AND_RETURN(throwScope, result);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(RequestPrototype__signalGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSRequest* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    if (JSValue cachedValue = thisObject->m_signal.get())
+        return JSValue::encode(cachedValue);
+
+    JSC::JSValue result = JSC::JSValue::decode(
+        RequestPrototype__getSignal(thisObject->wrapped(), globalObject));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_signal.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+extern "C" void RequestPrototype__signalSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+    thisObject->m_signal.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue RequestPrototype__signalGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSRequest*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_signal.get());
+}
+
 JSC_DEFINE_HOST_FUNCTION(RequestPrototype__textCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -6720,6 +6755,7 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_signal);
     visitor.append(thisObject->m_url);
 }
 
@@ -6733,6 +6769,7 @@ void JSRequest::visitAdditionalChildren(Visitor& visitor)
 
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
+    visitor.append(thisObject->m_signal);
     visitor.append(thisObject->m_url);
     ;
 }

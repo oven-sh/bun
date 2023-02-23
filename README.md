@@ -2843,7 +2843,7 @@ Instead of having to allocate unique functions for each instance of a socket, we
 
 How do you pass per-socket data to each socket object?
 
-`**data**` is a property on the `TCPSocket` & `TLSSocket` object that you can use to store per-socket data.
+`data` is a property on the `TCPSocket` & `TLSSocket` object that you can use to store per-socket data.
 
 ```ts
 socket.data = { name: "Clienty McClientface" };

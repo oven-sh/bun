@@ -2113,6 +2113,20 @@ pub const ZigConsoleClient = struct {
                             .Object,
                             enable_ansi_colors,
                         );
+                    } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        if (timer.kind == .setInterval) {
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        } else {
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        }
+                        
+                        return;
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);

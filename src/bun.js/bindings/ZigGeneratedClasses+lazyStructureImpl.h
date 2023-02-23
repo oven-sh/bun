@@ -143,6 +143,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSTextDecoder::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSTextDecoder::createConstructor(init.vm, init.global, init.prototype));
               });
+    m_JSTimeout.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSTimeout::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSTimeout::createStructure(init.vm, init.global, init.prototype));
+                 
+              });
     m_JSTranspiler.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSTranspiler::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -177,5 +183,6 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSTCPSocket.visit(visitor);  visitor.append(thisObject->m_JSTCPSocketSetterValue);
       thisObject->m_JSTLSSocket.visit(visitor);  visitor.append(thisObject->m_JSTLSSocketSetterValue);
       thisObject->m_JSTextDecoder.visit(visitor);  visitor.append(thisObject->m_JSTextDecoderSetterValue);
+      thisObject->m_JSTimeout.visit(visitor);  visitor.append(thisObject->m_JSTimeoutSetterValue);
       thisObject->m_JSTranspiler.visit(visitor);  visitor.append(thisObject->m_JSTranspilerSetterValue);
 }

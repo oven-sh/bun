@@ -13,8 +13,7 @@ it("setTimeout", async () => {
             resolve(numbers);
           }
           try {
-            expect(args.length).toBe(1);
-            expect(args[0]).toBe("foo");
+            expect(args).toStrictEqual(["foo"]);
           } catch (err) {
             reject(err);
           }
@@ -22,7 +21,7 @@ it("setTimeout", async () => {
         i,
         "foo",
       );
-      expect(id > lastID).toBe(true);
+      expect(+id > lastID).toBe(true);
       lastID = id;
     }
   });
@@ -35,14 +34,30 @@ it("setTimeout", async () => {
 
 it("clearTimeout", async () => {
   var called = false;
-  const id = setTimeout(() => {
-    called = true;
-    expect(false).toBe(true);
-  }, 1);
-  clearTimeout(id);
 
-  // assert it doesn't crash if you call clearTimeout twice
-  clearTimeout(id);
+  // as object
+  {
+    const id = setTimeout(() => {
+      called = true;
+      expect(false).toBe(true);
+    }, 0);
+    clearTimeout(id);
+
+    // assert it doesn't crash if you call clearTimeout twice
+    clearTimeout(id);
+  }
+
+  // as number
+  {
+    const id = setTimeout(() => {
+      called = true;
+      expect(false).toBe(true);
+    }, 0);
+    clearTimeout(+id);
+
+    // assert it doesn't crash if you call clearTimeout twice
+    clearTimeout(+id);
+  }
 
   await new Promise((resolve, reject) => {
     setTimeout(resolve, 10);
@@ -118,7 +133,7 @@ it("Bun.sleep propagates exceptions", async () => {
 
 it("Bun.sleep works with a Date object", async () => {
   var ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 10);
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
   const now = performance.now();
   await Bun.sleep(ten_ms);
   expect(performance.now() - now).toBeGreaterThanOrEqual(10);
@@ -134,4 +149,25 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   } catch (err) {
     expect(err.message).toBe("TestPassed");
   }
+});
+
+it.skip("order of setTimeouts", done => {
+  var nums = [];
+  var maybeDone = cb => {
+    return () => {
+      cb();
+      if (nums.length === 4) {
+        try {
+          expect(nums).toEqual([1, 2, 3, 4]);
+          done();
+        } catch (e) {
+          done(e);
+        }
+      }
+    };
+  };
+  setTimeout(maybeDone(() => nums.push(2)));
+  setTimeout(maybeDone(() => nums.push(3), 0));
+  setTimeout(maybeDone(() => nums.push(4), 1));
+  Promise.resolve().then(maybeDone(() => nums.push(1)));
 });

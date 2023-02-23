@@ -2035,7 +2035,7 @@ pub const ZigConsoleClient = struct {
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
-                            if (was_good_time) {
+                            if (this.ordered_properties or was_good_time) {
                                 this.resetLine();
                                 writer.writeAll("[");
                                 writer.writeAll("\n");
@@ -2057,7 +2057,7 @@ pub const ZigConsoleClient = struct {
                         var i: u32 = 1;
                         while (i < len) : (i += 1) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (this.goodTimeForANewLine()) {
+                            if (this.ordered_properties or this.goodTimeForANewLine()) {
                                 writer.writeAll("\n");
                                 this.writeIndent(Writer, writer_) catch unreachable;
                             } else {
@@ -2077,7 +2077,7 @@ pub const ZigConsoleClient = struct {
                         }
                     }
 
-                    if (was_good_time or this.goodTimeForANewLine()) {
+                    if (this.ordered_properties or was_good_time or this.goodTimeForANewLine()) {
                         this.resetLine();
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};

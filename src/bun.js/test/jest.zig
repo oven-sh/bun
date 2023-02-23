@@ -84,6 +84,13 @@ pub const DiffFormatter = struct {
             var buf_writer = buffered_writer.writer();
             const Writer = @TypeOf(buf_writer);
 
+            const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+                .enable_colors = false,
+                .add_newline = true,
+                .flush = false,
+                .ordered_properties = true,
+                .quote_strings = true,
+            };
             JSC.ZigConsoleClient.format(
                 .Debug,
                 this.globalObject,
@@ -92,13 +99,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 Writer,
                 buf_writer,
-                .{
-                    .enable_colors = false,
-                    .add_newline = false,
-                    .flush = false,
-                    .ordered_properties = true,
-                    .quote_strings = true,
-                },
+                fmt_options,
             );
             buffered_writer.flush() catch unreachable;
 
@@ -112,13 +113,7 @@ pub const DiffFormatter = struct {
                 Writer,
                 Writer,
                 buf_writer,
-                .{
-                    .enable_colors = false,
-                    .add_newline = false,
-                    .flush = false,
-                    .ordered_properties = true,
-                    .quote_strings = true,
-                },
+                fmt_options,
             );
             buffered_writer.flush() catch unreachable;
         }
@@ -266,14 +261,15 @@ pub const DiffFormatter = struct {
                             }
                         },
                     }
+                    if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
                 }
 
                 if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt("\n\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                    try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
                     try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
                     return;
                 }
-                try writer.print("\n\n- Expected  - {d}\n", .{insert_count});
+                try writer.print("\n- Expected  - {d}\n", .{insert_count});
                 try writer.print("+ Received  + {d}", .{delete_count});
                 return;
             },

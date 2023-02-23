@@ -627,7 +627,7 @@ pub const Fetch = struct {
 
         signal: ?*JSC.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
-        
+
         //needed to shutdown when aborted
         socket: ?*uws.Socket = null,
 
@@ -822,30 +822,12 @@ pub const Fetch = struct {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
             }
 
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
-                allocator,
-                fetch_options.method,
-                fetch_options.url,
-                fetch_options.headers.entries,
-                fetch_options.headers.buf.items,
-                &fetch_tasklet.response_buffer,
-                fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
-                HTTPClient.HTTPClientResult.Callback.New(
-                    *FetchTasklet,
-                    FetchTasklet.callback,
-                ).init(
-                    fetch_tasklet,
-                ),
-                proxy,
-                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
-                if (fetch_tasklet.signal != null) HTTPClient.SocketOpenCallback.New(
-                    *FetchTasklet,
-                    FetchTasklet.onSocketOpen
-                ).init(
-                    fetch_tasklet
-                ) else null
-            );
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(allocator, fetch_options.method, fetch_options.url, fetch_options.headers.entries, fetch_options.headers.buf.items, &fetch_tasklet.response_buffer, fetch_tasklet.request_body.slice(), fetch_options.timeout, HTTPClient.HTTPClientResult.Callback.New(
+                *FetchTasklet,
+                FetchTasklet.callback,
+            ).init(
+                fetch_tasklet,
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, if (fetch_tasklet.signal != null) HTTPClient.SocketOpenCallback.New(*FetchTasklet, FetchTasklet.onSocketOpen).init(fetch_tasklet) else null);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -865,7 +847,7 @@ pub const Fetch = struct {
             //keep to shutdown when aborted
             this.socket = socket;
         }
-        
+
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
@@ -873,15 +855,9 @@ pub const Fetch = struct {
             reason.protect();
             this.aborted.store(true, .Monotonic);
 
-            // if some socket is available call shutdown (uws should prevent shutdown an already closed socket)
-            if (this.socket) |socket_ptr| {
-                if(this.http.?.client.isHTTPS()){
-                    const socket = uws.NewSocketHandler(true).from(socket_ptr);
-                    socket.shutdown();
-                }else{
-                    const socket = uws.NewSocketHandler(false).from(socket_ptr);
-                    socket.shutdown();
-                }
+            // if some socket is available call shutdown
+            if (this.socket != null) {
+                HTTPClient.http_thread.scheduleShutdown(HTTPClient.SocketShutdown.init(this.http.?.client.isHTTPS(), this.socket.?));
             }
         }
 

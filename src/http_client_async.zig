@@ -479,6 +479,23 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
 const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 const Queue = UnboundedQueue(AsyncHTTP, .next);
+pub const SocketShutdown = struct {
+    is_ssl: bool,
+    socket: *uws.Socket,
+    next: ?*SocketShutdown = null,
+    pub fn init(is_ssl: bool, socket: *uws.Socket) *SocketShutdown {
+        var shutdown = bun.default_allocator.create(SocketShutdown) catch unreachable;
+        shutdown.is_ssl = is_ssl;
+        shutdown.socket = socket;
+
+        return shutdown;
+    }
+
+    pub fn deinit(this: *SocketShutdown) void {
+        bun.default_allocator.destroy(this);
+    }
+};
+const ShutdownQueue = UnboundedQueue(SocketShutdown, .next);
 
 pub const HTTPThread = struct {
     var http_thread_loaded: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false);
@@ -488,6 +505,7 @@ pub const HTTPThread = struct {
     https_context: NewHTTPContext(true),
 
     queued_tasks: Queue = Queue{},
+    queued_shutdowns: ShutdownQueue = ShutdownQueue{},
     has_awoken: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
     timer: std.time.Timer = undefined,
     const threadlog = Output.scoped(.HTTPThread, true);
@@ -556,6 +574,18 @@ pub const HTTPThread = struct {
     }
 
     fn drainEvents(this: *@This()) void {
+        //always clean schedule shutdown tasks (uws should prevent shutdown an already closed socket)
+        while (this.queued_shutdowns.pop()) |shutdown| {
+            if (shutdown.is_ssl) {
+                const socket = uws.NewSocketHandler(true).from(shutdown.socket);
+                socket.shutdown();
+            } else {
+                const socket = uws.NewSocketHandler(false).from(shutdown.socket);
+                socket.shutdown();
+            }
+            shutdown.deinit();
+        }
+
         var count: usize = 0;
         var remaining: usize = AsyncHTTP.max_simultaneous_requests - AsyncHTTP.active_requests_count.loadUnchecked();
         if (remaining == 0) return;
@@ -600,10 +630,25 @@ pub const HTTPThread = struct {
         }
     }
 
+    //Invoke call in the HTTPThread
+    pub fn invoke(this: *@This(), comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
+        if (this.has_awoken.load(.Monotonic)) {
+            this.loop.nextTick(UserType, user_data, deferCallback);
+            this.loop.wakeup();
+        }
+    }
+
     pub fn processEvents(this: *@This()) void {
         processEvents_(this);
         unreachable;
     }
+
+    pub fn scheduleShutdown(this: *@This(), shutdown: *SocketShutdown) void {
+        this.queued_shutdowns.push(shutdown);
+        if (this.has_awoken.load(.Monotonic))
+            this.loop.wakeup();
+    }
+
     pub fn schedule(this: *@This(), batch: Batch) void {
         if (batch.len == 0)
             return;

@@ -752,3 +752,18 @@ const net_if_h = @cImport({ @cInclude("net/if.h"); });
 pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
 pub const IFF_UP = net_if_h.IFF_UP;
 pub const IFF_LOOPBACK = net_if_h.IFF_LOOPBACK;
+pub const sockaddr_dl = extern struct {
+	sdl_len: u8,        // Total length of sockaddr */
+	sdl_family: u8,     // AF_LINK */
+	sdl_index: u16,     // if != 0, system given index for interface */
+	sdl_type: u8,       // interface type */
+	sdl_nlen: u8,       // interface name length, no trailing 0 reqd. */
+	sdl_alen: u8,       // link level address length */
+	sdl_slen: u8,       // link layer selector length */
+	sdl_data: [12]u8,   // minimum work area, can be larger; contains both if name and ll address */
+    //#ifndef __APPLE__
+    //	/* For TokenRing */
+    //	u_short sdl_rcf;        /* source routing control */
+    //	u_short sdl_route[16];  /* source routing information */
+    //#endif
+};

@@ -322,10 +322,15 @@ pub const Os = struct {
                 return false;
             }
 
-            // We won't actually return PACKET interfaces but we need them for
+            // We won't actually return link-layer interfaces but we need them for
             //  extracting the MAC address
-            pub fn isPhysical(iface: *C.ifaddrs) bool {
-                return iface.ifa_addr.*.sa_family == std.os.AF.PACKET;
+            pub fn isLinkLayer(iface: *C.ifaddrs) bool {
+                if (iface.ifa_addr == null) return false;
+                return if (comptime Environment.isLinux)
+                        return iface.ifa_addr.*.sa_family == std.os.AF.PACKET
+                    else if (comptime Environment.isMac)
+                        return iface.ifa_addr.?.*.family == std.os.AF.LINK
+                    else unreachable;
             }
 
             pub fn isLoopback(iface: *C.ifaddrs) bool {
@@ -334,15 +339,15 @@ pub const Os = struct {
         };
 
 
-        // The list currently contains entries for physical-level interfaces (family == AF_PACKET)
+        // The list currently contains entries for link-layer interfaces
         //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
-        //  but need the physical entries to determine MAC address.
+        //  but need the link-layer entries to determine MAC address.
         // So, on our first pass through the linked list we'll count the number of
         //  INET interfaces only.
         var num_inet_interfaces: usize = 0;
         var it = interface_start;
         while (it) |iface| : (it = iface.ifa_next) {
-            if (helpers.skip(iface) or helpers.isPhysical(iface)) continue;
+            if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
             num_inet_interfaces += 1;
         }
 
@@ -351,7 +356,7 @@ pub const Os = struct {
         // Second pass through, populate each interface object
         it = interface_start;
         while (it) |iface| : (it = iface.ifa_next) {
-            if (helpers.skip(iface) or helpers.isPhysical(iface)) continue;
+            if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
             const interface_name = std.mem.span(iface.ifa_name);
             const addr = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_addr)));
@@ -362,7 +367,8 @@ pub const Os = struct {
             // address <string> The assigned IPv4 or IPv6 address
             // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
             {
-                // Compute the CIDR suffix
+                // Compute the CIDR suffix; returns null if the netmask cannot
+                //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (addr.any.family) {
                     std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
                     std.os.AF.INET6 => netmaskToCIDRSuffix(@bitCast(u128, netmask.in6.sa.addr)),
@@ -409,33 +415,36 @@ pub const Os = struct {
 
             // mac <string> The MAC address of the network interface
             {
-                // We need to search for the physical interface whose name matches this one
-                var phys_it = interface_start;
-                const maybe_phys_addr = while (phys_it) |phys_iface| : (phys_it = phys_iface.ifa_next) {
-                    if (helpers.skip(phys_iface) or !helpers.isPhysical(phys_iface)) continue;
+                // We need to search for the link-layer interface whose name matches this one
+                var ll_it = interface_start;
+                const maybe_ll_addr = while (ll_it) |ll_iface| : (ll_it = ll_iface.ifa_next) {
+                    if (helpers.skip(ll_iface) or !helpers.isLinkLayer(ll_iface)) continue;
 
-                    const phys_name = std.mem.span(phys_iface.ifa_name);
-                    if (!std.mem.startsWith(u8, phys_name, interface_name)) continue;
-                    if (phys_name.len > interface_name.len and phys_name[interface_name.len] != ':') continue;
+                    const ll_name = std.mem.span(ll_iface.ifa_name);
+                    if (!std.mem.startsWith(u8, ll_name, interface_name)) continue;
+                    if (ll_name.len > interface_name.len and ll_name[interface_name.len] != ':') continue;
 
-                    // This is the correct physical interface entry for the current interface,
+                    // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
-                    break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, phys_iface.ifa_addr));
+                    if (comptime Environment.isLinux) {
+                        break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, ll_iface.ifa_addr));
+                    } else if (comptime Environment.isMac) {
+                        break @ptrCast(?*C.sockaddr_dl, @alignCast(2, ll_iface.ifa_addr));
+                    } else unreachable;
                 } else null;
 
-                if (maybe_phys_addr) |phys_addr| {
-                    // Encode its physical address.  We need 2*6 bytes for the
+                if (maybe_ll_addr) |ll_addr| {
+                    // Encode its link-layer address.  We need 2*6 bytes for the
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
+                    var addr_data = if (comptime Environment.isLinux) ll_addr.addr
+                                    else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..]
+                                    else unreachable;
                     const mac = std.fmt.bufPrint(&mac_buf,
                         "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}",
                         .{
-                            phys_addr.addr[0],
-                            phys_addr.addr[1],
-                            phys_addr.addr[2],
-                            phys_addr.addr[3],
-                            phys_addr.addr[4],
-                            phys_addr.addr[5],
+                            addr_data[0], addr_data[1], addr_data[2],
+                            addr_data[3], addr_data[4], addr_data[5],
                         }
                     ) catch unreachable;
                     interface.put(globalThis, JSC.ZigString.static("mac"),

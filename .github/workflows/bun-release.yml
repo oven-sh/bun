@@ -30,10 +30,9 @@ jobs:
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
         run: bun install
@@ -63,10 +62,9 @@ jobs:
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
         run: bun install
@@ -100,10 +98,9 @@ jobs:
           node-version: latest
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
         run: |

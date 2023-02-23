@@ -2,7 +2,7 @@ As of Bun v0.2.1, `Bun.serve()` supports server-side WebSockets, with on-the-fly
 
 {% callout %}
 
-**⚡️ Speed** — Bun's WebSockets are fast. For a [simple chatroom](https://github.com/oven-sh/bun/tree/main/bench/websocket-server/README.md) on Linux x64, Bun can handle 7x more requests per second than Node.js + [`"ws"`](https://github.com/websockets/ws).
+**⚡️ 7x more throughput** — Bun's WebSockets are fast. For a [simple chatroom](https://github.com/oven-sh/bun/tree/main/bench/websocket-server/README.md) on Linux x64, Bun can handle 7x more requests per second than Node.js + [`"ws"`](https://github.com/websockets/ws).
 
 | Messages sent per second | Runtime                        | Clients |
 | ------------------------ | ------------------------------ | ------- |
@@ -34,16 +34,16 @@ To add event listeners to the socket:
 
 ```ts
 // message is received
-socket.addEventListener("message", (event) => {});
+socket.addEventListener("message", event => {});
 
 // socket opened
-socket.addEventListener("open", (event) => {});
+socket.addEventListener("open", event => {});
 
 // socket closed
-socket.addEventListener("close", (event) => {});
+socket.addEventListener("close", event => {});
 
 // error handler
-socket.addEventListener("error", (event) => {});
+socket.addEventListener("error", event => {});
 ```
 
 ## Create a server
@@ -248,10 +248,7 @@ namespace Bun {
   export function serve(params: {
     fetch: (req: Request, server: Server) => Response | Promise<Response>;
     websocket?: {
-      message: (
-        ws: ServerWebSocket,
-        message: string | ArrayBuffer | Uint8Array,
-      ) => void;
+      message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
       open?: (ws: ServerWebSocket) => void;
       close?: (ws: ServerWebSocket) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
@@ -281,11 +278,7 @@ type Compressor =
 
 interface Server {
   pendingWebsockets: number;
-  publish(
-    topic: string,
-    data: string | ArrayBufferView | ArrayBuffer,
-    compress?: boolean,
-  ): number;
+  publish(topic: string, data: string | ArrayBufferView | ArrayBuffer, compress?: boolean): number;
   upgrade(
     req: Request,
     options?: {

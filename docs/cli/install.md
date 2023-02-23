@@ -4,7 +4,7 @@ It can be be used as a drop-in replacement for these tools, _regardless of wheth
 
 {% callout %}
 
-**⚡️ Speed** — Switch from `npm install` to `bun install` in any Node.js project to make your installations up to 80x faster.
+**⚡️ 80x faster** — Switch from `npm install` to `bun install` in any Node.js project to make your installations up to 80x faster.
 
 {% image src="https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png" height="200" /%}
 

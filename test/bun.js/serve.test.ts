@@ -1,4 +1,4 @@
-import { file, gc, serve } from "bun";
+import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
@@ -7,19 +7,18 @@ afterEach(() => gc(true));
 
 const count = 200;
 let port = 10000;
-let server;
+let server: Server | undefined;
 
-async function runTest(serverOptions, test) {
+async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Serve<any>) => Promise<void> | void) {
   if (server) {
-    server.reload(serverOptions);
+    server.reload({ ...serverOptions, port: 0 });
   } else {
     while (!server) {
       try {
-        serverOptions.port = port++;
-        server = serve(serverOptions);
+        server = serve({ ...serverOptions, port: 0 });
         break;
       } catch (e: any) {
-        if (e?.message !== `Failed to start server. Is port ${serverOptions.port} in use?`) {
+        if (e?.message !== `Failed to start server `) {
           throw e;
         }
       }
@@ -81,6 +80,35 @@ it("should display a welcome message when the response value type is incorrect",
       const response = await fetch(`http://${server.hostname}:${server.port}`);
       const text = await response.text();
       expect(text).toContain("Welcome to Bun!");
+    },
+  );
+});
+
+it("request.signal works in trivial case", async () => {
+  var aborty = new AbortController();
+  var didAbort = false;
+  await runTest(
+    {
+      async fetch(req) {
+        req.signal.addEventListener("abort", () => {
+          didAbort = true;
+        });
+        expect(didAbort).toBe(false);
+        aborty.abort();
+        await Bun.sleep(2);
+        return new Response("Test failed!");
+      },
+    },
+    async server => {
+      try {
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal });
+        throw new Error("Expected fetch to throw");
+      } catch (e: any) {
+        expect(e.name).toBe("AbortError");
+      }
+      await Bun.sleep(1);
+
+      expect(didAbort).toBe(true);
     },
   );
 });

@@ -146,20 +146,23 @@ async function init(): Promise<Lambda> {
     }
     return throwError("InitError", cause);
   }
-  const moduleName = handlerName.substring(index + 1) || "default";
-  let module = file[moduleName];
-  if (moduleName !== "default") {
+  const moduleName = handlerName.substring(index + 1) || "fetch";
+  let module = file["default"] ?? file[moduleName] ?? {};
+  if (typeof module === "function") {
     module = {
       fetch: module,
+    };
+  } else if (typeof module === "object" && moduleName !== "fetch") {
+    module = {
+      ...module,
+      fetch: module[moduleName],
     };
   }
   const { fetch, websocket } = module;
   if (typeof fetch !== "function") {
     return throwError(
       fetch === undefined ? "MethodDoesNotExist" : "MethodIsNotAFunction",
-      moduleName === "default"
-        ? `${fileName} does not have a default export with a function named 'fetch'`
-        : `${fileName} does not export a function named '${moduleName}'`,
+      `${fileName} does not have a default export with a function named '${moduleName}'`,
     );
   }
   if (websocket === undefined) {

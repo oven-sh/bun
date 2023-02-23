@@ -45,10 +45,6 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
-// Test headers
-// Test abort signal
-// Add check for eventemitter signal, wrap abortsignal in EE
-
 class BodyReadable extends _ReadableFromWeb {
   #response;
   #bodyUsed;

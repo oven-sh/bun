@@ -113,6 +113,17 @@ describe("undici", () => {
       }
     });
 
+    it("should properly append headers to the request", async () => {
+      const { body } = await request("https://httpbin.org/headers", {
+        headers: {
+          "x-foo": "bar",
+        },
+      });
+      expect(body).toBeDefined();
+      const json = (await body.json()) as { headers: { "X-Foo": string } };
+      expect(json.headers["X-Foo"]).toBe("bar");
+    });
+
     // it("should allow the use of FormData", async () => {
     //   const form = new FormData();
     //   form.append("foo", "bar");

@@ -1067,7 +1067,7 @@ pub fn hasSignalAborted(this: *HTTPClient) ?JSC.JSValue {
 }
 
 pub fn deinitSignal(this: *HTTPClient) void {
-     if (this.signal != null) {
+    if (this.signal != null) {
         var signal = this.signal.?;
         const ctx = bun.cast(*anyopaque, this);
         signal.cleanNativeBindings(ctx);
@@ -1839,14 +1839,16 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    log("closeAndFail", .{});
-    this.fail(err, null);
-    if (!socket.isClosed()) {
-        socket.ext(**anyopaque).?.* = bun.cast(
-            **anyopaque,
-            NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-        );
-        socket.close(0, null);
+    if (this.state.stage != .fail and this.state.stage != .done) {
+        log("closeAndFail", .{});
+        if (!socket.isClosed()) {
+            socket.ext(**anyopaque).?.* = bun.cast(
+                **anyopaque,
+                NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+            );
+            socket.close(0, null);
+        }
+        this.fail(err, null);
     }
 }
 
@@ -2139,14 +2141,16 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 }
 
 pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    log("closeAndAbort", .{});
-    this.fail(error.Aborted, reason);
-    if (!socket.isClosed()) {
-        socket.ext(**anyopaque).?.* = bun.cast(
-            **anyopaque,
-            NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-        );
-        socket.close(0, null);
+    if (this.state.stage != .fail and this.state.stage != .done) {
+        log("closeAndAbort", .{});
+        if (!socket.isClosed()) {
+            socket.ext(**anyopaque).?.* = bun.cast(
+                **anyopaque,
+                NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
+            );
+            socket.close(0, null);
+        }
+        this.fail(error.Aborted, reason);
     }
 }
 
@@ -2196,49 +2200,47 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 }
 
 pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    log("done", .{});
+    if (this.state.stage != .done and this.state.stage != .fail) {
+        log("done", .{});
 
-    this.deinitSignal();
+        this.deinitSignal();
 
-    var out_str = this.state.body_out_str.?;
-    var body = out_str.*;
-    this.cloned_metadata.response = this.state.pending_response;
-    const result = this.toResult(this.cloned_metadata, null);
-    const callback = this.completion_callback;
+        var out_str = this.state.body_out_str.?;
+        var body = out_str.*;
+        this.cloned_metadata.response = this.state.pending_response;
+        const result = this.toResult(this.cloned_metadata, null);
+        const callback = this.completion_callback;
 
-    this.state.response_stage = .done;
-    this.state.request_stage = .done;
-    this.state.stage = .done;
+        socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
-    socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
-
-    if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
-        ctx.releaseSocket(
-            socket,
-            this.connected_url.hostname,
-            this.connected_url.getPortAuto(),
-        );
-    } else if (!socket.isClosed()) {
-        socket.close(0, null);
-    }
-
-    this.state.reset();
-    result.body.?.* = body;
-    std.debug.assert(this.state.stage != .done);
-    this.state.response_stage = .done;
-    this.state.request_stage = .done;
-    this.state.stage = .done;
-    this.proxy_tunneling = false;
-    if (comptime print_every > 0) {
-        print_every_i += 1;
-        if (print_every_i % print_every == 0) {
-            Output.prettyln("Heap stats for HTTP thread\n", .{});
-            Output.flush();
-            default_arena.dumpThreadStats();
-            print_every_i = 0;
+        if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
+            ctx.releaseSocket(
+                socket,
+                this.connected_url.hostname,
+                this.connected_url.getPortAuto(),
+            );
+        } else if (!socket.isClosed()) {
+            socket.close(0, null);
         }
+
+        this.state.reset();
+        result.body.?.* = body;
+        std.debug.assert(this.state.stage != .done);
+        this.state.response_stage = .done;
+        this.state.request_stage = .done;
+        this.state.stage = .done;
+        this.proxy_tunneling = false;
+        if (comptime print_every > 0) {
+            print_every_i += 1;
+            if (print_every_i % print_every == 0) {
+                Output.prettyln("Heap stats for HTTP thread\n", .{});
+                Output.flush();
+                default_arena.dumpThreadStats();
+                print_every_i = 0;
+            }
+        }
+        callback.run(result);
     }
-    callback.run(result);
 }
 
 pub const HTTPClientResult = struct {

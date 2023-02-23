@@ -548,7 +548,7 @@ export const promises = {
     }
 
     resolve(hostname, rrtype) {
-      return dns.resolve(hostname, rrtype).then(promisifyResolve);
+      return dns.resolve(hostname, rrtype).then(promisifyResolve(rrtype));
     }
 
     resolve4(hostname, options) {

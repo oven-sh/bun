@@ -180,6 +180,7 @@ var InternalResolver = class Resolver {
   resolve(hostname, rrtype, callback) {
     if (typeof rrtype == "function") {
       callback = rrtype;
+      rrtype = null;
     }
 
     if (typeof callback != "function") {
@@ -211,6 +212,7 @@ var InternalResolver = class Resolver {
   resolve4(hostname, options, callback) {
     if (typeof options == "function") {
       callback = options;
+      options = null;
     }
 
     if (typeof callback != "function") {
@@ -221,7 +223,7 @@ var InternalResolver = class Resolver {
       addresses => {
         callback(
           null,
-          addresses.map(({ address }) => address),
+          options?.ttl ? addresses : addresses.map(({ address }) => address),
         );
       },
       error => {
@@ -233,6 +235,7 @@ var InternalResolver = class Resolver {
   resolve6(hostname, options, callback) {
     if (typeof options == "function") {
       callback = options;
+      options = null;
     }
 
     if (typeof callback != "function") {
@@ -243,7 +246,7 @@ var InternalResolver = class Resolver {
       addresses => {
         callback(
           null,
-          addresses.map(({ address }) => address),
+          options?.ttl ? addresses : addresses.map(({ address }) => address),
         );
       },
       error => {
@@ -461,6 +464,10 @@ const promisifyLookup = res => {
 };
 
 const promisifyResolve = rrtype => {
+  if (typeof rrtype !== "string"){
+    rrtype = null;
+  }
+
   switch (rrtype?.toLowerCase()) {
     case "a":
     case "aaaa":
@@ -485,15 +492,21 @@ export const promises = {
   },
 
   resolve(hostname, rrtype) {
-    return dns.resolve(hostname, rrtype).then(promisifyResolve);
+    return dns.resolve(hostname, rrtype).then(promisifyResolve(rrtype));
   },
 
   resolve4(hostname, options) {
-    return dns.lookup(hostname, { family: 4 });
+    if (options?.ttl) {
+      return dns.lookup(hostname, { family: 4 });  
+    }
+    return dns.lookup(hostname, { family: 4 }).then((res)=> res?.map(a => a.address))
   },
 
   resolve6(hostname, options) {
-    return dns.lookup(hostname, { family: 6 });
+    if (options?.ttl) {
+      return dns.lookup(hostname, { family: 6 });  
+    }
+    return dns.lookup(hostname, { family: 6 }).then((res)=> res?.map(a => a.address))
   },
 
   resolveSrv(hostname) {
@@ -539,11 +552,17 @@ export const promises = {
     }
 
     resolve4(hostname, options) {
-      return dns.lookup(hostname, { family: 4 });
+      if (options?.ttl) {
+        return dns.lookup(hostname, { family: 4 });  
+      }
+      return dns.lookup(hostname, { family: 4 }).then((res)=> res?.map(a => a.address))
     }
 
     resolve6(hostname, options) {
-      return dns.lookup(hostname, { family: 6 });
+      if (options?.ttl) {
+        return dns.lookup(hostname, { family: 6 });  
+      }
+      return dns.lookup(hostname, { family: 6 }).then((res)=> res?.map(a => a.address))
     }
 
     resolveAny(hostname) {

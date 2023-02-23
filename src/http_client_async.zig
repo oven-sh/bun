@@ -577,10 +577,10 @@ pub const HTTPThread = struct {
         //always clean schedule shutdown tasks (uws should prevent shutdown an already closed socket)
         while (this.queued_shutdowns.pop()) |shutdown| {
             if (shutdown.is_ssl) {
-                const socket = uws.NewSocketHandler(true).from(shutdown.socket);
+                const socket = uws.SocketTLS.from(shutdown.socket);
                 socket.shutdown();
             } else {
-                const socket = uws.NewSocketHandler(false).from(shutdown.socket);
+                const socket = uws.SocketTCP.from(shutdown.socket);
                 socket.shutdown();
             }
             shutdown.deinit();

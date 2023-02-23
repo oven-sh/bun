@@ -3,8 +3,10 @@ const {
   Readable,
   [Symbol.for("::bunternal::")]: { _ReadableFromWeb },
 } = import.meta.require("node:stream");
+const { Object } = import.meta.primordials;
 
-var bunPeek = Bun.peek;
+const ObjectCreate = Object.create;
+const kEmptyObject = ObjectCreate(null);
 
 export var fetch = Bun.fetch;
 export var Response = globalThis.Response;
@@ -43,23 +45,6 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
-/**
- * @typedef {BodyReadable} ResponseBody
- */
-
-// export interface RequestOptions extends DispatchOptions {
-//   /** Default: `null` */
-//   opaque?: unknown;
-//   /** Default: `null` */
-//   signal?: AbortSignal | EventEmitter | null;
-//   /** Default: 0 */
-//   maxRedirections?: number;
-//   /** Default: `null` */
-//   onInfo?: (info: { statusCode: number, headers: Record<string, string | string[]> }) => void;
-//   /** Default: `null` */
-//   responseHeader?: 'raw' | null;
-// }
-
 // /** Default: `null` */
 // body?: string | Buffer | Uint8Array | Readable | null | FormData;
 // /** Default: `null` */
@@ -81,15 +66,6 @@ function notImplemented() {
 // /** Whether Undici should throw an error upon receiving a 4xx or 5xx response from the server. Defaults to false */
 // throwOnError?: boolean;
 
-// onInfo -- maybe not implemented
-// blocking -- not implemented
-// upgrade -- maybe not implemented
-// headersTimeout -- probably not implemented
-// bodyTimeout -- probably not implemented
-// reset -- not implemented
-
-// Base case, take url, make fetch request, wrap Response Body in a Readable
-// Finish types
 // Add support for headers
 // Add support for trailers
 // Get statusCode
@@ -107,6 +83,7 @@ function notImplemented() {
 
 class BodyReadable extends _ReadableFromWeb {
   #response;
+  #bodyUsed;
 
   constructor(response, options = {}) {
     var { body } = response;
@@ -114,32 +91,54 @@ class BodyReadable extends _ReadableFromWeb {
     super(options, body);
 
     this.#response = response;
+    this.#bodyUsed = response.bodyUsed;
   }
 
-  bodyUsed() {
-    return this.#response.bodyUsed;
+  get bodyUsed() {
+    // return this.#response.bodyUsed;
+    return this.#bodyUsed;
+  }
+
+  #consume() {
+    if (this.#bodyUsed) throw new TypeError("unusable");
+    this.#bodyUsed = true;
   }
 
   async arrayBuffer() {
+    this.#consume();
     return await this.#response.arrayBuffer();
   }
 
   async blob() {
+    this.#consume();
     return await this.#response.blob();
   }
 
   async formData() {
+    this.#consume();
     return await this.#response.formData();
   }
 
   async json() {
+    this.#consume();
     return await this.#response.json();
   }
 
   async text() {
-    return this.#response.text();
+    this.#consume();
+    return await this.#response.text();
   }
 }
+
+// NOT IMPLEMENTED
+// *   idempotent?: boolean;
+// *   onInfo?: (info: { statusCode: number, headers: Object<string, string | string[]> }) => void;
+// *   opaque?: *;
+// *   responseHeader: 'raw' | null;
+// *   headersTimeout?: number | null;
+// *   bodyTimeout?: number | null;
+// *   upgrade?: boolean | string | null;
+// *   blocking?: boolean;
 
 /**
  * Performs an HTTP request.
@@ -147,21 +146,13 @@ class BodyReadable extends _ReadableFromWeb {
  * @param {{
  *   dispatcher: Dispatcher;
  *   method: HttpMethod;
- *   opaque?: *;
  *   signal?: AbortSignal | EventEmitter | null;
  *   maxRedirections?: number;
- *   onInfo?: (info: { statusCode: number, headers: Object<string, string | string[]> }) => void;
- *   responseHeader: 'raw' | null;
-body?: string | Buffer | Uint8Array | Readable | null | FormData;
-headers?: IncomingHttpHeaders | string[] | null;
-query?: Record<string, any>;
-idempotent?: boolean;
-blocking?: boolean;
-upgrade?: boolean | string | null;
-headersTimeout?: number | null;
-bodyTimeout?: number | null;
-reset?: boolean;
-throwOnError?: boolean;
+ *   body?: string | Buffer | Uint8Array | Readable | null | FormData;
+ *   headers?: IncomingHttpHeaders | string[] | null;
+ *   query?: Record<string, any>;
+ *   reset?: boolean;
+ *   throwOnError?: boolean;
  * }} [options]
  * @returns {{
  *   statusCode: number;
@@ -176,64 +167,90 @@ export async function request(
   url,
   options = {
     method: "GET",
-    headers: {},
-    query: {},
+    headers,
+    query,
     idempotent: false, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
-    headersTimeout: 30000,
-    bodyTimeout: 30000,
+    // headersTimeout: 30000,
+    // bodyTimeout: 30000,
     reset: false,
     throwOnError: false,
-    body: null,
-    dispatcher: null,
+    body,
+    dispatcher,
   },
 ) {
   let {
     method = "GET",
     headers: inputHeaders,
-    query = {},
+    query,
     idempotent, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
-    headersTimeout = 30000,
-    bodyTimeout = 30000,
+    // headersTimeout = 30000,
+    // bodyTimeout = 30000,
     reset = false,
     throwOnError = false,
-    body: inputBody = null,
+    body: inputBody,
+    maxRedirections,
     dispatcher,
   } = options;
 
-  // // if (typeof url !== "string" && !(url instanceof URL) && !(url instanceof UrlObject)) {
-  // //   // TODO: Make sure UrlObject gets converted to URL
-  // // }
-  // // console.log(method.toUpperCase);
+  // TODO: Reset
+
+  // TODO: Do more validations of options
+
+  if (typeof url !== "string" && !(url instanceof URL) && !(typeof url === "object" && url !== null))
+    throw new TypeError("url must be a string, URL, or UrlObject");
+
+  if (typeof url === "string" && query) url = new URL(url);
+  if (query) url.search = new URLSearchParams(query).toString();
+
   method = method && typeof method === "string" ? method.toUpperCase() : null;
-  idempotent = idempotent || method === "GET" || method === "HEAD";
+  idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
+  }
+
+  if (inputBody.read && inputBody instanceof Readable) {
+    // TODO: Streaming via ReadableStream?
+    let data = "";
+    inputBody.setEncoding("utf8");
+    for await (const chunk of stream) {
+      data += chunk;
+    }
+    inputBody = new TextEncoder().encode(data);
+  }
+
+  if (maxRedirections !== undefined && Number.isNaN(maxRedirections)) {
+    throw new Error("maxRedirections must be a number if defined");
+  }
+
+  if (signal && !(signal instanceof AbortSignal)) {
+    // TODO: Add support for event emitter signal
+    throw new Error("signal must be an instance of AbortSignal");
   }
 
   let resp;
   /** @type {Response} */
   const { statusCode, headers, trailers } = (resp = await fetch(url, {
     mode: "cors",
-    // query,
     method,
     headers: inputHeaders,
     body: inputBody,
-    // keepalive: !!dispatcher, // We use keepalive if we have a dispatcher
+    redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
+    // TODO: Make this smarter, make sure user does intend to make multiple requests
+    keepalive: !!dispatcher, // We use keepalive if we have a dispatcher
   }));
 
-  // TODO: Make this smarter, make sure user does intend to make multiple requests
   // // Throw if received 4xx or 5xx response indicating HTTP error
-  // if (throwOnError && statusCode >= 400 && statusCode < 600) {
-  //   throw new Error(`Request failed with status code ${statusCode}`);
-  // }
+  if (throwOnError && statusCode >= 400 && statusCode < 600) {
+    throw new Error(`Request failed with status code ${statusCode}`);
+  }
 
   const body = resp.body ? new BodyReadable(resp) : null;
-  return { statusCode, headers, body, trailers, opaque: {}, context: {} };
+  return { statusCode, headers, body, trailers, opaque: kEmptyObject, context: kEmptyObject };
 }
 
 export function stream() {

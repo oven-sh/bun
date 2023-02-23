@@ -221,7 +221,7 @@ pub const Os = struct {
         defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), info_size);
 
         // Ensure we got the amount of data we expected to guard against buffer overruns
-        if (info_size != @sizeOf(@TypeOf(info[0])) * num_cpus) {
+        if (info_size != C.PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus) {
             return error.broken_process_info;
         }
 

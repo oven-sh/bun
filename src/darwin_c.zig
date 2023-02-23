@@ -559,6 +559,8 @@ pub const CPU_STATE_MAX = 4;
 pub const processor_cpu_load_info = struct {
     cpu_ticks: [CPU_STATE_MAX]c_ulong,
 };
+pub const PROCESSOR_CPU_LOAD_INFO_COUNT = @as(std.c.mach_msg_type_number_t,
+                                              @sizeOf(processor_cpu_load_info)/@sizeOf(std.c.natural_t));
 pub const processor_info_array_t = [*]c_int;
 pub const PROCESSOR_INFO_MAX = 1024;
 

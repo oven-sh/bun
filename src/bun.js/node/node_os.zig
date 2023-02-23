@@ -237,7 +237,7 @@ pub const Os = struct {
         //NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
         // model name.
-        const model_name = JSC.ZigString.init(std.mem.span(&model_name_buf)).withEncoding().toValueGC(globalThis);
+        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toValueGC(globalThis);
 
 
         // Get CPU speed

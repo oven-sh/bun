@@ -613,7 +613,7 @@ You do not need to include file extensions in `import` paths. CommonJS-style imp
 
 You can override the public directory by passing `--public-dir="path-to-folder"`.
 
-If no directory is specified and `./public/` doesn’t exist, bun will try `./static/`. If `./static/` does not exist, but won’t serve from a public directory. If you pass `--public-dir=./` bun will serve from the current directory, but it will check the current directory last instead of first.
+If no directory is specified and `./public/` doesn’t exist, bun will try `./static/`. If `./static/` does not exist, bun won’t serve from a public directory. If you pass `--public-dir=./` bun will serve from the current directory, but it will check the current directory last instead of first.
 
 ## Using bun with TypeScript
 

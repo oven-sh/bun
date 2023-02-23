@@ -272,6 +272,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (active.get(HTTPClient)) |client| {
+                    if (client.onSocketOpen) |onSocketOpen| {
+                        onSocketOpen.run(socket.socket);
+                    }
+
                     return client.onOpen(comptime ssl, socket);
                 }
 
@@ -666,7 +670,7 @@ pub fn onOpen(
             ssl.configureHTTPClient(hostname);
         }
     }
-    
+
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -1000,6 +1004,7 @@ proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
 aborted: ?*std.atomic.Atomic(bool) = null,
+onSocketOpen: ?SocketOpenCallback = null,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1008,15 +1013,9 @@ pub fn init(
     header_entries: Headers.Entries,
     header_buf: string,
     signal: ?*std.atomic.Atomic(bool),
+    onSocketOpen: ?SocketOpenCallback,
 ) HTTPClient {
-    return HTTPClient{
-        .allocator = allocator,
-        .method = method,
-        .url = url,
-        .header_entries = header_entries,
-        .header_buf = header_buf,
-        .aborted = signal,
-    };
+    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .aborted = signal, .onSocketOpen = onSocketOpen };
 }
 
 pub fn deinit(this: *HTTPClient) void {
@@ -1204,6 +1203,7 @@ pub const AsyncHTTP = struct {
         callback: HTTPClientResult.Callback,
         http_proxy: ?URL,
         signal: ?*std.atomic.Atomic(bool),
+        onSocketOpen: ?SocketOpenCallback,
     ) AsyncHTTP {
         var this = AsyncHTTP{
             .allocator = allocator,
@@ -1216,7 +1216,7 @@ pub const AsyncHTTP = struct {
             .completion_callback = callback,
             .http_proxy = http_proxy,
         };
-        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal);
+        this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal, onSocketOpen);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
         if (http_proxy) |proxy| {
@@ -1247,13 +1247,13 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null);
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, http_proxy, null, null);
     }
 
     fn reset(this: *AsyncHTTP) !void {
         const timeout = this.timeout;
         var aborted = this.client.aborted;
-        this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
+        this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted, this.client.onSocketOpen);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
         if (this.http_proxy) |proxy| {
@@ -1497,31 +1497,34 @@ pub fn doRedirect(this: *HTTPClient) void {
     }
     return this.start("", body_out_str);
 }
-
+pub fn isHTTPS(this: *HTTPClient) bool {
+    if (this.http_proxy) |proxy| {
+        if (proxy.isHTTPS()) {
+            return true;
+        }
+        return false;
+    }
+    if (this.url.isHTTPS()) {
+        return true;
+    }
+    return false;
+}
 pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) void {
     body_out_str.reset();
 
     std.debug.assert(this.state.response_message_buffer.list.capacity == 0);
     this.state = InternalState.init(body, body_out_str);
 
-    if (this.http_proxy) |proxy| {
-        if (proxy.isHTTPS()) {
-            this.start_(true);
-        } else {
-            this.start_(false);
-        }
+    if (this.isHTTPS()) {
+        this.start_(true);
     } else {
-        if (this.url.isHTTPS()) {
-            this.start_(true);
-        } else {
-            this.start_(false);
-        }
+        this.start_(false);
     }
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     // Aborted before connecting
-    if (this.hasSignalAborted()){
+    if (this.hasSignalAborted()) {
         this.fail(error.Aborted);
         return;
     }
@@ -1534,6 +1537,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         this.fail(error.ConnectionClosed);
         std.debug.assert(this.state.fail != error.NoError);
+        return;
     }
 }
 
@@ -1558,7 +1562,7 @@ fn printResponse(response: picohttp.Response) void {
 }
 
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.hasSignalAborted())  {
+    if (this.hasSignalAborted()) {
         this.closeAndAbort(is_ssl, socket);
         return;
     }
@@ -2192,7 +2196,32 @@ pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ss
         callback.run(result);
     }
 }
+pub const SocketOpenCallback = struct {
+    ctx: *anyopaque,
+    function: Function,
 
+    pub const Function = *const fn (*anyopaque, *uws.Socket) void;
+
+    pub fn run(self: SocketOpenCallback, socket: *uws.Socket) void {
+        self.function(self.ctx, socket);
+    }
+
+    pub fn New(comptime Type: type, comptime callback: anytype) type {
+        return struct {
+            pub fn init(this: Type) SocketOpenCallback {
+                return SocketOpenCallback{
+                    .ctx = this,
+                    .function = @This().wrapped_callback,
+                };
+            }
+
+            pub fn wrapped_callback(ptr: *anyopaque, socket: *uws.Socket) void {
+                var casted = @ptrCast(Type, @alignCast(std.meta.alignment(Type), ptr));
+                @call(.always_inline, callback, .{ casted, socket });
+            }
+        };
+    }
+};
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     response: picohttp.Response = .{},

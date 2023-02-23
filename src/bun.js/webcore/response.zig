@@ -608,6 +608,8 @@ pub const Fetch = struct {
     );
 
     pub const FetchTasklet = struct {
+        const log = Output.scoped(.FetchTasklet, false);
+
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
         javascript_vm: *VirtualMachine = undefined,
@@ -625,6 +627,9 @@ pub const Fetch = struct {
 
         signal: ?*JSC.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+        
+        //needed to shutdown when aborted
+        socket: ?*uws.Socket = null,
 
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
@@ -834,6 +839,12 @@ pub const Fetch = struct {
                 ),
                 proxy,
                 if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
+                if (fetch_tasklet.signal != null) HTTPClient.SocketOpenCallback.New(
+                    *FetchTasklet,
+                    FetchTasklet.onSocketOpen
+                ).init(
+                    fetch_tasklet
+                ) else null
             );
 
             if (!fetch_options.follow_redirects) {
@@ -850,11 +861,28 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
+        pub fn onSocketOpen(this: *FetchTasklet, socket: *uws.Socket) void {
+            //keep to shutdown when aborted
+            this.socket = socket;
+        }
+        
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
+            log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
             this.aborted.store(true, .Monotonic);
+
+            // if some socket is available call shutdown (uws should prevent shutdown an already closed socket)
+            if (this.socket) |socket_ptr| {
+                if(this.http.?.client.isHTTPS()){
+                    const socket = uws.NewSocketHandler(true).from(socket_ptr);
+                    socket.shutdown();
+                }else{
+                    const socket = uws.NewSocketHandler(false).from(socket_ptr);
+                    socket.shutdown();
+                }
+            }
         }
 
         const FetchOptions = struct {

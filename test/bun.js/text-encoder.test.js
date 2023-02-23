@@ -99,7 +99,7 @@ describe("TextEncoder", () => {
 
     expect([...new TextEncoder().encode(String.fromCodePoint(0))]).toEqual([0]);
 
-    const fixture = new Uint8Array(await Bun.file("utf8-encoding-fixture.bin").arrayBuffer());
+    const fixture = new Uint8Array(await Bun.file(import.meta.dir + "/utf8-encoding-fixture.bin").arrayBuffer());
     const length = 0x110000;
     let textEncoder = new TextEncoder();
     let textDecoder = new TextDecoder();

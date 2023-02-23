@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { request, FormData } from "undici";
+import { request } from "undici";
 
 describe("undici", () => {
   describe("request", () => {
@@ -39,8 +39,9 @@ describe("undici", () => {
       expect(json.url).toBe("https://httpbin.org/get");
     });
 
-    // it("should accept an undici URLObject", async () => {
-    //   const { body } = await request({ protocol: "https:", hostname: "httpbin.org", path: "/get" } });
+    // it("should accept an undici UrlObject", async () => {
+    //   // @ts-ignore
+    //   const { body } = await request({ protocol: "https:", hostname: "httpbin.org", path: "/get" });
     //   expect(body).toBeDefined();
     //   const json = (await body.json()) as { url: string };
     //   expect(json.url).toBe("https://httpbin.org/get");
@@ -87,14 +88,28 @@ describe("undici", () => {
         await request("https://httpbin.org/status/404", { throwOnError: true });
         throw new Error("Should have errored");
       } catch (e) {
-        expect((e as Error).message).toBe("Not Found");
+        expect((e as Error).message).toBe("Request failed with status code 404");
       }
 
       try {
         await request("https://httpbin.org/status/500", { throwOnError: true });
         throw new Error("Should have errored");
       } catch (e) {
-        expect((e as Error).message).toBe("Internal Server Error");
+        expect((e as Error).message).toBe("Request failed with status code 500");
+      }
+    });
+
+    it("should allow us to abort the request with a signal", async () => {
+      const controller = new AbortController();
+      try {
+        setTimeout(() => controller.abort(), 1000);
+        const req = await request("https://httpbin.org/delay/5", {
+          signal: controller.signal,
+        });
+        await req.body.json();
+        throw new Error("Should have errored");
+      } catch (e) {
+        expect((e as Error).message).toBe("The operation was aborted.");
       }
     });
 

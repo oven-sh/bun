@@ -1,9 +1,9 @@
+// const { Object } = import.meta.primordials;
 const { EventEmitter } = import.meta.require("events");
 const {
   Readable,
   [Symbol.for("::bunternal::")]: { _ReadableFromWeb },
 } = import.meta.require("node:stream");
-const { Object } = import.meta.primordials;
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
@@ -45,41 +45,9 @@ function notImplemented() {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
-// /** Default: `null` */
-// body?: string | Buffer | Uint8Array | Readable | null | FormData;
-// /** Default: `null` */
-// headers?: IncomingHttpHeaders | string[] | null;
-// /** Query string params to be embedded in the request URL. Default: `null` */
-// query?: Record<string, any>;
-// /** Whether the requests can be safely retried or not. If `false` the request won't be sent until all preceding requests in the pipeline have completed. Default: `true` if `method` is `HEAD` or `GET`. */
-// idempotent?: boolean;
-// /** Whether the response is expected to take a long time and would end up blocking the pipeline. When this is set to `true` further pipelining will be avoided on the same connection until headers have been received. */
-// blocking?: boolean;
-// /** Upgrade the request. Should be used to specify the kind of upgrade i.e. `'Websocket'`. Default: `method === 'CONNECT' || null`. */
-// upgrade?: boolean | string | null;
-// /** The amount of time the parser will wait to receive the complete HTTP headers. Defaults to 30 seconds. */
-// headersTimeout?: number | null;
-// /** The timeout after which a request will time out, in milliseconds. Monitors time between receiving body data. Use 0 to disable it entirely. Defaults to 30 seconds. */
-// bodyTimeout?: number | null;
-// /** Whether the request should stablish a keep-alive or not. Default `false` */
-// reset?: boolean;
-// /** Whether Undici should throw an error upon receiving a 4xx or 5xx response from the server. Defaults to false */
-// throwOnError?: boolean;
-
-// Add support for headers
-// Add support for trailers
-// Get statusCode
-// Add support for abort signal
+// Test headers
+// Test abort signal
 // Add check for eventemitter signal, wrap abortsignal in EE
-// maxRedirections = ignored unless 0, then set to manual follow
-
-// Test cases
-// 1. Basic GET request
-// 2. Basic POST request
-// 3. Head request
-// 4. Specify idempotent
-// 5. Specify headers
-// 6. Specify query
 
 class BodyReadable extends _ReadableFromWeb {
   #response;
@@ -167,24 +135,26 @@ export async function request(
   url,
   options = {
     method: "GET",
-    headers,
-    query,
-    idempotent: false, // GET and HEAD requests are idempotent by default
+    signal: null,
+    headers: null,
+    query: null,
+    // idempotent: false, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
     // headersTimeout: 30000,
     // bodyTimeout: 30000,
     reset: false,
     throwOnError: false,
-    body,
-    dispatcher,
+    body: null,
+    // dispatcher,
   },
 ) {
   let {
     method = "GET",
     headers: inputHeaders,
     query,
-    idempotent, // GET and HEAD requests are idempotent by default
+    signal,
+    // idempotent, // GET and HEAD requests are idempotent by default
     // blocking = false,
     // upgrade = false,
     // headersTimeout = 30000,
@@ -193,27 +163,31 @@ export async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    dispatcher,
+    // dispatcher,
   } = options;
 
-  // TODO: Reset
+  // TODO: More validations
 
-  // TODO: Do more validations of options
-
-  if (typeof url !== "string" && !(url instanceof URL) && !(typeof url === "object" && url !== null))
-    throw new TypeError("url must be a string, URL, or UrlObject");
+  if (typeof url === "string") {
+    if (query) url = new URL(url);
+  } else if (typeof url === "object" && url !== null) {
+    if (!url instanceof URL) {
+      // TODO: Parse undici UrlObject
+      throw new Error("not implemented");
+    }
+  } else throw new TypeError("url must be a string, URL, or UrlObject");
 
   if (typeof url === "string" && query) url = new URL(url);
-  if (query) url.search = new URLSearchParams(query).toString();
+  if (typeof url === "object" && url !== null && query) if (query) url.search = new URLSearchParams(query).toString();
 
   method = method && typeof method === "string" ? method.toUpperCase() : null;
-  idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
+  // idempotent = idempotent === undefined ? method === "GET" || method === "HEAD" : idempotent;
 
   if (inputBody && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
   }
 
-  if (inputBody.read && inputBody instanceof Readable) {
+  if (inputBody && inputBody.read && inputBody instanceof Readable) {
     // TODO: Streaming via ReadableStream?
     let data = "";
     inputBody.setEncoding("utf8");
@@ -234,17 +208,21 @@ export async function request(
 
   let resp;
   /** @type {Response} */
-  const { statusCode, headers, trailers } = (resp = await fetch(url, {
+  const {
+    status: statusCode,
+    headers,
+    trailers,
+  } = (resp = await fetch(url, {
+    signal,
     mode: "cors",
     method,
-    headers: inputHeaders,
+    headers: inputHeaders || kEmptyObject,
     body: inputBody,
     redirect: maxRedirections === "undefined" || maxRedirections > 0 ? "follow" : "manual",
-    // TODO: Make this smarter, make sure user does intend to make multiple requests
-    keepalive: !!dispatcher, // We use keepalive if we have a dispatcher
+    keepalive: !reset,
   }));
 
-  // // Throw if received 4xx or 5xx response indicating HTTP error
+  // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
     throw new Error(`Request failed with status code ${statusCode}`);
   }

@@ -210,23 +210,28 @@ pub const Os = struct {
         // Fetch the CPU info structure
         var num_cpus: c.natural_t = 0;
         var info: [*]local_bindings.processor_cpu_load_info = undefined;
-        var msg_type: std.c.mach_msg_type_number_t = 0;
+        var info_size: std.c.mach_msg_type_number_t = 0;
         if (local_bindings.host_processor_info(
                 std.c.mach_host_self(),
                 local_bindings.PROCESSOR_CPU_LOAD_INFO,
                 &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info),
-                &msg_type) != .SUCCESS) {
+                &info_size) != .SUCCESS) {
             return error.no_processor_info;
         }
-        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), msg_type);
+        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), info_size);
+
+        // Ensure we got the amount of data we expected to guard against buffer overruns
+        if (info_size != @sizeOf(@TypeOf(info[0])) * num_cpus) {
+            return error.broken_process_info;
+        }
 
 
         // Get CPU model name
         var model_name_buf: [512]u8 = undefined;
         var len: usize = model_name_buf.len;
         // Try brand_string first and if it fails try hw.model
-        if (std.c.sysctlbyname("machdep.cpu.brand_string", &model_name_buf, &len, null, 0) != 0 and
-            std.c.sysctlbyname("hw.model", &model_name_buf, &len, null, 0) != 0) {
+        if (!(std.c.sysctlbyname("machdep.cpu.brand_string", &model_name_buf, &len, null, 0) == 0 or
+              std.c.sysctlbyname("hw.model", &model_name_buf, &len, null, 0) == 0)) {
             return error.no_processor_info;
         }
         //NOTE: sysctlbyname doesn't update len if it was large enough, so we
@@ -257,10 +262,10 @@ pub const Os = struct {
         var cpu_index: u32 = 0;
         while (cpu_index < num_cpus) : (cpu_index += 1) {
             const times = CPUTimes{
-                .user = @intCast(u64, info[cpu_index].cpu_ticks[0]) * multiplier,
-                .nice = @intCast(u64, info[cpu_index].cpu_ticks[3]) * multiplier,
-                .sys  = @intCast(u64, info[cpu_index].cpu_ticks[1]) * multiplier,
-                .idle = @intCast(u64, info[cpu_index].cpu_ticks[2]) * multiplier,
+                .user = info[cpu_index].cpu_ticks[0] * multiplier,
+                .nice = info[cpu_index].cpu_ticks[3] * multiplier,
+                .sys  = info[cpu_index].cpu_ticks[1] * multiplier,
+                .idle = info[cpu_index].cpu_ticks[2] * multiplier,
                 .irq  = 0,  // not available
             };
 

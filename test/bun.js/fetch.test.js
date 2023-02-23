@@ -51,9 +51,9 @@ afterAll(() => {
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
-describe("AbortSignalStreamTest", () => {
+describe("AbortSignalStreamTest",async () => {
 
-  const port = 64322;
+  const port = 84322;
   async function abortOnStage(body, stage, port) {
     let error = undefined;
     var abortController = new AbortController();
@@ -93,23 +93,24 @@ describe("AbortSignalStreamTest", () => {
 
       } catch (ex) {
         error = ex;
+        
       }
       server.stop();
-      expect(error).toBeTruthy(error instanceof DOMException);
+      expect(error instanceof DOMException).toBeTruthy();
       expect(error.name).toBe("AbortError");
       expect(error.message).toBe("The operation was aborted.");
     }
   }
 
   for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
+    await it(`Abort after ${i} chunks`, async () => {
       await abortOnStage(payload, i, port + i);
     })();
   }
 })
 
 describe("AbortSignalDirectStreamTest", () => {
-  const port = 64322;
+  const port = 74322;
   async function abortOnStage(body, stage, port) {
     let error = undefined;
     var abortController = new AbortController();
@@ -152,14 +153,14 @@ describe("AbortSignalDirectStreamTest", () => {
         error = ex;
       }
       server.stop();
-      expect(error).toBeTruthy(error instanceof DOMException);
+      expect(error instanceof DOMException).toBeTruthy();
       expect(error.name).toBe("AbortError");
       expect(error.message).toBe("The operation was aborted.");
     }
   }
 
   for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
+    await it(`Abort after ${i} chunks`, async () => {
       await abortOnStage(payload, i, port + i);
     })();
   }
@@ -258,7 +259,7 @@ describe("AbortSignal", () => {
       error = ex
     }
 
-    expect(error).toBeTruthy(error instanceof DOMException);
+    expect(error instanceof DOMException).toBeTruthy();
     expect(error.name).toBe("AbortError");
     expect(error.message).toBe("The operation was aborted.");
   });

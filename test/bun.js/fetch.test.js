@@ -1,7 +1,11 @@
-import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, test, beforeEach } from "bun:test";
 import fs, { chmodSync, unlinkSync } from "fs";
 import { mkfifo } from "mkfifo";
 import { gc, withoutAggressiveGC } from "./gc";
+
+const sleep = countdown => {
+  return Bun.sleep(countdown);
+};
 
 const exampleFixture = fs.readFileSync(
   import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) + "/fetch.js.txt",
@@ -9,13 +13,14 @@ const exampleFixture = fs.readFileSync(
 );
 
 var cachedServer;
-function getServer(handler) {
-  cachedServer ||= Bun.serve(handler);
-  cachedServer.reload(handler);
-  return cachedServer;
+function getServer({ port, ...rest }) {
+  return (cachedServer = Bun.serve({
+    ...rest,
+    port: 0,
+  }));
 }
 
-afterAll(() => {
+afterEach(() => {
   cachedServer?.stop?.(true);
 });
 
@@ -63,9 +68,9 @@ describe("AbortSignalStreamTest", async () => {
       } catch (ex) {
         error = ex;
       }
-      expect(error instanceof DOMException).toBeTruthy();
       expect(error.name).toBe("AbortError");
       expect(error.message).toBe("The operation was aborted.");
+      expect(error instanceof DOMException).toBeTruthy();
     }
   }
 
@@ -77,7 +82,6 @@ describe("AbortSignalStreamTest", async () => {
 });
 
 describe("AbortSignalDirectStreamTest", () => {
-  const port = 74322;
   async function abortOnStage(body, stage) {
     let error = undefined;
     var abortController = new AbortController();
@@ -119,9 +123,9 @@ describe("AbortSignalDirectStreamTest", () => {
       } catch (ex) {
         error = ex;
       }
-      expect(error instanceof DOMException).toBeTruthy();
       expect(error.name).toBe("AbortError");
       expect(error.message).toBe("The operation was aborted.");
+      expect(error instanceof DOMException).toBeTruthy();
     }
   }
 
@@ -133,6 +137,39 @@ describe("AbortSignalDirectStreamTest", () => {
 });
 
 describe("AbortSignal", () => {
+  var server;
+  beforeEach(() => {
+    server = getServer({
+      async fetch(request) {
+        if (request.url.endsWith("/nodelay")) {
+          return new Response("Hello");
+        }
+        if (request.url.endsWith("/stream")) {
+          const reader = request.body.getReader();
+          const body = new ReadableStream({
+            async pull(controller) {
+              if (!reader) controller.close();
+              const { done, value } = await reader.read();
+              // When no more data needs to be consumed, close the stream
+              if (done) {
+                controller.close();
+                return;
+              }
+              // Enqueue the next data chunk into our target stream
+              controller.enqueue(value);
+            },
+          });
+          return new Response(body);
+        }
+        if (request.method.toUpperCase() === "POST") {
+          const body = await request.text();
+          return new Response(body);
+        }
+        await sleep(15);
+        return new Response("Hello");
+      },
+    });
+  });
   it("AbortError", async () => {
     let name;
     try {
@@ -140,7 +177,7 @@ describe("AbortSignal", () => {
       const signal = controller.signal;
 
       async function manualAbort() {
-        await Bun.sleep(10);
+        await sleep(1);
         controller.abort();
       }
       await Promise.all([
@@ -172,8 +209,9 @@ describe("AbortSignal", () => {
     try {
       var controller = new AbortController();
       const signal = controller.signal;
+
       async function manualAbort() {
-        await Bun.sleep(10);
+        await sleep(10);
         controller.abort("My Reason");
       }
       await Promise.all([
@@ -197,7 +235,7 @@ describe("AbortSignal", () => {
       });
 
       async function manualAbort() {
-        await Bun.sleep(10);
+        await sleep(10);
         controller.abort();
       }
       await Promise.all([
@@ -231,9 +269,9 @@ describe("AbortSignal", () => {
       error = ex;
     }
 
-    expect(error instanceof DOMException).toBeTruthy();
     expect(error.name).toBe("AbortError");
     expect(error.message).toBe("The operation was aborted.");
+    expect(error instanceof DOMException).toBeTruthy();
   });
 
   it("TimeoutError", async () => {
@@ -253,7 +291,7 @@ describe("AbortSignal", () => {
       const signal = controller.signal;
       const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
       async function manualAbort() {
-        await Bun.sleep(10);
+        await sleep(10);
         controller.abort();
       }
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
@@ -443,7 +481,7 @@ describe("fetch", () => {
       await fetch(url, { body: "buntastic" });
       expect(false).toBe(true);
     } catch (exception) {
-      expect(exception instanceof TypeError).toBe(true);
+      expect(exception.name).toBe("TypeError");
     }
   });
 });

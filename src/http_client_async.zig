@@ -635,6 +635,11 @@ pub fn onOpen(
 
     log("Connected {s} \n", .{client.url.href});
 
+    if (client.hasSignalAborted()) {
+        client.closeAndAbort(comptime is_ssl, socket);
+        return;
+    }
+
     if (comptime is_ssl) {
         var ssl: *BoringSSL.SSL = @ptrCast(*BoringSSL.SSL, socket.getNativeHandle());
         if (!ssl.isInitFinished()) {
@@ -661,7 +666,7 @@ pub fn onOpen(
             ssl.configureHTTPClient(hostname);
         }
     }
-    client.addAbortSignalEventListenner(is_ssl, socket);
+    
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -695,7 +700,7 @@ pub fn onClose(
     }
 
     if (in_progress) {
-        client.fail(error.ConnectionClosed, null);
+        client.fail(error.ConnectionClosed);
     }
 }
 pub fn onTimeout(
@@ -707,7 +712,7 @@ pub fn onTimeout(
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {
-        client.fail(error.Timeout, null);
+        client.fail(error.Timeout);
     }
 }
 pub fn onConnectError(
@@ -719,7 +724,7 @@ pub fn onConnectError(
     log("onConnectError  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionRefused, null);
+        client.fail(error.ConnectionRefused);
 }
 pub fn onEnd(
     client: *HTTPClient,
@@ -729,7 +734,7 @@ pub fn onEnd(
     log("onEnd  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail)
-        client.fail(error.ConnectionClosed, null);
+        client.fail(error.ConnectionClosed);
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -994,87 +999,26 @@ http_proxy: ?URL = null,
 proxy_authorization: ?[]u8 = null,
 proxy_tunneling: bool = false,
 proxy_tunnel: ?ProxyTunnel = null,
-signal: ?*JSC.AbortSignal = null,
-abort_handler: ?*anyopaque = null,
-abort_handler_deinit: ?*const fn (?*anyopaque) void = null,
-pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*JSC.AbortSignal) HTTPClient {
-    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .signal = signal, .abort_handler = null, .abort_handler_deinit = null };
-}
+aborted: ?*std.atomic.Atomic(bool) = null,
 
-pub fn ClientSocketAbortHandler(comptime is_ssl: bool) type {
-    return struct {
-        client: *HTTPClient,
-        socket: NewHTTPContext(is_ssl).HTTPSocket,
-
-        pub fn init(client: *HTTPClient, socket: NewHTTPContext(is_ssl).HTTPSocket) !*@This() {
-            var ctx = try client.allocator.create(@This());
-            ctx.client = client;
-            ctx.socket = socket;
-            return ctx;
-        }
-
-        pub fn onAborted(this: ?*anyopaque, reason: JSC.JSValue) callconv(.C) void {
-            log("onAborted", .{});
-            if (this) |this_| {
-                const self = bun.cast(*@This(), this_);
-                if (self.client.state.response_stage != .done and self.client.state.response_stage != .fail) {
-                    self.client.closeAndAbort(reason, is_ssl, self.socket);
-                }
-            }
-        }
-
-        pub fn deinit(this: ?*anyopaque) void {
-            if (this) |this_| {
-                var self = bun.cast(*@This(), this_);
-                const allocator = self.client.allocator;
-                allocator.destroy(self);
-            }
-        }
+pub fn init(
+    allocator: std.mem.Allocator,
+    method: Method,
+    url: URL,
+    header_entries: Headers.Entries,
+    header_buf: string,
+    signal: ?*std.atomic.Atomic(bool),
+) HTTPClient {
+    return HTTPClient{
+        .allocator = allocator,
+        .method = method,
+        .url = url,
+        .header_entries = header_entries,
+        .header_buf = header_buf,
+        .aborted = signal,
     };
 }
 
-pub fn addAbortSignalEventListenner(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.signal) |signal| {
-        const aborted = signal.aborted();
-        if (aborted) {
-            log("addAbortSignalEventListenner already aborted!", .{});
-            const reason = signal.abortReason();
-            this.closeAndAbort(reason, is_ssl, socket);
-            return;
-        }
-
-        const handler = ClientSocketAbortHandler(is_ssl).init(this, socket) catch unreachable;
-        this.abort_handler = bun.cast(*anyopaque, handler);
-        this.abort_handler_deinit = ClientSocketAbortHandler(is_ssl).deinit;
-        _ = signal.addListener(this.abort_handler.?, ClientSocketAbortHandler(is_ssl).onAborted);
-        log("addAbortSignalEventListenner added!", .{});
-        return;
-    }
-    log("addAbortSignalEventListenner (signal == null)", .{});
-}
-
-pub fn hasSignalAborted(this: *HTTPClient) ?JSC.JSValue {
-    if (this.signal) |signal| {
-        const aborted = signal.aborted();
-        log("hasSignalAborted {any}", .{aborted});
-        if (aborted) {
-            return signal.abortReason();
-        }
-        return null;
-    }
-    log("hasSignalAborted (signal == null)", .{});
-    return null;
-}
-
-pub fn deinitSignal(this: *HTTPClient) void {
-    if (this.signal != null) {
-        var signal = this.signal.?;
-        const ctx = bun.cast(*anyopaque, this);
-        signal.cleanNativeBindings(ctx);
-        _ = signal.unref();
-        this.signal = null;
-    }
-}
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect) |redirect| {
         redirect.release();
@@ -1089,13 +1033,6 @@ pub fn deinit(this: *HTTPClient) void {
         this.proxy_tunnel = null;
     }
 
-    this.deinitSignal();
-
-    if (this.abort_handler != null and this.abort_handler_deinit != null) {
-        this.abort_handler_deinit.?(this.abort_handler.?);
-        this.abort_handler = null;
-        this.abort_handler_deinit = null;
-    }
     this.state.compressed_body.deinit();
     this.state.response_message_buffer.deinit();
 }
@@ -1255,8 +1192,30 @@ pub const AsyncHTTP = struct {
     };
     const AtomicState = std.atomic.Atomic(State);
 
-    pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, callback: HTTPClientResult.Callback, http_proxy: ?URL, signal: ?*JSC.AbortSignal) AsyncHTTP {
-        var this = AsyncHTTP{ .allocator = allocator, .url = url, .method = method, .request_headers = headers, .request_header_buf = headers_buf, .request_body = request_body, .response_buffer = response_buffer, .completion_callback = callback, .http_proxy = http_proxy };
+    pub fn init(
+        allocator: std.mem.Allocator,
+        method: Method,
+        url: URL,
+        headers: Headers.Entries,
+        headers_buf: string,
+        response_buffer: *MutableString,
+        request_body: []const u8,
+        timeout: usize,
+        callback: HTTPClientResult.Callback,
+        http_proxy: ?URL,
+        signal: ?*std.atomic.Atomic(bool),
+    ) AsyncHTTP {
+        var this = AsyncHTTP{
+            .allocator = allocator,
+            .url = url,
+            .method = method,
+            .request_headers = headers,
+            .request_header_buf = headers_buf,
+            .request_body = request_body,
+            .response_buffer = response_buffer,
+            .completion_callback = callback,
+            .http_proxy = http_proxy,
+        };
         this.client = HTTPClient.init(allocator, method, url, headers, headers_buf, signal);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
@@ -1293,7 +1252,8 @@ pub const AsyncHTTP = struct {
 
     fn reset(this: *AsyncHTTP) !void {
         const timeout = this.timeout;
-        this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf);
+        var aborted = this.client.aborted;
+        this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
         this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
         if (this.http_proxy) |proxy| {
@@ -1409,6 +1369,10 @@ pub const AsyncHTTP = struct {
     }
 };
 
+pub fn hasSignalAborted(this: *const HTTPClient) bool {
+    return (this.aborted orelse return false).load(.Monotonic);
+}
+
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;
     var header_entries = this.header_entries.slice();
@@ -1520,7 +1484,7 @@ pub fn doRedirect(this: *HTTPClient) void {
     std.debug.assert(this.follow_redirects);
 
     if (this.remaining_redirect_count == 0) {
-        this.fail(error.TooManyRedirects, null);
+        this.fail(error.TooManyRedirects);
         return;
     }
     this.state.reset();
@@ -1557,18 +1521,18 @@ pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) 
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     // Aborted before connecting
-    if (this.hasSignalAborted()) |reason| {
-        this.fail(error.Aborted, reason);
+    if (this.hasSignalAborted()){
+        this.fail(error.Aborted);
         return;
     }
 
     var socket = http_thread.connect(this, is_ssl) catch |err| {
-        this.fail(err, null);
+        this.fail(err);
         return;
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
-        this.fail(error.ConnectionClosed, null);
+        this.fail(error.ConnectionClosed);
         std.debug.assert(this.state.fail != error.NoError);
     }
 }
@@ -1594,8 +1558,8 @@ fn printResponse(response: picohttp.Response) void {
 }
 
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.hasSignalAborted()) |reason| {
-        this.closeAndAbort(reason, is_ssl, socket);
+    if (this.hasSignalAborted())  {
+        this.closeAndAbort(is_ssl, socket);
         return;
     }
 
@@ -1840,7 +1804,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .fail and this.state.stage != .done) {
-        log("closeAndFail", .{});
+        log("closeAndFail: {s}", .{@errorName(err)});
         if (!socket.isClosed()) {
             socket.ext(**anyopaque).?.* = bun.cast(
                 **anyopaque,
@@ -1848,7 +1812,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
             );
             socket.close(0, null);
         }
-        this.fail(err, null);
+        this.fail(err);
     }
 }
 
@@ -1903,8 +1867,8 @@ fn startProxyHandshake(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTP
 }
 
 pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u8, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.hasSignalAborted()) |reason| {
-        this.closeAndAbort(reason, is_ssl, socket);
+    if (this.hasSignalAborted()) {
+        this.closeAndAbort(is_ssl, socket);
         return;
     }
     switch (this.state.response_stage) {
@@ -2140,34 +2104,22 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
     }
 }
 
-pub fn closeAndAbort(this: *HTTPClient, reason: JSC.JSValue, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (this.state.stage != .fail and this.state.stage != .done) {
-        log("closeAndAbort", .{});
-        if (!socket.isClosed()) {
-            socket.ext(**anyopaque).?.* = bun.cast(
-                **anyopaque,
-                NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr(),
-            );
-            socket.close(0, null);
-        }
-        this.fail(error.Aborted, reason);
-    }
+pub fn closeAndAbort(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    this.closeAndFail(error.Aborted, comptime is_ssl, socket);
 }
 
-fn fail(this: *HTTPClient, err: anyerror, reason: ?JSC.JSValue) void {
+fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.request_stage = .fail;
     this.state.response_stage = .fail;
     this.state.fail = err;
     this.state.stage = .fail;
 
     const callback = this.completion_callback;
-    const result = this.toResult(this.cloned_metadata, reason);
+    const result = this.toResult(this.cloned_metadata);
     this.state.reset();
     this.proxy_tunneling = false;
 
     callback.run(result);
-
-    this.deinitSignal();
 }
 
 // We have to clone metadata immediately after use
@@ -2203,12 +2155,10 @@ pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ss
     if (this.state.stage != .done and this.state.stage != .fail) {
         log("done", .{});
 
-        this.deinitSignal();
-
         var out_str = this.state.body_out_str.?;
         var body = out_str.*;
         this.cloned_metadata.response = this.state.pending_response;
-        const result = this.toResult(this.cloned_metadata, null);
+        const result = this.toResult(this.cloned_metadata);
         const callback = this.completion_callback;
 
         socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
@@ -2251,7 +2201,6 @@ pub const HTTPClientResult = struct {
     fail: anyerror = error.NoError,
     redirected: bool = false,
     headers_buf: []picohttp.Header = &.{},
-    reason: ?JSC.JSValue = null,
 
     pub fn isSuccess(this: *const HTTPClientResult) bool {
         return this.fail == error.NoError;
@@ -2304,7 +2253,7 @@ pub const HTTPClientResult = struct {
     };
 };
 
-pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata, reason: ?JSC.JSValue) HTTPClientResult {
+pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientResult {
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .response = metadata.response,
@@ -2312,7 +2261,6 @@ pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata, reason: ?JSC.
         .redirected = this.remaining_redirect_count != default_redirect_count,
         .href = metadata.url,
         .fail = this.state.fail,
-        .reason = reason,
         .headers_buf = metadata.response.headers,
     };
 }

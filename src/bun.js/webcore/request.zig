@@ -260,7 +260,7 @@ pub const Request = struct {
         return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
     }
 
-    pub fn finalize(this: *Request) callconv(.C) void {
+    pub fn finalizeWithoutDeinit(this: *Request) void {
         if (this.headers) |headers| {
             headers.deref();
             this.headers = null;
@@ -275,7 +275,10 @@ pub const Request = struct {
             _ = signal.unref();
             this.signal = null;
         }
+    }
 
+    pub fn finalize(this: *Request) callconv(.C) void {
+        this.finalizeWithoutDeinit();
         bun.default_allocator.destroy(this);
     }
 
@@ -402,10 +405,7 @@ pub const Request = struct {
                         if (Body.Value.fromJS(globalThis, body_)) |body| {
                             request.body = body;
                         } else {
-                            if (request.headers) |head| {
-                                head.deref();
-                            }
-
+                            request.finalizeWithoutDeinit();
                             return null;
                         }
                     }
@@ -419,6 +419,19 @@ pub const Request = struct {
                 }
             },
             else => {
+                if (arguments[1].get(globalThis, "signal")) |signal_| {
+                    if (AbortSignal.fromJS(signal_)) |signal| {
+                        //Keep it alive
+                        signal_.ensureStillAlive();
+                        request.signal = signal.ref();
+                    } else {
+                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
+
+                        request.finalizeWithoutDeinit();
+                        return null;
+                    }
+                }
+
                 if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1], arguments[1].jsType()) catch null) |req_init| {
                     request.headers = req_init.headers;
                     request.method = req_init.method;
@@ -428,26 +441,7 @@ pub const Request = struct {
                     if (Body.Value.fromJS(globalThis, body_)) |body| {
                         request.body = body;
                     } else {
-                        if (request.headers) |head| {
-                            head.deref();
-                        }
-
-                        return null;
-                    }
-                }
-
-                if (arguments[1].get(globalThis, "signal")) |signal_| {
-                    if (AbortSignal.fromJS(signal_)) |signal| {
-                        //Keep it alive
-                        signal_.ensureStillAlive();
-                        request.signal = signal.ref();
-                    } else {
-                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
-
-                        if (request.headers) |head| {
-                            head.deref();
-                        }
-
+                        request.finalizeWithoutDeinit();
                         return null;
                     }
                 }

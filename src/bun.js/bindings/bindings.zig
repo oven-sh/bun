@@ -1690,6 +1690,26 @@ pub const AbortSignal = extern opaque {
     pub const name = "JSC::AbortSignal";
     pub const namespace = "JSC";
 
+    pub fn listen(
+        this: *AbortSignal,
+        comptime Context: type,
+        ctx: *Context,
+        comptime cb: *const fn (*Context, JSValue) void,
+    ) *AbortSignal {
+        const Wrapper = struct {
+            const call = cb;
+            pub fn callback(
+                ptr: ?*anyopaque,
+                reason: JSValue,
+            ) callconv(.C) void {
+                var val = bun.cast(*Context, ptr.?);
+                call(val, reason);
+            }
+        };
+
+        return this.addListener(@ptrCast(?*anyopaque, ctx), Wrapper.callback);
+    }
+
     pub fn addListener(
         this: *AbortSignal,
         ctx: ?*anyopaque,
@@ -1709,10 +1729,12 @@ pub const AbortSignal = extern opaque {
         return cppFn("signal", .{ this, reason });
     }
 
+    /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(this: *AbortSignal) bool {
         return cppFn("aborted", .{this});
     }
 
+    /// This function is not threadsafe. JSValue cannot safely be passed between threads.
     pub fn abortReason(this: *AbortSignal) JSValue {
         return cppFn("abortReason", .{this});
     }
@@ -1734,11 +1756,11 @@ pub const AbortSignal = extern opaque {
     }
 
     pub fn toJS(this: *AbortSignal, global: *JSGlobalObject) JSValue {
-        return cppFn("toJS", .{this, global});
+        return cppFn("toJS", .{ this, global });
     }
 
     pub fn create(global: *JSGlobalObject) JSValue {
-        return cppFn("create", .{ global });
+        return cppFn("create", .{global});
     }
 
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -1749,20 +1771,7 @@ pub const AbortSignal = extern opaque {
         return cppFn("createTimeoutError", .{ message, code, global });
     }
 
-    pub const Extern = [_][]const u8{
-        "createAbortError",
-        "createTimeoutError",
-        "create",
-        "ref",
-        "unref",
-        "signal",
-        "abortReason",
-        "aborted",
-        "addListener",
-        "fromJS",
-        "toJS",
-        "cleanNativeBindings"
-    };
+    pub const Extern = [_][]const u8{ "createAbortError", "createTimeoutError", "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
 };
 
 pub const JSPromise = extern struct {
@@ -3567,14 +3576,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("eqlCell", .{ this, other });
     }
 
-    pub const BuiltinName = enum(u8) {
-        method,
-        headers,
-        status,
-        url,
-        body,
-        data
-    };
+    pub const BuiltinName = enum(u8) { method, headers, status, url, body, data };
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {

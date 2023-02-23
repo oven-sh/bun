@@ -113,6 +113,44 @@ it("request.signal works in trivial case", async () => {
   );
 });
 
+it("request.signal works in leaky case", async () => {
+  var aborty = new AbortController();
+  var didAbort = false;
+  var leaky;
+  await runTest(
+    {
+      async fetch(req) {
+        leaky = req;
+        expect(didAbort).toBe(false);
+        aborty.abort();
+        await Bun.sleep(2);
+        return new Response("Test failed!");
+      },
+    },
+    async server => {
+      try {
+        const resp = fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal });
+
+        await Bun.sleep(1);
+
+        leaky.signal.addEventListener("abort", () => {
+          didAbort = true;
+        });
+
+        await resp;
+
+        throw new Error("Expected fetch to throw");
+      } catch (e: any) {
+        expect(e.name).toBe("AbortError");
+      }
+
+      await Bun.sleep(1);
+
+      expect(didAbort).toBe(true);
+    },
+  );
+});
+
 it("should work for a file", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

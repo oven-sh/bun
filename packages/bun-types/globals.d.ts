@@ -1366,6 +1366,15 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
  * @param error Error or string
  */
 declare function reportError(error: any): void;
+
+interface Timer {
+  ref(): void;
+  unref(): void;
+  hasRef(): boolean;
+
+  [Symbol.toPrimitive](): number;
+}
+
 /**
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
@@ -1373,7 +1382,7 @@ declare function reportError(error: any): void;
 declare function setImmediate(
   handler: TimerHandler,
   ...arguments: any[]
-): number;
+): Timer;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
@@ -1383,7 +1392,7 @@ declare function setInterval(
   handler: TimerHandler,
   interval?: number,
   ...arguments: any[]
-): number;
+): Timer;
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
@@ -1393,7 +1402,7 @@ declare function setTimeout(
   handler: TimerHandler,
   timeout?: number,
   ...arguments: any[]
-): number;
+): Timer;
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,

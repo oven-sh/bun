@@ -26,10 +26,6 @@ await Bun.connect({
   },
   hostname: "adsf",
   port: 324,
-  tls: {
-    certFile: "asdf",
-    keyFile: "adsf",
-  },
 });
 
 await Bun.connect({

@@ -13,7 +13,7 @@
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "JarredSumner.zig-unofficial",
+    "editor.defaultFormatter": "ziglang.vscode-zig",
     "editor.formatOnSave": true
   },
   "[ts]": {

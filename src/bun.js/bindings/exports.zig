@@ -964,11 +964,11 @@ pub const ZigConsoleClient = struct {
                 @TypeOf(buffered_writer.unbuffered_writer.context),
                 Writer,
                 writer,
-                enable_colors,
-                true,
-                true,
-                false,
-                false,
+                .{
+                    .enable_colors = enable_colors,
+                    .add_newline = true,
+                    .flush = true,
+                },
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;
@@ -1006,6 +1006,14 @@ pub const ZigConsoleClient = struct {
             ) catch unreachable;
     }
 
+    pub const FormatOptions = struct {
+        enable_colors: bool,
+        add_newline: bool,
+        flush: bool,
+        ordered_properties: bool = false,
+        quote_strings: bool = false,
+    };
+
     pub fn format(
         level: MessageLevel,
         global: *JSGlobalObject,
@@ -1014,11 +1022,7 @@ pub const ZigConsoleClient = struct {
         comptime RawWriter: type,
         comptime Writer: type,
         writer: Writer,
-        enable_colors: bool,
-        add_newline: bool,
-        flush: bool,
-        order_properties: bool,
-        quote_strings: bool,
+        options: FormatOptions,
     ) void {
         var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
@@ -1033,8 +1037,8 @@ pub const ZigConsoleClient = struct {
             fmt = ZigConsoleClient.Formatter{
                 .remaining_values = &[_]JSValue{},
                 .globalThis = global,
-                .ordered_properties = order_properties,
-                .quote_strings = quote_strings,
+                .ordered_properties = options.ordered_properties,
+                .quote_strings = options.quote_strings,
             };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
@@ -1044,7 +1048,7 @@ pub const ZigConsoleClient = struct {
                 writer;
 
             if (tag.tag == .String) {
-                if (enable_colors) {
+                if (options.enable_colors) {
                     if (level == .Error) {
                         unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
                     }
@@ -1069,14 +1073,14 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                if (add_newline) _ = unbuffered_writer.write("\n") catch 0;
+                if (options.add_newline) _ = unbuffered_writer.write("\n") catch 0;
             } else {
                 defer {
                     if (comptime Writer != RawWriter) {
-                        if (flush) writer.context.flush() catch {};
+                        if (options.flush) writer.context.flush() catch {};
                     }
                 }
-                if (enable_colors) {
+                if (options.enable_colors) {
                     fmt.format(
                         tag,
                         Writer,
@@ -1095,7 +1099,7 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                if (add_newline) _ = writer.write("\n") catch 0;
+                if (options.add_newline) _ = writer.write("\n") catch 0;
             }
 
             return;
@@ -1103,7 +1107,7 @@ pub const ZigConsoleClient = struct {
 
         defer {
             if (comptime Writer != RawWriter) {
-                if (flush) writer.context.flush() catch {};
+                if (options.flush) writer.context.flush() catch {};
             }
         }
 
@@ -1111,13 +1115,13 @@ pub const ZigConsoleClient = struct {
         fmt = ZigConsoleClient.Formatter{
             .remaining_values = vals[0..len][1..],
             .globalThis = global,
-            .ordered_properties = order_properties,
-            .quote_strings = quote_strings,
+            .ordered_properties = options.ordered_properties,
+            .quote_strings = options.quote_strings,
         };
         var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
         var any = false;
-        if (enable_colors) {
+        if (options.enable_colors) {
             if (level == .Error) {
                 writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
             }
@@ -1163,7 +1167,7 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        if (add_newline) _ = writer.write("\n") catch 0;
+        if (options.add_newline) _ = writer.write("\n") catch 0;
     }
 
     pub const Formatter = struct {
@@ -2031,7 +2035,7 @@ pub const ZigConsoleClient = struct {
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
-                            if (was_good_time) {
+                            if (this.ordered_properties or was_good_time) {
                                 this.resetLine();
                                 writer.writeAll("[");
                                 writer.writeAll("\n");
@@ -2053,7 +2057,7 @@ pub const ZigConsoleClient = struct {
                         var i: u32 = 1;
                         while (i < len) : (i += 1) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (this.goodTimeForANewLine()) {
+                            if (this.ordered_properties or this.goodTimeForANewLine()) {
                                 writer.writeAll("\n");
                                 this.writeIndent(Writer, writer_) catch unreachable;
                             } else {
@@ -2073,7 +2077,7 @@ pub const ZigConsoleClient = struct {
                         }
                     }
 
-                    if (was_good_time or this.goodTimeForANewLine()) {
+                    if (this.ordered_properties or was_good_time or this.goodTimeForANewLine()) {
                         this.resetLine();
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
@@ -2109,6 +2113,20 @@ pub const ZigConsoleClient = struct {
                             .Object,
                             enable_ansi_colors,
                         );
+                    } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        if (timer.kind == .setInterval) {
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        } else {
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        }
+                        
+                        return;
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);

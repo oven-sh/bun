@@ -12,15 +12,15 @@ const directoriesToSearch = [
 ];
 
 function symbolName(typeName, name) {
-  return `${typeName}__${name}`;
+  return `${typeName}__${name.replaceAll("@@", "")}`;
 }
 
 function protoSymbolName(typeName, name) {
-  return `${typeName}Prototype__${name}`;
+  return `${typeName}Prototype__${name.replaceAll("@@", "")}`;
 }
 
 function classSymbolName(typeName, name) {
-  return `${typeName}Class__${name}`;
+  return `${typeName}Class__${name.replaceAll("@@", "")}`;
 }
 
 function subspaceFor(typeName) {
@@ -266,6 +266,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
 
   for (const name in props) {
     if ("internal" in props[name]) continue;
+    if (name.startsWith("@@")) continue;
 
     rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes));
   }
@@ -300,6 +301,22 @@ ${rows.join("  ,\n")}
 function generatePrototype(typeName, obj) {
   const proto = prototypeName(typeName);
   const { proto: protoFields } = obj;
+  var specialSymbols = "";
+
+  for (const name in protoFields) {
+    if (!name.startsWith("@@")) {
+      continue;
+    }
+
+    const symbol = name.slice(2);
+
+    specialSymbols += `
+    this->putDirect(vm, vm.propertyNames->${symbol}Symbol, JSFunction::create(vm, globalObject, 1, String("${symbol}"_s), ${protoSymbolName(
+      typeName,
+      symbol,
+    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+  }
+
   return `
 ${
   obj.construct
@@ -331,7 +348,7 @@ ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || []
 void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);
+    reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);${specialSymbols}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

@@ -22,5 +22,6 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStatsConstructor;std::
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTCPSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTLSSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspiler;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTimeout;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspiler;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspilerConstructor;

@@ -142,6 +142,12 @@ JSC::Structure* JSTextDecoderStructure() { return m_JSTextDecoder.getInitialized
   JSC::LazyClassStructure m_JSTextDecoder;
   bool hasJSTextDecoderSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSTextDecoderSetterValue;
+JSC::Structure* JSTimeoutStructure() { return m_JSTimeout.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTimeoutConstructor() { return m_JSTimeout.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTimeoutPrototype() { return m_JSTimeout.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTimeout;
+  bool hasJSTimeoutSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTimeoutSetterValue;
 JSC::Structure* JSTranspilerStructure() { return m_JSTranspiler.getInitializedOnMainThread(this); }
         JSC::JSObject* JSTranspilerConstructor() { return m_JSTranspiler.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSTranspilerPrototype() { return m_JSTranspiler.prototypeInitializedOnMainThread(this); }

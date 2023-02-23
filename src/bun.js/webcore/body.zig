@@ -293,6 +293,7 @@ pub const Body = struct {
         Locked: PendingValue,
         Used: void,
         Empty: void,
+        Null: void,
         Error: JSValue,
 
         pub fn toBlobIfPossible(this: *Value) void {
@@ -355,6 +356,7 @@ pub const Body = struct {
             Used,
             Empty,
             Error,
+            Null,
         };
 
         // pub const empty = Value{ .Empty = void{} };
@@ -363,6 +365,9 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
+                .Null => {
+                    return JSValue.jsNull();
+                },
                 .Used, .Empty => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
@@ -441,7 +446,7 @@ pub const Body = struct {
 
             if (value.isEmptyOrUndefinedOrNull()) {
                 return Body.Value{
-                    .Empty = void{},
+                    .Null = void{},
                 };
             }
 
@@ -954,6 +959,10 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Null) {
+                return JSValue.jsNull();
+            }
+
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalThis);
             }
@@ -971,6 +980,10 @@ pub fn BodyMixin(comptime Type: type) type {
             globalThis: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
+
+            if (body.* == .Null) {
+                return JSValue.jsNull();
+            }
 
             if (body.* == .Used) {
                 // TODO: make this closed
@@ -993,6 +1006,11 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Null) {
+                return JSValue.jsNull();
+            }
+
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }
@@ -1018,6 +1036,9 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Null) {
+                return JSC.JSValue.jsNull();
+            }
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1037,6 +1058,10 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Null) {
+                return JSC.JSValue.jsNull();
+            }
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1084,6 +1109,10 @@ pub fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
+            if (value.* == .Null) {
+                return JSC.JSValue.jsNull();
+            }
+            
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }

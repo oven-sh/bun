@@ -976,6 +976,24 @@ describe("Request", () => {
     expect(await clone.text()).toBe("<div>hello</div>");
   });
 
+  it("body nullable", async () => {
+    gc();
+    {
+      const req = new Request("https://hello.com", { body: null });
+      expect(req.body).toBeNull();
+    }
+    gc();
+    {
+      const req = new Request("https://hello.com", { body: undefined });
+      expect(req.body).toBeNull();
+    }
+    gc();
+    {
+      const req = new Request("https://hello.com");
+      expect(req.body).toBeNull();
+    }
+  });
+
   it("signal", async () => {
     gc();
     const controller = new AbortController();

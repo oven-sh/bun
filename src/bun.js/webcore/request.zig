@@ -59,7 +59,7 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    body: Body.Value = Body.Value{ .Empty = {} },
+    body: Body.Value = Body.Value{ .Null = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -189,7 +189,7 @@ pub const Request = struct {
             },
             .InternalBlob => return this.body.InternalBlob.contentType(),
             // .InlineBlob => return this.body.InlineBlob.contentType(),
-            .Error, .Used, .Locked, .Empty => return MimeType.other.value,
+            .Error, .Used, .Locked, .Empty, .Null => return MimeType.other.value,
         }
     }
 

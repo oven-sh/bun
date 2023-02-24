@@ -314,7 +314,7 @@ pub fn build(b: *Build) !void {
         obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
 
-        // Disable staack probing on x86 so we don't need to include compiler_rt
+        // Disable stack probing on x86 so we don't need to include compiler_rt
         if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
@@ -596,6 +596,10 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
+
+    // Disable stack probing on x86 so we don't need to include compiler_rt
+    // Needs to be disabled here too so headers object will build without the `__zig_probe_stack` symbol
+    if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

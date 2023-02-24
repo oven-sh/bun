@@ -169,9 +169,9 @@ function lookupService(address, port, callback) {
 }
 
 var InternalResolver = class Resolver {
-  constructor(options) {}
+  constructor(options) { }
 
-  cancel() {}
+  cancel() { }
 
   getServers() {
     return [];
@@ -180,6 +180,7 @@ var InternalResolver = class Resolver {
   resolve(hostname, rrtype, callback) {
     if (typeof rrtype == "function") {
       callback = rrtype;
+      rrtype = null;
     }
 
     if (typeof callback != "function") {
@@ -194,7 +195,7 @@ var InternalResolver = class Resolver {
             callback(
               null,
               hostname,
-              results.map(({ address }) => address),
+              results.map(mapResolveX),
             );
             break;
           default:
@@ -211,6 +212,7 @@ var InternalResolver = class Resolver {
   resolve4(hostname, options, callback) {
     if (typeof options == "function") {
       callback = options;
+      options = null;
     }
 
     if (typeof callback != "function") {
@@ -221,7 +223,7 @@ var InternalResolver = class Resolver {
       addresses => {
         callback(
           null,
-          addresses.map(({ address }) => address),
+          options?.ttl ? addresses : addresses.map(mapResolveX),
         );
       },
       error => {
@@ -233,6 +235,7 @@ var InternalResolver = class Resolver {
   resolve6(hostname, options, callback) {
     if (typeof options == "function") {
       callback = options;
+      options = null;
     }
 
     if (typeof callback != "function") {
@@ -243,7 +246,7 @@ var InternalResolver = class Resolver {
       addresses => {
         callback(
           null,
-          addresses.map(({ address }) => address),
+          options?.ttl ? addresses : addresses.map(({ address }) => address),
         );
       },
       error => {
@@ -394,7 +397,7 @@ var InternalResolver = class Resolver {
     callback(null, []);
   }
 
-  setServers(servers) {}
+  setServers(servers) { }
 };
 
 function resolve(hostname, rrtype, callback) {
@@ -451,8 +454,8 @@ export var {
   resolveTxt,
 } = InternalResolver.prototype;
 
-function setDefaultResultOrder() {}
-function setServers() {}
+function setDefaultResultOrder() { }
+function setServers() { }
 
 const promisifyLookup = res => {
   res.sort((a, b) => a.family - b.family);
@@ -460,19 +463,12 @@ const promisifyLookup = res => {
   return { address, family };
 };
 
-const promisifyResolve = rrtype => {
-  switch (rrtype?.toLowerCase()) {
-    case "a":
-    case "aaaa":
-      return res => {
-        res.sort((a, b) => a.family - b.family);
-        const [{ address, family }] = res;
-        return { address, family };
-      };
-    default:
-      return res => res;
-  }
-};
+const mapResolveX = a => a.address;
+
+const promisifyResolveX = res => {
+  return res?.map(mapResolveX);
+}
+
 
 // promisified versions
 export const promises = {
@@ -485,15 +481,30 @@ export const promises = {
   },
 
   resolve(hostname, rrtype) {
-    return dns.resolve(hostname, rrtype).then(promisifyResolve);
+    if (typeof rrtype !== "string") {
+      rrtype = null;
+    }
+    switch (rrtype?.toLowerCase()) {
+      case "a":
+      case "aaaa":
+        return dns.resolve(hostname, rrtype).then(promisifyLookup);
+      default:
+        return dns.resolve(hostname, rrtype);
+    }
   },
 
   resolve4(hostname, options) {
-    return dns.lookup(hostname, { family: 4 });
+    if (options?.ttl) {
+      return dns.lookup(hostname, { family: 4 });
+    }
+    return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX)
   },
 
   resolve6(hostname, options) {
-    return dns.lookup(hostname, { family: 6 });
+    if (options?.ttl) {
+      return dns.lookup(hostname, { family: 6 });
+    }
+    return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX)
   },
 
   resolveSrv(hostname) {
@@ -526,24 +537,39 @@ export const promises = {
   },
 
   Resolver: class Resolver {
-    constructor(options) {}
+    constructor(options) { }
 
-    cancel() {}
+    cancel() { }
 
     getServers() {
       return [];
     }
 
     resolve(hostname, rrtype) {
-      return dns.resolve(hostname, rrtype).then(promisifyResolve);
+      if (typeof rrtype !== "string") {
+        rrtype = null;
+      }
+      switch (rrtype?.toLowerCase()) {
+        case "a":
+        case "aaaa":
+          return dns.resolve(hostname, rrtype).then(promisifyLookup);
+        default:
+          return dns.resolve(hostname, rrtype);
+      }
     }
 
     resolve4(hostname, options) {
-      return dns.lookup(hostname, { family: 4 });
+      if (options?.ttl) {
+        return dns.lookup(hostname, { family: 4 });
+      }
+      return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX)
     }
 
     resolve6(hostname, options) {
-      return dns.lookup(hostname, { family: 6 });
+      if (options?.ttl) {
+        return dns.lookup(hostname, { family: 6 });
+      }
+      return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX)
     }
 
     resolveAny(hostname) {
@@ -590,7 +616,7 @@ export const promises = {
       return Promise.resolve([]);
     }
 
-    setServers(servers) {}
+    setServers(servers) { }
   },
 };
 for (const key of ["resolveAny", "reverse"]) {

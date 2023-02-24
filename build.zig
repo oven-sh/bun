@@ -43,8 +43,6 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-var compiler_rt_path: []const u8 = "";
-var compiler_rt_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
     var bun = b.createModule(.{
         .source_file = FileSource.relative("src/bun_redirect.zig"),
@@ -313,8 +311,11 @@ pub fn build(b: *Build) !void {
         obj.linkLibC();
 
         obj.strip = false;
-        obj.bundle_compiler_rt = true;
+        obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
+
+        // Disable staack probing on x86 so we don't need to include compiler_rt
+        if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
             obj.emit_bin = .no_emit;
@@ -595,9 +596,6 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
-
-    // Disable staack probing on x86 so we don't need to include compiler_rt
-    if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

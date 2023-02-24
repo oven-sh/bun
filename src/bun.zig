@@ -386,7 +386,7 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
-    if (src.ptr == dest.ptr) return;
+    if (@ptrToInt(src.ptr) == @ptrToInt(dest.ptr)) return;
 
     var input: []const u8 = std.mem.sliceAsBytes(src);
     var output: []u8 = std.mem.sliceAsBytes(dest);

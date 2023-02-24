@@ -1590,23 +1590,26 @@ pub const StringBuilder = struct {
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
         if (String.canInline(slice)) return;
-        return countWithHash(this, slice, String.Builder.stringHash(slice));
+        this._countWithHash(slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
         if (String.canInline(slice)) return;
+        this._countWithHash(slice, hash);
+    }
+
+    inline fn _countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
         if (!this.lockfile.string_pool.contains(hash)) {
             this.cap += slice.len;
         }
     }
 
     pub fn allocatedSlice(this: *StringBuilder) []const u8 {
-        if (this.ptr == null) return "";
-        return this.ptr.?[0..this.cap];
+        return if (this.ptr) |ptr| ptr[0..this.cap] else "";
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        std.debug.assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) std.debug.assert(this.cap >= this.len);
 
         const excess = this.cap - this.len;
 
@@ -1631,15 +1634,11 @@ pub const StringBuilder = struct {
     // SlicedString is not supported due to inline strings.
     pub fn appendWithoutPool(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
         if (String.canInline(slice)) {
-            switch (Type) {
-                String => {
-                    return String.init(this.lockfile.buffers.string_bytes.items, slice);
-                },
-                ExternalString => {
-                    return ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash);
-                },
+            return switch (Type) {
+                String => String.init(this.lockfile.buffers.string_bytes.items, slice),
+                ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash),
                 else => @compileError("Invalid type passed to StringBuilder"),
-            }
+            };
         }
         if (comptime Environment.allow_assert) {
             std.debug.assert(this.len <= this.cap); // didn't count everything
@@ -1652,28 +1651,20 @@ pub const StringBuilder = struct {
 
         if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
-        switch (Type) {
-            String => {
-                return String.init(this.lockfile.buffers.string_bytes.items, final_slice);
-            },
-            ExternalString => {
-                return ExternalString.init(this.lockfile.buffers.string_bytes.items, final_slice, hash);
-            },
+        return switch (Type) {
+            String => String.init(this.lockfile.buffers.string_bytes.items, final_slice),
+            ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, final_slice, hash),
             else => @compileError("Invalid type passed to StringBuilder"),
-        }
+        };
     }
 
     pub fn appendWithHash(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
         if (String.canInline(slice)) {
-            switch (Type) {
-                String => {
-                    return String.init(this.lockfile.buffers.string_bytes.items, slice);
-                },
-                ExternalString => {
-                    return ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash);
-                },
+            return switch (Type) {
+                String => String.init(this.lockfile.buffers.string_bytes.items, slice),
+                ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash),
                 else => @compileError("Invalid type passed to StringBuilder"),
-            }
+            };
         }
 
         if (comptime Environment.allow_assert) {
@@ -1692,18 +1683,14 @@ pub const StringBuilder = struct {
 
         if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
-        switch (Type) {
-            String => {
-                return string_entry.value_ptr.*;
-            },
-            ExternalString => {
-                return ExternalString{
-                    .value = string_entry.value_ptr.*,
-                    .hash = hash,
-                };
+        return switch (Type) {
+            String => string_entry.value_ptr.*,
+            ExternalString => .{
+                .value = string_entry.value_ptr.*,
+                .hash = hash,
             },
             else => @compileError("Invalid type passed to StringBuilder"),
-        }
+        };
     }
 };
 

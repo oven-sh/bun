@@ -827,7 +827,7 @@ pub const Fetch = struct {
                 FetchTasklet.callback,
             ).init(
                 fetch_tasklet,
-            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null, if (fetch_tasklet.signal != null) HTTPClient.SocketOpenCallback.New(*FetchTasklet, FetchTasklet.onSocketOpen).init(fetch_tasklet) else null);
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -843,11 +843,6 @@ pub const Fetch = struct {
             return fetch_tasklet;
         }
 
-        pub fn onSocketOpen(this: *FetchTasklet, socket: *uws.Socket) void {
-            //keep to shutdown when aborted
-            this.socket = socket;
-        }
-
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
@@ -855,9 +850,8 @@ pub const Fetch = struct {
             reason.protect();
             this.aborted.store(true, .Monotonic);
 
-            // if some socket is available call shutdown
-            if (this.socket != null) {
-                HTTPClient.http_thread.scheduleShutdown(HTTPClient.SocketShutdown.init(this.http.?.client.isHTTPS(), this.socket.?));
+            if (this.http != null) {
+                HTTPClient.http_thread.scheduleShutdown(this.http.?);
             }
         }
 

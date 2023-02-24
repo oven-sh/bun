@@ -52,6 +52,12 @@ declare module "bun" {
     options?: { PATH?: string; cwd?: string },
   ): string;
 
+  export type Serve<WebSocketDataType = undefined> =
+    | ServeOptions
+    | TLSServeOptions
+    | WebSocketServeOptions<WebSocketDataType>
+    | TLSWebSocketServeOptions<WebSocketDataType>;
+
   /**
    * Start a fast HTTP server.
    *
@@ -88,8 +94,12 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve<WebSocketDataType>(
-    options: Serve<WebSocketDataType>,
+  export function serve<T>(
+    options:
+      | ServeOptions
+      | TLSServeOptions
+      | WebSocketServeOptions<T>
+      | TLSWebSocketServeOptions<T>,
   ): Server;
 
   /**
@@ -821,8 +831,9 @@ declare module "bun" {
    * ```
    *
    */
+
   export class Transpiler {
-    constructor(options: TranspilerOptions);
+    constructor(options?: TranspilerOptions);
 
     /**
      * Transpile code from TypeScript or JSX into valid JavaScript.
@@ -856,7 +867,7 @@ declare module "bun" {
      * @param code The code to transpile
      *
      */
-    transformSync(code: StringOrBuffer, loader: JavaScriptLoader): string;
+    transformSync(code: StringOrBuffer, loader?: JavaScriptLoader): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.
@@ -1439,7 +1450,7 @@ declare module "bun" {
      * "http://localhost:3000"
      *
      */
-    baseURI?: string;
+    // baseURI?: string;
 
     /**
      * What is the maximum size of a request body? (in bytes)
@@ -1527,6 +1538,9 @@ declare module "bun" {
     ): Response | undefined | Promise<Response | undefined>;
   }
 
+  export interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
+    extends WebSocketServeOptions<WebSocketDataType>,
+      TLSOptions {}
   export interface Errorlike extends Error {
     code?: string;
     errno?: number;
@@ -1547,8 +1561,18 @@ declare module "bun" {
      */
     certFile: string;
 
+    /**
+     * Passphrase for the TLS key
+     */
     passphrase?: string;
+    /**
+     *  File path to a .pem file for a custom root CA
+     */
     caFile?: string;
+
+    /**
+     * File path to a .pem file custom Diffie Helman parameters
+     */
     dhParamsFile?: string;
 
     /**
@@ -1564,17 +1588,13 @@ declare module "bun" {
     lowMemoryMode?: boolean;
   }
 
-  export type TLSServeOptions<WebSocketDataType = undefined> = (
-    | WebSocketServeOptions<WebSocketDataType>
-    | ServerWebSocket
-  ) &
-    TLSOptions & {
-      /**
-       *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-       *  The values are SSL options objects.
-       */
-      serverNames: Record<string, TLSOptions>;
-    };
+  export interface TLSServeOptions extends ServeOptions, TLSOptions {
+    /**
+     *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+     *  The values are SSL options objects.
+     */
+    serverNames?: Record<string, TLSOptions>;
+  }
 
   /**
    * HTTP & HTTPS Server
@@ -1753,11 +1773,6 @@ declare module "bun" {
      */
     readonly development: boolean;
   }
-
-  export type Serve<WebSocketDataType = undefined> =
-    | TLSServeOptions<WebSocketDataType>
-    | WebSocketServeOptions<WebSocketDataType>
-    | ServeOptions;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -2154,16 +2169,16 @@ declare module "bun" {
   /**
    * Resolve a `Promise` after milliseconds. This is like
    * {@link setTimeout} except it returns a `Promise`.
-   * 
+   *
    * @param ms milliseconds to delay resolving the promise. This is a minimum
    * number. It may take longer. If a {@link Date} is passed, it will sleep until the
    * {@link Date} is reached.
-   * 
-   * @example 
+   *
+   * @example
    * ## Sleep for 1 second
    * ```ts
    * import { sleep } from "bun";
-   * 
+   *
    * await sleep(1000);
    * ```
    * ## Sleep for 10 milliseconds
@@ -2171,7 +2186,7 @@ declare module "bun" {
    * await Bun.sleep(10);
    * ```
    * ## Sleep until `Date`
-   * 
+   *
    * ```ts
    * const target = new Date();
    * target.setSeconds(target.getSeconds() + 1);
@@ -2657,7 +2672,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<(typeof options)["setup"]>;
+    }): ReturnType<typeof options["setup"]>;
 
     /**
      * Deactivate all plugins
@@ -2775,20 +2790,18 @@ declare module "bun" {
     readonly localPort: number;
   }
 
-  interface SocketListener<Options extends SocketOptions = SocketOptions> {
+  interface SocketListener<Data = undefined> {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;
-    reload(options: Pick<Partial<Options>, "socket">): void;
-    data: Options["data"];
+    reload(options: Pick<Partial<SocketOptions>, "socket">): void;
+    data: Data;
   }
-  interface TCPSocketListener<Options extends TCPSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface TCPSocketListener<Data> extends SocketListener<Data> {
     readonly port: number;
     readonly hostname: string;
   }
-  interface UnixSocketListener<Options extends UnixSocketOptions<unknown>>
-    extends SocketListener<Options> {
+  interface UnixSocketListener<Data> extends SocketListener<Data> {
     readonly unix: string;
   }
 
@@ -2808,7 +2821,7 @@ declare module "bun" {
     Data = unknown,
     DataBinaryType extends BinaryType = "buffer",
   > {
-    open(socket: Socket<Data>): void | Promise<void>;
+    open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(
@@ -2839,6 +2852,10 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
+     * Called when a message times out.
+     */
+    timeout?(socket: Socket<Data>): void | Promise<void>;
+    /**
      * Choose what `ArrayBufferView` is returned in the {@link SocketHandler.data} callback.
      *
      * @default "buffer"
@@ -2858,12 +2875,25 @@ declare module "bun" {
 
   interface SocketOptions<Data = unknown> {
     socket: SocketHandler<Data>;
-    tls?: boolean | TLSOptions;
     data?: Data;
   }
-  interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
+  // interface TCPSocketOptions<Data = undefined> extends SocketOptions<Data> {
+  //   hostname: string;
+  //   port: number;
+  // }
+
+  interface TCPSocketListenOptions<Data = undefined>
+    extends SocketOptions<Data> {
     hostname: string;
     port: number;
+    tls?: TLSOptions;
+  }
+
+  interface TCPSocketConnectOptions<Data = undefined>
+    extends SocketOptions<Data> {
+    hostname: string;
+    port: number;
+    tls?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
@@ -2884,7 +2914,7 @@ declare module "bun" {
    *
    */
   export function connect<Data = undefined>(
-    options: TCPSocketOptions<Data>,
+    options: TCPSocketConnectOptions<Data>,
   ): Promise<TCPSocketListener<typeof options>>;
   export function connect<Data = undefined>(
     options: UnixSocketOptions<Data>,
@@ -2904,11 +2934,11 @@ declare module "bun" {
    *
    */
   export function listen<Data = undefined>(
-    options: TCPSocketOptions<Data>,
-  ): TCPSocketListener<typeof options>;
+    options: TCPSocketListenOptions<Data>,
+  ): TCPSocketListener<Data>;
   export function listen<Data = undefined>(
     options: UnixSocketOptions<Data>,
-  ): UnixSocketListener<typeof options>;
+  ): UnixSocketListener<Data>;
 
   namespace SpawnOptions {
     type Readable =
@@ -2951,7 +2981,7 @@ declare module "bun" {
        * Changes to `process.env` at runtime won't automatically be reflected in the default value. For that, you can pass `process.env` explicitly.
        *
        */
-      env?: Record<string, string>;
+      env?: Record<string, string | number>;
 
       /**
        * The standard file descriptors of the process
@@ -3117,11 +3147,11 @@ declare module "bun" {
 
       /** The base path to use when routing */
       assetPrefix?: string;
-
       origin?: string;
     });
 
-    match(input: string | Request | Response | URL): MatchedRoute | null;
+    // todo: URL
+    match(input: string | Request | Response): MatchedRoute | null;
 
     readonly assetPrefix: string;
     readonly origin: string;

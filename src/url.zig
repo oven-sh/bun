@@ -821,6 +821,309 @@ pub const PercentEncoding = struct {
     }
 };
 
+pub const FormData = struct {
+    fields: Map,
+    buffer: []const u8,
+
+    pub const Map = std.ArrayHashMapUnmanaged(
+        bun.Semver.String,
+        Field.Entry,
+        bun.Semver.String.ArrayHashContext,
+        false,
+    );
+
+    pub const Encoding = union(enum) {
+        URLEncoded: void,
+        Multipart: []const u8, // boundary
+
+        pub fn get(content_type: []const u8) ?Encoding {
+            if (strings.indexOf(content_type, "application/x-www-form-urlencoded") != null)
+                return Encoding{ .URLEncoded = void{} };
+
+            if (strings.indexOf(content_type, "multipart/form-data") == null) return null;
+
+            const boundary = getBoundary(content_type) orelse return null;
+            return .{
+                .Multipart = boundary,
+            };
+        }
+    };
+
+    pub const AsyncFormData = struct {
+        encoding: Encoding,
+        allocator: std.mem.Allocator,
+
+        pub fn init(allocator: std.mem.Allocator, encoding: Encoding) !*AsyncFormData {
+            var this = try allocator.create(AsyncFormData);
+            this.* = AsyncFormData{
+                .encoding = switch (encoding) {
+                    .Multipart => .{
+                        .Multipart = try allocator.dupe(u8, encoding.Multipart),
+                    },
+                    else => encoding,
+                },
+                .allocator = allocator,
+            };
+            return this;
+        }
+
+        pub fn deinit(this: *AsyncFormData) void {
+            if (this.encoding == .Multipart)
+                this.allocator.free(this.encoding.Multipart);
+            this.allocator.destroy(this);
+        }
+
+        pub fn toJS(this: *AsyncFormData, global: *bun.JSC.JSGlobalObject, data: []const u8, promise: bun.JSC.AnyPromise) void {
+            if (this.encoding == .Multipart and this.encoding.Multipart.len == 0) {
+                promise.reject(global, bun.JSC.ZigString.init("FormData missing boundary").toErrorInstance(global));
+                return;
+            }
+
+            const js_value = bun.FormData.toJS(
+                global,
+                data,
+                this.encoding,
+            ) catch |err| {
+                promise.reject(global, global.createErrorInstance("FormData {s}", .{@errorName(err)}));
+                return;
+            };
+
+            promise.resolve(global, js_value);
+        }
+    };
+
+    pub fn getBoundary(content_type: []const u8) ?[]const u8 {
+        const boundary_index = strings.indexOf(content_type, "boundary=") orelse return null;
+        const boundary_start = boundary_index + "boundary=".len;
+        const begin = content_type[boundary_start..];
+        if (begin.len == 0)
+            return null;
+
+        var boundary_end = strings.indexOfChar(begin, ';') orelse @truncate(u32, begin.len);
+        if (begin[0] == '"' and boundary_end > 0 and begin[boundary_end -| 1] == '"') {
+            boundary_end -|= 1;
+            return begin[1..boundary_end];
+        }
+
+        return begin[0..boundary_end];
+    }
+
+    pub const Field = struct {
+        value: bun.Semver.String = .{},
+        filename: bun.Semver.String = .{},
+        content_type: bun.Semver.String = .{},
+        is_file: bool = false,
+        zero_count: u8 = 0,
+
+        pub const Entry = union(enum) {
+            field: Field,
+            list: bun.BabyList(Field),
+        };
+
+        pub const External = extern struct {
+            name: bun.JSC.ZigString,
+            value: bun.JSC.ZigString,
+            blob: ?*bun.JSC.WebCore.Blob = null,
+        };
+    };
+
+    pub fn toJS(globalThis: *bun.JSC.JSGlobalObject, input: []const u8, encoding: Encoding) !bun.JSC.JSValue {
+        switch (encoding) {
+            .URLEncoded => {
+                var str = bun.JSC.ZigString.fromUTF8(input);
+                return bun.JSC.DOMFormData.createFromURLQuery(globalThis, &str);
+            },
+            .Multipart => |boundary| return toJSFromMultipartData(globalThis, input, boundary),
+        }
+    }
+
+    pub fn toJSFromMultipartData(
+        globalThis: *bun.JSC.JSGlobalObject,
+        input: []const u8,
+        boundary: []const u8,
+    ) !bun.JSC.JSValue {
+        const form_data_value = bun.JSC.DOMFormData.create(globalThis);
+        form_data_value.ensureStillAlive();
+        var form = bun.JSC.DOMFormData.fromJS(form_data_value).?;
+        const Wrapper = struct {
+            globalThis: *bun.JSC.JSGlobalObject,
+            form: *bun.JSC.DOMFormData,
+
+            pub fn onEntry(wrap: *@This(), name: bun.Semver.String, field: Field, buf: []const u8) void {
+                var value_str = field.value.slice(buf);
+                var key = bun.JSC.ZigString.initUTF8(name.slice(buf));
+
+                if (field.is_file) {
+                    var filename_str = field.filename.slice(buf);
+
+                    var blob = bun.JSC.WebCore.Blob.create(value_str, bun.default_allocator, wrap.globalThis, false);
+                    defer blob.detach();
+                    var filename = bun.JSC.ZigString.initUTF8(filename_str);
+                    const content_type: []const u8 = brk: {
+                        if (filename_str.len > 0) {
+                            if (bun.HTTP.MimeType.byExtensionNoDefault(std.fs.path.extension(filename_str))) |mime| {
+                                break :brk mime.value;
+                            }
+                        }
+
+                        if (bun.HTTP.MimeType.sniff(value_str)) |mime| {
+                            break :brk mime.value;
+                        }
+
+                        break :brk "";
+                    };
+
+                    if (content_type.len > 0) {
+                        blob.content_type = content_type;
+                        blob.content_type_allocated = false;
+                    }
+
+                    wrap.form.appendBlob(wrap.globalThis, &key, &blob, &filename);
+                } else {
+                    var value = bun.JSC.ZigString.initUTF8(value_str);
+                    wrap.form.append(&key, &value);
+                }
+            }
+        };
+
+        {
+            var wrap = Wrapper{
+                .globalThis = globalThis,
+                .form = form,
+            };
+
+            try forEachMultipartEntry(input, boundary, *Wrapper, &wrap, Wrapper.onEntry);
+        }
+
+        return form_data_value;
+    }
+
+    pub fn forEachMultipartEntry(
+        input: []const u8,
+        boundary: []const u8,
+        comptime Ctx: type,
+        ctx: Ctx,
+        comptime iterator: fn (
+            Ctx,
+            bun.Semver.String,
+            Field,
+            string,
+        ) void,
+    ) !void {
+        var slice = input;
+        var subslicer = bun.Semver.SlicedString.init(input, input);
+
+        var buf: [76]u8 = undefined;
+        {
+            const final_boundary = std.fmt.bufPrint(&buf, "--{s}--", .{boundary}) catch |err| {
+                if (err == error.NoSpaceLeft) {
+                    return error.@"boundary is too long";
+                }
+
+                return err;
+            };
+            const final_boundary_index = strings.lastIndexOf(input, final_boundary);
+            if (final_boundary_index == null) {
+                return error.@"missing final boundary";
+            }
+            slice = slice[0..final_boundary_index.?];
+        }
+
+        const separator = try std.fmt.bufPrint(&buf, "--{s}\r\n", .{boundary});
+        var splitter = strings.split(slice, separator);
+        _ = splitter.next(); // skip first boundary
+
+        while (splitter.next()) |chunk| {
+            var remain = chunk;
+            const header_end = strings.indexOf(remain, "\r\n\r\n") orelse return error.@"is missing header end";
+            const header = remain[0 .. header_end + 2];
+            remain = remain[header_end + 4 ..];
+
+            var field = Field{};
+            var name: bun.Semver.String = .{};
+            var filename: ?bun.Semver.String = null;
+            var header_chunk = header;
+            var is_file = false;
+            while (header_chunk.len > 0 and (filename == null or name.len() == 0)) {
+                const line_end = strings.indexOf(header_chunk, "\r\n") orelse return error.@"is missing header line end";
+                const line = header_chunk[0..line_end];
+                header_chunk = header_chunk[line_end + 2 ..];
+                const colon = strings.indexOf(line, ":") orelse return error.@"is missing header colon separator";
+
+                const key = line[0..colon];
+                var value = if (line.len > colon + 1) line[colon + 1 ..] else "";
+                if (strings.eqlCaseInsensitiveASCII(key, "content-disposition", true)) {
+                    value = strings.trim(value, " ");
+                    if (strings.hasPrefixComptime(value, "form-data;")) {
+                        value = value["form-data;".len..];
+                        value = strings.trim(value, " ");
+                    }
+
+                    while (strings.indexOf(value, "=")) |eql_start| {
+                        const eql_key = strings.trim(value[0..eql_start], " ;");
+                        value = value[eql_start + 1 ..];
+                        if (strings.hasPrefixComptime(value, "\"")) {
+                            value = value[1..];
+                        }
+
+                        var field_value = value;
+                        {
+                            var i: usize = 0;
+                            while (i < field_value.len) : (i += 1) {
+                                switch (field_value[i]) {
+                                    '"' => {
+                                        field_value = field_value[0..i];
+                                        break;
+                                    },
+                                    '\\' => {
+                                        i += @boolToInt(field_value.len > i + 1 and field_value[i + 1] == '"');
+                                    },
+                                    // the spec requires a end quote, but some browsers don't send it
+                                    else => {},
+                                }
+                            }
+                            value = value[@min(i + 1, value.len)..];
+                        }
+
+                        if (strings.eqlCaseInsensitiveASCII(eql_key, "name", true)) {
+                            name = subslicer.sub(field_value).value();
+                        } else if (strings.eqlCaseInsensitiveASCII(eql_key, "filename", true)) {
+                            filename = subslicer.sub(field_value).value();
+                            is_file = true;
+                        }
+
+                        if (!name.isEmpty() and filename != null) {
+                            break;
+                        }
+
+                        if (strings.indexOfChar(value, ';')) |semi_start| {
+                            value = value[semi_start + 1 ..];
+                        } else {
+                            break;
+                        }
+                    }
+                } else if (value.len > 0 and field.content_type.isEmpty() and strings.eqlCaseInsensitiveASCII(key, "content-type", true)) {
+                    field.content_type = subslicer.sub(strings.trim(value, "; \t")).value();
+                }
+            }
+
+            if (name.len() + @as(usize, field.zero_count) == 0) {
+                continue;
+            }
+
+            var body = remain;
+            if (strings.endsWithComptime(body, "\r\n")) {
+                body = body[0 .. body.len - 2];
+            }
+            field.value = subslicer.sub(body).value();
+            field.filename = filename orelse .{};
+            field.is_file = is_file;
+
+            iterator(ctx, name, field, input);
+        }
+    }
+};
+
 const ParamsList = @import("./router.zig").Param.List;
 pub const CombinedScanner = struct {
     query: Scanner,
@@ -1161,7 +1464,7 @@ test "QueryStringMap (full)" {
     var target: [fixture.ext.len]string = undefined;
     try expect((map.getAll("ext", &target)) == fixture.ext.len);
 
-    for (target) |item, i| {
+    for (target, 0..) |item, i| {
         try expectString(
             fixture.ext[i],
             item,
@@ -1175,7 +1478,7 @@ test "QueryStringMap not encoded" {
         .hey = "1",
         .wow = "true",
     };
-    const url_slice = std.mem.span(url);
+    const url_slice = bun.asByteSlice(url);
     var map = (try QueryStringMap.init(std.testing.allocator, url_slice)) orelse return try std.testing.expect(false);
     try expect(map.buffer.len == 0);
     try expect(url_slice.ptr == map.slice.ptr);
@@ -1219,7 +1522,7 @@ test "QueryStringMap Iterator" {
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
     defer map.deinit();
     var buf_: [48]string = undefined;
-    var buf = std.mem.span(&buf_);
+    var buf = buf_[0..48];
     var iter = map.iter();
 
     var result: QueryStringMap.Iterator.Result = iter.next(buf) orelse return try expect(false);
@@ -1289,7 +1592,7 @@ test "QueryStringMap Iterator" {
     result = iter.next(buf) orelse return try expect(false);
     try expectString("ext", result.name);
     try expectEqual(result.values.len, fixture.ext.len);
-    for (fixture.ext) |ext, i| {
+    for (fixture.ext, 0..) |ext, i| {
         try expectString(ext, result.values[i]);
     }
 

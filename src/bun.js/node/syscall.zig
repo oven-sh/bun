@@ -141,7 +141,7 @@ pub fn stat(path: [:0]const u8) Maybe(os.Stat) {
     const rc = statSym(path, &stat_);
 
     if (comptime Environment.allow_assert)
-        log("stat({s}) = {d}", .{ std.mem.span(path), rc });
+        log("stat({s}) = {d}", .{ bun.asByteSlice(path), rc });
 
     if (Maybe(os.Stat).errnoSys(rc, .stat)) |err| return err;
     return Maybe(os.Stat){ .result = stat_ };

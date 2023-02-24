@@ -7,6 +7,7 @@ export default [
     noConstructor: true,
     finalize: true,
     hasPendingActivity: true,
+    configurable: false,
     klass: {},
     JSType: "0b11101110",
     proto: {

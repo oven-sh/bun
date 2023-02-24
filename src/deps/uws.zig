@@ -946,7 +946,7 @@ pub const Request = opaque {
         return uws_req_get_yield(req);
     }
     pub fn setYield(req: *Request, yield: bool) void {
-        uws_req_set_field(req, yield);
+        uws_req_set_yield(req, yield);
     }
     pub fn url(req: *Request) []const u8 {
         var ptr: [*]const u8 = undefined;
@@ -975,7 +975,7 @@ pub const Request = opaque {
 
     extern fn uws_req_is_ancient(res: *Request) bool;
     extern fn uws_req_get_yield(res: *Request) bool;
-    extern fn uws_req_set_field(res: *Request, yield: bool) void;
+    extern fn uws_req_set_yield(res: *Request, yield: bool) void;
     extern fn uws_req_get_url(res: *Request, dest: *[*]const u8) usize;
     extern fn uws_req_get_method(res: *Request, dest: *[*]const u8) usize;
     extern fn uws_req_get_header(res: *Request, lower_case_header: [*]const u8, lower_case_header_length: usize, dest: *[*]const u8) usize;
@@ -986,6 +986,9 @@ pub const Request = opaque {
 pub const ListenSocket = opaque {
     pub fn close(this: *ListenSocket, ssl: bool) void {
         us_listen_socket_close(@boolToInt(ssl), this);
+    }
+    pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
+        return us_socket_local_port(@boolToInt(ssl), this);
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
@@ -1057,6 +1060,12 @@ pub fn NewApp(comptime ssl: bool) type {
                     unreachable;
                 }
                 return us_listen_socket_close(ssl_flag, @ptrCast(*uws.ListenSocket, this));
+            }
+            pub inline fn getLocalPort(this: *ThisApp.ListenSocket) i32 {
+                if (comptime is_bindgen) {
+                    unreachable;
+                }
+                return us_socket_local_port(ssl_flag, @ptrCast(*uws.Socket, this));
             }
         };
 

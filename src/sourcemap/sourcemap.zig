@@ -531,7 +531,7 @@ const base64_lut: [std.math.maxInt(u7)]u7 = brk: {
     @setEvalBranchQuota(9999);
     var bytes = [_]u7{std.math.maxInt(u7)} ** std.math.maxInt(u7);
 
-    for (base64) |c, i| {
+    for (base64, 0..) |c, i| {
         bytes[c] = i;
     }
 

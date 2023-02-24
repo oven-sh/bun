@@ -259,7 +259,7 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
-const bun = @import("bun");
+const bun = @import("root").bun;
 pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
@@ -508,6 +508,8 @@ pub const Waker = struct {
     const zeroed = std.mem.zeroes([16]Kevent64);
 
     pub fn wake(this: *Waker) !void {
+        bun.JSC.markBinding(@src());
+
         if (io_darwin_schedule_wakeup(this.machport)) {
             this.has_pending_wake = false;
             return;
@@ -516,6 +518,7 @@ pub const Waker = struct {
     }
 
     pub fn wait(this: Waker) !usize {
+        bun.JSC.markBinding(@src());
         var events = zeroed;
 
         const count = std.os.system.kevent64(
@@ -551,6 +554,7 @@ pub const Waker = struct {
     }
 
     pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
+        bun.JSC.markBinding(@src());
         assert(kq > -1);
         var machport_buf = try allocator.alloc(u8, 1024);
         const machport = io_darwin_create_machport(
@@ -573,6 +577,7 @@ pub const UserFilterWaker = struct {
     ident: u64 = undefined,
 
     pub fn wake(this: UserFilterWaker) !void {
+        bun.JSC.markBinding(@src());
         var events = zeroed;
         events[0].ident = this.ident;
         events[0].filter = c.EVFILT_USER;
@@ -782,7 +787,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
 }
 
 fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
-    for (events) |*kevent, flushed| {
+    for (events, 0..) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
         const event_info = switch (completion.operation) {

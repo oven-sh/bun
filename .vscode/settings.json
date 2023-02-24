@@ -13,7 +13,7 @@
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
-    "editor.defaultFormatter": "tiehuis.zig",
+    "editor.defaultFormatter": "ziglang.vscode-zig",
     "editor.formatOnSave": true
   },
   "[ts]": {
@@ -34,6 +34,19 @@
   },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
+  "[markdown]": {
+    "editor.unicodeHighlight.ambiguousCharacters": false,
+    "editor.unicodeHighlight.invisibleCharacters": false,
+    "diffEditor.ignoreTrimWhitespace": false,
+    "editor.defaultFormatter": "yzhang.markdown-all-in-one",
+    "editor.formatOnSave": true,
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "comments": "off",
+      "strings": "off",
+      "other": "off"
+    }
+  },
   "lldb.verboseLogging": false,
   "files.exclude": {
     "**/.git": true,
@@ -182,7 +195,11 @@
     "ethernet.h": "c",
     "inet.h": "c",
     "packet.h": "c",
-    "queue": "cpp"
+    "queue": "cpp",
+    "compare": "cpp",
+    "concepts": "cpp",
+    "typeindex": "cpp",
+    "__verbose_abort": "cpp"
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "Enabled",

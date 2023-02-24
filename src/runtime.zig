@@ -38,7 +38,7 @@ pub const ErrorCSS = struct {
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
+                resolve_path.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
@@ -61,7 +61,7 @@ pub const ErrorJS = struct {
             var dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
-                resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
+                resolve_path.joinAbsString(dirname, &paths, .auto),
                 .{ .mode = .read_only },
             ) catch return embedDebugFallback(
                 "Missing " ++ content.error_js_path ++ ". Please run \"make bun_error\"",
@@ -291,6 +291,8 @@ pub const Runtime = struct {
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
         inlining: bool = false,
+
+        inject_jest_globals: bool = false,
 
         /// Instead of jsx("div", {}, void 0)
         /// ->

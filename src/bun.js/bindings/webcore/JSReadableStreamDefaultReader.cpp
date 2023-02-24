@@ -174,9 +174,9 @@ JSC::GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceForImpl(JSC::
     return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReader = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReader = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultReader.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReader = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReader = std::forward<decltype(space)>(space); });
 }
 
 }

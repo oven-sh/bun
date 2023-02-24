@@ -180,7 +180,7 @@ pub const PluginRunner = struct {
             JSC.ZigString.init("");
         const on_resolve_plugin = global.runOnResolvePlugins(
             namespace,
-            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0),
+            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0, 0),
             JSC.ZigString.init(importer),
             target,
         ) orelse return null;
@@ -514,7 +514,12 @@ pub const Bundler = struct {
                 var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
 
                 // Process always has highest priority.
+                const was_production = this.options.production;
                 this.env.loadProcess();
+                if (!was_production and this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
+
                 if (this.options.production) {
                     try this.env.load(&this.fs.fs, dir, false);
                 } else {
@@ -523,6 +528,9 @@ pub const Bundler = struct {
             },
             .disable => {
                 this.env.loadProcess();
+                if (this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
             },
             else => {},
         }
@@ -682,7 +690,7 @@ pub const Bundler = struct {
                     var dir_info = dir_info_ orelse return;
 
                     this.options.routes.dir = dir_info.abs_path;
-                    this.options.routes.extensions = std.mem.span(&options.RouteConfig.DefaultExtensions);
+                    this.options.routes.extensions = options.RouteConfig.DefaultExtensions[0..];
                     this.options.routes.routes_enabled = true;
                     this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                     try this.router.?.loadRoutes(
@@ -1324,6 +1332,7 @@ pub const Bundler = struct {
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
         hoist_bun_plugin: bool = false,
+        inject_jest_globals: bool = false,
     };
 
     pub fn parse(
@@ -1453,6 +1462,7 @@ pub const Bundler = struct {
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
                 opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
+                opts.features.inject_jest_globals = this_parse.inject_jest_globals;
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }

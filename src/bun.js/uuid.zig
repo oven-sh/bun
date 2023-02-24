@@ -87,7 +87,7 @@ pub fn print(
     buf[13] = '-';
     buf[18] = '-';
     buf[23] = '-';
-    inline for (encoded_pos) |i, j| {
+    inline for (encoded_pos, 0..) |i, j| {
         buf[comptime i + 0] = hex[bytes[j] >> 4];
         buf[comptime i + 1] = hex[bytes[j] & 0x0f];
     }
@@ -99,7 +99,7 @@ pub fn parse(buf: []const u8) Error!UUID {
     if (buf.len != 36 or buf[8] != '-' or buf[13] != '-' or buf[18] != '-' or buf[23] != '-')
         return Error.InvalidUUID;
 
-    inline for (encoded_pos) |i, j| {
+    inline for (encoded_pos, 0..) |i, j| {
         const hi = hex_to_nibble[buf[i + 0]];
         const lo = hex_to_nibble[buf[i + 1]];
         if (hi == 0xff or lo == 0xff) {

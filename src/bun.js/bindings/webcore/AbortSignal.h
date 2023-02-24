@@ -65,6 +65,8 @@ public:
 
     using Algorithm = Function<void(JSValue)>;
     void addAlgorithm(Algorithm&& algorithm) { m_algorithms.append(WTFMove(algorithm)); }
+    void cleanNativeBindings(void* ref);
+    void addNativeCallback(std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)> callback) { m_native_callbacks.append(callback); }
 
     bool isFollowingSignal() const { return !!m_followingSignal; }
 
@@ -86,6 +88,7 @@ private:
 
     bool m_aborted { false };
     Vector<Algorithm> m_algorithms;
+    Vector<std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>> m_native_callbacks;
     WeakPtr<AbortSignal> m_followingSignal;
     JSValueInWrappedObject m_reason;
     bool m_hasActiveTimeoutTimer { false };

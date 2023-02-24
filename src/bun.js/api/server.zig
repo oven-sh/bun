@@ -408,10 +408,6 @@ pub const ServerConfig = struct {
             }
         }
 
-        if (args.port == 0) {
-            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global, exception);
-        }
-
         if (args.base_uri.len > 0) {
             args.base_url = URL.parse(args.base_uri);
             if (args.base_url.hostname.len == 0) {
@@ -448,7 +444,6 @@ pub const ServerConfig = struct {
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
-            
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
@@ -1015,6 +1010,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
+                        if (req.signal) |signal| {
+                            // if signal is not aborted, abort the signal
+                            if (!signal.aborted()) {
+                                const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                                reason.ensureStillAlive();
+                                _ = signal.signal(reason);
+                            }
+                        }
+
                         // the promise is pending
                         if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
                             this.pending_promises_for_abort += 1;
@@ -1083,6 +1087,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
+                    if (req.signal) |signal| {
+                        // if signal is not aborted, abort the signal
+                        if (!signal.aborted()) {
+                            const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                            reason.ensureStillAlive();
+                            _ = signal.signal(reason);
+                        }
+                    }
                     // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
                         req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
@@ -4308,7 +4320,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn getPort(this: *ThisServer) JSC.JSValue {
-            return JSC.JSValue.jsNumber(this.config.port);
+            var listener = this.listener orelse return JSC.JSValue.jsNumber(this.config.port);
+            return JSC.JSValue.jsNumber(listener.getLocalPort());
         }
 
         pub fn getPendingRequests(this: *ThisServer) JSC.JSValue {

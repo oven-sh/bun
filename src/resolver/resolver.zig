@@ -330,7 +330,7 @@ pub const PendingResolution = struct {
     esm: ESModule.Package.External = .{},
     dependency: Dependency.Version = .{},
     resolution_id: Install.PackageID = Install.invalid_package_id,
-    root_dependency_id: Install.PackageID = Install.invalid_package_id,
+    root_dependency_id: Install.DependencyID = Install.invalid_package_id,
     import_record_id: u32 = std.math.maxInt(u32),
     string_buf: []u8 = "",
     tag: Tag,
@@ -709,7 +709,7 @@ pub const Resolver = struct {
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
-            .url, .at_conditional, .at => std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder),
+            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
             .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
             else => r.opts.extension_order,
         };
@@ -1577,7 +1577,7 @@ pub const Resolver = struct {
                             string_buf = package_json.dependencies.source_buf;
                         }
 
-                        for (dependencies_list) |dependency, dependency_id| {
+                        for (dependencies_list, 0..) |dependency, dependency_id| {
                             const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
@@ -1687,6 +1687,7 @@ pub const Resolver = struct {
                                 if (st == .extract)
                                     manager.enqueuePackageForDownload(
                                         esm.name,
+                                        manager.lockfile.buffers.legacyPackageToDependencyID(resolved_package_id) catch unreachable,
                                         resolved_package_id,
                                         resolution.value.npm.version,
                                         manager.lockfile.str(&resolution.value.npm.url),
@@ -1818,7 +1819,7 @@ pub const Resolver = struct {
     }
     fn dirInfoForResolution(
         r: *ThisResolver,
-        dir_path: []const u8,
+        dir_path: string,
         package_id: Install.PackageID,
     ) !?*DirInfo {
         std.debug.assert(r.package_manager != null);
@@ -1832,13 +1833,13 @@ pub const Resolver = struct {
         var cached_dir_entry_result = rfs.entries.getOrPut(dir_path) catch unreachable;
 
         var dir_entries_option: *Fs.FileSystem.RealFS.EntriesOption = undefined;
-        var needs_iter: bool = true;
+        var needs_iter = true;
         var open_dir = std.fs.cwd().openIterableDir(dir_path, .{}) catch |err| {
             switch (err) {
                 error.FileNotFound => unreachable,
                 else => {
                     // TODO: handle this error better
-                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{std.mem.span(@errorName(err))}) catch unreachable;
+                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{bun.asByteSlice(@errorName(err))}) catch unreachable;
                     return err;
                 },
             }
@@ -1854,7 +1855,9 @@ pub const Resolver = struct {
         if (needs_iter) {
             const allocator = r.fs.allocator;
             dir_entries_option = rfs.entries.put(&cached_dir_entry_result, .{
-                .entries = Fs.FileSystem.DirEntry.init(dir_path),
+                .entries = Fs.FileSystem.DirEntry.init(
+                    Fs.FileSystem.DirnameStore.instance.append(string, dir_path) catch unreachable,
+                ),
             }) catch unreachable;
 
             if (FeatureFlags.store_file_descriptors) {
@@ -1869,7 +1872,7 @@ pub const Resolver = struct {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        var dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, DirInfo{}) catch unreachable;
+        var dir_info_ptr = r.dir_cache.put(&dir_cache_info_result, .{}) catch unreachable;
 
         try r.dirInfoUncached(
             dir_info_ptr,
@@ -1978,7 +1981,6 @@ pub const Resolver = struct {
                         .pending = .{
                             .esm = cloned,
                             .dependency = version,
-                            .resolution_id = Install.invalid_package_id,
                             .root_dependency_id = id,
                             .string_buf = builder.allocatedSlice(),
                             .tag = .resolve,

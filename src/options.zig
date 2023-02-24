@@ -70,7 +70,7 @@ pub fn stringHashMapFromArrays(comptime t: type, allocator: std.mem.Allocator, k
     var hash_map = t.init(allocator);
     if (keys.len > 0) {
         try hash_map.ensureTotalCapacity(@intCast(u32, keys.len));
-        for (keys) |key, i| {
+        for (keys, 0..) |key, i| {
             hash_map.putAssumeCapacity(key, values[i]);
         }
     }
@@ -117,7 +117,7 @@ pub const ExternalModules = struct {
         var result = ExternalModules{
             .node_modules = std.BufSet.init(allocator),
             .abs_paths = std.BufSet.init(allocator),
-            .patterns = std.mem.span(default_wildcard_patterns),
+            .patterns = default_wildcard_patterns[0..],
         };
 
         switch (platform) {
@@ -144,7 +144,7 @@ pub const ExternalModules = struct {
         }
 
         var patterns = std.ArrayList(WildcardPattern).initCapacity(allocator, default_wildcard_patterns.len) catch unreachable;
-        patterns.appendSliceAssumeCapacity(std.mem.span(default_wildcard_patterns));
+        patterns.appendSliceAssumeCapacity(default_wildcard_patterns[0..]);
 
         for (externals) |external| {
             const path = external;
@@ -1097,7 +1097,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
 
     if (platform.isBun()) {
-        for (loader_values) |_, i| {
+        for (loader_values, 0..) |_, i| {
             const loader = switch (input_loaders.loaders[i]) {
                 .jsx => Loader.jsx,
                 .js => Loader.js,
@@ -1114,7 +1114,7 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
             loader_values[i] = loader;
         }
     } else {
-        for (loader_values) |_, i| {
+        for (loader_values, 0..) |_, i| {
             const loader = switch (input_loaders.loaders[i]) {
                 .jsx => Loader.jsx,
                 .js => Loader.js,
@@ -1252,6 +1252,11 @@ pub const BundleOptions = struct {
 
     inlining: bool = false,
     minify_whitespace: bool = false,
+
+    pub fn setProduction(this: *BundleOptions, value: bool) void {
+        this.production = value;
+        this.jsx.development = !value;
+    }
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
@@ -1929,7 +1934,7 @@ pub const Env = struct {
 
         try this.defaults.ensureTotalCapacity(this.allocator, defaults.keys.len);
 
-        for (defaults.keys) |key, i| {
+        for (defaults.keys, 0..) |key, i| {
             this.defaults.appendAssumeCapacity(.{ .key = key, .value = defaults.values[i] });
         }
     }
@@ -2235,7 +2240,7 @@ pub const RouteConfig = struct {
     pub inline fn zero() RouteConfig {
         return RouteConfig{
             .dir = DefaultDir,
-            .extensions = std.mem.span(&DefaultExtensions),
+            .extensions = DefaultExtensions[0..],
             .static_dir = DefaultStaticDir,
             .routes_enabled = false,
         };

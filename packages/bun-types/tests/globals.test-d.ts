@@ -64,3 +64,26 @@ expectType<Promise<void>>(fsPromises.mkdir("./index.d.ts"));
 Bun.env;
 
 Bun.version;
+
+setImmediate;
+clearImmediate;
+setInterval;
+clearInterval;
+setTimeout;
+clearTimeout;
+
+const arg = new AbortSignal();
+arg;
+
+const e = new CustomEvent("asdf");
+console.log(e);
+
+exports;
+module.exports;
+
+global.AbortController;
+global.Bun;
+
+const er = new DOMException();
+er.name;
+er.HIERARCHY_REQUEST_ERR;

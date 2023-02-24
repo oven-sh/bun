@@ -26,7 +26,7 @@ pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
     var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
     var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos) |field, i| {
+    inline for (fieldInfos, 0..) |field, i| {
         enumFields[i] = .{
             .name = field.name,
             .value = i,
@@ -105,7 +105,7 @@ pub fn Maybe(comptime ResultType: type) type {
                         if (ResultType == []u8) {
                             return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
                         }
-                        return JSC.ZigString.init(std.mem.span(r)).withEncoding().toValueAuto(globalThis);
+                        return JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalThis);
                     }
 
                     if (comptime @typeInfo(ReturnType) == .Bool) {
@@ -178,7 +178,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = std.mem.span(path) },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
                 },
             };
         }
@@ -643,7 +643,7 @@ pub const PathLike = union(Tag) {
                     arguments.protectEat();
 
                     if (zig_str.is16Bit()) {
-                        var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
+                        var printed = bun.asByteSlice(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
                         return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
                     }
 
@@ -964,67 +964,122 @@ pub const FileSystemFlags = enum(Mode) {
     const O_SYNC: Mode = 0;
     const O_TRUNC: Mode = std.os.O.TRUNC;
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
-        if (val.isUndefinedOrNull()) {
-            return @intToEnum(FileSystemFlags, O_RDONLY);
-        }
+    const map = bun.ComptimeStringMap(Mode, .{
+        .{ "r", O_RDONLY },
+        .{ "rs", O_RDONLY | O_SYNC },
+        .{ "sr", O_RDONLY | O_SYNC },
+        .{ "r+", O_RDWR },
+        .{ "rs+", O_RDWR | O_SYNC },
+        .{ "sr+", O_RDWR | O_SYNC },
 
+        .{ "R", O_RDONLY },
+        .{ "RS", O_RDONLY | O_SYNC },
+        .{ "SR", O_RDONLY | O_SYNC },
+        .{ "R+", O_RDWR },
+        .{ "RS+", O_RDWR | O_SYNC },
+        .{ "SR+", O_RDWR | O_SYNC },
+
+        .{ "w", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "W", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "WX", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XW", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "w+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "W+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "WX+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XW+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "a", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "A", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "AX", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XA", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "AS", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "SA", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "a+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+
+        .{ "A+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "AX+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XA+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "AS+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+    });
+
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
-            const number = val.toInt32();
-            return @intToEnum(FileSystemFlags, number);
+            const number = val.coerce(i32, ctx);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, @max(number, 0)));
         }
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            var zig_str = JSC.ZigString.init("");
-            val.toZigString(&zig_str, ctx.ptr());
+            const str = val.getZigString(ctx);
+            if (str.isEmpty()) {
+                JSC.throwInvalidArguments(
+                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
+            // it's definitely wrong when the string is super long
+            else if (str.len > 12) {
+                JSC.throwInvalidArguments(
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
 
-            var buf: [4]u8 = .{ 0, 0, 0, 0 };
-            @memcpy(&buf, zig_str.ptr, @min(buf.len, zig_str.len));
-            const Matcher = strings.ExactSizeMatcher(4);
+            const flags = brk: {
+                switch (str.is16Bit()) {
+                    inline else => |is_16bit| {
+                        const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
 
-            // https://github.com/nodejs/node/blob/8c3637cd35cca352794e2c128f3bc5e6b6c41380/lib/internal/fs/utils.js#L565
-            const flags = switch (Matcher.match(buf[0..4])) {
-                Matcher.case("r") => O_RDONLY,
-                Matcher.case("rs"), Matcher.case("sr") => O_RDONLY | O_SYNC,
-                Matcher.case("r+") => O_RDWR,
-                Matcher.case("rs+"), Matcher.case("sr+") => O_RDWR | O_SYNC,
+                        if (std.ascii.isDigit(@truncate(u8, chars[0]))) {
+                            // node allows "0o644" as a string :(
+                            if (is_16bit) {
+                                const slice = str.toSlice(bun.default_allocator);
+                                defer slice.deinit();
 
-                Matcher.case("w") => O_TRUNC | O_CREAT | O_WRONLY,
-                Matcher.case("wx"), Matcher.case("xw") => O_TRUNC | O_CREAT | O_WRONLY | O_EXCL,
+                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
+                            } else {
+                                break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
+                            }
+                        }
+                    },
+                }
 
-                Matcher.case("w+") => O_TRUNC | O_CREAT | O_RDWR,
-                Matcher.case("wx+"), Matcher.case("xw+") => O_TRUNC | O_CREAT | O_RDWR | O_EXCL,
-
-                Matcher.case("a") => O_APPEND | O_CREAT | O_WRONLY,
-                Matcher.case("ax"), Matcher.case("xa") => O_APPEND | O_CREAT | O_WRONLY | O_EXCL,
-                Matcher.case("as"), Matcher.case("sa") => O_APPEND | O_CREAT | O_WRONLY | O_SYNC,
-
-                Matcher.case("a+") => O_APPEND | O_CREAT | O_RDWR,
-                Matcher.case("ax+"), Matcher.case("xa+") => O_APPEND | O_CREAT | O_RDWR | O_EXCL,
-                Matcher.case("as+"), Matcher.case("sa+") => O_APPEND | O_CREAT | O_RDWR | O_SYNC,
-
-                Matcher.case("") => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag: string can't be empty",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
-                else => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
+                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
+            } orelse {
+                JSC.throwInvalidArguments(
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
+                    ctx,
+                    exception,
+                );
+                return null;
             };
 
-            return @intToEnum(FileSystemFlags, flags);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, flags));
         }
 
         return null;
@@ -1044,113 +1099,8 @@ pub const Date = enum(u64) {
     }
 };
 
-fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
+fn StatsDataType(comptime T: type) type {
     return struct {
-        const This = @This();
-
-        pub const Class = JSC.NewClass(
-            This,
-            .{ .name = name },
-            .{
-                .isBlockDevice = .{
-                    .rfn = JSC.wrap(This, "isBlockDevice", false),
-                },
-                .isCharacterDevice = .{
-                    .rfn = JSC.wrap(This, "isCharacterDevice", false),
-                },
-                .isDirectory = .{
-                    .rfn = JSC.wrap(This, "isDirectory", false),
-                },
-                .isFIFO = .{
-                    .rfn = JSC.wrap(This, "isFIFO", false),
-                },
-                .isFile = .{
-                    .rfn = JSC.wrap(This, "isFile", false),
-                },
-                .isSocket = .{
-                    .rfn = JSC.wrap(This, "isSocket", false),
-                },
-                .isSymbolicLink = .{
-                    .rfn = JSC.wrap(This, "isSymbolicLink", false),
-                },
-                .finalize = finalize,
-            },
-            .{
-                .dev = .{
-                    .get = JSC.To.JS.Getter(This, .dev),
-                    .name = "dev",
-                },
-                .ino = .{
-                    .get = JSC.To.JS.Getter(This, .ino),
-                    .name = "ino",
-                },
-                .mode = .{
-                    .get = JSC.To.JS.Getter(This, .mode),
-                    .name = "mode",
-                },
-                .nlink = .{
-                    .get = JSC.To.JS.Getter(This, .nlink),
-                    .name = "nlink",
-                },
-                .uid = .{
-                    .get = JSC.To.JS.Getter(This, .uid),
-                    .name = "uid",
-                },
-                .gid = .{
-                    .get = JSC.To.JS.Getter(This, .gid),
-                    .name = "gid",
-                },
-                .rdev = .{
-                    .get = JSC.To.JS.Getter(This, .rdev),
-                    .name = "rdev",
-                },
-                .size = .{
-                    .get = JSC.To.JS.Getter(This, .size),
-                    .name = "size",
-                },
-                .blksize = .{
-                    .get = JSC.To.JS.Getter(This, .blksize),
-                    .name = "blksize",
-                },
-                .blocks = .{
-                    .get = JSC.To.JS.Getter(This, .blocks),
-                    .name = "blocks",
-                },
-                .atime = .{
-                    .get = JSC.To.JS.Getter(This, .atime),
-                    .name = "atime",
-                },
-                .mtime = .{
-                    .get = JSC.To.JS.Getter(This, .mtime),
-                    .name = "mtime",
-                },
-                .ctime = .{
-                    .get = JSC.To.JS.Getter(This, .ctime),
-                    .name = "ctime",
-                },
-                .birthtime = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime),
-                    .name = "birthtime",
-                },
-                .atimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .atime_ms),
-                    .name = "atimeMs",
-                },
-                .mtimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .mtime_ms),
-                    .name = "mtimeMs",
-                },
-                .ctimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .ctime_ms),
-                    .name = "ctimeMs",
-                },
-                .birthtimeMs = .{
-                    .get = JSC.To.JS.Getter(This, .birthtime_ms),
-                    .name = "birthtimeMs",
-                },
-            },
-        );
-
         dev: T,
         ino: T,
         mode: T,
@@ -1161,10 +1111,12 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         size: T,
         blksize: T,
         blocks: T,
-        atime_ms: T,
-        mtime_ms: T,
-        ctime_ms: T,
+        atime_ms: f64,
+        mtime_ms: f64,
+        ctime_ms: f64,
         birthtime_ms: T,
+
+        // TODO: don't store these 4 fields
         atime: Date,
         mtime: Date,
         ctime: Date,
@@ -1174,6 +1126,7 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             const atime = stat_.atime();
             const mtime = stat_.mtime();
             const ctime = stat_.ctime();
+
             return @This(){
                 .dev = @truncate(T, @intCast(i64, stat_.dev)),
                 .ino = @truncate(T, @intCast(i64, stat_.ino)),
@@ -1185,9 +1138,9 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 .size = @truncate(T, @intCast(i64, stat_.size)),
                 .blksize = @truncate(T, @intCast(i64, stat_.blksize)),
                 .blocks = @truncate(T, @intCast(i64, stat_.blocks)),
-                .atime_ms = @truncate(T, @intCast(i64, if (atime.tv_nsec > 0) (@intCast(usize, atime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .mtime_ms = @truncate(T, @intCast(i64, if (mtime.tv_nsec > 0) (@intCast(usize, mtime.tv_nsec) / std.time.ns_per_ms) else 0)),
-                .ctime_ms = @truncate(T, @intCast(i64, if (ctime.tv_nsec > 0) (@intCast(usize, ctime.tv_nsec) / std.time.ns_per_ms) else 0)),
+                .atime_ms = (@intToFloat(f64, @max(atime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(atime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .mtime_ms = (@intToFloat(f64, @max(mtime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(mtime.tv_nsec, 0))) / std.time.ns_per_ms),
+                .ctime_ms = (@intToFloat(f64, @max(ctime.tv_sec, 0)) * std.time.ms_per_s) + (@intToFloat(f64, @intCast(usize, @max(ctime.tv_nsec, 0))) / std.time.ns_per_ms),
                 .atime = @intToEnum(Date, @intCast(u64, @max(atime.tv_sec, 0))),
                 .mtime = @intToEnum(Date, @intCast(u64, @max(mtime.tv_sec, 0))),
                 .ctime = @intToEnum(Date, @intCast(u64, @max(ctime.tv_sec, 0))),
@@ -1205,54 +1158,151 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                     @intToEnum(Date, @intCast(u64, @max(stat_.birthtime().tv_sec, 0))),
             };
         }
-
-        pub fn isBlockDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isCharacterDevice(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isDirectory(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFIFO(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isFile(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
-        }
-
-        pub fn isSocket(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.mode)));
-        }
-
-        // Node.js says this method is only valid on the result of lstat()
-        // so it's fine if we just include it on stat() because it would
-        // still just return false.
-        //
-        // See https://nodejs.org/api/fs.html#statsissymboliclink
-        pub fn isSymbolicLink(this: *This) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.mode)));
-        }
-
-        pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
-            var _this = bun.default_allocator.create(Stats) catch unreachable;
-            _this.* = this;
-            return Class.make(ctx, _this);
-        }
-
-        pub fn finalize(this: *This) void {
-            bun.default_allocator.destroy(this);
-        }
     };
 }
 
-pub const Stats = StatsLike("Stats", i32);
-pub const BigIntStats = StatsLike("BigIntStats", i64);
+pub const Stats = union(enum) {
+    big: StatsDataType(i64),
+    small: StatsDataType(i32),
+
+    const This = Stats;
+    pub usingnamespace JSC.Codegen.JSStats;
+
+    fn unionGetter(comptime field: std.meta.FieldEnum(StatsDataType(i64))) JSC.To.Cpp.PropertyGetter(This) {
+        return struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                return switch (this.*) {
+                    .big => JSC.toJS(globalThis, @field(this.big, @tagName(field)), null),
+                    .small => JSC.toJS(globalThis, @field(this.small, @tagName(field)), null),
+                };
+            }
+        }.callback;
+    }
+
+    pub const isBlockDevice_ = JSC.wrapInstanceMethod(Stats, "isBlockDevice", false);
+    pub const isCharacterDevice_ = JSC.wrapInstanceMethod(Stats, "isCharacterDevice", false);
+    pub const isDirectory_ = JSC.wrapInstanceMethod(Stats, "isDirectory", false);
+    pub const isFIFO_ = JSC.wrapInstanceMethod(Stats, "isFIFO", false);
+    pub const isFile_ = JSC.wrapInstanceMethod(Stats, "isFile", false);
+    pub const isSocket_ = JSC.wrapInstanceMethod(Stats, "isSocket", false);
+    pub const isSymbolicLink_ = JSC.wrapInstanceMethod(Stats, "isSymbolicLink", false);
+
+    pub const isBlockDevice_WithoutTypeChecks = domCall(.isBlockDevice);
+    pub const isCharacterDevice_WithoutTypeChecks = domCall(.isCharacterDevice);
+    pub const isDirectory_WithoutTypeChecks = domCall(.isDirectory);
+    pub const isFIFO_WithoutTypeChecks = domCall(.isFIFO);
+    pub const isFile_WithoutTypeChecks = domCall(.isFile);
+    pub const isSocket_WithoutTypeChecks = domCall(.isSocket);
+    pub const isSymbolicLink_WithoutTypeChecks = domCall(.isSymbolicLink);
+
+    const DOMCallFn = fn (
+        *Stats,
+        *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue;
+    fn domCall(comptime decl: std.meta.DeclEnum(Stats)) DOMCallFn {
+        return struct {
+            pub fn run(
+                this: *Stats,
+                _: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue {
+                return @call(.auto, @field(Stats, @tagName(decl)), .{this});
+            }
+        }.run;
+    }
+
+    pub const dev = unionGetter(.dev);
+    pub const ino = unionGetter(.ino);
+    pub const mode = unionGetter(.mode);
+    pub const nlink = unionGetter(.nlink);
+    pub const uid = unionGetter(.uid);
+    pub const gid = unionGetter(.gid);
+    pub const rdev = unionGetter(.rdev);
+    pub const size = unionGetter(.size);
+    pub const blksize = unionGetter(.blksize);
+    pub const blocks = unionGetter(.blocks);
+    pub const atime = unionGetter(.atime);
+    pub const mtime = unionGetter(.mtime);
+    pub const ctime = unionGetter(.ctime);
+    pub const birthtime = unionGetter(.birthtime);
+    pub const atimeMs = unionGetter(.atime_ms);
+    pub const mtimeMs = unionGetter(.mtime_ms);
+    pub const ctimeMs = unionGetter(.ctime_ms);
+    pub const birthtimeMs = unionGetter(.birthtime_ms);
+
+    fn modeInternal(this: *This) i32 {
+        return switch (this.*) {
+            .big => @truncate(i32, this.big.mode),
+            .small => this.small.mode,
+        };
+    }
+
+    pub fn isBlockDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isCharacterDevice(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isDirectory(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFIFO(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isFile(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn isSocket(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.modeInternal())));
+    }
+
+    // Node.js says this method is only valid on the result of lstat()
+    // so it's fine if we just include it on stat() because it would
+    // still just return false.
+    //
+    // See https://nodejs.org/api/fs.html#statsissymboliclink
+    pub fn isSymbolicLink(this: *This) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.modeInternal())));
+    }
+
+    pub fn finalize(this: *This) callconv(.C) void {
+        bun.default_allocator.destroy(this);
+    }
+
+    pub fn init(stat: std.os.Stat, big: bool) This {
+        if (big) {
+            return .{ .big = StatsDataType(i64).init(stat) };
+        } else {
+            return .{ .small = StatsDataType(i32).init(stat) };
+        }
+    }
+
+    pub fn initWithAllocator(allocator: std.mem.Allocator, stat: std.os.Stat, big: bool) *This {
+        var this = allocator.create(Stats) catch unreachable;
+        this.* = init(stat, big);
+        return this;
+    }
+
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Stats {
+        globalThis.throw("Stats is not constructable. use fs.stat()", .{});
+
+        return null;
+    }
+
+    comptime {
+        _ = isBlockDevice_WithoutTypeChecks;
+        _ = isCharacterDevice_WithoutTypeChecks;
+        _ = isDirectory_WithoutTypeChecks;
+        _ = isFIFO_WithoutTypeChecks;
+        _ = isFile_WithoutTypeChecks;
+        _ = isSocket_WithoutTypeChecks;
+        _ = isSymbolicLink_WithoutTypeChecks;
+    }
+};
 
 /// A class representing a directory stream.
 ///
@@ -1376,7 +1426,7 @@ pub const Emitter = struct {
             pub fn remove(this: *List, ctx: JSC.C.JSContextRef, callback: JSC.JSValue) bool {
                 const callbacks = this.list.items(.callback);
 
-                for (callbacks) |item, i| {
+                for (callbacks, 0..) |item, i| {
                     if (callback.eqlValue(item)) {
                         JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
                         this.once_count -|= @as(u32, @boolToInt(this.list.items(.once)[i]));
@@ -1670,7 +1720,7 @@ pub const Path = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         var possibly_utf16 = false;
-        for (args_ptr[0..args_len]) |arg, i| {
+        for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             if (zig_str.is16Bit()) {
                 // TODO: remove this string conversion

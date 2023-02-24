@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "bun:test";
 import { gc, gcTick } from "./gc";
-import {
+import fs, {
   closeSync,
   existsSync,
   mkdirSync,
@@ -23,13 +23,26 @@ import {
   unlinkSync,
   mkdtempSync,
   constants,
+  Dirent,
+  Stats,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "../fixtures/export-lazy-fs-streams/export-from";
+import {
+  ReadStream as ReadStreamStar_,
+  WriteStream as WriteStreamStar_,
+} from "../fixtures/export-lazy-fs-streams/export-*-from";
 
 const Buffer = globalThis.Buffer || Uint8Array;
 
 if (!import.meta.dir) {
   import.meta.dir = ".";
+}
+
+function mkdirForce(path) {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
 describe("copyFileSync", () => {
@@ -354,12 +367,24 @@ describe("writeFileSync", () => {
   });
 });
 
+function triggerDOMJIT(target, fn, result) {
+  for (let i = 0; i < 9999; i++) {
+    if (fn.apply(target) !== result) {
+      throw new Error("DOMJIT failed");
+    }
+  }
+}
+
 describe("lstat", () => {
   it("file metadata is correct", () => {
     const fileStats = lstatSync(new URL("./fs-stream.js", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, true);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, false);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("folder metadata is correct", () => {
@@ -367,6 +392,10 @@ describe("lstat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, false);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, true);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("symlink metadata is correct", () => {
@@ -374,6 +403,10 @@ describe("lstat", () => {
     expect(linkStats.isSymbolicLink()).toBe(true);
     expect(linkStats.isFile()).toBe(false);
     expect(linkStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(linkStats, linkStats.isFile, false);
+    triggerDOMJIT(linkStats, linkStats.isDirectory, false);
+    triggerDOMJIT(linkStats, linkStats.isSymbolicLink, true);
   });
 });
 
@@ -383,6 +416,10 @@ describe("stat", () => {
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(true);
     expect(fileStats.isDirectory()).toBe(false);
+
+    triggerDOMJIT(fileStats, fileStats.isFile, true);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, false);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("folder metadata is correct", () => {
@@ -408,6 +445,10 @@ describe("stat", () => {
     expect(typeof fileStats.mtime).toBe("object");
     expect(typeof fileStats.ctime).toBe("object");
     expect(typeof fileStats.birthtime).toBe("object");
+
+    triggerDOMJIT(fileStats, fileStats.isFile, false);
+    triggerDOMJIT(fileStats, fileStats.isDirectory, true);
+    triggerDOMJIT(fileStats, fileStats.isSymbolicLink, false);
   });
 
   it("stat returns ENOENT", () => {
@@ -570,6 +611,178 @@ describe("createReadStream", () => {
       stream.on("end", () => {
         resolve(true);
       });
+    });
+  });
+});
+
+describe("fs.WriteStream", () => {
+  it("should be exported", () => {
+    expect(fs.WriteStream).toBeDefined();
+  });
+
+  it("should be constructable", () => {
+    const stream = new fs.WriteStream("test.txt");
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should be able to write to a file", done => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-writestream-test.txt`);
+
+    const stream = new fs.WriteStream(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", e => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
+
+  it("should work if re-exported by name", () => {
+    const stream = new WriteStream_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported by name, called without new", () => {
+    const stream = WriteStream_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported, as export * from ...", () => {
+    const stream = new WriteStreamStar_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should work if re-exported, as export * from..., called without new", () => {
+    const stream = WriteStreamStar_("test.txt");
+    expect(stream instanceof WriteStream_).toBe(true);
+    expect(stream instanceof WriteStreamStar_).toBe(true);
+    expect(stream instanceof fs.WriteStream).toBe(true);
+  });
+
+  it("should be able to write to a file with re-exported WriteStream", done => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-writestream-re-exported-test.txt`);
+
+    const stream = new WriteStream_(path, { flags: "w+" });
+    stream.write("Test file written successfully");
+    stream.end();
+
+    stream.on("error", e => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    stream.on("finish", () => {
+      expect(readFileSync(path, "utf8")).toBe("Test file written successfully");
+      done();
+    });
+  });
+});
+
+describe("fs.ReadStream", () => {
+  it("should be exported", () => {
+    expect(fs.ReadStream).toBeDefined();
+  });
+
+  it("should be constructable", () => {
+    const stream = new fs.ReadStream("test.txt");
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file", done => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-readstream-test.txt`);
+
+    writeFileSync(path, "Test file written successfully", {
+      encoding: "utf8",
+      flag: "w+",
+    });
+
+    const stream = new fs.ReadStream(path);
+    stream.setEncoding("utf8");
+    stream.on("error", e => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", chunk => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
+    });
+  });
+
+  it("should work if re-exported by name", () => {
+    const stream = new ReadStream_("test.txt");
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported by name, called without new", () => {
+    const stream = ReadStream_("test.txt");
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported as export * from ...", () => {
+    const stream = new ReadStreamStar_("test.txt");
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should work if re-exported as export * from ..., called without new", () => {
+    const stream = ReadStreamStar_("test.txt");
+    expect(stream instanceof ReadStreamStar_).toBe(true);
+    expect(stream instanceof ReadStream_).toBe(true);
+    expect(stream instanceof fs.ReadStream).toBe(true);
+  });
+
+  it("should be able to read from a file, with re-exported ReadStream", done => {
+    const pathToDir = `${tmpdir()}/${Date.now()}`;
+    mkdirForce(pathToDir);
+    const path = join(pathToDir, `fs-readstream-re-exported-test.txt`);
+
+    writeFileSync(path, "Test file written successfully", {
+      encoding: "utf8",
+      flag: "w+",
+    });
+
+    const stream = new ReadStream_(path);
+    stream.setEncoding("utf8");
+    stream.on("error", e => {
+      done(e instanceof Error ? e : new Error(e));
+    });
+
+    let data = "";
+
+    stream.on("data", chunk => {
+      data += chunk;
+    });
+
+    stream.on("end", () => {
+      expect(data).toBe("Test file written successfully");
+      done();
     });
   });
 });
@@ -766,4 +979,19 @@ it("fs.constants", () => {
   expect(constants.S_IRWXO).toBeDefined();
   expect(constants.S_IROTH).toBeDefined();
   expect(constants.S_IWOTH).toBeDefined();
+});
+
+it("fs.Dirent", () => {
+  expect(Dirent).toBeDefined();
+});
+
+it("fs.Stats", () => {
+  expect(Stats).toBeDefined();
+});
+
+it("repro 1516: can use undefined/null to specify default flag", () => {
+  const path = "/tmp/repro_1516.txt";
+  writeFileSync(path, "b", { flag: undefined });
+  expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
+  rmSync(path);
 });

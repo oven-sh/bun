@@ -31,7 +31,7 @@ pub const ThreadPool = struct {
         const num_workers = std.math.max(1, config.max_threads orelse std.Thread.cpuCount() catch 1);
         self.workers = try self.allocator.alloc(Worker, num_workers);
 
-        for (self.workers) |*worker| {
+        for (&self.workers) |*worker| {
             try worker.init(self);
             @atomicStore(usize, &self.spawned, self.spawned + 1, .SeqCst);
         }
@@ -40,7 +40,7 @@ pub const ThreadPool = struct {
     pub fn deinit(self: *ThreadPool) void {
         self.shutdown();
 
-        for (self.workers[0..self.spawned]) |*worker|
+        for (&self.workers[0..self.spawned]) |*worker|
             worker.deinit();
 
         while (self.run_queue.pop()) |run_node|

@@ -60,7 +60,7 @@ pub const Request = struct {
     bytes_read: u32 = 0,
 
     pub fn clone(this: *const Request, headers: []Header, builder: *StringBuilder) Request {
-        for (this.headers) |header, i| {
+        for (this.headers, 0..) |header, i| {
             headers[i] = header.clone(builder);
         }
 
@@ -144,7 +144,7 @@ pub const Response = struct {
         var that = this.*;
         that.status = builder.append(this.status);
 
-        for (this.headers) |header, i| {
+        for (this.headers, 0..) |header, i| {
             headers[i] = header.clone(builder);
         }
 

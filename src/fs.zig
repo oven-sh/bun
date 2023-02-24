@@ -203,50 +203,41 @@ pub const FileSystem = struct {
         // }
 
         pub fn addEntry(dir: *DirEntry, entry: std.fs.IterableDir.Entry, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
-            var _kind: Entry.Kind = undefined;
-            switch (entry.kind) {
-                .Directory => {
-                    _kind = Entry.Kind.dir;
-                },
-                .SymLink => {
-                    // This might be wrong!
-                    _kind = Entry.Kind.file;
-                },
-                .File => {
-                    _kind = Entry.Kind.file;
-                },
-                else => {
-                    return;
-                },
-            }
+            const _kind: Entry.Kind = switch (entry.kind) {
+                .Directory => .dir,
+                // This might be wrong!
+                .SymLink => .file,
+                .File => .file,
+                else => return,
+            };
             // entry.name only lives for the duration of the iteration
 
-            const name = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.append(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.init(entry.name);
-
-            const name_lowercased = if (entry.name.len >= strings.StringOrTinyString.Max)
-                strings.StringOrTinyString.init(try FileSystem.FilenameStore.instance.appendLowerCase(@TypeOf(entry.name), entry.name))
-            else
-                strings.StringOrTinyString.initLowerCase(entry.name);
-
-            var stored = try EntryStore.instance.append(
-                Entry{
-                    .base_ = name,
-                    .base_lowercase_ = name_lowercased,
-                    .dir = dir.dir,
-                    .mutex = Mutex.init(),
-                    // Call "stat" lazily for performance. The "@material-ui/icons" package
-                    // contains a directory with over 11,000 entries in it and running "stat"
-                    // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .SymLink,
-                    .cache = Entry.Cache{
-                        .symlink = PathString.empty,
-                        .kind = _kind,
-                    },
-                },
+            const name = try strings.StringOrTinyString.initAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
             );
+
+            const name_lowercased = try strings.StringOrTinyString.initLowerCaseAppendIfNeeded(
+                entry.name,
+                *FileSystem.FilenameStore,
+                &FileSystem.FilenameStore.instance,
+            );
+
+            const stored = try EntryStore.instance.append(.{
+                .base_ = name,
+                .base_lowercase_ = name_lowercased,
+                .dir = dir.dir,
+                .mutex = Mutex.init(),
+                // Call "stat" lazily for performance. The "@material-ui/icons" package
+                // contains a directory with over 11,000 entries in it and running "stat"
+                // for each entry was a big performance issue for that package.
+                .need_stat = entry.kind == .SymLink,
+                .cache = .{
+                    .symlink = PathString.empty,
+                    .kind = _kind,
+                },
+            });
 
             const stored_name = stored.base();
 
@@ -270,7 +261,7 @@ pub const FileSystem = struct {
                 Output.prettyln("\n  {s}", .{dir});
             }
 
-            return DirEntry{ .dir = dir, .data = EntryMap{} };
+            return .{ .dir = dir, .data = .{} };
         }
 
         pub const Err = struct {
@@ -304,7 +295,7 @@ pub const FileSystem = struct {
 
         pub fn getComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) ?Entry.Lookup {
             comptime var query: [query_str.len]u8 = undefined;
-            comptime for (query_str) |c, i| {
+            comptime for (query_str, 0..) |c, i| {
                 query[i] = std.ascii.toLower(c);
             };
 
@@ -341,7 +332,7 @@ pub const FileSystem = struct {
 
         pub fn hasComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) bool {
             comptime var query: [query_str.len]u8 = undefined;
-            comptime for (query_str) |c, i| {
+            comptime for (query_str, 0..) |c, i| {
                 query[i] = std.ascii.toLower(c);
             };
 
@@ -363,7 +354,7 @@ pub const FileSystem = struct {
     };
 
     pub const Entry = struct {
-        cache: Cache = Cache{},
+        cache: Cache = .{},
         dir: string,
 
         base_: strings.StringOrTinyString,
@@ -406,7 +397,7 @@ pub const FileSystem = struct {
         pub const Cache = struct {
             symlink: PathString = PathString.empty,
             fd: StoredFileDescriptorType = 0,
-            kind: Kind = Kind.file,
+            kind: Kind = .file,
         };
 
         pub const Kind = enum {
@@ -530,7 +521,7 @@ pub const FileSystem = struct {
         const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
         Output.print("{{\n", .{});
 
-        inline for (LIMITS) |limit_type, i| {
+        inline for (LIMITS, 0..) |limit_type, i| {
             const limit = std.os.getrlimit(limit_type) catch return;
 
             if (i == 0) {
@@ -673,7 +664,7 @@ pub const FileSystem = struct {
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() !usize {
             const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
-            inline for (LIMITS) |limit_type, i| {
+            inline for (LIMITS, 0..) |limit_type, i| {
                 const limit = try std.os.getrlimit(limit_type);
 
                 if (limit.cur < limit.max) {

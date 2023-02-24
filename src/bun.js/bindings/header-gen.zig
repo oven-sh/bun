@@ -147,7 +147,7 @@ pub const C_Generator = struct {
 
         comptime var nonnull = std.BoundedArray(u8, 32).init(0) catch unreachable;
 
-        inline for (meta.params) |arg, i| {
+        inline for (meta.params, 0..) |arg, i| {
             const ArgType = comptime arg.type.?;
 
             switch (comptime @typeInfo(ArgType)) {
@@ -188,7 +188,7 @@ pub const C_Generator = struct {
         const nonnull_slice = comptime nonnull.slice();
         if (comptime nonnull_slice.len > 0) {
             self.write(" __attribute__((nonnull (");
-            inline for (comptime nonnull_slice) |i, j| {
+            inline for (comptime nonnull_slice, 0..) |i, j| {
                 self.write(comptime std.fmt.comptimePrint("{d}", .{i}));
                 if (j != nonnull_slice.len - 1)
                     self.write(", ");
@@ -214,7 +214,7 @@ pub const C_Generator = struct {
         const func: std.builtin.Type.Fn = @typeInfo(Function).Fn;
         self.writeType(func.return_type orelse void);
         self.write("(*" ++ name ++ ")(");
-        inline for (func.params) |arg, i| {
+        inline for (func.params, 0..) |arg, i| {
             self.writeType(arg.type.?);
             // if (comptime func.arg_names.len > 0 and func.arg_names.len > i) {
             //     self.write(comptime arg_names[i]);
@@ -304,7 +304,7 @@ pub const C_Generator = struct {
         self.write("enum " ++ name ++ " {\n");
 
         comptime var last = 0;
-        inline for (meta.fields) |field, i| {
+        inline for (meta.fields, 0..) |field, i| {
             self.write("    " ++ field.name);
 
             // if field value is unexpected/custom, manually define it
@@ -372,7 +372,7 @@ pub const C_Generator = struct {
                 _ = std.mem.replace(u8, TT.name, ":", "_", &original);
                 break :brk original;
             };
-            const formatted_name = comptime std.mem.span(&_formatted_name);
+            const formatted_name = comptime _formatted_name[0..];
 
             if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {
                 if (@TypeOf(TT.Type) == type) {
@@ -524,11 +524,11 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 comptime var new_name = std.mem.zeroes([Type.include.len]u8);
 
                 comptime {
-                    _ = std.mem.replace(u8, Type.include, "/", "_", std.mem.span(&new_name));
-                    _ = std.mem.replace(u8, &new_name, ".", "_", std.mem.span(&new_name));
-                    _ = std.mem.replace(u8, &new_name, "<", "_", std.mem.span(&new_name));
-                    _ = std.mem.replace(u8, &new_name, ">", "_", std.mem.span(&new_name));
-                    _ = std.mem.replace(u8, &new_name, "\"", "_", std.mem.span(&new_name));
+                    _ = std.mem.replace(u8, Type.include, "/", "_", &new_name);
+                    _ = std.mem.replace(u8, &new_name, ".", "_", &new_name);
+                    _ = std.mem.replace(u8, &new_name, "<", "_", &new_name);
+                    _ = std.mem.replace(u8, &new_name, ">", "_", &new_name);
+                    _ = std.mem.replace(u8, &new_name, "\"", "_", &new_name);
                 }
                 file.writeAll("\n#pragma mark - " ++ Type.name ++ "\n\n") catch unreachable;
 
@@ -797,7 +797,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                             if (@hasDecl(Type, extern_decl)) {
                                                 const normalized_name = comptime brk: {
                                                     var _normalized_name: [Type.name.len]u8 = undefined;
-                                                    _ = std.mem.replace(u8, Type.name, ":", "_", std.mem.span(&_normalized_name));
+                                                    _ = std.mem.replace(u8, Type.name, ":", "_", &_normalized_name);
                                                     break :brk _normalized_name;
                                                 };
 
@@ -808,7 +808,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                                     Type,
                                                     comptime std.meta.declarationInfo(Type, extern_decl),
                                                     comptime extern_decl,
-                                                    comptime std.mem.span(&normalized_name),
+                                                    &normalized_name,
                                                 );
                                             }
                                         }

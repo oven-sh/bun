@@ -33,7 +33,7 @@ pub const FolderResolution = union(Tag) {
         return std.hash.Wyhash.hash(0, normalized_path);
     }
 
-    pub fn NewResolver(comptime tag: Resolution.Tag) type {
+    fn NewResolver(comptime tag: Resolution.Tag) type {
         return struct {
             folder_path: string,
 
@@ -50,11 +50,10 @@ pub const FolderResolution = union(Tag) {
         };
     }
 
-    pub const Resolver = NewResolver(Resolution.Tag.folder);
-    pub const SymlinkResolver = NewResolver(Resolution.Tag.symlink);
-    pub const WorkspaceResolver = NewResolver(Resolution.Tag.workspace);
-    pub const CacheFolderResolver = struct {
-        folder_path: []const u8 = "",
+    const Resolver = NewResolver(Resolution.Tag.folder);
+    const SymlinkResolver = NewResolver(Resolution.Tag.symlink);
+    const WorkspaceResolver = NewResolver(Resolution.Tag.workspace);
+    const CacheFolderResolver = struct {
         version: Semver.Version,
 
         pub fn resolve(this: @This(), comptime Builder: type, _: Builder, _: JSAst.Expr) !Resolution {
@@ -149,9 +148,8 @@ pub const FolderResolution = union(Tag) {
 
         const source = logger.Source.initPathString(abs, body.data.list.items[0..source_buf]);
 
-        try Lockfile.Package.parse(
+        try package.parse(
             manager.lockfile,
-            &package,
             manager.allocator,
             manager.log,
             source,
@@ -183,14 +181,18 @@ pub const FolderResolution = union(Tag) {
         if (entry.found_existing) return entry.value_ptr.*;
 
         const package: Lockfile.Package = switch (global_or_relative) {
-            .global => readPackageJSONFromDisk(
-                manager,
-                abs,
-                version,
-                Features.link,
-                SymlinkResolver,
-                SymlinkResolver{ .folder_path = non_normalized_path },
-            ),
+            .global => brk: {
+                var path: [bun.MAX_PATH_BYTES]u8 = undefined;
+                std.mem.copy(u8, &path, non_normalized_path);
+                break :brk readPackageJSONFromDisk(
+                    manager,
+                    abs,
+                    version,
+                    Features.link,
+                    SymlinkResolver,
+                    SymlinkResolver{ .folder_path = path[0..non_normalized_path.len] },
+                );
+            },
             .relative => |tag| switch (tag) {
                 .folder => readPackageJSONFromDisk(
                     manager,

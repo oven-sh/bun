@@ -203,7 +203,7 @@ pub const TransformTask = struct {
                             this.global,
                             bun.default_allocator,
                             logger.Msg{
-                                .data = logger.Data{ .text = std.mem.span(@errorName(err)) },
+                                .data = logger.Data{ .text = bun.asByteSlice(@errorName(err)) },
                             },
                         ));
                     }

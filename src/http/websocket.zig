@@ -248,7 +248,7 @@ pub const Websocket = struct {
             try stream.writeAll(mask);
 
             // Encode
-            for (dataframe.data) |c, i| {
+            for (dataframe.data, 0..) |c, i| {
                 try stream.writeByte(c ^ mask[i % 4]);
             }
         } else {
@@ -334,7 +334,7 @@ pub const Websocket = struct {
         if (header.mask) {
             const mask = buf[0..4];
             // Decode data in place
-            for (data) |_, i| {
+            for (data, 0..) |_, i| {
                 data[i] ^= mask[i % 4];
             }
         }

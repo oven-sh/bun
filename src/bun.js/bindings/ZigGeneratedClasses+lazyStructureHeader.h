@@ -112,6 +112,12 @@ JSC::Structure* JSServerWebSocketStructure() { return m_JSServerWebSocket.getIni
   JSC::LazyClassStructure m_JSServerWebSocket;
   bool hasJSServerWebSocketSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSServerWebSocketSetterValue;
+JSC::Structure* JSStatsStructure() { return m_JSStats.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSStatsConstructor() { return m_JSStats.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSStatsPrototype() { return m_JSStats.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSStats;
+  bool hasJSStatsSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSStatsSetterValue;
 JSC::Structure* JSSubprocessStructure() { return m_JSSubprocess.getInitializedOnMainThread(this); }
         JSC::JSObject* JSSubprocessConstructor() { return m_JSSubprocess.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSSubprocessPrototype() { return m_JSSubprocess.prototypeInitializedOnMainThread(this); }
@@ -136,6 +142,12 @@ JSC::Structure* JSTextDecoderStructure() { return m_JSTextDecoder.getInitialized
   JSC::LazyClassStructure m_JSTextDecoder;
   bool hasJSTextDecoderSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSTextDecoderSetterValue;
+JSC::Structure* JSTimeoutStructure() { return m_JSTimeout.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTimeoutConstructor() { return m_JSTimeout.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTimeoutPrototype() { return m_JSTimeout.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSTimeout;
+  bool hasJSTimeoutSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTimeoutSetterValue;
 JSC::Structure* JSTranspilerStructure() { return m_JSTranspiler.getInitializedOnMainThread(this); }
         JSC::JSObject* JSTranspilerConstructor() { return m_JSTranspiler.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSTranspilerPrototype() { return m_JSTranspiler.prototypeInitializedOnMainThread(this); }

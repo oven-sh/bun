@@ -173,8 +173,8 @@ JSC::GCClient::IsoSubspace* JSTransformStreamDefaultController::subspaceForImpl(
     return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = std::forward<decltype(space)>(space); });
 }
 }

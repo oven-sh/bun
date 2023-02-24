@@ -19,8 +19,16 @@ declare module "timers" {
   const _exported: {
     clearTimeout: (timer: Timer | number) => void;
     clearInterval: (timer: Timer | number) => void;
-    setInterval: (cb: CallableFunction, msDelay: number, ...args: any[]) => Timer;
-    setTimeout: (cb: CallableFunction, msDelay: number, ...args: any[]) => Timer;
+    setInterval: (
+      cb: CallableFunction,
+      msDelay: number,
+      ...args: any[]
+    ) => Timer;
+    setTimeout: (
+      cb: CallableFunction,
+      msDelay: number,
+      ...args: any[]
+    ) => Timer;
     setImmediate: (cb: CallableFunction, ...args: any[]) => Timer;
   };
   export = _exported;

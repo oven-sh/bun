@@ -294,9 +294,9 @@ JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForCryptoKey.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoKey = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCryptoKey = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForCryptoKey.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoKey = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForCryptoKey = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>

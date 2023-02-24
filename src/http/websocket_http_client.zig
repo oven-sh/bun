@@ -623,11 +623,11 @@ pub const Mask = struct {
         }
 
         if (comptime !skip_mask) {
-            for (input) |c, i| {
+            for (input, 0..) |c, i| {
                 output[i] = c ^ mask[i % 4];
             }
         } else {
-            for (input) |c, i| {
+            for (input, 0..) |c, i| {
                 output[i] = c;
             }
         }

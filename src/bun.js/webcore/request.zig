@@ -12,6 +12,7 @@ const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
+const AbortSignal = JSC.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = @import("bun").Output;
@@ -57,6 +58,7 @@ pub const Request = struct {
     url_was_allocated: bool = false,
 
     headers: ?*FetchHeaders = null,
+    signal: ?*AbortSignal = null,
     body: Body.Value = Body.Value{ .Empty = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
@@ -75,6 +77,37 @@ pub const Request = struct {
     pub const getJSON = RequestMixin.getJSON;
     pub const getArrayBuffer = RequestMixin.getArrayBuffer;
     pub const getBlob = RequestMixin.getBlob;
+    pub const getFormData = RequestMixin.getFormData;
+
+    pub fn getContentType(
+        this: *Request,
+    ) ?ZigString.Slice {
+        if (this.uws_request) |req| {
+            if (req.header("content-type")) |value| {
+                return ZigString.Slice.fromUTF8NeverFree(value);
+            }
+        }
+
+        if (this.headers) |headers| {
+            if (headers.fastGet(.ContentType)) |value| {
+                return value.toSlice(bun.default_allocator);
+            }
+        }
+
+        if (this.body == .Blob) {
+            if (this.body.Blob.content_type.len > 0)
+                return ZigString.Slice.fromUTF8NeverFree(this.body.Blob.content_type);
+        }
+
+        return null;
+    }
+
+    pub fn getFormDataEncoding(this: *Request) ?*bun.FormData.AsyncFormData {
+        var content_type_slice: ZigString.Slice = this.getContentType() orelse return null;
+        defer content_type_slice.deinit();
+        const encoding = bun.FormData.Encoding.get(content_type_slice.slice()) orelse return null;
+        return bun.FormData.AsyncFormData.init(bun.default_allocator, encoding) catch unreachable;
+    }
 
     pub fn estimatedSize(this: *Request) callconv(.C) usize {
         return this.reported_estimated_size orelse brk: {
@@ -92,7 +125,7 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("method: \"");
-            try writer.writeAll(std.mem.span(@tagName(this.method)));
+            try writer.writeAll(bun.asByteSlice(@tagName(this.method)));
             try writer.writeAll("\"");
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
@@ -130,7 +163,7 @@ pub const Request = struct {
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
-            .url = std.mem.span(ctx.getFullURL()),
+            .url = bun.asByteSlice(ctx.getFullURL()),
             .body = .{ .Empty = {} },
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
@@ -186,6 +219,21 @@ pub const Request = struct {
         return ZigString.Empty.toValueGC(globalThis);
     }
 
+    pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        // Already have an C++ instance
+        if (this.signal) |signal| {
+            return signal.toJS(globalThis);
+        } else {
+            //Lazy create default signal
+            const js_signal = AbortSignal.create(globalThis);
+            js_signal.ensureStillAlive();
+            if (AbortSignal.fromJS(js_signal)) |signal| {
+                this.signal = signal.ref();
+            }
+            return js_signal;
+        }
+    }
+
     pub fn getMethod(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -212,7 +260,7 @@ pub const Request = struct {
         return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
     }
 
-    pub fn finalize(this: *Request) callconv(.C) void {
+    pub fn finalizeWithoutDeinit(this: *Request) void {
         if (this.headers) |headers| {
             headers.deref();
             this.headers = null;
@@ -223,7 +271,14 @@ pub const Request = struct {
         }
 
         this.body.deinit();
+        if (this.signal) |signal| {
+            _ = signal.unref();
+            this.signal = null;
+        }
+    }
 
+    pub fn finalize(this: *Request) callconv(.C) void {
+        this.finalizeWithoutDeinit();
         bun.default_allocator.destroy(this);
     }
 
@@ -238,7 +293,7 @@ pub const Request = struct {
         globalObject: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         if (this.headers) |headers_ref| {
-            if (headers_ref.get("referrer")) |referrer| {
+            if (headers_ref.get("referrer", globalObject)) |referrer| {
                 return ZigString.init(referrer).toValueGC(globalObject);
             }
         }
@@ -341,17 +396,18 @@ pub const Request = struct {
                     }).slice();
                     request.url_was_allocated = request.url.len > 0;
                 } else {
+                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
+                        request.headers = req_init.headers;
+                        request.method = req_init.method;
+                    }
+
                     if (urlOrObject.fastGet(globalThis, .body)) |body_| {
                         if (Body.Value.fromJS(globalThis, body_)) |body| {
                             request.body = body;
                         } else {
+                            request.finalizeWithoutDeinit();
                             return null;
                         }
-                    }
-
-                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
-                        request.headers = req_init.headers;
-                        request.method = req_init.method;
                     }
 
                     if (urlOrObject.fastGet(globalThis, .url)) |url| {
@@ -363,10 +419,15 @@ pub const Request = struct {
                 }
             },
             else => {
-                if (arguments[1].fastGet(globalThis, .body)) |body_| {
-                    if (Body.Value.fromJS(globalThis, body_)) |body| {
-                        request.body = body;
+                if (arguments[1].get(globalThis, "signal")) |signal_| {
+                    if (AbortSignal.fromJS(signal_)) |signal| {
+                        //Keep it alive
+                        signal_.ensureStillAlive();
+                        request.signal = signal.ref();
                     } else {
+                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
+
+                        request.finalizeWithoutDeinit();
                         return null;
                     }
                 }
@@ -376,11 +437,28 @@ pub const Request = struct {
                     request.method = req_init.method;
                 }
 
+                if (arguments[1].fastGet(globalThis, .body)) |body_| {
+                    if (Body.Value.fromJS(globalThis, body_)) |body| {
+                        request.body = body;
+                    } else {
+                        request.finalizeWithoutDeinit();
+                        return null;
+                    }
+                }
+
                 request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
                     return null;
                 }).slice();
                 request.url_was_allocated = request.url.len > 0;
             },
+        }
+
+        if (request.body == .Blob and
+            request.headers != null and
+            request.body.Blob.content_type.len > 0 and
+            !request.headers.?.fastHas(.ContentType))
+        {
+            request.headers.?.put("content-type", request.body.Blob.content_type, globalThis);
         }
 
         return request;
@@ -423,6 +501,13 @@ pub const Request = struct {
                 this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
+
+                if (this.body == .Blob) {
+                    const content_type = this.body.Blob.content_type;
+                    if (content_type.len > 0) {
+                        this.headers.?.put("content-type", content_type, globalThis);
+                    }
+                }
             }
         }
 
@@ -447,10 +532,14 @@ pub const Request = struct {
         };
 
         if (this.headers) |head| {
-            req.headers = head.cloneThis();
+            req.headers = head.cloneThis(globalThis);
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
-            this.headers = req.headers.?.cloneThis().?;
+            this.headers = req.headers.?.cloneThis(globalThis).?;
+        }
+
+        if (this.signal) |signal| {
+            req.signal = signal.ref();
         }
     }
 

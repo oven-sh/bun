@@ -5,4 +5,4 @@ git clone https://github.com/zigtools/zls /home/ubuntu/zls
 cd /home/ubuntu/zls
 git checkout aabdb0c6ecb3c9a47feff2c2bfb9be4e95adf723
 git submodule update --init --recursive --progress --depth=1
-zig build -Drelease-fast
+zig build -Doptimize=ReleaseFast

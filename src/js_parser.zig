@@ -2563,6 +2563,70 @@ pub const Parser = struct {
             exports_kind = .esm;
         }
 
+        // Auto inject jest globals into the test file
+        if (p.options.features.inject_jest_globals) outer: {
+            var jest: *Jest = &p.jest;
+
+            for (p.import_records.items) |*item| {
+                // skip if they did import it
+                if (strings.eqlComptime(item.path.text, "bun:test") or strings.eqlComptime(item.path.text, "@jest/globals") or strings.eqlComptime(item.path.text, "vitest")) {
+                    break :outer;
+                }
+            }
+
+            // if they didn't use any of the jest globals, don't inject it, I guess.
+            const items_count = brk: {
+                var count: usize = 0;
+                inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                    count += @boolToInt(p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0);
+                }
+
+                break :brk count;
+            };
+            if (items_count == 0)
+                break :outer;
+
+            const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, "bun:test");
+            var import_record: *ImportRecord = &p.import_records.items[import_record_id];
+            import_record.tag = .bun_test;
+
+            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, items_count);
+            var clauses: []js_ast.ClauseItem = p.allocator.alloc(js_ast.ClauseItem, items_count) catch unreachable;
+            var clause_i: usize = 0;
+            inline for (comptime std.meta.fieldNames(Jest)) |symbol_name| {
+                if (p.symbols.items[@field(jest, symbol_name).innerIndex()].use_count_estimate > 0) {
+                    clauses[clause_i] = js_ast.ClauseItem{
+                        .name = .{ .ref = @field(jest, symbol_name), .loc = logger.Loc.Empty },
+                        .alias = symbol_name,
+                        .alias_loc = logger.Loc.Empty,
+                        .original_name = "",
+                    };
+                    declared_symbols[clause_i] = .{ .ref = @field(jest, symbol_name), .is_top_level = true };
+                    clause_i += 1;
+                }
+            }
+
+            const import_stmt = p.s(
+                S.Import{
+                    .namespace_ref = p.declareSymbol(.unbound, logger.Loc.Empty, "bun_test_import_namespace_for_internal_use_only") catch unreachable,
+                    .items = clauses,
+                    .import_record_index = import_record_id,
+                },
+                logger.Loc.Empty,
+            );
+
+            var part_stmts = try p.allocator.alloc(Stmt, 1);
+            part_stmts[0] = import_stmt;
+            var import_record_indices = try p.allocator.alloc(u32, 1);
+            import_record_indices[0] = import_record_id;
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .import_record_indices = import_record_indices,
+                .tag = .bun_test,
+            }) catch unreachable;
+        }
+
         // Auto-import & post-process JSX
         switch (comptime ParserType.jsx_transform_type) {
             .react => {
@@ -3215,7 +3279,7 @@ pub const Parser = struct {
             var import_records = try p.allocator.alloc(u32, p.cjs_import_stmts.items.len);
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, p.cjs_import_stmts.items.len);
 
-            for (p.cjs_import_stmts.items) |entry, i| {
+            for (p.cjs_import_stmts.items, 0..) |entry, i| {
                 const import_statement: *S.Import = entry.data.s_import;
                 import_records[i] = import_statement.import_record_index;
                 declared_symbols[i] = .{
@@ -3515,6 +3579,17 @@ pub const MacroState = struct {
     }
 };
 
+const Jest = struct {
+    expect: Ref = Ref.None,
+    describe: Ref = Ref.None,
+    @"test": Ref = Ref.None,
+    it: Ref = Ref.None,
+    beforeEach: Ref = Ref.None,
+    afterEach: Ref = Ref.None,
+    beforeAll: Ref = Ref.None,
+    afterAll: Ref = Ref.None,
+};
+
 // workaround for https://github.com/ziglang/zig/issues/10903
 fn NewParser(
     comptime parser_features: ParserFeatures,
@@ -3655,6 +3730,8 @@ fn NewParser_(
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
 
         bun_jsx_ref: Ref = Ref.None,
+
+        jest: Jest = .{},
 
         // Imports (both ES6 and CommonJS) are tracked at the top level
         import_records: ImportRecordList,
@@ -3998,7 +4075,7 @@ fn NewParser_(
                 if (merge and parts_.len > 1) {
                     var first_none_part: usize = parts_.len;
                     var stmts_count: usize = 0;
-                    for (parts_) |part, i| {
+                    for (parts_, 0..) |part, i| {
                         if (part.tag == .none) {
                             stmts_count += part.stmts.len;
                             first_none_part = @min(i, first_none_part);
@@ -4136,7 +4213,7 @@ fn NewParser_(
             var symbol_use_values = part.symbol_uses.values();
             var symbols = p.symbols.items;
 
-            for (symbol_use_refs) |ref, i| {
+            for (symbol_use_refs, 0..) |ref, i| {
                 symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
             }
 
@@ -4514,7 +4591,7 @@ fn NewParser_(
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
             try p.module_scope.generated.append(allocator, namespace_ref);
-            for (imports) |alias, i| {
+            for (imports, 0..) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
                 clause_items[i] = js_ast.ClauseItem{
@@ -5107,6 +5184,17 @@ fn NewParser_(
             p.dirname_ref = try p.declareCommonJSSymbol(.unbound, "__dirname");
             p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
 
+            if (p.options.features.inject_jest_globals) {
+                p.jest.describe = try p.declareCommonJSSymbol(.unbound, "describe");
+                p.jest.@"test" = try p.declareCommonJSSymbol(.unbound, "test");
+                p.jest.it = try p.declareCommonJSSymbol(.unbound, "it");
+                p.jest.expect = try p.declareCommonJSSymbol(.unbound, "expect");
+                p.jest.beforeEach = try p.declareCommonJSSymbol(.unbound, "beforeEach");
+                p.jest.afterEach = try p.declareCommonJSSymbol(.unbound, "afterEach");
+                p.jest.beforeAll = try p.declareCommonJSSymbol(.unbound, "beforeAll");
+                p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
+            }
+
             if (p.options.enable_bundling) {
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");
                 p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
@@ -5367,7 +5455,7 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.items) |_, i| {
+            for (scope.children.items, 0..) |_, i| {
                 p.hoistSymbols(scope.children.items[i]);
             }
         }
@@ -5487,7 +5575,7 @@ fn NewParser_(
                     // p.markSyntaxFeature(Destructing)
                     var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
                     var is_spread = false;
-                    for (ex.items.slice()) |_, i| {
+                    for (ex.items.slice(), 0..) |_, i| {
                         var item = ex.items.ptr[i];
                         if (item.data == .e_spread) {
                             is_spread = true;
@@ -6537,7 +6625,7 @@ fn NewParser_(
             if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
                 var plugin_i: usize = std.math.maxInt(usize);
                 const items = stmt.items;
-                for (items) |item, i| {
+                for (items, 0..) |item, i| {
                     // Mark Bun.plugin()
                     // TODO: remove if they have multiple imports of the same name?
                     if (strings.eqlComptime(item.alias, "plugin")) {
@@ -9717,7 +9805,7 @@ fn NewParser_(
                 },
 
                 .b_array => |bind| {
-                    for (bind.items) |_, i| {
+                    for (bind.items, 0..) |_, i| {
                         p.declareBinding(kind, &bind.items[i].binding, opts) catch unreachable;
                     }
                 },
@@ -12759,7 +12847,7 @@ fn NewParser_(
                     if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
                         var previous_parts: []js_ast.Part = parts.items;
 
-                        for (previous_parts) |*previous_part, j| {
+                        for (previous_parts, 0..) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
                             const declared_symbols = previous_part.declared_symbols;
@@ -13212,7 +13300,7 @@ fn NewParser_(
                             };
 
                             const jsx_props = e_.properties.slice();
-                            for (jsx_props) |property, i| {
+                            for (jsx_props, 0..) |property, i| {
                                 if (property.kind != .spread) {
                                     e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
                                 }
@@ -14530,7 +14618,7 @@ fn NewParser_(
                         if (is_macro_ref)
                             p.options.ignore_dce_annotations = true;
 
-                        for (e_.args.slice()) |_, i| {
+                        for (e_.args.slice(), 0..) |_, i| {
                             const arg = e_.args.ptr[i];
                             e_.args.ptr[i] = p.visitExpr(arg);
                         }
@@ -16688,7 +16776,7 @@ fn NewParser_(
 
                         array.items.len = @min(array.items.len, @truncate(u32, bound_array.items.len));
                         var slice = array.items.slice();
-                        for (bound_array.items[0..array.items.len]) |item, item_i| {
+                        for (bound_array.items[0..array.items.len], 0..) |item, item_i| {
                             const child_expr = slice[item_i];
                             if (item.binding.data == .b_missing) {
                                 slice[item_i] = p.newExpr(E.Missing{}, expr.loc);
@@ -16977,7 +17065,7 @@ fn NewParser_(
 
                                         if (is_constructor) constructor_function = func;
 
-                                        for (func.func.args) |arg, i| {
+                                        for (func.func.args, 0..) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -17106,7 +17194,7 @@ fn NewParser_(
                             var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
                             // statements coming from class body inserted after super call or beginning of constructor.
                             var super_index: ?usize = null;
-                            for (constructor_stmts.items) |item, index| {
+                            for (constructor_stmts.items, 0..) |item, index| {
                                 if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
                                 super_index = index;
                                 break;
@@ -17607,7 +17695,7 @@ fn NewParser_(
                         // if this is an expression, we can move statements after super() because there will be 0 decorators
                         var super_index: ?usize = null;
                         if (class.extends != null) {
-                            for (constructor.func.body.stmts) |stmt, index| {
+                            for (constructor.func.body.stmts, 0..) |stmt, index| {
                                 if (stmt.data != .s_expr or stmt.data.s_expr.value.data != .e_call or stmt.data.s_expr.value.data.e_call.target.data != .e_super) continue;
                                 super_index = index;
                                 break;
@@ -18087,7 +18175,7 @@ fn NewParser_(
                 }
 
                 // First, try converting the expressions to bindings
-                for (items) |_, i| {
+                for (items, 0..) |_, i| {
                     var is_spread = false;
                     switch (items[i].data) {
                         .e_spread => |v| {
@@ -18319,7 +18407,7 @@ fn NewParser_(
                 var imports_list_i: u32 = 0;
                 var exports_list_i: u32 = 0;
 
-                for (part.stmts) |_, i| {
+                for (part.stmts, 0..) |_, i| {
                     switch (part.stmts[i].data) {
                         .s_import => {
                             imports_list[imports_list_i] = part.stmts[i];
@@ -18814,7 +18902,7 @@ fn NewParser_(
                 // }
             }
 
-            return js_ast.Ast{
+            return .{
                 .runtime_imports = p.runtime_imports,
                 .parts = parts,
                 .module_scope = p.module_scope.*,

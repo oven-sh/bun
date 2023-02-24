@@ -35,7 +35,51 @@ fn ObjectPtrType(comptime Type: type) type {
     return *Type;
 }
 
+const Internal = struct {
+    pub fn toJSWithType(globalThis: *JSC.JSGlobalObject, comptime Type: type, value: Type, exception: JSC.C.ExceptionRef) JSValue {
+        // TODO: refactor withType to use this instead of the other way around
+        return JSC.JSValue.c(To.JS.withType(Type, value, globalThis, exception));
+    }
+
+    pub fn toJS(globalThis: *JSC.JSGlobalObject, value: anytype, exception: JSC.C.ExceptionRef) JSValue {
+        return toJSWithType(globalThis, @TypeOf(value), value, exception);
+    }
+};
+
+pub usingnamespace Internal;
+
 pub const To = struct {
+    pub const Cpp = struct {
+        pub fn PropertyGetter(
+            comptime Type: type,
+        ) type {
+            return comptime fn (
+                this: ObjectPtrType(Type),
+                globalThis: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue;
+        }
+
+        const toJS = Internal.toJSWithType;
+
+        pub fn GetterFn(comptime Type: type, comptime decl: std.meta.DeclEnum(Type)) PropertyGetter(Type) {
+            return struct {
+                pub fn getter(
+                    this: ObjectPtrType(Type),
+                    globalThis: *JSC.JSGlobalObject,
+                ) callconv(.C) JSC.JSValue {
+                    var exception_ref = [_]JSC.C.JSValueRef{null};
+                    var exception: JSC.C.ExceptionRef = &exception_ref;
+                    const result = toJS(globalThis, @call(.auto, @field(Type, @tagName(decl)), .{this}), exception);
+                    if (exception.* != null) {
+                        globalThis.throwValue(JSC.JSValue.c(exception.*));
+                        return .zero;
+                    }
+
+                    return result;
+                }
+            }.getter;
+        }
+    };
     pub const JS = struct {
         pub inline fn str(_: anytype, val: anytype) js.JSStringRef {
             return js.JSStringCreateWithUTF8CString(val[0.. :0]);
@@ -175,7 +219,7 @@ pub const To = struct {
                     var zig_strings = allocator.alloc(ZigString, value.len) catch unreachable;
                     defer if (stack_fallback.fixed_buffer_allocator.end_index >= 511) allocator.free(zig_strings);
 
-                    for (value) |path_string, i| {
+                    for (value, 0..) |path_string, i| {
                         if (comptime Type == []const PathString) {
                             zig_strings[i] = ZigString.init(path_string.slice());
                         } else {
@@ -601,7 +645,7 @@ pub const d = struct {
 
                     comptime {
                         var args: string = "";
-                        for (func.args) |a, i| {
+                        for (func.args, 0..) |a, i| {
                             if (i > 0) {
                                 args = args ++ ", ";
                             }
@@ -636,7 +680,7 @@ pub const d = struct {
 
                     comptime {
                         var args: string = "";
-                        for (func.args) |a, i| {
+                        for (func.args, 0..) |a, i| {
                             if (i > 0) {
                                 args = args ++ ", ";
                             }
@@ -707,7 +751,7 @@ pub const d = struct {
 
                         indent += indent_level;
 
-                        for (klass.properties) |property, i| {
+                        for (klass.properties, 0..) |property, i| {
                             if (i > 0) {
                                 buf = buf ++ "\n";
                             }
@@ -717,7 +761,7 @@ pub const d = struct {
 
                         buf = buf ++ "\n";
 
-                        for (klass.functions) |func, i| {
+                        for (klass.functions, 0..) |func, i| {
                             if (i > 0) {
                                 buf = buf ++ "\n";
                             }
@@ -729,7 +773,7 @@ pub const d = struct {
                             );
                         }
 
-                        for (klass.classes) |func, i| {
+                        for (klass.classes, 0..) |func, i| {
                             if (i > 0) {
                                 buf = buf ++ "\n";
                             }
@@ -778,7 +822,7 @@ pub const d = struct {
                             );
                         }
 
-                        for (klass.properties) |property, i| {
+                        for (klass.properties, 0..) |property, i| {
                             if (i > 0 or did_print_constructor) {
                                 buf = buf ++ "\n";
                             }
@@ -788,7 +832,7 @@ pub const d = struct {
 
                         buf = buf ++ "\n";
 
-                        for (klass.functions) |func, i| {
+                        for (klass.functions, 0..) |func, i| {
                             if (i > 0) {
                                 buf = buf ++ "\n";
                             }
@@ -1250,7 +1294,7 @@ pub fn NewClassWithInstanceType(
                     .attributes = js.JSPropertyAttributes.kJSPropertyAttributeNone,
                 },
             );
-            for (property_name_literals) |lit, i| {
+            for (property_name_literals, 0..) |lit, i| {
                 props[i] = brk2: {
                     var static_prop = JSC.C.JSStaticValue{
                         .name = lit.ptr[0..lit.len :0],
@@ -1294,7 +1338,7 @@ pub fn NewClassWithInstanceType(
                 .convertToType = null,
             };
             var __static_functions: [function_name_literals.len + 1]js.JSStaticFunction = undefined;
-            for (__static_functions) |_, i| {
+            for (__static_functions, 0..) |_, i| {
                 __static_functions[i] = js.JSStaticFunction{
                     .name = "",
                     .callAsFunction = null,
@@ -1648,7 +1692,7 @@ pub fn toTypeError(
     args: anytype,
     ctx: js.JSContextRef,
 ) JSC.JSValue {
-    return toTypeErrorWithCode(std.mem.span(@tagName(code)), fmt, args, ctx);
+    return toTypeErrorWithCode(@tagName(code), fmt, args, ctx);
 }
 
 pub fn throwInvalidArguments(
@@ -1672,6 +1716,13 @@ pub fn toInvalidArguments(
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
     return default_allocator;
+}
+
+/// Print a JSValue to stdout; this is only meant for debugging purposes
+pub fn dump(value: JSValue, globalObject: *JSC.JSGlobalObject) !void {
+    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+    try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
+    Output.flush();
 }
 
 pub const JSStringList = std.ArrayList(js.JSStringRef);
@@ -2112,9 +2163,6 @@ const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
-const DirEnt = JSC.Node.DirEnt;
-const Stats = JSC.Node.Stats;
-const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
@@ -2143,7 +2191,6 @@ const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 const FFI = JSC.FFI;
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
-    BigIntStats,
     BuildError,
     Comment,
     DebugServer,
@@ -2164,7 +2211,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Server,
 
     SSLServer,
-    Stats,
     TextChunk,
     FFI,
 });

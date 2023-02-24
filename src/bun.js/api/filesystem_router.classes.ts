@@ -6,7 +6,7 @@ export default [
     construct: true,
     finalize: true,
     JSType: "0b11101110",
-
+    configurable: false,
     proto: {
       match: {
         fn: "match",

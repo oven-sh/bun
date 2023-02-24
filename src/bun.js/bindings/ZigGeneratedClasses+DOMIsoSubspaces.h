@@ -17,9 +17,11 @@ std::unique_ptr<IsoSubspace> m_subspaceForSHA256Constructor;std::unique_ptr<IsoS
 std::unique_ptr<IsoSubspace> m_subspaceForSHA384Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA512;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA512Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocket;
-std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSubprocess;
+std::unique_ptr<IsoSubspace> m_subspaceForServerWebSocketConstructor;std::unique_ptr<IsoSubspace> m_subspaceForStats;
+std::unique_ptr<IsoSubspace> m_subspaceForStatsConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSubprocess;
 std::unique_ptr<IsoSubspace> m_subspaceForTCPSocket;
 std::unique_ptr<IsoSubspace> m_subspaceForTLSSocket;
 std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
-std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTranspiler;
+std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTimeout;
+std::unique_ptr<IsoSubspace> m_subspaceForTranspiler;
 std::unique_ptr<IsoSubspace> m_subspaceForTranspilerConstructor;

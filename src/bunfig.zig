@@ -256,7 +256,7 @@ pub const Bunfig = struct {
                             if (name_.len == 0) continue;
                             const name = if (name_[0] == '@') name_[1..] else name_;
                             var index = names.items.len;
-                            for (names.items) |comparator, i| {
+                            for (names.items, 0..) |comparator, i| {
                                 if (strings.eql(name, comparator)) {
                                     index = i;
                                     break;
@@ -417,7 +417,7 @@ pub const Bunfig = struct {
                         try this.expect(entryPoints, .e_array);
                         const items = entryPoints.data.e_array.items.slice();
                         var names = try this.allocator.alloc(string, items.len);
-                        for (items) |item, i| {
+                        for (items, 0..) |item, i| {
                             try this.expect(item, .e_string);
                             names[i] = try item.data.e_string.string(allocator);
                         }
@@ -560,7 +560,7 @@ pub const Bunfig = struct {
                     .e_array => |array| {
                         var externals = try allocator.alloc(string, array.items.len);
 
-                        for (array.items.slice()) |item, i| {
+                        for (array.items.slice(), 0..) |item, i| {
                             try this.expect(item, .e_string);
                             externals[i] = try item.data.e_string.string(allocator);
                         }
@@ -584,7 +584,7 @@ pub const Bunfig = struct {
                 var loader_names = try this.allocator.alloc(string, properties.len);
                 var loader_values = try this.allocator.alloc(Api.Loader, properties.len);
 
-                for (properties) |item, i| {
+                for (properties, 0..) |item, i| {
                     var key = item.key.?.asString(allocator).?;
                     if (key.len == 0) continue;
                     if (key[0] != '.') {

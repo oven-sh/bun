@@ -318,15 +318,6 @@ fn JSONLikeParser_(
                     }
 
                     try p.lexer.unexpected();
-                    if (comptime Environment.isDebug) {
-                        std.io.getStdErr().writer().print("\nThis range: {d} - {d} \n{s}", .{
-                            p.lexer.range().loc.start,
-                            p.lexer.range().end().start,
-                            p.lexer.range().in(p.lexer.source.contents),
-                        }) catch {};
-
-                        @breakpoint();
-                    }
                     return error.ParserError;
                 },
             }
@@ -637,7 +628,7 @@ pub fn toAST(
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
+        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
         .Union => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {

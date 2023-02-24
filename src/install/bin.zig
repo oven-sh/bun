@@ -85,7 +85,7 @@ pub const Bin = extern struct {
                 .value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) },
             },
             .map => {
-                for (this.value.map.get(prev_external_strings)) |extern_string, i| {
+                for (this.value.map.get(prev_external_strings), 0..) |extern_string, i| {
                     extern_strings_slice[i] = builder.append(ExternalString, extern_string.slice(buf));
                 }
 
@@ -308,6 +308,8 @@ pub const Bin = extern struct {
             setPermissions(this.root_node_modules_folder, dest_path);
         }
 
+        const dot_bin = ".bin" ++ std.fs.path.sep_str;
+
         // It is important that we use symlinkat(2) with relative paths instead of symlink()
         // That way, if you move your node_modules folder around, the symlinks in .bin still work
         // If we used absolute paths for the symlinks, you'd end up with broken symlinks
@@ -318,17 +320,29 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                target_buf[0..".bin/".len].* = ".bin/".*;
-                from_remain = target_buf[".bin/".len..];
-                dest_buf[0.."../".len].* = "../".*;
-                remain = dest_buf["../".len..];
+                const root_dir = std.fs.Dir{ .fd = this.root_node_modules_folder };
+                const from = root_dir.realpath(dot_bin, &target_buf) catch |err| {
+                    this.err = err;
+                    return;
+                };
+                const to = bun.getFdPath(this.package_installed_node_modules, &dest_buf) catch |err| {
+                    this.err = err;
+                    return;
+                };
+                const rel = Path.relative(from, to);
+                std.mem.copy(u8, remain, rel);
+                remain = remain[rel.len..];
+                remain[0] = std.fs.path.sep;
+                remain = remain[1..];
+                from_remain[0..dot_bin.len].* = dot_bin.*;
+                from_remain = from_remain[dot_bin.len..];
             } else {
                 if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
                     this.err = error.MissingGlobalBinDir;
                     return;
                 }
 
-                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                std.mem.copy(u8, &target_buf, this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -362,8 +376,8 @@ pub const Bin = extern struct {
                 .file => {
                     var target = this.bin.value.file.slice(this.string_buf);
 
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
@@ -384,8 +398,8 @@ pub const Bin = extern struct {
                 },
                 .named_file => {
                     var target = this.bin.value.named_file[1].slice(this.string_buf);
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
                     std.mem.copy(u8, remain, target);
                     remain = remain[target.len..];
@@ -414,8 +428,8 @@ pub const Bin = extern struct {
                         const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
 
                         var target = name_in_filesystem.slice(this.string_buf);
-                        if (strings.hasPrefix(target, "./")) {
-                            target = target[2..];
+                        if (strings.hasPrefixComptime(target, "./")) {
+                            target = target["./".len..];
                         }
                         std.mem.copy(u8, remain, target);
                         remain = remain[target.len..];
@@ -435,8 +449,8 @@ pub const Bin = extern struct {
                 },
                 .dir => {
                     var target = this.bin.value.dir.slice(this.string_buf);
-                    if (strings.hasPrefix(target, "./")) {
-                        target = target[2..];
+                    if (strings.hasPrefixComptime(target, "./")) {
+                        target = target["./".len..];
                     }
 
                     var parts = [_][]const u8{ name, target };
@@ -475,7 +489,7 @@ pub const Bin = extern struct {
                                 target_buf_remain[0] = 0;
                                 var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
                                 var to_path = if (!link_global)
-                                    std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch continue
+                                    std.fmt.bufPrintZ(&dest_buf, dot_bin ++ "{s}", .{entry.name}) catch continue
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
@@ -495,8 +509,8 @@ pub const Bin = extern struct {
             var remain: []u8 = &dest_buf;
 
             if (!link_global) {
-                target_buf[0..".bin/".len].* = ".bin/".*;
-                from_remain = target_buf[".bin/".len..];
+                target_buf[0..dot_bin.len].* = dot_bin.*;
+                from_remain = target_buf[dot_bin.len..];
                 dest_buf[0.."../".len].* = "../".*;
                 remain = dest_buf["../".len..];
             } else {
@@ -626,7 +640,7 @@ pub const Bin = extern struct {
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
                                 var to_path = if (!link_global)
-                                    std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch continue
+                                    std.fmt.bufPrintZ(&dest_buf, dot_bin ++ "{s}", .{entry.name}) catch continue
                                 else
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 

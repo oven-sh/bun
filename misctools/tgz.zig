@@ -23,8 +23,8 @@ const RecognizedExtensions = std.ComptimeStringMap(void, .{
 
 var buf: [32 * 1024 * 1024]u8 = undefined;
 
-// zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
-// zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 pub fn main() anyerror!void {
     var stdout_ = std.io.getStdOut();
     var stderr_ = std.io.getStdErr();
@@ -38,13 +38,13 @@ pub fn main() anyerror!void {
     }
 
     var tarball_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    var basename = std.fs.path.basename(std.mem.span(args[args.len - 1]));
+    var basename = std.fs.path.basename(bun.asByteSlice(args[args.len - 1]));
     while (RecognizedExtensions.has(std.fs.path.extension(basename))) {
         basename = basename[0 .. basename.len - std.fs.path.extension(basename).len];
     }
 
     var parts = [_][]const u8{
-        std.mem.span(args[args.len - 1]),
+        bun.asByteSlice(args[args.len - 1]),
     };
 
     const tarball_path = path_handler.joinAbsStringBuf(try std.process.getCwdAlloc(std.heap.c_allocator), &tarball_path_buf, &parts, .auto);

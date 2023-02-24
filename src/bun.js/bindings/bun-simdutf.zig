@@ -102,6 +102,7 @@ pub const validate = struct {
         return simdutf__validate_utf8(input.ptr, input.len);
     }
     pub fn ascii(input: []const u8) bool {
+        JSC.markBinding(@src());
         return simdutf__validate_ascii(input.ptr, input.len);
     }
     pub fn utf16le(input: []const u16) bool {

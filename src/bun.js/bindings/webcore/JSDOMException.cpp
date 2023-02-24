@@ -296,9 +296,9 @@ JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = WTFMove(space); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = WTFMove(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); });
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

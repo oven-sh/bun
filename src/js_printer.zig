@@ -90,6 +90,55 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
 
 const indentation_buf = [_]u8{' '} ** 128;
 
+pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_backtick: bool) u8 {
+    var single_cost: usize = 0;
+    var double_cost: usize = 0;
+    var backtick_cost: usize = 0;
+    var char: u8 = 0;
+    var i: usize = 0;
+    while (i < str.len) {
+        switch (str[i]) {
+            '\'' => {
+                single_cost += 1;
+            },
+            '"' => {
+                double_cost += 1;
+            },
+            '`' => {
+                backtick_cost += 1;
+            },
+            '\r', '\n' => {
+                if (allow_backtick) {
+                    return '`';
+                }
+            },
+            '\\' => {
+                i += 1;
+            },
+            '$' => {
+                if (i + 1 < str.len and str[i + 1] == '{') {
+                    backtick_cost += 1;
+                }
+            },
+            else => {},
+        }
+        i += 1;
+    }
+
+    char = '"';
+    if (double_cost > single_cost) {
+        char = '\'';
+
+        if (single_cost > backtick_cost and allow_backtick) {
+            char = '`';
+        }
+    } else if (double_cost > backtick_cost and allow_backtick) {
+        char = '`';
+    }
+
+    return char;
+}
+
 const Whitespacer = struct {
     normal: []const u8,
     minify: []const u8,
@@ -656,7 +705,7 @@ pub fn NewPrinter(
                     p.writer.print(StringType, str);
                 },
                 [6]u8 => {
-                    const span = std.mem.span(&str);
+                    const span = str[0..6];
                     p.writer.print(@TypeOf(span), span);
                 },
                 else => {
@@ -770,7 +819,7 @@ pub fn NewPrinter(
                     p.printIndent();
                 }
 
-                for (import.items) |item, i| {
+                for (import.items, 0..) |item, i| {
                     if (i > 0) {
                         p.print(",");
                         p.printSpace();
@@ -896,11 +945,24 @@ pub fn NewPrinter(
             p.print(keyword);
             p.printSpace();
 
-            for (decls) |*decl, i| {
-                if (i != 0) {
-                    p.print(",");
-                    p.printSpace();
+            if (decls.len == 0) {
+                // "var ;" is invalid syntax
+                // assert we never reach it
+                unreachable;
+            }
+
+            {
+                p.printBinding(decls[0].binding);
+
+                if (decls[0].value) |value| {
+                    p.printWhitespacer(ws(" = "));
+                    p.printExpr(value, .comma, flags);
                 }
+            }
+
+            for (decls[1..]) |*decl| {
+                p.print(",");
+                p.printSpace();
 
                 p.printBinding(decl.binding);
 
@@ -951,7 +1013,7 @@ pub fn NewPrinter(
                 p.print("(");
             }
 
-            for (args) |arg, i| {
+            for (args, 0..) |arg, i| {
                 if (i != 0) {
                     p.print(",");
                     p.printSpace();
@@ -1022,11 +1084,14 @@ pub fn NewPrinter(
             p.print("}");
         }
 
-        pub fn bestQuoteCharForEString(p: *Printer, str: *const E.String, allow_backtick: bool) u8 {
+        pub fn bestQuoteCharForEString(str: *const E.String, allow_backtick: bool) u8 {
+            if (comptime is_json)
+                return '"';
+
             if (str.isUTF8()) {
-                return p.bestQuoteCharForString(str.data, allow_backtick);
+                return bestQuoteCharForString(u8, str.data, allow_backtick);
             } else {
-                return p.bestQuoteCharForString(str.slice16(), allow_backtick);
+                return bestQuoteCharForString(u16, str.slice16(), allow_backtick);
             }
         }
 
@@ -1036,57 +1101,6 @@ pub fn NewPrinter(
             } else {
                 this.print(spacer.normal);
             }
-        }
-
-        pub fn bestQuoteCharForString(_: *Printer, str: anytype, allow_backtick: bool) u8 {
-            if (comptime is_json) return '"';
-
-            var single_cost: usize = 0;
-            var double_cost: usize = 0;
-            var backtick_cost: usize = 0;
-            var char: u8 = 0;
-            var i: usize = 0;
-            while (i < str.len) {
-                switch (str[i]) {
-                    '\'' => {
-                        single_cost += 1;
-                    },
-                    '"' => {
-                        double_cost += 1;
-                    },
-                    '`' => {
-                        backtick_cost += 1;
-                    },
-                    '\r', '\n' => {
-                        if (allow_backtick) {
-                            return '`';
-                        }
-                    },
-                    '\\' => {
-                        i += 1;
-                    },
-                    '$' => {
-                        if (i + 1 < str.len and str[i + 1] == '{') {
-                            backtick_cost += 1;
-                        }
-                    },
-                    else => {},
-                }
-                i += 1;
-            }
-
-            char = '"';
-            if (double_cost > single_cost) {
-                char = '\'';
-
-                if (single_cost > backtick_cost and allow_backtick) {
-                    char = '`';
-                }
-            } else if (double_cost > backtick_cost and allow_backtick) {
-                char = '`';
-            }
-
-            return char;
         }
 
         pub fn printNonNegativeFloat(p: *Printer, float: f64) void {
@@ -1355,7 +1369,7 @@ pub fn NewPrinter(
                                 if (i < n) {
                                     const c2: CodeUnitType = text[i];
 
-                                    if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
+                                    if (c2 >= first_low_surrogate and c2 <= last_low_surrogate) {
                                         i += 1;
 
                                         // Escape this character if UTF-8 isn't allowed
@@ -1406,7 +1420,7 @@ pub fn NewPrinter(
                                     }
                                 } else {
                                     // chars < 255 as two digit hex escape
-                                    if (c < 0xFF) {
+                                    if (c <= 0xFF) {
                                         var ptr = e.writer.reserve(4) catch unreachable;
                                         ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
                                         e.writer.advance(4);
@@ -1535,7 +1549,11 @@ pub fn NewPrinter(
         pub inline fn printPure(_: *Printer) void {}
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
-            const quote = p.bestQuoteCharForString(str, allow_backtick);
+            const quote = if (comptime !is_json)
+                bestQuoteCharForString(u8, str, allow_backtick)
+            else
+                '"';
+
             p.print(quote);
             p.print(str);
             p.print(quote);
@@ -1695,6 +1713,28 @@ pub fn NewPrinter(
                         wrap = true;
                     }
 
+                    const is_unbound_eval = !e.is_direct_eval and p.isUnboundEvalIdentifier(e.target);
+
+                    if (is_unbound_eval) {
+                        if (e.args.len == 1 and e.args.ptr[0].data == .e_string and is_bun_platform) {
+                            // prisma:
+                            //
+                            //   eval("__dirname")
+                            //
+                            // We don't have a __dirname variable defined in our ESM <> CJS compat mode
+                            // (Perhaps we should change that for cases like this?)
+                            //
+                            //
+                            if (e.args.ptr[0].data.e_string.eqlComptime("__dirname")) {
+                                p.print("import.meta.dir");
+                                return;
+                            } else if (e.args.ptr[0].data.e_string.eqlComptime("__filename")) {
+                                p.print("import.meta.file");
+                                return;
+                            }
+                        }
+                    }
+
                     if (wrap) {
                         p.print("(");
                     }
@@ -1708,7 +1748,7 @@ pub fn NewPrinter(
                     }
                     // We don't ever want to accidentally generate a direct eval expression here
                     p.call_target = e.target.data;
-                    if (!e.is_direct_eval and p.isUnboundEvalIdentifier(e.target)) {
+                    if (is_unbound_eval) {
                         p.print("(0, ");
                         p.printExpr(e.target, .postfix, ExprFlag.None());
                         p.print(")");
@@ -2025,7 +2065,7 @@ pub fn NewPrinter(
                             p.options.indent += 1;
                         }
 
-                        for (items) |item, i| {
+                        for (items, 0..) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -2128,7 +2168,7 @@ pub fn NewPrinter(
                         return;
                     }
 
-                    const c = p.bestQuoteCharForEString(e, true);
+                    const c = bestQuoteCharForEString(e, true);
 
                     p.print(c);
                     p.printStringContent(e, c);
@@ -2589,7 +2629,54 @@ pub fn NewPrinter(
                 p.print(" ");
             }
 
-            p.print(e.value);
+            if (comptime is_bun_platform) {
+                // Translate any non-ASCII to unicode escape sequences
+                var ascii_start: usize = 0;
+                var is_ascii = false;
+                var iter = CodepointIterator.init(e.value);
+                var cursor = CodepointIterator.Cursor{};
+                while (iter.next(&cursor)) {
+                    switch (cursor.c) {
+                        first_ascii...last_ascii => {
+                            if (!is_ascii) {
+                                ascii_start = cursor.i;
+                                is_ascii = true;
+                            }
+                        },
+                        else => {
+                            if (is_ascii) {
+                                p.print(e.value[ascii_start..cursor.i]);
+                                is_ascii = false;
+                            }
+
+                            switch (cursor.c) {
+                                0...0xFFFF => {
+                                    p.print([_]u8{
+                                        '\\',
+                                        'u',
+                                        hex_chars[cursor.c >> 12],
+                                        hex_chars[(cursor.c >> 8) & 15],
+                                        hex_chars[(cursor.c >> 4) & 15],
+                                        hex_chars[cursor.c & 15],
+                                    });
+                                },
+                                else => {
+                                    p.print("\\u{");
+                                    std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                    p.print("}");
+                                },
+                            }
+                        },
+                    }
+                }
+
+                if (is_ascii) {
+                    p.print(e.value[ascii_start..]);
+                }
+            } else {
+                // UTF8 sequence is fine
+                p.print(e.value);
+            }
 
             // Need a space before the next identifier to avoid it turning into flags
             p.prev_reg_exp_end = p.writer.written;
@@ -2724,7 +2811,10 @@ pub fn NewPrinter(
                             p.print(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote = p.bestQuoteCharForString(key.data, true);
+                            const quote = if (comptime !is_json)
+                                bestQuoteCharForString(u8, key.data, true)
+                            else
+                                '"';
                             if (quote == '`') {
                                 p.print('[');
                             }
@@ -2801,7 +2891,7 @@ pub fn NewPrinter(
                             }
                         }
                     } else {
-                        const c = p.bestQuoteCharForString(key.slice16(), false);
+                        const c = bestQuoteCharForString(u16, key.slice16(), false);
                         p.print(c);
                         p.printQuotedUTF16(key.slice16(), c);
                         p.print(c);
@@ -2876,7 +2966,7 @@ pub fn NewPrinter(
                     if (b.items.len > 0) {
                         p.options.indent += @as(usize, @boolToInt(!b.is_single_line));
 
-                        for (b.items) |*item, i| {
+                        for (b.items, 0..) |*item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (b.is_single_line) {
@@ -2919,7 +3009,7 @@ pub fn NewPrinter(
                         p.options.indent +=
                             @as(usize, @boolToInt(!b.is_single_line));
 
-                        for (b.properties) |*property, i| {
+                        for (b.properties, 0..) |*property, i| {
                             if (i != 0) {
                                 p.print(",");
                             }
@@ -3302,7 +3392,7 @@ pub fn NewPrinter(
                                 p.print("{");
                                 p.printSpace();
                                 const last = s.items.len - 1;
-                                for (s.items) |item, i| {
+                                for (s.items, 0..) |item, i| {
                                     const symbol = p.symbols.getWithLink(item.name.ref.?).?;
                                     const name = symbol.original_name;
                                     var did_print = false;
@@ -3419,7 +3509,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |item, i| {
+                    for (s.items, 0..) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -3476,7 +3566,7 @@ pub fn NewPrinter(
                             // Avoid initializing an entire component library because you imported one icon
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
                             p.print(",{");
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 p.printClauseAlias(item.alias);
                                 p.print(":");
                                 p.printQuotedUTF8(p.renamer.nameForSymbol(item.name.ref.?), true);
@@ -3502,7 +3592,7 @@ pub fn NewPrinter(
                             p.print("var {");
                             var symbol_counter: u32 = p.symbol_counter;
 
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 if (i > 0) {
                                     p.print(",");
                                 }
@@ -3528,7 +3618,7 @@ pub fn NewPrinter(
                             // reset symbol counter back
                             symbol_counter = p.symbol_counter;
 
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 if (i > 0) {
                                     p.print(",");
                                 }
@@ -3559,7 +3649,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |item, i| {
+                    for (s.items, 0..) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -3957,7 +4047,7 @@ pub fn NewPrinter(
                                     p.printSpace();
                                     p.print(",");
                                     p.printSpace();
-                                    for (s.items) |item, i| {
+                                    for (s.items, 0..) |item, i| {
                                         p.printClauseItemAs(item, .@"var");
 
                                         if (i < s.items.len - 1) {
@@ -3967,7 +4057,7 @@ pub fn NewPrinter(
                                     }
                                 }
                             } else {
-                                for (s.items) |item, i| {
+                                for (s.items, 0..) |item, i| {
                                     p.printClauseItemAs(item, .@"var");
 
                                     if (i < s.items.len - 1) {
@@ -4006,7 +4096,7 @@ pub fn NewPrinter(
                                 var needs_comma = false;
                                 // This might be a determinsim issue
                                 // But, it's not random
-                                skip: for (p.import_records) |_record, i| {
+                                skip: for (p.import_records, 0..) |_record, i| {
                                     if (!_record.is_bundled or _record.module_id == 0) continue;
 
                                     if (i < last) {
@@ -4068,7 +4158,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                         }
 
-                        for (s.items) |item, i| {
+                        for (s.items, 0..) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (s.is_single_line) {
@@ -4123,7 +4213,10 @@ pub fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_directive => |s| {
-                    const c = p.bestQuoteCharForString(s.value, false);
+                    if (comptime is_json)
+                        unreachable;
+
+                    const c = bestQuoteCharForString(u16, s.value, false);
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print(c);
@@ -4196,7 +4289,10 @@ pub fn NewPrinter(
         }
 
         pub fn printImportRecordPath(p: *Printer, import_record: *const ImportRecord) void {
-            const quote = p.bestQuoteCharForString(import_record.path.text, false);
+            if (comptime is_json)
+                unreachable;
+
+            const quote = bestQuoteCharForString(u8, import_record.path.text, false);
             if (import_record.print_namespace_in_path and import_record.path.namespace.len > 0 and !strings.eqlComptime(import_record.path.namespace, "file")) {
                 p.print(quote);
                 p.print(import_record.path.namespace);

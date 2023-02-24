@@ -559,7 +559,7 @@ test "Futex - Chain" {
     };
 
     var ctx = Context{};
-    for (ctx.threads) |*entry, index| {
+    for (&ctx.threads, 0..) |*entry, index| {
         entry.signal = .{};
         entry.thread = try std.Thread.spawn(.{}, Context.run, .{ &ctx, index });
     }

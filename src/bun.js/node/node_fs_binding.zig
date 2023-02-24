@@ -233,6 +233,10 @@ pub const NodeJSFS = struct {
         return JSC.Node.Dirent.getConstructor(globalThis);
     }
 
+    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        return JSC.Node.Stats.getConstructor(globalThis);
+    }
+
     // Not implemented yet:
     const notimpl = fdatasync;
     pub const opendir = notimpl;

@@ -162,6 +162,9 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
 
   exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
 
+  exportNames.append(JSC::Identifier::fromString(vm, "globalPaths"_s));
+  exportValues.append(JSC::constructEmptyArray(globalObject, 0));
+
   JSC::JSArray *builtinModules = JSC::JSArray::create(
       vm,
       globalObject->arrayStructureForIndexingTypeDuringAllocation(

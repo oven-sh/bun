@@ -14,7 +14,17 @@ type Platform =
   | "win32"
   | "cygwin"
   | "netbsd";
-type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
+type Architecture =
+  | "arm"
+  | "arm64"
+  | "ia32"
+  | "mips"
+  | "mipsel"
+  | "ppc"
+  | "ppc64"
+  | "s390"
+  | "s390x"
+  | "x64";
 type Signals =
   | "SIGABRT"
   | "SIGALRM"
@@ -404,6 +414,7 @@ interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
   json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
+  formData(): Promise<FormData>;
 }
 
 type BlobPart = string | Blob | BufferSource | ArrayBuffer;
@@ -436,7 +447,10 @@ interface Headers {
   entries(): IterableIterator<[string, string]>;
   keys(): IterableIterator<string>;
   values(): IterableIterator<string>;
-  forEach(callbackfn: (value: string, key: string, parent: Headers) => void, thisArg?: any): void;
+  forEach(
+    callbackfn: (value: string, key: string, parent: Headers) => void,
+    thisArg?: any,
+  ): void;
 
   /**
    * Convert {@link Headers} to a plain JavaScript object.
@@ -480,7 +494,58 @@ declare var Headers: {
 };
 
 type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
-type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
+type ResponseType =
+  | "basic"
+  | "cors"
+  | "default"
+  | "error"
+  | "opaque"
+  | "opaqueredirect";
+
+type FormDataEntryValue = Blob | string;
+
+/** Provides a way to easily construct a set of key/value pairs representing
+ * form fields and their values, which can then be easily sent using the
+ * XMLHttpRequest.send() method. It uses the same format a form would use if the
+ * encoding type were set to "multipart/form-data".
+ */
+interface FormData {
+  /**
+   * Appends a new value onto an existing key inside a FormData object, or adds
+   * the key if it does not already exist.
+   *
+   * @param name The name of the field whose data is contained in value.
+   * @param value The field's value.
+   * @param fileName The filename reported to the server.
+   *
+   * ## Upload a file
+   * ```ts
+   * const formData = new FormData();
+   * formData.append("username", "abc123");
+   * formData.append("avatar", Bun.file("avatar.png"), "avatar.png");
+   * await fetch("https://example.com", { method: "POST", body: formData });
+   * ```
+   */
+  append(name: string, value: string | Blob, fileName?: string): void;
+  delete(name: string): void;
+  get(name: string): FormDataEntryValue | null;
+  getAll(name: string): FormDataEntryValue[];
+  has(name: string): boolean;
+  set(name: string, value: string | Blob, fileName?: string): void;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  entries(): IterableIterator<[string, FormDataEntryValue]>;
+  [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
+  forEach(
+    callback: (value: FormDataEntryValue, key: string, parent: this) => void,
+    thisArg?: any,
+  ): void;
+}
+
+declare var FormData: {
+  prototype: FormData;
+  new (): FormData;
+};
 
 declare class Blob implements BlobInterface {
   /**
@@ -526,6 +591,20 @@ declare class Blob implements BlobInterface {
    */
   json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
+  /**
+   * Read the data from the blob as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * The `type` property of the blob is used to determine the format of the
+   * body.
+   *
+   * This is a non-standard addition to the `Blob` API, to make it conform more
+   * closely to the `BodyMixin` API.
+   */
+  formData(): Promise<FormData>;
+
   type: string;
   size: number;
 }
@@ -556,7 +635,10 @@ interface ResponseInit {
  * ```
  */
 declare class Response implements BlobInterface {
-  constructor(body?: ReadableStream | BlobPart | BlobPart[] | null, options?: ResponseInit);
+  constructor(
+    body?: ReadableStream | BlobPart | BlobPart[] | null | FormData,
+    options?: ResponseInit,
+  );
 
   /**
    * Create a new {@link Response} with a JSON body
@@ -669,6 +751,18 @@ declare class Response implements BlobInterface {
    */
   blob(): Promise<Blob>;
 
+  /**
+   * Read the data from the Response as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * If no `Content-Type` header is present, the promise will be rejected.
+   *
+   * @returns Promise<FormData> - The body of the response as a {@link FormData}.
+   */
+  formData(): Promise<FormData>;
+
   readonly ok: boolean;
   readonly redirected: boolean;
   /**
@@ -689,7 +783,13 @@ declare class Response implements BlobInterface {
   clone(): Response;
 }
 
-type RequestCache = "default" | "force-cache" | "no-cache" | "no-store" | "only-if-cached" | "reload";
+type RequestCache =
+  | "default"
+  | "force-cache"
+  | "no-cache"
+  | "no-store"
+  | "only-if-cached"
+  | "reload";
 type RequestCredentials = "include" | "omit" | "same-origin";
 type RequestDestination =
   | ""
@@ -724,12 +824,14 @@ type ReferrerPolicy =
   | "strict-origin"
   | "strict-origin-when-cross-origin"
   | "unsafe-url";
-type RequestInfo = Request | string;
+type RequestInfo = Request | string | RequestInit;
 
 type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
-type XMLHttpRequestBodyInit = Blob | BufferSource | string;
+type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
 type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
-type ReadableStreamDefaultReadResult<T> = ReadableStreamDefaultReadValueResult<T> | ReadableStreamDefaultReadDoneResult;
+type ReadableStreamDefaultReadResult<T> =
+  | ReadableStreamDefaultReadValueResult<T>
+  | ReadableStreamDefaultReadDoneResult;
 type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
 
 interface RequestInit {
@@ -954,16 +1056,24 @@ declare class Request implements BlobInterface {
   readonly referrerPolicy: ReferrerPolicy;
   /**
    * Returns the signal associated with request, which is an AbortSignal object indicating whether or not request has been aborted, and its abort event handler.
-   *
-   * Note: this is **not implemented yet**. The cake is a lie.
    */
   readonly signal: AbortSignal;
 
   /** Copy the Request object into a new Request, including the body */
   clone(): Request;
+
+  /**
+   * Read the body from the Request as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * @returns Promise<FormData> - The body of the request as a {@link FormData}.
+   */
+  formData(): Promise<FormData>;
 }
 
-interface Crypto {
+declare interface Crypto {
   readonly subtle: SubtleCrypto;
 
   getRandomValues<T extends BufferSource = BufferSource>(array: T): T;
@@ -979,6 +1089,10 @@ interface Crypto {
    */
   randomUUID(): string;
 }
+declare var Crypto: {
+  prototype: Crypto;
+  new (): Crypto;
+};
 
 declare var crypto: Crypto;
 
@@ -1061,7 +1175,10 @@ declare class TextDecoder {
    */
   readonly ignoreBOM: boolean;
 
-  constructor(encoding?: Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean });
+  constructor(
+    encoding?: Encoding,
+    options?: { fatal?: boolean; ignoreBOM?: boolean },
+  );
 
   /**
    * Decodes the `input` and returns a string. If `options.stream` is `true`, any
@@ -1207,6 +1324,11 @@ declare function clearInterval(id?: number): void;
  * @param id timer id
  */
 declare function clearTimeout(id?: number): void;
+/**
+ * Cancel an immediate function call by its immediate ID.
+ * @param id immediate id
+ */
+declare function clearImmediate(id?: number): void;
 // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 /**
@@ -1220,8 +1342,10 @@ declare function clearTimeout(id?: number): void;
  *
  */
 
-declare function fetch(url: string | URL, init?: FetchRequestInit): Promise<Response>;
-
+declare function fetch(
+  url: string | URL,
+  init?: FetchRequestInit,
+): Promise<Response>;
 
 /**
  * Send a HTTP(s) request
@@ -1242,23 +1366,43 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
  * @param error Error or string
  */
 declare function reportError(error: any): void;
+
+interface Timer {
+  ref(): void;
+  unref(): void;
+  hasRef(): boolean;
+
+  [Symbol.toPrimitive](): number;
+}
+
 /**
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
  */
-declare function setImmediate(handler: TimerHandler, ...arguments: any[]): number;
+declare function setImmediate(
+  handler: TimerHandler,
+  ...arguments: any[]
+): Timer;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
  */
-declare function setInterval(handler: TimerHandler, interval?: number, ...arguments: any[]): number;
+declare function setInterval(
+  handler: TimerHandler,
+  interval?: number,
+  ...arguments: any[]
+): Timer;
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
  * @param timeout milliseconds to wait between calls
  */
-declare function setTimeout(handler: TimerHandler, timeout?: number, ...arguments: any[]): number;
+declare function setTimeout(
+  handler: TimerHandler,
+  timeout?: number,
+  ...arguments: any[]
+): Timer;
 declare function addEventListener<K extends keyof EventMap>(
   type: K,
   listener: (this: object, ev: EventMap[K]) => any,
@@ -1572,6 +1716,27 @@ declare var MessageEvent: {
   new <T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
 };
 
+interface CustomEventInit<T = any> extends EventInit {
+  detail?: T;
+}
+
+interface CustomEvent<T = any> extends Event {
+  /** Returns any custom data event was created with. Typically used for synthetic events. */
+  readonly detail: T;
+  /** @deprecated */
+  initCustomEvent(
+    type: string,
+    bubbles?: boolean,
+    cancelable?: boolean,
+    detail?: T,
+  ): void;
+}
+
+declare var CustomEvent: {
+  prototype: CustomEvent;
+  new <T>(type: string, eventInitDict?: CustomEventInit<T>): CustomEvent<T>;
+};
+
 /**
  * An implementation of the [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
  */
@@ -1706,14 +1871,19 @@ interface URLSearchParams {
   keys(): IterableIterator<string>;
   /** Returns an iterator allowing to go through all values of the key/value pairs of this search parameter. */
   values(): IterableIterator<string>;
-  forEach(callbackfn: (value: string, key: string, parent: URLSearchParams) => void, thisArg?: any): void;
+  forEach(
+    callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
+    thisArg?: any,
+  ): void;
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
 }
 
 declare var URLSearchParams: {
   prototype: URLSearchParams;
-  new (init?: string[][] | Record<string, string> | string | URLSearchParams): URLSearchParams;
+  new (
+    init?: string[][] | Record<string, string> | string | URLSearchParams,
+  ): URLSearchParams;
   toString(): string;
 };
 
@@ -1791,6 +1961,23 @@ interface AbortSignal extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+
+  /**
+   * Create an AbortSignal which times out after milliseconds
+   *
+   * @param milliseconds the number of milliseconds to delay until {@link AbortSignal.prototype.signal()} is called
+   *
+   * @example
+   *
+   * ## Timeout a `fetch()` request
+   *
+   * ```ts
+   * await fetch("https://example.com", {
+   *    signal: AbortSignal.timeout(100)
+   * })
+   * ```
+   */
+  timeout(milliseconds: number): AbortSignal;
 }
 
 declare var AbortSignal: {
@@ -1914,10 +2101,19 @@ interface ReadableStream<R = any> {
   readonly locked: boolean;
   cancel(reason?: any): Promise<void>;
   getReader(): ReadableStreamDefaultReader<R>;
-  pipeThrough<T>(transform: ReadableWritablePair<T, R>, options?: StreamPipeOptions): ReadableStream<T>;
-  pipeTo(destination: WritableStream<R>, options?: StreamPipeOptions): Promise<void>;
+  pipeThrough<T>(
+    transform: ReadableWritablePair<T, R>,
+    options?: StreamPipeOptions,
+  ): ReadableStream<T>;
+  pipeTo(
+    destination: WritableStream<R>,
+    options?: StreamPipeOptions,
+  ): Promise<void>;
   tee(): [ReadableStream<R>, ReadableStream<R>];
-  forEach(callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void, thisArg?: any): void;
+  forEach(
+    callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
+    thisArg?: any,
+  ): void;
   [Symbol.asyncIterator](): AsyncIterableIterator<R>;
   values(options?: { preventCancel: boolean }): AsyncIterableIterator<R>;
 }
@@ -1975,7 +2171,8 @@ declare var ReadableStreamDefaultController: {
   new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
+interface ReadableStreamDefaultReader<R = any>
+  extends ReadableStreamGenericReader {
   read(): Promise<ReadableStreamDefaultReadResult<R>>;
   releaseLock(): void;
 }
@@ -2020,7 +2217,10 @@ interface WritableStream<W = any> {
 
 declare var WritableStream: {
   prototype: WritableStream;
-  new <W = any>(underlyingSink?: UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  new <W = any>(
+    underlyingSink?: UnderlyingSink<W>,
+    strategy?: QueuingStrategy<W>,
+  ): WritableStream<W>;
 };
 
 /** This Streams API interface represents a controller allowing control of a WritableStream's state. When constructing a WritableStream, the underlying sink is given a corresponding WritableStreamDefaultController instance to manipulate. */
@@ -2060,7 +2260,10 @@ interface TransformerStartCallback<O> {
 }
 
 interface TransformerTransformCallback<I, O> {
-  (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+  (
+    chunk: I,
+    controller: TransformStreamDefaultController<O>,
+  ): void | PromiseLike<void>;
 }
 
 interface UnderlyingSinkAbortCallback {
@@ -2076,7 +2279,10 @@ interface UnderlyingSinkStartCallback {
 }
 
 interface UnderlyingSinkWriteCallback<W> {
-  (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
+  (
+    chunk: W,
+    controller: WritableStreamDefaultController,
+  ): void | PromiseLike<void>;
 }
 
 interface UnderlyingSourceCancelCallback {
@@ -2101,7 +2307,9 @@ interface UnderlyingSource<R = any> {
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 interface DirectUnderlyingSource<R = any> {
   cancel?: UnderlyingSourceCancelCallback;
-  pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
+  pull: (
+    controller: ReadableStreamDirectController,
+  ) => void | PromiseLike<void>;
   type: "direct";
 }
 
@@ -2206,6 +2414,43 @@ interface ErrnoException extends Error {
   syscall?: string | undefined;
 }
 
+/** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
+interface DOMException extends Error {
+  /** @deprecated */
+  readonly code: number;
+  readonly message: string;
+  readonly name: string;
+  readonly ABORT_ERR: number;
+  readonly DATA_CLONE_ERR: number;
+  readonly DOMSTRING_SIZE_ERR: number;
+  readonly HIERARCHY_REQUEST_ERR: number;
+  readonly INDEX_SIZE_ERR: number;
+  readonly INUSE_ATTRIBUTE_ERR: number;
+  readonly INVALID_ACCESS_ERR: number;
+  readonly INVALID_CHARACTER_ERR: number;
+  readonly INVALID_MODIFICATION_ERR: number;
+  readonly INVALID_NODE_TYPE_ERR: number;
+  readonly INVALID_STATE_ERR: number;
+  readonly NAMESPACE_ERR: number;
+  readonly NETWORK_ERR: number;
+  readonly NOT_FOUND_ERR: number;
+  readonly NOT_SUPPORTED_ERR: number;
+  readonly NO_DATA_ALLOWED_ERR: number;
+  readonly NO_MODIFICATION_ALLOWED_ERR: number;
+  readonly QUOTA_EXCEEDED_ERR: number;
+  readonly SECURITY_ERR: number;
+  readonly SYNTAX_ERR: number;
+  readonly TIMEOUT_ERR: number;
+  readonly TYPE_MISMATCH_ERR: number;
+  readonly URL_MISMATCH_ERR: number;
+  readonly VALIDATION_ERR: number;
+  readonly WRONG_DOCUMENT_ERR: number;
+}
+declare var DOMException: {
+  prototype: DOMException;
+  new (message?: string, name?: string): DOMException;
+};
+
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
@@ -2218,7 +2463,15 @@ declare function prompt(message?: string, _default?: string): string | null;
 
 type KeyFormat = "jwk" | "pkcs8" | "raw" | "spki";
 type KeyType = "private" | "public" | "secret";
-type KeyUsage = "decrypt" | "deriveBits" | "deriveKey" | "encrypt" | "sign" | "unwrapKey" | "verify" | "wrapKey";
+type KeyUsage =
+  | "decrypt"
+  | "deriveBits"
+  | "deriveKey"
+  | "encrypt"
+  | "sign"
+  | "unwrapKey"
+  | "verify"
+  | "wrapKey";
 type HashAlgorithmIdentifier = AlgorithmIdentifier;
 type NamedCurve = string;
 
@@ -2371,30 +2624,59 @@ type AlgorithmIdentifier = Algorithm | string;
  */
 interface SubtleCrypto {
   decrypt(
-    algorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
+    algorithm:
+      | AlgorithmIdentifier
+      | RsaOaepParams
+      | AesCtrParams
+      | AesCbcParams
+      | AesGcmParams,
     key: CryptoKey,
     data: BufferSource,
   ): Promise<ArrayBuffer>;
   deriveBits(
-    algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params,
+    algorithm:
+      | AlgorithmIdentifier
+      | EcdhKeyDeriveParams
+      | HkdfParams
+      | Pbkdf2Params,
     baseKey: CryptoKey,
     length: number,
   ): Promise<ArrayBuffer>;
   deriveKey(
-    algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params,
+    algorithm:
+      | AlgorithmIdentifier
+      | EcdhKeyDeriveParams
+      | HkdfParams
+      | Pbkdf2Params,
     baseKey: CryptoKey,
-    derivedKeyType: AlgorithmIdentifier | AesDerivedKeyParams | HmacImportParams | HkdfParams | Pbkdf2Params,
+    derivedKeyType:
+      | AlgorithmIdentifier
+      | AesDerivedKeyParams
+      | HmacImportParams
+      | HkdfParams
+      | Pbkdf2Params,
     extractable: boolean,
     keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
-  digest(algorithm: AlgorithmIdentifier, data: BufferSource): Promise<ArrayBuffer>;
+  digest(
+    algorithm: AlgorithmIdentifier,
+    data: BufferSource,
+  ): Promise<ArrayBuffer>;
   encrypt(
-    algorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
+    algorithm:
+      | AlgorithmIdentifier
+      | RsaOaepParams
+      | AesCtrParams
+      | AesCbcParams
+      | AesGcmParams,
     key: CryptoKey,
     data: BufferSource,
   ): Promise<ArrayBuffer>;
   exportKey(format: "jwk", key: CryptoKey): Promise<JsonWebKey>;
-  exportKey(format: Exclude<KeyFormat, "jwk">, key: CryptoKey): Promise<ArrayBuffer>;
+  exportKey(
+    format: Exclude<KeyFormat, "jwk">,
+    key: CryptoKey,
+  ): Promise<ArrayBuffer>;
   generateKey(
     algorithm: RsaHashedKeyGenParams | EcKeyGenParams,
     extractable: boolean,
@@ -2413,14 +2695,24 @@ interface SubtleCrypto {
   importKey(
     format: "jwk",
     keyData: JsonWebKey,
-    algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm,
+    algorithm:
+      | AlgorithmIdentifier
+      | RsaHashedImportParams
+      | EcKeyImportParams
+      | HmacImportParams
+      | AesKeyAlgorithm,
     extractable: boolean,
     keyUsages: ReadonlyArray<KeyUsage>,
   ): Promise<CryptoKey>;
   importKey(
     format: Exclude<KeyFormat, "jwk">,
     keyData: BufferSource,
-    algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm,
+    algorithm:
+      | AlgorithmIdentifier
+      | RsaHashedImportParams
+      | EcKeyImportParams
+      | HmacImportParams
+      | AesKeyAlgorithm,
     extractable: boolean,
     keyUsages: KeyUsage[],
   ): Promise<CryptoKey>;
@@ -2433,7 +2725,12 @@ interface SubtleCrypto {
     format: KeyFormat,
     wrappedKey: BufferSource,
     unwrappingKey: CryptoKey,
-    unwrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
+    unwrapAlgorithm:
+      | AlgorithmIdentifier
+      | RsaOaepParams
+      | AesCtrParams
+      | AesCbcParams
+      | AesGcmParams,
     unwrappedKeyAlgorithm:
       | AlgorithmIdentifier
       | RsaHashedImportParams
@@ -2453,7 +2750,12 @@ interface SubtleCrypto {
     format: KeyFormat,
     key: CryptoKey,
     wrappingKey: CryptoKey,
-    wrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams,
+    wrapAlgorithm:
+      | AlgorithmIdentifier
+      | RsaOaepParams
+      | AesCtrParams
+      | AesCbcParams
+      | AesGcmParams,
   ): Promise<ArrayBuffer>;
 }
 
@@ -2537,7 +2839,9 @@ interface ErrorConstructor {
    *
    * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
    */
-  prepareStackTrace?: ((err: Error, stackTraces: CallSite[]) => any) | undefined;
+  prepareStackTrace?:
+    | ((err: Error, stackTraces: CallSite[]) => any)
+    | undefined;
 
   stackTraceLimit: number;
 }
@@ -2642,3 +2946,154 @@ interface SharedArrayBuffer {
    */
   grow(size: number): SharedArrayBuffer;
 }
+
+declare namespace WebAssembly {
+  interface CompileError extends Error {}
+
+  var CompileError: {
+    prototype: CompileError;
+    new (message?: string): CompileError;
+    (message?: string): CompileError;
+  };
+
+  interface Global {
+    value: any;
+    valueOf(): any;
+  }
+
+  var Global: {
+    prototype: Global;
+    new (descriptor: GlobalDescriptor, v?: any): Global;
+  };
+
+  interface Instance {
+    readonly exports: Exports;
+  }
+
+  var Instance: {
+    prototype: Instance;
+    new (module: Module, importObject?: Imports): Instance;
+  };
+
+  interface LinkError extends Error {}
+
+  var LinkError: {
+    prototype: LinkError;
+    new (message?: string): LinkError;
+    (message?: string): LinkError;
+  };
+
+  interface Memory {
+    readonly buffer: ArrayBuffer;
+    grow(delta: number): number;
+  }
+
+  var Memory: {
+    prototype: Memory;
+    new (descriptor: MemoryDescriptor): Memory;
+  };
+
+  interface Module {}
+
+  var Module: {
+    prototype: Module;
+    new (bytes: BufferSource): Module;
+    customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
+    exports(moduleObject: Module): ModuleExportDescriptor[];
+    imports(moduleObject: Module): ModuleImportDescriptor[];
+  };
+
+  interface RuntimeError extends Error {}
+
+  var RuntimeError: {
+    prototype: RuntimeError;
+    new (message?: string): RuntimeError;
+    (message?: string): RuntimeError;
+  };
+
+  interface Table {
+    readonly length: number;
+    get(index: number): any;
+    grow(delta: number, value?: any): number;
+    set(index: number, value?: any): void;
+  }
+
+  var Table: {
+    prototype: Table;
+    new (descriptor: TableDescriptor, value?: any): Table;
+  };
+
+  interface GlobalDescriptor {
+    mutable?: boolean;
+    value: ValueType;
+  }
+
+  interface MemoryDescriptor {
+    initial: number;
+    maximum?: number;
+    shared?: boolean;
+  }
+
+  interface ModuleExportDescriptor {
+    kind: ImportExportKind;
+    name: string;
+  }
+
+  interface ModuleImportDescriptor {
+    kind: ImportExportKind;
+    module: string;
+    name: string;
+  }
+
+  interface TableDescriptor {
+    element: TableKind;
+    initial: number;
+    maximum?: number;
+  }
+
+  interface WebAssemblyInstantiatedSource {
+    instance: Instance;
+    module: Module;
+  }
+
+  type ImportExportKind = "function" | "global" | "memory" | "table";
+  type TableKind = "anyfunc" | "externref";
+  type ValueType =
+    | "anyfunc"
+    | "externref"
+    | "f32"
+    | "f64"
+    | "i32"
+    | "i64"
+    | "v128";
+  type ExportValue = Function | Global | Memory | Table;
+  type Exports = Record<string, ExportValue>;
+  type ImportValue = ExportValue | number;
+  type Imports = Record<string, ModuleImports>;
+  type ModuleImports = Record<string, ImportValue>;
+  function compile(bytes: BufferSource): Promise<Module>;
+  // function compileStreaming(source: Response | PromiseLike<Response>): Promise<Module>;
+  function instantiate(
+    bytes: BufferSource,
+    importObject?: Imports,
+  ): Promise<WebAssemblyInstantiatedSource>;
+  function instantiate(
+    moduleObject: Module,
+    importObject?: Imports,
+  ): Promise<Instance>;
+  // function instantiateStreaming(
+  //   source: Response | PromiseLike<Response>,
+  //   importObject?: Imports,
+  // ): Promise<WebAssemblyInstantiatedSource>;
+  function validate(bytes: BufferSource): boolean;
+}
+
+interface NodeModule {
+  exports: any;
+}
+
+declare var module: NodeModule;
+
+// Same as module.exports
+declare var exports: any;
+declare var global: typeof globalThis;

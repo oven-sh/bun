@@ -424,7 +424,7 @@ pub const FileSystemRouter = struct {
         var name_strings = bun.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
         defer bun.default_allocator.free(name_strings);
         var paths_strings = name_strings[names.len..];
-        for (names) |name, i| {
+        for (names, 0..) |name, i| {
             name_strings[i] = ZigString.init(name).withEncoding();
             paths_strings[i] = ZigString.init(paths[i]).withEncoding();
         }
@@ -610,7 +610,7 @@ pub const MatchedRoute = struct {
                     std.debug.assert(entry.values.len > 0);
                     if (entry.values.len > 1) {
                         var values = query_string_value_refs_buf[0..entry.values.len];
-                        for (entry.values) |value, i| {
+                        for (entry.values, 0..) |value, i| {
                             values[i] = ZigString.init(value).withEncoding();
                         }
                         obj.putRecord(global, &str, values.ptr, values.len);

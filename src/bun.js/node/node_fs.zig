@@ -39,7 +39,6 @@ const gid_t = std.os.gid_t;
 const ReadPosition = u63;
 
 const Stats = JSC.Node.Stats;
-const BigIntStats = JSC.Node.BigIntStats;
 const Dirent = JSC.Node.Dirent;
 
 pub const FlavoredIO = struct {
@@ -1027,15 +1026,17 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
+                    if (val.getTruthy(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
                     }
 
-                    if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (val.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 } else if (!val.isEmpty()) {
-                    flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                    if (!val.isUndefinedOrNull())
+                        // error is handled below
+                        flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
@@ -1454,6 +1455,9 @@ const Arguments = struct {
         path: PathOrFileDescriptor,
         encoding: Encoding = Encoding.utf8,
 
+        offset: JSC.WebCore.Blob.SizeType = 0,
+        max_size: ?JSC.WebCore.Blob.SizeType = null,
+
         flag: FileSystemFlags = FileSystemFlags.r,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
@@ -1505,7 +1509,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
+                    if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1596,23 +1600,21 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
-                        if (!encoding_.isUndefinedOrNull()) {
-                            encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
-                                if (exception.* == null) {
-                                    JSC.throwInvalidArguments(
-                                        "Invalid encoding",
-                                        .{},
-                                        ctx,
-                                        exception,
-                                    );
-                                }
-                                return null;
-                            };
-                        }
+                    if (arg.getTruthy(ctx.ptr(), "encoding")) |encoding_| {
+                        encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
+                            if (exception.* == null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
+                    if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1626,7 +1628,7 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (arg.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1877,9 +1879,9 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                    if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
+                            if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},
@@ -2011,9 +2013,9 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                    if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
+                            if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},
@@ -2744,7 +2746,7 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 return switch (Syscall.fstat(args.fd)) {
-                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result) },
+                    .result => |result| Maybe(Return.Fstat){ .result = Stats.init(result, false) },
                     .err => |err| Maybe(Return.Fstat){ .err = err },
                 };
             },
@@ -2848,7 +2850,7 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result) },
+                    .result => |result| Maybe(Return.Lstat){ .result = Return.Lstat.init(result, false) },
                     .err => |err| Maybe(Return.Lstat){ .err = err },
                 };
             },
@@ -3309,8 +3311,28 @@ pub const NodeFS = struct {
                     .result => |stat_| stat_,
                 };
 
+                // Only used in DOMFormData
+                if (args.offset > 0) {
+                    std.os.lseek_SET(fd, args.offset) catch {};
+                }
+
                 // For certain files, the size might be 0 but the file might still have contents.
-                const size = @intCast(u64, @max(stat_.size, 0));
+                const size = @intCast(
+                    u64,
+                    @max(
+                        @min(
+                            stat_.size,
+                            @intCast(
+                                @TypeOf(stat_.size),
+                                // Only used in DOMFormData
+                                args.max_size orelse std.math.maxInt(
+                                    JSC.WebCore.Blob.SizeType,
+                                ),
+                            ),
+                        ),
+                        0,
+                    ),
+                );
 
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
@@ -3741,7 +3763,7 @@ pub const NodeFS = struct {
                         &this.sync_error_buf,
                     ),
                 )) {
-                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result) },
+                    .result => |result| Maybe(Return.Stat){ .result = Return.Stat.init(result, false) },
                     .err => |err| Maybe(Return.Stat){ .err = err },
                 });
             },

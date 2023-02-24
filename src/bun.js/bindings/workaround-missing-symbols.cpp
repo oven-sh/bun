@@ -1,3 +1,7 @@
+#ifndef UNLIKELY
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
+
 // if linux
 #if defined(__linux__)
 
@@ -7,10 +11,6 @@
 #include <math.h>
 #include <errno.h>
 #include <dlfcn.h>
-
-#ifndef UNLIKELY
-#define UNLIKELY(x) __builtin_expect(!!(x), 0)
-#endif
 
 #ifndef _STAT_VER
 #if defined(__aarch64__)
@@ -179,6 +179,77 @@ extern "C" int __xmknodat(int ver, int dirfd, const char* path, __mode_t mode, _
 extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_t dev)
 {
     return __xmknodat(_MKNOD_VER, dirfd, path, mode, dev);
+}
+
+#endif
+
+// macOS
+#if defined(__APPLE__)
+
+#include <dlfcn.h>
+
+extern "C" int pthread_self_is_exiting_np()
+{
+    static void* pthread_self_is_exiting_np_ptr = nullptr;
+    static bool pthread_self_is_exiting_np_ptr_initialized = false;
+    if (UNLIKELY(!pthread_self_is_exiting_np_ptr_initialized)) {
+        pthread_self_is_exiting_np_ptr_initialized = true;
+        pthread_self_is_exiting_np_ptr = dlsym(RTLD_DEFAULT, "pthread_self_is_exiting_np");
+    }
+
+    if (UNLIKELY(pthread_self_is_exiting_np_ptr == nullptr))
+        return 0;
+
+    return ((int (*)())pthread_self_is_exiting_np_ptr)();
+}
+
+extern "C" int posix_spawn_file_actions_addchdir_np(
+    void* file_actions,
+    const char* path)
+{
+    static void* posix_spawn_file_actions_addchdir_np_ptr = nullptr;
+    static bool posix_spawn_file_actions_addchdir_np_ptr_initialized = false;
+    if (UNLIKELY(!posix_spawn_file_actions_addchdir_np_ptr_initialized)) {
+        posix_spawn_file_actions_addchdir_np_ptr_initialized = true;
+        posix_spawn_file_actions_addchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addchdir_np");
+    }
+
+    if (UNLIKELY(posix_spawn_file_actions_addchdir_np_ptr == nullptr))
+        return 0;
+
+    return ((int (*)(void*, const char*))posix_spawn_file_actions_addchdir_np_ptr)(file_actions, path);
+}
+
+extern "C" int posix_spawn_file_actions_addinherit_np(void* ptr,
+    int status)
+{
+    static void* posix_spawn_file_actions_addinherit_np_ptr = nullptr;
+    static bool posix_spawn_file_actions_addinherit_np_ptr_initialized = false;
+    if (UNLIKELY(!posix_spawn_file_actions_addinherit_np_ptr_initialized)) {
+        posix_spawn_file_actions_addinherit_np_ptr_initialized = true;
+        posix_spawn_file_actions_addinherit_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addinherit_np");
+    }
+
+    if (UNLIKELY(posix_spawn_file_actions_addinherit_np_ptr == nullptr))
+        return 0;
+
+    return ((int (*)(void*, int))posix_spawn_file_actions_addinherit_np_ptr)(ptr, status);
+}
+
+extern "C" int posix_spawn_file_actions_addfchdir_np(void* ptr,
+    int fd)
+{
+    static void* posix_spawn_file_actions_addfchdir_np_ptr = nullptr;
+    static bool posix_spawn_file_actions_addfchdir_np_ptr_initialized = false;
+    if (UNLIKELY(!posix_spawn_file_actions_addfchdir_np_ptr_initialized)) {
+        posix_spawn_file_actions_addfchdir_np_ptr_initialized = true;
+        posix_spawn_file_actions_addfchdir_np_ptr = dlsym(RTLD_DEFAULT, "posix_spawn_file_actions_addfchdir_np");
+    }
+
+    if (UNLIKELY(posix_spawn_file_actions_addfchdir_np_ptr == nullptr))
+        return 0;
+
+    return ((int (*)(void*, int))posix_spawn_file_actions_addfchdir_np_ptr)(ptr, fd);
 }
 
 #endif

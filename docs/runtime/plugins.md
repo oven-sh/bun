@@ -225,13 +225,10 @@ console.log(mySvelteComponent.render());
 
 ## Reference
 
-### `import {plugin} from "bun"`
-
 ```ts
-function plugin(plugin: {
-  name: string;
-  setup: (build: PluginBuilder) => void;
-}): void;
+namespace Bun {
+  function plugin(plugin: { name: string; setup: (build: PluginBuilder) => void }): void;
+}
 
 type PluginBuilder = {
   onLoad: (

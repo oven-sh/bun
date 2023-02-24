@@ -558,7 +558,7 @@ pub const HTTPThread = struct {
 
     fn drainEvents(this: *@This()) void {
         while (this.queued_shutdowns.pop()) |http| {
-            if (socket_async_http_abort_tracker.get(http.async_http_id)) |socket_ptr| {
+            if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                 if (http.client.isHTTPS()) {
                     const socket = uws.SocketTLS.from(socket_ptr);
                     socket.shutdown();

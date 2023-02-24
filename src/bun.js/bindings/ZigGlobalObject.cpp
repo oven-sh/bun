@@ -2953,7 +2953,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     }
 
     JSC::JSValue arguments = {};
-    size_t argumentCount = callFrame->argumentCount() - 1;
+    size_t argumentCount = callFrame->argumentCount();
     if (argumentCount > 1) {
         JSC::ObjectInitializationScope initializationScope(globalObject->vm());
         JSC::JSArray* argumentsArray = JSC::JSArray::tryCreateUninitializedRestricted(

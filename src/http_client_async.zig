@@ -560,10 +560,10 @@ pub const HTTPThread = struct {
         while (this.queued_shutdowns.pop()) |http| {
             if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
                 if (http.client.isHTTPS()) {
-                    const socket = uws.SocketTLS.from(socket_ptr);
+                    const socket = uws.SocketTLS.from(socket_ptr.value);
                     socket.shutdown();
                 } else {
-                    const socket = uws.SocketTCP.from(socket_ptr);
+                    const socket = uws.SocketTCP.from(socket_ptr.value);
                     socket.shutdown();
                 }
             }

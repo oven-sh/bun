@@ -600,6 +600,9 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
 
+    // Necessary for stack probing on x86_64
+    if (target.getCpuArch().isX86()) obj.bundle_compiler_rt = true;
+
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;
         obj.link_emit_relocs = true;

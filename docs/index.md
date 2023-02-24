@@ -6,7 +6,7 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 $ bun run index.tsx  # TS and JSX supported out of the box
 ```
 
-​​The `bun​` command-line tool also implements a test runner, package runner, and npm-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
+​​The `bun​` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
 
 ```bash
 $ bun test                      # run tests

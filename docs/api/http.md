@@ -1,10 +1,19 @@
 {% callout %}
-**Note** — Bun provides an [almost complete](/docs/runtime/nodejs#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules. This page only documents Bun-native APIs.
+**Note** — This page documents the `Bun.serve` API. This API is heavily optimized and represents the recommended way to build HTTP servers in Bun. Existing Node.js projectes may use Bun's [nearly complete](/docs/runtime/nodejs#node_http) implementation of the Node.js [`http`](https://nodejs.org/api/http.html) and [`https`](https://nodejs.org/api/https.html) modules.
 {% /callout %}
 
-## Start a server
+## Send a request
 
-`Bun.serve(options) => Server`
+Bun implements the Web `fetch` API for making HTTP requests. The `fetch` function is available in the global scope.
+
+```ts
+const response = await fetch("https://bun.sh/manifest.json");
+const result = (await response.json()) as any;
+console.log(result.icons[0].src);
+// => "/logo-square.jpg"
+```
+
+## Start a server
 
 Start an HTTP server in Bun with `Bun.serve`.
 
@@ -41,7 +50,7 @@ Bun.serve({
 });
 ```
 
-## Error handling
+### Error handling
 
 To activate development mode, set `development: true`. By default, development mode is _enabled_ unless `NODE_ENV` is `production`.
 
@@ -91,7 +100,7 @@ const server = Bun.serve({
 server.stop();
 ```
 
-## TLS
+### TLS
 
 Bun supports TLS out of the box, powered by [OpenSSL](https://www.openssl.org/). Enable TLS by passing in a value for `keyFile` and `certFile`; both are required to enable TLS. If needed, supply a `passphrase` to decrypt the `keyFile`.
 
@@ -120,7 +129,7 @@ Bun.serve({
 });
 ```
 
-## Hot reloading
+### Hot reloading
 
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
@@ -142,7 +151,7 @@ $ bun --hot server.ts
 
 It's possible to configure hot reloading while using the explicit `Bun.serve` API; for details refer to [Runtime > Hot reloading](/docs/runtime/hot).
 
-## Streaming files
+### Streaming files
 
 To stream a file, return a `Response` object with a `BunFile` object as the body.
 
@@ -180,7 +189,7 @@ Bun.serve({
 });
 ```
 
-## Benchmarks
+### Benchmarks
 
 Below are Bun and Node.js implementations of a simple HTTP server that responds `Bun!` to each incoming `Request`.
 
@@ -223,7 +232,7 @@ The `Bun.serve` server can handle roughly 2.5x more requests per second than Nod
 
 {% image width="499" alt="image" src="https://user-images.githubusercontent.com/709451/162389032-fc302444-9d03-46be-ba87-c12bd8ce89a0.png" /%}
 
-## Reference
+### Reference
 
 {% details summary="See TypeScript definitions" %}
 

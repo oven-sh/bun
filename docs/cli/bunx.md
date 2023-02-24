@@ -1,4 +1,76 @@
-The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`. It's designed for Node.js compatibility; use it in any Bun or Node.js project.
+Use `bunx` to auto-install and run packages from `npm`. The `bunx` CLI will be auto-installed when you install `bun`.
+
+```bash
+$ bunx cowsay "Hello world!"
+```
+
+{% callout %}
+⚡️ **Speed** — With Bun's fast startup times, `bunx` is [roughly 100x faster](https://twitter.com/jarredsumner/status/1606163655527059458) than `npx` for locally installed packages.
+{% /callout %}
+
+Packages can declare executables in the `"bin"` field of their `package.json`. These are known as _package executables_ or _package binaries_.
+
+```jsonc#package.json
+{
+  // ... other fields
+  "name": "my-cli",
+  "bin": {
+    "my-cli": "dist/index.js"
+  }
+}
+```
+
+These executables are commonly plain JavaScript files marked with a [shebang line](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate which program should be used to execute them. The following file indicates that it should be executed with `node`.
+
+```js#dist/index.js
+#!/usr/bin/env node
+
+console.log("Hello world!");
+```
+
+These executables can be run with `bunx`,
+
+```bash
+$ bunx my-cli
+```
+
+As with `npx`, `bunx` will check for a locally installed package first, then fall back to auto-installing the package from `npm`. Installed packages will be stored in Bun's global cache for future use.
+
+### Arguments and flags
+
+To pass additional command-line flags and arguments through to the executable, place them after the executable name.
+
+```bash
+$ bunx my-cli --foo bar
+```
+
+### Shebangs
+
+By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using [Bun's runtime](/docs/runtime), even if the executable indicates otherwise. To do so, include the `--bun` flag.
+
+```bash
+$ bunx --bun my-cli
+```
+
+{% callout %}
+**Note** — The `--bun` flag must occur _before_ the executable name. Flags that appear _after_ the name are passed through to the executable.
+
+```bash
+$ bunx --bun my-cli # good
+$ bunx my-cli --bun # bad
+```
+
+{% /callout %}
+
+## Environment variables
+
+Bun automatically loads environment variables from `.env` files before running a file, script, or executable. The following files are checked, in order:
+
+1. `.env.local` (first)
+2. `NODE_ENV` === `"production"` ? `.env.production` : `.env.development`
+3. `.env`
+
+To debug environment variables, run `bun run env` to view a list of resolved environment variables.
 
 {% callout %}
 
@@ -84,7 +156,7 @@ dryRun = false
 
 {% /details %}
 
-## Add and remove packages
+## Adding packages
 
 To add or remove a particular package:
 
@@ -145,27 +217,6 @@ To view a complete list of options for a given command:
 
 ```bash
 $ bun add --help
-```
-
-## Git dependencies
-
-To add a dependency from a git repository:
-
-```bash
-$ bun install git@github.com:moment/moment.git
-```
-
-Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#github-urls), [`git`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#git-urls-as-dependencies), `git+ssh`, `git+https`, and many more.
-
-```json
-{
-  "dependencies": {
-    "dayjs": "git+https://github.com/iamkun/dayjs.git",
-    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
-    "moment": "git@github.com:moment/moment.git",
-    "zod": "github:colinhacks/zod"
-  }
-}
 ```
 
 ## Global cache
@@ -347,7 +398,7 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
-To configure a private registry scoped to a particular organization:
+To configure organization-scoped private registries:
 
 ```toml
 [install.scopes]
@@ -360,86 +411,4 @@ To configure a private registry scoped to a particular organization:
 
 # registry with token
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
-```
-
-## Linking and unlinking
-
-Use `bun link` in a local directory to register the current package as a "linkable" package.
-
-```bash
-$ cd /path/to/cool-pkg
-$ cat package.json
-{
-  "name": "cool-pkg",
-  "version": "1.0.0"
-}
-$ bun link
-bun link v0.5.7 (7416672e)
-Success! Registered "cool-pkg"
-
-To use cool-pkg in a project, run:
-  bun link cool-pkg
-
-Or add it in dependencies in your package.json file:
-  "cool-pkg": "link:cool-pkg"
-```
-
-This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
-
-```bash
-$ cd /path/to/my-app
-$ bun link cool-pkg
-```
-
-This will add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`.
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-    "dependencies": {
-+     "cool-pkg": "link:cool-pkg"
-    }
-  }
-```
-
-## Utilities
-
-The `bun pm` command group provides a set of utilities for working with Bun's package manager.
-
-To print the path to the `bin` directory for the local project:
-
-```bash
-$ bun pm bin
-/path/to/current/project/node_modules/.bin
-```
-
-To get the path to the global `bin` directory:
-
-```bash
-$ bun pm bin
-<$HOME>/.bun/bin
-```
-
-To print a list of packages installed in the current project and their resolved versions, excluding their dependencies. Use the `--all` flag to print the entire tree, including all nth-order dependencies.
-
-```bash
-/path/to/project node_modules (5)
-├── eslint@8.33.0
-├── react@18.2.0
-├── react-dom@18.2.0
-├── typescript@4.8.4
-└── zod@3.20.1
-```
-
-To print the path to Bun's global module cache:
-
-```bash
-$ bun pm cache
-```
-
-To clear Bun's global module cache:
-
-```bash
-$ bun pm cache rm
 ```

@@ -6,7 +6,7 @@ Configuring a development environment for Bun usually takes 30-90 minutes depend
 
 ## Linux/Windows
 
-The best way to build Bun on Linux and Windows is with the official [Dev Container](https://containers.dev). It ships with Zig, JavaScriptCore, Zig Language Server, `vscode-zig`, and more pre-installed on an instance of Ubuntu.
+The best way to build Bun on Linux and Windows is with the official [Dev Container](https://containers.dev). It ships with Zig, JavaScriptCore, Zig Language Server, and more pre-installed on an instance of Ubuntu.
 
 {% image src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" /%}
 
@@ -206,21 +206,6 @@ You probably won't need to run that one much.
 Certain modules like `node:fs`, `node:path`, `node:stream`, and `bun:sqlite` are implemented in JavaScript. These live in `src/bun.js/*.exports.js` files.
 
 While Bun is in beta, you can modify them at runtime in release builds via the environment variable `BUN_OVERRIDE_MODULE_PATH`. When set, Bun will look in the override directory for `<name>.exports.js` before checking the files from `src/bun.js` (which are now baked in to the binary). This lets you test changes to the ESM modules without needing to re-compile Bun.
-
-## `vscode-zig`
-
-{% callout %}
-**Note** — This is automatically installed on the devcontainer.
-{% /callout %}
-
-We maintain a fork of the `vscode-zig` extension that adds a `Run test` and a `Debug test` button into the dev environment. To install it:
-
-```bash
-$ curl -L https://github.com/Jarred-Sumner/vscode-zig/releases/download/fork-v1/zig-0.2.5.vsix > vscode-zig.vsix
-$ code --install-extension vscode-zig.vsix
-```
-
-{% image src="https://pbs.twimg.com/media/FBZsKHlUcAYDzm5?format=jpg&name=large" href="https://github.com/jarred-sumner/vscode-zig" /%}
 
 ## Troubleshooting
 

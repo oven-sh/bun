@@ -435,28 +435,28 @@ pub const Jest = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
+        arguments_: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         var runner_ = runner orelse {
             JSError(getAllocator(ctx), "Run bun wiptest to run a test", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
+        const arguments = @ptrCast([]const JSC.JSValue, arguments_);
 
-        if (arguments.len < 1 or !js.JSValueIsString(ctx, arguments[0])) {
+        if (arguments.len < 1 or !arguments[0].isString()) {
             JSError(getAllocator(ctx), "Bun.jest() expects a string filename", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
-        var str = js.JSValueToStringCopy(ctx, arguments[0], exception);
-        defer js.JSStringRelease(str);
-        var ptr = js.JSStringGetCharacters8Ptr(str);
-        const len = js.JSStringGetLength(str);
-        if (len == 0 or ptr[0] != '/') {
+        var str = arguments[0].toSlice(ctx, bun.default_allocator);
+        defer str.deinit();
+        var slice = str.slice();
+
+        if (str.len == 0 or slice[0] != '/') {
             JSError(getAllocator(ctx), "Bun.jest() expects an absolute file path", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         }
-        var str_value = ptr[0..len];
-        var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, str_value) catch unreachable;
+        var filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
 
         var scope = runner_.getOrPutFile(filepath);
         DescribeScope.active = scope;
@@ -2495,7 +2495,7 @@ pub const DescribeScope = struct {
     pub fn execCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
         const name = comptime @as(string, @tagName(hook));
         var hooks: []JSC.JSValue = @field(this, name).items;
-        for (hooks) |cb, i| {
+        for (hooks, 0..) |cb, i| {
             if (cb.isEmpty()) continue;
 
             const pending_test = Jest.runner.?.pending_test;

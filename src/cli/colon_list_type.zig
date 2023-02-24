@@ -22,7 +22,7 @@ pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type {
         values: []t,
 
         pub fn load(self: *@This(), input: []const string) !void {
-            for (input) |str, i| {
+            for (input, 0..) |str, i| {
                 // Support either ":" or "=" as the separator, preferring whichever is first.
                 // ":" is less confusing IMO because that syntax is used with flags
                 // but "=" is what esbuild uses and I want this to be somewhat familiar for people using esbuild

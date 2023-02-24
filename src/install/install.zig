@@ -1649,7 +1649,7 @@ pub const PackageManager = struct {
         is_main: bool,
     ) DependencyToEnqueue {
         const str_buf = this.lockfile.buffers.string_bytes.items;
-        for (this.lockfile.buffers.dependencies.items) |dependency, dependency_id| {
+        for (this.lockfile.buffers.dependencies.items, 0..) |dependency, dependency_id| {
             if (!strings.eqlLong(dependency.name.slice(str_buf), name, true)) continue;
             if (!dependency.version.eql(version, str_buf, version_buf)) continue;
             return switch (this.lockfile.buffers.resolutions.items[dependency_id]) {
@@ -4082,7 +4082,7 @@ pub const PackageManager = struct {
             }
             if (bun_install_) |bun_install| {
                 if (bun_install.scoped) |scoped| {
-                    for (scoped.scopes) |name, i| {
+                    for (scoped.scopes, 0..) |name, i| {
                         var registry = scoped.registries[i];
                         if (registry.url.len == 0) registry.url = base.url;
                         try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
@@ -4104,7 +4104,7 @@ pub const PackageManager = struct {
 
                 if (bun_install.native_bin_links.len > 0) {
                     var buf = try allocator.alloc(u64, bun_install.native_bin_links.len);
-                    for (bun_install.native_bin_links) |name, i| {
+                    for (bun_install.native_bin_links, 0..) |name, i| {
                         buf[i] = String.Builder.stringHash(name);
                     }
                     this.native_bin_link_allowlist = buf;
@@ -4375,7 +4375,7 @@ pub const PackageManager = struct {
                     var all = try allocator.alloc(PackageNameHash, this.native_bin_link_allowlist.len + cli.link_native_bins.len);
                     std.mem.copy(PackageNameHash, all, this.native_bin_link_allowlist);
                     var remain = all[this.native_bin_link_allowlist.len..];
-                    for (cli.link_native_bins) |name, i| {
+                    for (cli.link_native_bins, 0..) |name, i| {
                         remain[i] = String.Builder.stringHash(name);
                     }
                     this.native_bin_link_allowlist = all;
@@ -6901,7 +6901,7 @@ pub const PackageManager = struct {
                         manager.lockfile.buffers.dependencies.items = manager.lockfile.buffers.dependencies.items.ptr[0 .. off + len];
                         manager.lockfile.buffers.resolutions.items = manager.lockfile.buffers.resolutions.items.ptr[0 .. off + len];
 
-                        for (new_dependencies) |new_dep, i| {
+                        for (new_dependencies, 0..) |new_dep, i| {
                             dependencies[i] = try new_dep.clone(lockfile.buffers.string_bytes.items, *Lockfile.StringBuilder, builder);
                             if (mapping[i] != invalid_package_id) {
                                 resolutions[i] = old_resolutions[mapping[i]];

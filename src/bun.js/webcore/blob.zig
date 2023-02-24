@@ -391,7 +391,7 @@ pub const Blob = struct {
             bun.default_allocator.destroy(handler);
             var blob = blob_ catch |err| {
                 var error_string = ZigString.init(
-                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{std.mem.span(@errorName(err))}) catch unreachable,
+                    std.fmt.allocPrint(bun.default_allocator, "Failed to write file \"{s}\"", .{bun.asByteSlice(@errorName(err))}) catch unreachable,
                 );
                 error_string.mark();
 
@@ -1185,7 +1185,7 @@ pub const Blob = struct {
 
                                 this.system_error = .{
                                     .syscall = ZigString.init("open"),
-                                    .code = ZigString.init(std.mem.span(@errorName(this.errno.?))),
+                                    .code = ZigString.init(bun.asByteSlice(@errorName(this.errno.?))),
                                     .path = ZigString.init(path_string.slice()),
                                 };
 
@@ -1391,7 +1391,7 @@ pub const Blob = struct {
                         }).toSystemError();
                     } else {
                         this.system_error = JSC.SystemError{
-                            .code = ZigString.init(std.mem.span(@errorName(err))),
+                            .code = ZigString.init(bun.asByteSlice(@errorName(err))),
                             .path = if (this.file_store.pathlike == .path)
                                 ZigString.init(this.file_store.pathlike.path.slice())
                             else
@@ -1630,7 +1630,7 @@ pub const Blob = struct {
                 this.wrote += @truncate(SizeType, result catch |errno| {
                     this.errno = errno;
                     this.system_error = this.system_error orelse JSC.SystemError{
-                        .code = ZigString.init(std.mem.span(@errorName(errno))),
+                        .code = ZigString.init(bun.asByteSlice(@errorName(errno))),
                         .syscall = ZigString.init("write"),
                     };
 

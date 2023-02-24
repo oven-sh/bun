@@ -481,7 +481,7 @@ pub const ZigStackTrace = extern struct {
                 var stack_frames = try allocator.alloc(Api.StackFrame, _frames.len);
                 stack_trace.frames = stack_frames;
 
-                for (_frames) |frame, i| {
+                for (_frames, 0..) |frame, i| {
                     stack_frames[i] = try frame.toAPI(
                         root_path,
                         origin,
@@ -527,7 +527,7 @@ pub const ZigStackTrace = extern struct {
 
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
         var i: usize = 0;
-        for (this.source_lines_numbers[0..this.source_lines_len]) |num, j| {
+        for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
             if (num > 0) {
                 i = j;
             }
@@ -2125,7 +2125,7 @@ pub const ZigConsoleClient = struct {
                                 timer.id,
                             });
                         }
-                        
+
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
@@ -2607,7 +2607,7 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
 
                     const slice = arrayBuffer.byteSlice();
-                    writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
+                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
 
                     writer.print("({d}) [ ", .{arrayBuffer.len});
                     if (slice.len > 0) {

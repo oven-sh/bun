@@ -1677,7 +1677,7 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
             arguments_len: usize,
         ) callconv(.C) JSValue {
             return CallbackFunction(@ptrCast(*Type, @alignCast(@alignOf(*Type), ctx.?)), globalThis, arguments[0..arguments_len]) catch |err| brk: {
-                break :brk ZigString.init(std.mem.span(@errorName(err))).toErrorInstance(globalThis);
+                break :brk ZigString.init(bun.asByteSlice(@errorName(err))).toErrorInstance(globalThis);
             };
         }
     }.callback;
@@ -2376,7 +2376,7 @@ pub const JSGlobalObject = extern struct {
         const names = comptime std.meta.fieldNames(@TypeOf(module));
         var export_names: [names.len]ZigString = undefined;
         var export_values: [names.len]JSValue = undefined;
-        inline for (comptime names) |export_name, i| {
+        inline for (comptime names, 0..) |export_name, i| {
             export_names[i] = ZigString.init(export_name);
             const function = @field(module, export_name).@"0";
             const len = @field(module, export_name).@"1";

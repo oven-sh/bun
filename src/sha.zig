@@ -188,7 +188,7 @@ pub fn main() anyerror!void {
 
     var engine = BoringSSL.ENGINE_new().?;
 
-    inline for (boring) |BoringHasher, i| {
+    inline for (boring, 0..) |BoringHasher, i| {
         const ZigHasher = zig[i];
         std.debug.print(
             comptime labels[i] ++ " - hashing {.3f}:\n",

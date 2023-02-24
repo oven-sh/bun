@@ -113,7 +113,7 @@ pub const ShellIterator = struct {
             after_quote,
         } = .skip_whitespace;
 
-        for (iter.str) |c, i| {
+        for (iter.str, 0..) |c, i| {
             switch (state) {
                 // The state that skips the initial whitespace.
                 .skip_whitespace => switch (c) {

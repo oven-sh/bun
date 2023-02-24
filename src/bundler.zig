@@ -690,7 +690,7 @@ pub const Bundler = struct {
                     var dir_info = dir_info_ orelse return;
 
                     this.options.routes.dir = dir_info.abs_path;
-                    this.options.routes.extensions = std.mem.span(&options.RouteConfig.DefaultExtensions);
+                    this.options.routes.extensions = options.RouteConfig.DefaultExtensions[0..];
                     this.options.routes.routes_enabled = true;
                     this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                     try this.router.?.loadRoutes(

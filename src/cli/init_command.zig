@@ -80,7 +80,7 @@ pub const InitCommand = struct {
         }
 
         var new = try allocator.alloc(u8, input.len);
-        for (input) |c, i| {
+        for (input, 0..) |c, i| {
             if (c == ' ' or c == '"' or c == '\'') {
                 new[i] = '-';
             } else {
@@ -180,7 +180,7 @@ pub const InitCommand = struct {
 
                 for (paths_to_try) |path| {
                     if (exists(path)) {
-                        fields.entry_point = std.mem.span(path);
+                        fields.entry_point = bun.asByteSlice(path);
                         break :infer;
                     }
                 }

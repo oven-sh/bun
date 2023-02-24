@@ -236,7 +236,7 @@ pub const ModuleLoader = struct {
                 outer: for (modules) |module_| {
                     var module = module_;
                     const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
-                    for (root_dependency_ids) |dep, dep_i| {
+                    for (root_dependency_ids, 0..) |dep, dep_i| {
                         if (dep != root_dependency_id) continue;
                         module.resolveError(
                             this.vm(),
@@ -328,7 +328,7 @@ pub const ModuleLoader = struct {
                 outer: for (modules) |module_| {
                     var module = module_;
                     var tags = module.parse_result.pending_imports.items(.tag);
-                    for (tags) |tag, tag_i| {
+                    for (tags, 0..) |tag, tag_i| {
                         if (tag == .resolve) {
                             var esms = module.parse_result.pending_imports.items(.esm);
                             const esm = esms[tag_i];
@@ -375,7 +375,7 @@ pub const ModuleLoader = struct {
                     var module = module_;
                     const record_ids = module.parse_result.pending_imports.items(.import_record_id);
                     const root_dependency_ids = module.parse_result.pending_imports.items(.root_dependency_id);
-                    for (root_dependency_ids) |dependency_id, import_id| {
+                    for (root_dependency_ids, 0..) |dependency_id, import_id| {
                         if (resolution_ids[dependency_id] != package_id) continue;
                         module.downloadError(
                             this.vm(),
@@ -410,7 +410,7 @@ pub const ModuleLoader = struct {
                     // var esms = module.parse_result.pending_imports.items(.esm);
                     // var versions = module.parse_result.pending_imports.items(.dependency);
                     var done_count: usize = 0;
-                    for (tags) |tag, tag_i| {
+                    for (tags, 0..) |tag, tag_i| {
                         const root_id = root_dependency_ids[tag_i];
                         const resolution_ids = pm.lockfile.buffers.resolutions.items;
                         if (root_id >= resolution_ids.len) continue;
@@ -618,7 +618,7 @@ pub const ModuleLoader = struct {
                 else => |err| std.fmt.allocPrint(
                     bun.default_allocator,
                     "{s} resolving package '{s}' at '{s}'",
-                    .{ std.mem.span(@errorName(err)), result.name, result.url },
+                    .{ bun.asByteSlice(@errorName(err)), result.name, result.url },
                 ),
             };
 
@@ -707,7 +707,7 @@ pub const ModuleLoader = struct {
                     bun.default_allocator,
                     "{s} downloading package '{s}@{any}'",
                     .{
-                        std.mem.span(@errorName(err)),
+                        bun.asByteSlice(@errorName(err)),
                         result.name,
                         result.resolution.fmt(vm.packageManager().lockfile.buffers.string_bytes.items),
                     },
@@ -1559,8 +1559,8 @@ pub const ModuleLoader = struct {
                         return ResolvedSource{
                             .allocator = null,
                             .source_code = ZigString.init(jsc_vm.entry_point.source.contents),
-                            .specifier = ZigString.init(std.mem.span(JSC.VirtualMachine.main_file_name)),
-                            .source_url = ZigString.init(std.mem.span(JSC.VirtualMachine.main_file_name)),
+                            .specifier = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                            .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                             .hash = 0,
                         };
                     }
@@ -1628,8 +1628,8 @@ pub const ModuleLoader = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
-                        .specifier = ZigString.init(std.mem.span(JSC.VirtualMachine.main_file_name)),
-                        .source_url = ZigString.init(std.mem.span(JSC.VirtualMachine.main_file_name)),
+                        .specifier = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
+                        .source_url = ZigString.init(bun.asByteSlice(JSC.VirtualMachine.main_file_name)),
                         .hash = 0,
                     };
                 },

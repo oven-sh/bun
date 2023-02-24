@@ -428,7 +428,7 @@ pub const Msg = struct {
             .data = this.data.cloneWithBuilder(builder),
             .metadata = this.metadata,
             .notes = if (this.notes != null and this.notes.?.len > 0) brk: {
-                for (this.notes.?) |note, i| {
+                for (this.notes.?, 0..) |note, i| {
                     notes[i] = note.cloneWithBuilder(builder);
                 }
                 break :brk notes[0..this.notes.?.len];
@@ -469,7 +469,7 @@ pub const Msg = struct {
 
         if (this.notes) |notes| {
             if (notes.len > 0) {
-                for (notes) |note, i| {
+                for (notes, 0..) |note, i| {
                     _notes[i] = note.toAPI();
                 }
             }
@@ -480,7 +480,7 @@ pub const Msg = struct {
 
     pub fn toAPIFromList(comptime ListType: type, list: ListType, allocator: std.mem.Allocator) ![]Api.Message {
         var out_list = try allocator.alloc(Api.Message, list.items.len);
-        for (list.items) |item, i| {
+        for (list.items, 0..) |item, i| {
             out_list[i] = try item.toAPI(allocator);
         }
 
@@ -671,7 +671,7 @@ pub const Log = struct {
                 return JSC.JSValue.fromRef(JSC.BuildError.create(global, allocator, msg));
             },
             else => {
-                for (msgs[0..count]) |msg, i| {
+                for (msgs[0..count], 0..) |msg, i| {
                     switch (msg.metadata) {
                         .build => {
                             errors_stack[i] = JSC.BuildError.create(global, allocator, msg).?;

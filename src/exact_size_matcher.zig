@@ -44,7 +44,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
             switch (str.len) {
                 1...max_bytes - 1 => {
                     var tmp: [max_bytes]u8 = undefined;
-                    for (str) |char, i| {
+                    for (str, 0..) |char, i| {
                         tmp[i] = std.ascii.toLower(char);
                     }
                     @memset(tmp[str.len..].ptr, 0, tmp[str.len..].len);

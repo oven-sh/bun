@@ -96,7 +96,7 @@ pub const Editor = enum(u8) {
         inline for (default_preference_list) |editor| {
             if (bin_name.get(editor)) |path| {
                 if (which(buf, PATH, cwd, path)) |bin| {
-                    out.* = std.mem.span(bin);
+                    out.* = bun.asByteSlice(bin);
                     return editor;
                 }
             }
@@ -111,7 +111,7 @@ pub const Editor = enum(u8) {
         if (bin_name.get(editor)) |path| {
             if (path.len > 0) {
                 if (which(buf, PATH, cwd, path)) |bin| {
-                    out.* = std.mem.span(bin);
+                    out.* = bun.asByteSlice(bin);
                     return true;
                 }
             }
@@ -126,7 +126,7 @@ pub const Editor = enum(u8) {
                 if (std.os.open(path, 0, 0)) |opened| {
                     std.os.close(opened);
                     if (out != null) {
-                        out.?.* = std.mem.span(path);
+                        out.?.* = bun.asByteSlice(path);
                     }
                     return true;
                 } else |_| {}

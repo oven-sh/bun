@@ -113,7 +113,7 @@ pub const CommandLineReporter = struct {
         const color_code = comptime if (skip) "<d>" else "";
 
         if (Output.enable_ansi_colors_stderr) {
-            for (scopes) |_, i| {
+            for (scopes, 0..) |_, i| {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;
@@ -125,7 +125,7 @@ pub const CommandLineReporter = struct {
                 writer.writeAll(" >") catch unreachable;
             }
         } else {
-            for (scopes) |_, i| {
+            for (scopes, 0..) |_, i| {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;

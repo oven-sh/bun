@@ -229,7 +229,7 @@ const ExternVersionMap = extern struct {
     values: PackageVersionList = PackageVersionList{},
 
     pub fn findKeyIndex(this: ExternVersionMap, buf: []const Semver.Version, find: Semver.Version) ?u32 {
-        for (this.keys.get(buf)) |key, i| {
+        for (this.keys.get(buf), 0..) |key, i| {
             if (key.eql(find)) {
                 return @truncate(u32, i);
             }
@@ -482,7 +482,7 @@ pub const PackageManifest = struct {
                 alignment: usize,
             };
             var data: [fields.len]Data = undefined;
-            for (fields) |field_info, i| {
+            for (fields, 0..) |field_info, i| {
                 data[i] = .{
                     .size = @sizeOf(field_info.type),
                     .name = field_info.name,
@@ -499,7 +499,7 @@ pub const PackageManifest = struct {
             std.sort.sort(Data, &data, &trash, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
-            for (data) |elem, i| {
+            for (data, 0..) |elem, i| {
                 sizes_bytes[i] = elem.size;
                 names[i] = elem.name;
             }
@@ -717,7 +717,7 @@ pub const PackageManifest = struct {
 
     pub fn findByDistTag(this: *const PackageManifest, tag: string) ?FindResult {
         const versions = this.pkg.dist_tags.versions.get(this.versions);
-        for (this.pkg.dist_tags.tags.get(this.external_strings)) |tag_str, i| {
+        for (this.pkg.dist_tags.tags.get(this.external_strings), 0..) |tag_str, i| {
             if (strings.eql(tag_str.slice(this.string_buf), tag)) {
                 return this.findByVersion(versions[i]);
             }

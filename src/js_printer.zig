@@ -705,7 +705,7 @@ pub fn NewPrinter(
                     p.writer.print(StringType, str);
                 },
                 [6]u8 => {
-                    const span = std.mem.span(&str);
+                    const span = str[0..6];
                     p.writer.print(@TypeOf(span), span);
                 },
                 else => {
@@ -819,7 +819,7 @@ pub fn NewPrinter(
                     p.printIndent();
                 }
 
-                for (import.items) |item, i| {
+                for (import.items, 0..) |item, i| {
                     if (i > 0) {
                         p.print(",");
                         p.printSpace();
@@ -1013,7 +1013,7 @@ pub fn NewPrinter(
                 p.print("(");
             }
 
-            for (args) |arg, i| {
+            for (args, 0..) |arg, i| {
                 if (i != 0) {
                     p.print(",");
                     p.printSpace();
@@ -2065,7 +2065,7 @@ pub fn NewPrinter(
                             p.options.indent += 1;
                         }
 
-                        for (items) |item, i| {
+                        for (items, 0..) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (e.is_single_line) {
@@ -2966,7 +2966,7 @@ pub fn NewPrinter(
                     if (b.items.len > 0) {
                         p.options.indent += @as(usize, @boolToInt(!b.is_single_line));
 
-                        for (b.items) |*item, i| {
+                        for (b.items, 0..) |*item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (b.is_single_line) {
@@ -3009,7 +3009,7 @@ pub fn NewPrinter(
                         p.options.indent +=
                             @as(usize, @boolToInt(!b.is_single_line));
 
-                        for (b.properties) |*property, i| {
+                        for (b.properties, 0..) |*property, i| {
                             if (i != 0) {
                                 p.print(",");
                             }
@@ -3392,7 +3392,7 @@ pub fn NewPrinter(
                                 p.print("{");
                                 p.printSpace();
                                 const last = s.items.len - 1;
-                                for (s.items) |item, i| {
+                                for (s.items, 0..) |item, i| {
                                     const symbol = p.symbols.getWithLink(item.name.ref.?).?;
                                     const name = symbol.original_name;
                                     var did_print = false;
@@ -3509,7 +3509,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |item, i| {
+                    for (s.items, 0..) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -3566,7 +3566,7 @@ pub fn NewPrinter(
                             // Avoid initializing an entire component library because you imported one icon
                             p.printLoadFromBundleWithoutCall(s.import_record_index);
                             p.print(",{");
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 p.printClauseAlias(item.alias);
                                 p.print(":");
                                 p.printQuotedUTF8(p.renamer.nameForSymbol(item.name.ref.?), true);
@@ -3592,7 +3592,7 @@ pub fn NewPrinter(
                             p.print("var {");
                             var symbol_counter: u32 = p.symbol_counter;
 
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 if (i > 0) {
                                     p.print(",");
                                 }
@@ -3618,7 +3618,7 @@ pub fn NewPrinter(
                             // reset symbol counter back
                             symbol_counter = p.symbol_counter;
 
-                            for (s.items) |item, i| {
+                            for (s.items, 0..) |item, i| {
                                 if (i > 0) {
                                     p.print(",");
                                 }
@@ -3649,7 +3649,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |item, i| {
+                    for (s.items, 0..) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -4047,7 +4047,7 @@ pub fn NewPrinter(
                                     p.printSpace();
                                     p.print(",");
                                     p.printSpace();
-                                    for (s.items) |item, i| {
+                                    for (s.items, 0..) |item, i| {
                                         p.printClauseItemAs(item, .@"var");
 
                                         if (i < s.items.len - 1) {
@@ -4057,7 +4057,7 @@ pub fn NewPrinter(
                                     }
                                 }
                             } else {
-                                for (s.items) |item, i| {
+                                for (s.items, 0..) |item, i| {
                                     p.printClauseItemAs(item, .@"var");
 
                                     if (i < s.items.len - 1) {
@@ -4096,7 +4096,7 @@ pub fn NewPrinter(
                                 var needs_comma = false;
                                 // This might be a determinsim issue
                                 // But, it's not random
-                                skip: for (p.import_records) |_record, i| {
+                                skip: for (p.import_records, 0..) |_record, i| {
                                     if (!_record.is_bundled or _record.module_id == 0) continue;
 
                                     if (i < last) {
@@ -4158,7 +4158,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                         }
 
-                        for (s.items) |item, i| {
+                        for (s.items, 0..) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (s.is_single_line) {

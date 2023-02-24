@@ -1061,7 +1061,7 @@ pub const RunCommand = struct {
 
                 // // file.close();
 
-                const out = std.mem.span(destination);
+                const out = bun.asByteSlice(destination);
                 return try runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),

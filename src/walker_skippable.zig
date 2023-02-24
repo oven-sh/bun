@@ -149,7 +149,7 @@ pub fn walk(
     var skip_filenames_ = skip_names[0..skip_name_i];
     var skip_dirnames_ = skip_names[skip_name_i..];
 
-    for (skip_dirnames) |name, i| {
+    for (skip_dirnames, 0..) |name, i| {
         skip_dirnames_[i] = std.hash.Wyhash.hash(seed, name);
     }
 

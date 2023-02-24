@@ -375,7 +375,7 @@ pub const Tree = struct {
             var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
             var next = PackageIDSlice{};
 
-            for (trees) |*tree, id| {
+            for (trees, 0..) |*tree, id| {
                 if (tree.dependencies.len > 0) {
                     var child = dependencies[id];
                     const len = @truncate(PackageID, child.items.len);
@@ -525,7 +525,7 @@ pub fn maybeCloneFilteringRootPackages(
     var any_changes = false;
     const end = @truncate(PackageID, old.packages.len);
 
-    for (root_dependencies) |dependency, i| {
+    for (root_dependencies, 0..) |dependency, i| {
         if (!dependency.behavior.isEnabled(features) and resolutions[i] < end) {
             resolutions[i] = invalid_package_id;
             any_changes = true;
@@ -550,7 +550,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 
             for (updates) |update| {
                 if (update.version.tag == .uninitialized) {
-                    for (root_deps) |dep, i| {
+                    for (root_deps, 0..) |dep, i| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             const old_resolution = old_resolutions[i];
                             if (old_resolution > old.packages.len) continue;
@@ -577,9 +577,9 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
             const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
 
-            for (updates) |update, update_i| {
+            for (updates, 0..) |update, update_i| {
                 if (update.version.tag == .uninitialized) {
-                    for (root_deps) |*dep, i| {
+                    for (root_deps, 0..) |*dep, i| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             const old_resolution = old_resolutions[i];
                             if (old_resolution > old.packages.len) continue;
@@ -702,7 +702,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
 
         for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
-                for (root_deps) |dep, i| {
+                for (root_deps, 0..) |dep, i| {
                     if (update.matches(dep, string_buf)) {
                         const package_id = resolved_ids[i];
                         if (package_id > new.packages.len) continue;
@@ -893,7 +893,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
-                    std.mem.span(lockfile_path),
+                    std.mem.sliceAsBytes(lockfile_path),
                 });
                 Global.crash();
             },
@@ -988,7 +988,7 @@ pub const Printer = struct {
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        for (this.updates) |update, update_id| {
+                        for (this.updates, 0..) |update, update_id| {
                             if (update.failed) return;
                             if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
@@ -1019,14 +1019,14 @@ pub const Printer = struct {
                     );
                 }
             } else {
-                outer: for (dependencies_buffer) |dependency, dep_id| {
+                outer: for (dependencies_buffer, 0..) |dependency, dep_id| {
                     if (dependency.behavior.isPeer()) continue;
                     const package_id = resolutions_buffer[dep_id];
                     if (package_id >= end) continue;
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        for (this.updates) |update, update_id| {
+                        for (this.updates, 0..) |update, update_id| {
                             if (update.failed) return;
                             if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
@@ -1343,8 +1343,8 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
     const string_buf = this.buffers.string_bytes.items;
 
     const root_list = resolutions_list[0];
-    for (resolutions_list) |list, parent_id| {
-        for (list.get(resolutions_buffer)) |package_id, j| {
+    for (resolutions_list, 0..) |list, parent_id| {
+        for (list.get(resolutions_buffer), 0..) |package_id, j| {
             if (package_id >= end) {
                 const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
                 if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
@@ -1878,7 +1878,7 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        for (old_dependencies) |dependency, i| {
+        for (old_dependencies, 0..) |dependency, i| {
             dependencies[i] = try dependency.clone(
                 old_string_buf,
                 *Lockfile.StringBuilder,
@@ -1890,7 +1890,7 @@ pub const Package = extern struct {
 
         cloner.trees_count += @as(u32, @boolToInt(old_resolutions.len > 0));
 
-        for (old_resolutions) |old_resolution, i| {
+        for (old_resolutions, 0..) |old_resolution, i| {
             if (old_resolution >= max_package_id) continue;
 
             const mapped = package_id_mapping[old_resolution];
@@ -2065,7 +2065,7 @@ pub const Package = extern struct {
 
                 if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
 
-                for (keys) |key, i| {
+                for (keys, 0..) |key, i| {
                     string_builder.count(key.slice(string_buf));
                     string_builder.count(version_strings[i].slice(string_buf));
                 }
@@ -2160,7 +2160,7 @@ pub const Package = extern struct {
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if (comptime group.behavior.isOptional()) {
-                        for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dep, j| {
+                        for (start_dependencies[0 .. total_dependencies_count - dependencies.len], 0..) |dep, j| {
                             if (dep.name_hash == key.hash) {
                                 // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
                                 // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
@@ -2236,13 +2236,13 @@ pub const Package = extern struct {
             const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
 
-            for (from_deps) |*from_dep, i| {
+            for (from_deps, 0..) |*from_dep, i| {
                 // common case: dependency is present in both versions and in the same position
                 const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
                     i
                 else brk: {
                     // less common, o(n^2) case
-                    for (to_deps) |to_dep, j| {
+                    for (to_deps, 0..) |to_dep, j| {
                         if (from_dep.name_hash == to_dep.name_hash) break :brk j;
                     }
 
@@ -2262,7 +2262,7 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            outer: for (to_deps) |to_dep, i| {
+            outer: for (to_deps, 0..) |to_dep, i| {
                 if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
 
                 for (from_deps) |from_dep| {
@@ -2421,7 +2421,7 @@ pub const Package = extern struct {
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
                 if (comptime group.behavior.isOptional()) {
-                    for (package_dependencies[0 .. package_dependencies.len - dependencies.len]) |package_dep, j| {
+                    for (package_dependencies[0 .. package_dependencies.len - dependencies.len], 0..) |package_dep, j| {
                         if (package_dep.name_hash == this_dep.name_hash) {
                             package_dependencies[j] = this_dep;
                             break;
@@ -2470,7 +2470,7 @@ pub const Package = extern struct {
 
         const orig_msgs_len = log.msgs.items.len;
 
-        for (arr.slice()) |item, i| {
+        for (arr.slice(), 0..) |item, i| {
             defer fallback.fixed_buffer_allocator.reset();
             const path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
@@ -2962,7 +2962,7 @@ pub const Package = extern struct {
                     .e_array => |arr| {
                         if (arr.items.len == 0) break :brk;
 
-                        for (arr.slice()) |item, i| {
+                        for (arr.slice(), 0..) |item, i| {
                             const name = workspace_names[i];
                             defer allocator.free(name);
 
@@ -3009,7 +3009,7 @@ pub const Package = extern struct {
                                     var arr = packages_q.data.e_array;
                                     if (arr.items.len == 0) break :brk;
 
-                                    for (arr.slice()) |item, i| {
+                                    for (arr.slice(), 0..) |item, i| {
                                         const name = workspace_names[i];
                                         defer allocator.free(name);
 
@@ -3148,7 +3148,7 @@ pub const Package = extern struct {
                 Type: type,
             };
             var data: [fields.len]Data = undefined;
-            for (fields) |field_info, i| {
+            for (fields, 0..) |field_info, i| {
                 data[i] = .{
                     .size = @sizeOf(field_info.type),
                     .size_index = i,
@@ -3167,7 +3167,7 @@ pub const Package = extern struct {
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             var Types: [fields.len]type = undefined;
-            for (data) |elem, i| {
+            for (data, 0..) |elem, i| {
                 sizes_bytes[i] = elem.size;
                 field_indexes[i] = elem.size_index;
                 Types[i] = elem.Type;
@@ -3304,7 +3304,7 @@ const Buffers = struct {
             alignment: usize,
         };
         var data: [fields.len]Data = undefined;
-        for (fields) |field_info, i| {
+        for (fields, 0..) |field_info, i| {
             data[i] = .{
                 .size = @sizeOf(field_info.type),
                 .name = field_info.name,
@@ -3323,7 +3323,7 @@ const Buffers = struct {
         var sizes_bytes: [fields.len]usize = undefined;
         var names: [fields.len][]const u8 = undefined;
         var types: [fields.len]type = undefined;
-        for (data) |elem, i| {
+        for (data, 0..) |elem, i| {
             sizes_bytes[i] = elem.size;
             names[i] = elem.name;
             types[i] = elem.type;
@@ -3454,7 +3454,7 @@ const Buffers = struct {
         switch (package_id) {
             0 => return Tree.root_dep_id,
             invalid_package_id => return invalid_package_id,
-            else => for (this.resolutions.items) |pkg_id, dep_id| {
+            else => for (this.resolutions.items, 0..) |pkg_id, dep_id| {
                 if (pkg_id == package_id) return @truncate(DependencyID, dep_id);
             },
         }
@@ -3465,7 +3465,7 @@ const Buffers = struct {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
-        inline for (sizes.names) |name, i| {
+        inline for (sizes.names, 0..) |name, i| {
             const Type = @TypeOf(@field(this, name));
 
             var pos: usize = 0;
@@ -3485,7 +3485,7 @@ const Buffers = struct {
                 this.trees = try Tree.List.initCapacity(allocator, tree_list.items.len);
                 this.trees.items.len = tree_list.items.len;
 
-                for (tree_list.items) |tree, j| {
+                for (tree_list.items, 0..) |tree, j| {
                     this.trees.items[j] = Tree.toTree(tree);
                 }
             } else {
@@ -3619,7 +3619,7 @@ pub const Serializer = struct {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
-            for (name_hashes) |name_hash, id| {
+            for (name_hashes, 0..) |name_hash, id| {
                 try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
 
                 const resolution = resolutions[id];

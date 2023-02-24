@@ -628,7 +628,7 @@ pub fn toAST(
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
+        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
         .Union => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {

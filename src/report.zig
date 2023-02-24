@@ -72,12 +72,12 @@ pub const CrashReportWriter = struct {
             .{ base_dir, Global.package_json_version, @intCast(u64, @max(std.time.milliTimestamp(), 0)) },
         ) catch return;
 
-        std.fs.cwd().makeDir(std.fs.path.dirname(std.mem.span(file_path)).?) catch {};
+        std.fs.cwd().makeDir(std.fs.path.dirname(bun.asByteSlice(file_path)).?) catch {};
         var file = std.fs.cwd().createFileZ(file_path, .{ .truncate = true }) catch return;
         this.file = std.io.bufferedWriter(
             file.writer(),
         );
-        this.file_path = std.mem.span(file_path);
+        this.file_path = bun.asByteSlice(file_path);
     }
 
     pub fn printPath(this: *CrashReportWriter) void {

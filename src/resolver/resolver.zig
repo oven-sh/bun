@@ -709,7 +709,7 @@ pub const Resolver = struct {
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
-            .url, .at_conditional, .at => std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder),
+            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
             .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
             else => r.opts.extension_order,
         };
@@ -1577,7 +1577,7 @@ pub const Resolver = struct {
                             string_buf = package_json.dependencies.source_buf;
                         }
 
-                        for (dependencies_list) |dependency, dependency_id| {
+                        for (dependencies_list, 0..) |dependency, dependency_id| {
                             const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
@@ -1839,7 +1839,7 @@ pub const Resolver = struct {
                 error.FileNotFound => unreachable,
                 else => {
                     // TODO: handle this error better
-                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{std.mem.span(@errorName(err))}) catch unreachable;
+                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{bun.asByteSlice(@errorName(err))}) catch unreachable;
                     return err;
                 },
             }

@@ -628,7 +628,7 @@ libarchive:
 
 .PHONY: tgz
 tgz:
-	$(ZIG) build tgz-obj -Drelease-fast
+	$(ZIG) build tgz-obj -Doptimize=ReleaseFast
 	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/tgz.o
 
@@ -665,7 +665,7 @@ init-submodules:
 
 .PHONY: build-obj
 build-obj:
-	$(ZIG) build obj -Drelease-fast -Dcpu="$(CPU_TARGET)"
+	$(ZIG) build obj -Doptimize=ReleaseFast -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-build-obj-wasm
 dev-build-obj-wasm:
@@ -682,7 +682,7 @@ dev-wasm: dev-build-obj-wasm
 
 .PHONY: build-obj-wasm
 build-obj-wasm:
-	$(ZIG) build bun-wasm -Drelease-fast -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding --prominent-compile-errors
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
@@ -692,7 +692,7 @@ build-obj-wasm:
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Drelease-small -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding --prominent-compile-errors
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
@@ -719,7 +719,7 @@ wasm: api build-obj-wasm-small
 
 .PHONY: build-obj-safe
 build-obj-safe:
-	$(ZIG) build obj -Drelease-safe
+	$(ZIG) build obj -Doptimize=ReleaseSafe
 
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=$(CXX_VERSION) -fno-exceptions
@@ -821,13 +821,13 @@ generate-install-script:
 
 .PHONY: fetch
 fetch: $(IO_FILES)
-	$(ZIG) build -Drelease-fast fetch-obj
+	$(ZIG) build -Doptimize=ReleaseFast fetch-obj
 	$(CXX) $(PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 
 .PHONY: sha
 sha:
-	$(ZIG) build -Drelease-fast sha-bench-obj
+	$(ZIG) build -Doptimize=ReleaseFast sha-bench-obj
 	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
@@ -843,7 +843,7 @@ machbench-debug: $(IO_FILES)
 
 .PHONY: machbench
 machbench: $(IO_FILES)
-	$(ZIG) build -Drelease-fast machbench-obj
+	$(ZIG) build -Doptimize=ReleaseFast machbench-obj
 	$(CXX) $(PACKAGE_DIR)/machbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/machbench $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/machbench.o
 
@@ -855,7 +855,7 @@ httpbench-debug: $(IO_FILES)
 
 .PHONY: httpbench-release
 httpbench-release: $(IO_FILES)
-	$(ZIG) build -Drelease-fast httpbench-obj
+	$(ZIG) build -Doptimize=ReleaseFast httpbench-obj
 	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/httpbench $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
@@ -1076,7 +1076,7 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj --prominent-compile-errors
+	$(ZIG) build obj --prominent-compile-errors -freference-trace
 
 .PHONY: dev-obj-linux
 dev-obj-linux:

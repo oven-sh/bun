@@ -26,7 +26,7 @@ pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
     var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
     var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos) |field, i| {
+    inline for (fieldInfos, 0..) |field, i| {
         enumFields[i] = .{
             .name = field.name,
             .value = i,
@@ -105,7 +105,7 @@ pub fn Maybe(comptime ResultType: type) type {
                         if (ResultType == []u8) {
                             return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
                         }
-                        return JSC.ZigString.init(std.mem.span(r)).withEncoding().toValueAuto(globalThis);
+                        return JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalThis);
                     }
 
                     if (comptime @typeInfo(ReturnType) == .Bool) {
@@ -178,7 +178,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = std.mem.span(path) },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
                 },
             };
         }
@@ -643,7 +643,7 @@ pub const PathLike = union(Tag) {
                     arguments.protectEat();
 
                     if (zig_str.is16Bit()) {
-                        var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
+                        var printed = bun.asByteSlice(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
                         return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
                     }
 
@@ -1426,7 +1426,7 @@ pub const Emitter = struct {
             pub fn remove(this: *List, ctx: JSC.C.JSContextRef, callback: JSC.JSValue) bool {
                 const callbacks = this.list.items(.callback);
 
-                for (callbacks) |item, i| {
+                for (callbacks, 0..) |item, i| {
                     if (callback.eqlValue(item)) {
                         JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
                         this.once_count -|= @as(u32, @boolToInt(this.list.items(.once)[i]));
@@ -1720,7 +1720,7 @@ pub const Path = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         var possibly_utf16 = false;
-        for (args_ptr[0..args_len]) |arg, i| {
+        for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             if (zig_str.is16Bit()) {
                 // TODO: remove this string conversion

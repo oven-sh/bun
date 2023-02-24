@@ -5231,7 +5231,7 @@ On fish that looks like `fish_add_path (brew --prefix llvm@15)/bin`
 Install the version of Zig referenced in the [`Dockerfile`](./Dockerfile) using [zigup](https://github.com/marler8997/zigup). For example:
 
 ```bash
-zigup 0.11.0-dev.1393+38eebf3c4
+zigup 0.11.0-dev.1783+436e99d13
 ```
 
 #### Build bun (macOS)

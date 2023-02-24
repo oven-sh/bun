@@ -6,7 +6,7 @@ pub const CachedBitset = extern struct {
     len: u32,
 
     pub fn fromFile(comptime filename: anytype) CachedBitset {
-        return comptime @bitCast(CachedBitset, std.mem.span(@embedFile(filename)).ptr[0..@sizeOf(CachedBitset)].*);
+        return comptime @bitCast(CachedBitset, bun.asByteSlice(@embedFile(filename)).ptr[0..@sizeOf(CachedBitset)].*);
     }
 };
 

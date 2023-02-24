@@ -125,7 +125,7 @@ pub const Request = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("method: \"");
-            try writer.writeAll(std.mem.span(@tagName(this.method)));
+            try writer.writeAll(bun.asByteSlice(@tagName(this.method)));
             try writer.writeAll("\"");
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
@@ -163,7 +163,7 @@ pub const Request = struct {
 
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
-            .url = std.mem.span(ctx.getFullURL()),
+            .url = bun.asByteSlice(ctx.getFullURL()),
             .body = .{ .Empty = {} },
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),

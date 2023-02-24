@@ -95,7 +95,7 @@ this is some output
 
 ## TypeScript
 
-To install TypeScript definitions for Bun's built-in APIs, first install `bun-types`.
+To install TypeScript definitions for Bun's built-in APIs in your project, install `bun-types`.
 
 ```sh
 $ bun add -d bun-types # dev dependency

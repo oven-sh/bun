@@ -23,8 +23,8 @@ const RecognizedExtensions = std.ComptimeStringMap(void, .{
 
 var buf: [32 * 1024 * 1024]u8 = undefined;
 
-// zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
-// zig build-exe -Drelease-fast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
+// zig build-exe -Doptimize=ReleaseFast --main-pkg-path ../ ./tgz.zig ../src/deps/zlib/libz.a ../src/deps/libarchive.a -lc -liconv
 pub fn main() anyerror!void {
     var stdout_ = std.io.getStdOut();
     var stderr_ = std.io.getStdErr();

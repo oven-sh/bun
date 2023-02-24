@@ -426,7 +426,7 @@ ENV CCACHE_DIR=/ccache
 
 RUN --mount=type=cache,target=/ccache cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
-    OUTPUT_DIR=/tmp/bun-${TRIPLET}-${GIT_SHA} $ZIG_PATH/zig build obj -Doutput-dir=/tmp/bun-${TRIPLET}-${GIT_SHA} -Drelease-fast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" && \
+    OUTPUT_DIR=/tmp/bun-${TRIPLET}-${GIT_SHA} $ZIG_PATH/zig build obj -Doutput-dir=/tmp/bun-${TRIPLET}-${GIT_SHA} -Doptimize=ReleaseFast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" && \
     cp /tmp/bun-${TRIPLET}-${GIT_SHA}/bun.o /tmp/bun-${TRIPLET}-${GIT_SHA}/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/src/build-id).o && cd / && rm -rf $BUN_DIR
 
 FROM scratch as build_release_obj

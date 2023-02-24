@@ -59,8 +59,8 @@ pub const BytecodeCacheFetcher = struct {
             .Unknown => {
                 var basename_buf: [512]u8 = undefined;
                 var pathname = Fs.PathName.init(sourcename);
-                std.mem.copy(u8, &basename_buf, pathname.base);
-                std.mem.copy(u8, basename_buf[pathname.base.len..], ".bytecode");
+                bun.copy(u8, &basename_buf, pathname.base);
+                bun.copy(u8, basename_buf[pathname.base.len..], ".bytecode");
                 const basename = basename_buf[0 .. pathname.base.len + ".bytecode".len];
 
                 if (fs.fetchCacheFile(basename)) |cache_file| {
@@ -162,7 +162,7 @@ pub const FileSystem = struct {
         // This makes path resolution more reliable
         if (!std.fs.path.isSep(_top_level_dir[_top_level_dir.len - 1])) {
             const tld = try allocator.alloc(u8, _top_level_dir.len + 1);
-            std.mem.copy(u8, tld, _top_level_dir);
+            bun.copy(u8, tld, _top_level_dir);
             tld[tld.len - 1] = std.fs.path.sep;
             // if (!isBrowser) {
             //     allocator.free(_top_level_dir);
@@ -1256,10 +1256,10 @@ pub const Path = struct {
                 return new_path;
             } else {
                 var buf = try allocator.alloc(u8, this.text.len + this.pretty.len + 2);
-                std.mem.copy(u8, buf, this.text);
+                bun.copy(u8, buf, this.text);
                 buf.ptr[this.text.len] = 0;
                 var new_pretty = buf[this.text.len + 1 ..];
-                std.mem.copy(u8, buf[this.text.len + 1 ..], this.pretty);
+                bun.copy(u8, buf[this.text.len + 1 ..], this.pretty);
                 var new_path = Fs.Path.init(buf[0..this.text.len]);
                 buf.ptr[buf.len - 1] = 0;
                 new_path.pretty = new_pretty;

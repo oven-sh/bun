@@ -97,7 +97,7 @@ pub const BuildCommand = struct {
                         },
                         .move => |value| {
                             // const primary = f.input.text[from_path.len..];
-                            // std.mem.copy(u8, filepath_buf[2..], primary);
+                            // bun.copy(u8, filepath_buf[2..], primary);
                             // rel_path = filepath_buf[0 .. primary.len + 2];
                             rel_path = value.pathname;
 

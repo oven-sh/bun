@@ -395,8 +395,8 @@ pub const InstallCompletionsCommand = struct {
                         // $ZDOTDIR/.zlogout
 
                         if (bun.getenvZ("ZDOTDIR")) |zdot_dir| {
-                            std.mem.copy(u8, &zshrc_filepath, zdot_dir);
-                            std.mem.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
+                            bun.copy(u8, &zshrc_filepath, zdot_dir);
+                            bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
                             var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :first;
@@ -405,8 +405,8 @@ pub const InstallCompletionsCommand = struct {
 
                     second: {
                         if (bun.getenvZ("HOME")) |zdot_dir| {
-                            std.mem.copy(u8, &zshrc_filepath, zdot_dir);
-                            std.mem.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
+                            bun.copy(u8, &zshrc_filepath, zdot_dir);
+                            bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshrc");
                             zshrc_filepath[zdot_dir.len + "/.zshrc".len] = 0;
                             var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshrc".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :second;
@@ -415,8 +415,8 @@ pub const InstallCompletionsCommand = struct {
 
                     third: {
                         if (bun.getenvZ("HOME")) |zdot_dir| {
-                            std.mem.copy(u8, &zshrc_filepath, zdot_dir);
-                            std.mem.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
+                            bun.copy(u8, &zshrc_filepath, zdot_dir);
+                            bun.copy(u8, zshrc_filepath[zdot_dir.len..], "/.zshenv");
                             zshrc_filepath[zdot_dir.len + "/.zshenv".len] = 0;
                             var filepath = zshrc_filepath[0 .. zdot_dir.len + "/.zshenv".len :0];
                             break :zshrc std.fs.openFileAbsoluteZ(filepath, .{ .mode = .read_write }) catch break :third;

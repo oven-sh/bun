@@ -330,7 +330,7 @@ pub const Bin = extern struct {
                     return;
                 };
                 const rel = Path.relative(from, to);
-                std.mem.copy(u8, remain, rel);
+                bun.copy(u8, remain, rel);
                 remain = remain[rel.len..];
                 remain[0] = std.fs.path.sep;
                 remain = remain[1..];
@@ -342,7 +342,7 @@ pub const Bin = extern struct {
                     return;
                 }
 
-                std.mem.copy(u8, &target_buf, this.global_bin_path);
+                bun.copy(u8, &target_buf, this.global_bin_path);
                 from_remain = target_buf[this.global_bin_path.len..];
                 from_remain[0] = std.fs.path.sep;
                 from_remain = from_remain[1..];
@@ -358,7 +358,7 @@ pub const Bin = extern struct {
             }
 
             const name = this.package_name.slice();
-            std.mem.copy(u8, remain, name);
+            bun.copy(u8, remain, name);
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
@@ -379,7 +379,7 @@ pub const Bin = extern struct {
                     if (strings.hasPrefixComptime(target, "./")) {
                         target = target["./".len..];
                     }
-                    std.mem.copy(u8, remain, target);
+                    bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
                     const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
@@ -389,7 +389,7 @@ pub const Bin = extern struct {
                     // we need to use the unscoped package name here
                     // this is why @babel/parser would fail to link
                     const unscoped_name = unscopedPackageName(name);
-                    std.mem.copy(u8, from_remain, unscoped_name);
+                    bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -401,7 +401,7 @@ pub const Bin = extern struct {
                     if (strings.hasPrefixComptime(target, "./")) {
                         target = target["./".len..];
                     }
-                    std.mem.copy(u8, remain, target);
+                    bun.copy(u8, remain, target);
                     remain = remain[target.len..];
                     remain[0] = 0;
                     const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
@@ -409,7 +409,7 @@ pub const Bin = extern struct {
 
                     var target_path: [:0]u8 = dest_buf[0..target_len :0];
                     var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
-                    std.mem.copy(u8, from_remain, name_to_use);
+                    bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -431,7 +431,7 @@ pub const Bin = extern struct {
                         if (strings.hasPrefixComptime(target, "./")) {
                             target = target["./".len..];
                         }
-                        std.mem.copy(u8, remain, target);
+                        bun.copy(u8, remain, target);
                         remain = remain[target.len..];
                         remain[0] = 0;
                         const target_len = @ptrToInt(remain.ptr) - @ptrToInt(&dest_buf);
@@ -439,7 +439,7 @@ pub const Bin = extern struct {
 
                         var target_path: [:0]u8 = dest_buf[0..target_len :0];
                         var name_to_use = name_in_terminal.slice(this.string_buf);
-                        std.mem.copy(u8, from_remain, name_to_use);
+                        bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
                         var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -455,7 +455,7 @@ pub const Bin = extern struct {
 
                     var parts = [_][]const u8{ name, target };
 
-                    std.mem.copy(u8, remain, target);
+                    bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
@@ -484,7 +484,7 @@ pub const Bin = extern struct {
                         switch (entry.kind) {
                             std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
                                 target_buf_remain = prev_target_buf_remain;
-                                std.mem.copy(u8, target_buf_remain, entry.name);
+                                bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
                                 var from_path: [:0]u8 = target_buf[0 .. @ptrToInt(target_buf_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -535,7 +535,7 @@ pub const Bin = extern struct {
             }
 
             const name = this.package_name.slice();
-            std.mem.copy(u8, remain, name);
+            bun.copy(u8, remain, name);
             remain = remain[name.len..];
             remain[0] = std.fs.path.sep;
             remain = remain[1..];
@@ -554,7 +554,7 @@ pub const Bin = extern struct {
                     // we need to use the unscoped package name here
                     // this is why @babel/parser would fail to link
                     const unscoped_name = unscopedPackageName(name);
-                    std.mem.copy(u8, from_remain, unscoped_name);
+                    bun.copy(u8, from_remain, unscoped_name);
                     from_remain = from_remain[unscoped_name.len..];
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -563,7 +563,7 @@ pub const Bin = extern struct {
                 },
                 .named_file => {
                     var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
-                    std.mem.copy(u8, from_remain, name_to_use);
+                    bun.copy(u8, from_remain, name_to_use);
                     from_remain = from_remain[name_to_use.len..];
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -585,13 +585,13 @@ pub const Bin = extern struct {
                         if (strings.hasPrefix(target, "./")) {
                             target = target[2..];
                         }
-                        std.mem.copy(u8, remain, target);
+                        bun.copy(u8, remain, target);
                         remain = remain[target.len..];
                         remain[0] = 0;
                         remain = remain[1..];
 
                         var name_to_use = name_in_terminal.slice(this.string_buf);
-                        std.mem.copy(u8, from_remain, name_to_use);
+                        bun.copy(u8, from_remain, name_to_use);
                         from_remain = from_remain[name_to_use.len..];
                         from_remain[0] = 0;
                         var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
@@ -607,7 +607,7 @@ pub const Bin = extern struct {
 
                     var parts = [_][]const u8{ name, target };
 
-                    std.mem.copy(u8, remain, target);
+                    bun.copy(u8, remain, target);
                     remain = remain[target.len..];
 
                     var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
@@ -636,7 +636,7 @@ pub const Bin = extern struct {
                         switch (entry.kind) {
                             std.fs.IterableDir.Entry.Kind.SymLink, std.fs.IterableDir.Entry.Kind.File => {
                                 target_buf_remain = prev_target_buf_remain;
-                                std.mem.copy(u8, target_buf_remain, entry.name);
+                                bun.copy(u8, target_buf_remain, entry.name);
                                 target_buf_remain = target_buf_remain[entry.name.len..];
                                 target_buf_remain[0] = 0;
                                 var to_path = if (!link_global)

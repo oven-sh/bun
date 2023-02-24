@@ -2045,7 +2045,7 @@ pub const EntryPoint = struct {
             var out = try allocator.alloc(u8, str.len + 2);
             out[0] = '.';
             out[1] = '/';
-            std.mem.copy(u8, out[2..], str);
+            bun.copy(u8, out[2..], str);
             return out;
         }
     }

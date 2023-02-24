@@ -69,7 +69,7 @@ pub fn parse(possibly_encoded_pathname_: string) !URLPath {
             possibly_encoded_pathname.len,
         )];
 
-        std.mem.copy(u8, possibly_encoded_pathname, possibly_encoded_pathname_[0..possibly_encoded_pathname.len]);
+        bun.copy(u8, possibly_encoded_pathname, possibly_encoded_pathname_[0..possibly_encoded_pathname.len]);
         var clone = possibly_encoded_pathname[0..possibly_encoded_pathname.len];
 
         var fbs = std.io.fixedBufferStream(

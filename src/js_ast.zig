@@ -103,14 +103,14 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
             var used = _self.overflow.allocator.dupe(*Block, _self.overflow.slice()) catch unreachable;
             var new_head = _self.overflow.allocator.create(Block) catch unreachable;
-            new_head.* = Block{};
+            new_head.* = .{};
 
             var to_move = _self.overflow.ptrs[0.._self.overflow.allocated][_self.overflow.used..];
             if (to_move.len > 0) {
                 to_move = to_move[1..];
             }
 
-            std.mem.copyBackwards(*Block, _self.overflow.ptrs[1..], to_move);
+            bun.copy(*Block, _self.overflow.ptrs[1..], to_move);
             _self.overflow.ptrs[0] = new_head;
             _self.overflow.allocated = 1 + @truncate(Overflow.UsedSize, to_move.len);
             reset();

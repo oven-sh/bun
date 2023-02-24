@@ -391,7 +391,7 @@ pub const ZigString = extern struct {
                 return "";
             }
 
-            std.mem.copy(u8, buf[0..this.len], this.slice());
+            bun.copy(u8, buf, this.slice());
             buf[this.len] = 0;
             return bun.cstring(buf[0..this.len]);
         }

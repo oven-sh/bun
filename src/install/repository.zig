@@ -79,7 +79,7 @@ pub const Repository = extern struct {
         buf: []const u8,
         repository: *const Repository,
         pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
+            if (comptime Environment.allow_assert) std.debug.assert(formatter.label.len > 0);
             try writer.writeAll(formatter.label);
 
             const repo = formatter.repository.repo.slice(formatter.buf);
@@ -124,13 +124,13 @@ pub const Repository = extern struct {
     pub fn tryHTTPS(url: string) ?string {
         if (strings.hasPrefixComptime(url, "ssh://")) {
             final_path_buf[0.."https".len].* = "https".*;
-            std.mem.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
+            bun.copy(u8, final_path_buf["https".len..], url["ssh".len..]);
             return final_path_buf[0..(url.len - "ssh".len + "https".len)];
         }
         if (Dependency.isSCPLikePath(url)) {
             final_path_buf[0.."https://".len].* = "https://".*;
             var rest = final_path_buf["https://".len..];
-            std.mem.copy(u8, rest, url);
+            bun.copy(u8, rest, url);
             if (strings.indexOfChar(rest, ':')) |colon| rest[colon] = '/';
             return final_path_buf[0..(url.len + "https://".len)];
         }

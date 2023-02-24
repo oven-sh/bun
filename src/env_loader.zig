@@ -911,9 +911,9 @@ pub const Map = struct {
             var i: usize = 0;
             while (it.next()) |pair| : (i += 1) {
                 const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.len + 1, 0);
-                std.mem.copy(u8, env_buf, pair.key_ptr.*);
+                bun.copy(u8, env_buf, pair.key_ptr.*);
                 env_buf[pair.key_ptr.len] = '=';
-                std.mem.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
+                bun.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
                 envp_buf[i] = env_buf.ptr;
             }
             std.debug.assert(i == envp_count);

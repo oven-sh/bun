@@ -317,7 +317,7 @@ pub fn build(b: *Build) !void {
         obj.linkLibC();
 
         obj.strip = false;
-        obj.bundle_compiler_rt = false;
+        obj.bundle_compiler_rt = true;
         obj.omit_frame_pointer = optimize != .Debug;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {

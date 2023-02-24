@@ -1,3 +1,5 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -8,10 +10,10 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const std = @import("std");
+const JSAst = bun.JSAst;
 
 const JSLexer = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = bun.logger;
 
 const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
@@ -31,19 +33,17 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = @import("bun").HTTP.HeaderBuilder;
+const HeaderBuilder = bun.HTTP.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
-const HTTPChannel = @import("bun").HTTP.HTTPChannel;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
+const AsyncHTTP = bun.HTTP.AsyncHTTP;
+const HTTPChannel = bun.HTTP.HTTPChannel;
+const NetworkThread = bun.HTTP.NetworkThread;
 
 const Integrity = @import("./integrity.zig").Integrity;
-const clap = @import("bun").clap;
+const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
@@ -58,33 +58,32 @@ const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
-const StructBuilder = @import("../builder.zig");
 const Bin = @import("./bin.zig").Bin;
 const Dependency = @import("./dependency.zig");
 const Behavior = Dependency.Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
-const PackageManager = @import("./install.zig").PackageManager;
-const ExternalSlice = @import("./install.zig").ExternalSlice;
-const ExternalSliceAligned = @import("./install.zig").ExternalSliceAligned;
-const PackageID = @import("./install.zig").PackageID;
-const DependencyID = @import("./install.zig").DependencyID;
-const Features = @import("./install.zig").Features;
-const PackageInstall = @import("./install.zig").PackageInstall;
-const PackageNameHash = @import("./install.zig").PackageNameHash;
-const Aligner = @import("./install.zig").Aligner;
-const ExternalStringMap = @import("./install.zig").ExternalStringMap;
-const alignment_bytes_to_repeat_buffer = @import("./install.zig").alignment_bytes_to_repeat_buffer;
+const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
+const ExternalSlice = Install.ExternalSlice;
+const ExternalSliceAligned = Install.ExternalSliceAligned;
+const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
+const Features = Install.Features;
+const PackageInstall = Install.PackageInstall;
+const PackageNameHash = Install.PackageNameHash;
+const Aligner = Install.Aligner;
+const ExternalStringMap = Install.ExternalStringMap;
+const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
+const initializeStore = Install.initializeStore;
+const invalid_package_id = Install.invalid_package_id;
+const ExternalStringList = Install.ExternalStringList;
 const Resolution = @import("./resolution.zig").Resolution;
-const initializeStore = @import("./install.zig").initializeStore;
-const invalid_package_id = @import("./install.zig").invalid_package_id;
-const JSAst = bun.JSAst;
-const Origin = @import("./install.zig").Origin;
+const Origin = Install.Origin;
 const Crypto = @import("../sha.zig").Hashers;
-pub const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
-const zero_hash = std.mem.zeroes(MetaHash);
-
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
+const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
+const zero_hash = std.mem.zeroes(MetaHash);
 const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
 
 // Serialized data
@@ -93,16 +92,16 @@ format: FormatVersion = .v1,
 
 meta_hash: MetaHash = zero_hash,
 
-packages: Lockfile.Package.List = Lockfile.Package.List{},
-buffers: Buffers = Buffers{},
+packages: Lockfile.Package.List = .{},
+buffers: Buffers = .{},
 
 /// name -> PackageID || [*]PackageID
 /// Not for iterating.
 package_index: PackageIndex.Map,
 unique_packages: Bitset,
 string_pool: StringPool,
-allocator: std.mem.Allocator,
-scratch: Scratch = Scratch{},
+allocator: Allocator,
+scratch: Scratch = .{},
 
 scripts: Scripts = .{},
 workspace_paths: NameHashMap = .{},
@@ -134,7 +133,7 @@ pub const Scripts = struct {
             this.postprepare.items.len) > 0;
     }
 
-    pub fn run(this: *Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+    pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
         for (@field(this, hook).items) |entry| {
             std.debug.assert(Fs.FileSystem.instance_loaded);
             const cwd = Path.joinAbsString(
@@ -148,7 +147,7 @@ pub const Scripts = struct {
         }
     }
 
-    pub fn deinit(this: *Scripts, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Scripts, allocator: Allocator) void {
         this.preinstall.deinit(allocator);
         this.install.deinit(allocator);
         this.postinstall.deinit(allocator);
@@ -179,7 +178,7 @@ pub const LoadFromDiskResult = union(Tag) {
     };
 };
 
-pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     std.debug.assert(FileSystem.instance_loaded);
     var file = std.io.getStdIn();
 
@@ -199,7 +198,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.
     return this.loadFromBytes(buf, allocator, log);
 }
 
-pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, log: *logger.Log) LoadFromDiskResult {
+pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
     var stream = Stream{ .buffer = buf, .pos = 0 };
 
     this.format = FormatVersion.current;
@@ -324,7 +323,7 @@ pub const Tree = struct {
 
                         const tree_id = this.depth_stack[depth_buf_len];
                         const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(string_buf);
-                        std.mem.copy(u8, this.path_buf[path_written..], name);
+                        bun.copy(u8, this.path_buf[path_written..], name);
                         path_written += name.len;
 
                         this.path_buf[path_written..][0.."/node_modules".len].* = (std.fs.path.sep_str ++ "node_modules").*;
@@ -345,7 +344,7 @@ pub const Tree = struct {
     };
 
     const Builder = struct {
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         name_hashes: []const PackageNameHash,
         list: ArrayList = .{},
         resolutions: []const PackageID,
@@ -840,7 +839,7 @@ pub const Printer = struct {
     var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn print(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         lockfile_path_: string,
         format: Format,
@@ -856,7 +855,7 @@ pub const Printer = struct {
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
         } else {
-            std.mem.copy(u8, &lockfile_path_buf1, lockfile_path);
+            bun.copy(u8, &lockfile_path_buf1, lockfile_path);
             lockfile_path_buf1[lockfile_path_.len] = 0;
             lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
         }
@@ -907,7 +906,7 @@ pub const Printer = struct {
     }
 
     pub fn printWithLockfile(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lockfile: *Lockfile,
         format: Format,
         comptime Writer: type,
@@ -1451,11 +1450,11 @@ inline fn strWithType(this: *Lockfile, comptime Type: type, slicable: Type) stri
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
-pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
-    this.* = Lockfile{
+pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
+    this.* = .{
         .format = Lockfile.FormatVersion.current,
-        .packages = Lockfile.Package.List{},
-        .buffers = Buffers{},
+        .packages = .{},
+        .buffers = .{},
         .package_index = PackageIndex.Map.initContext(allocator, .{}),
         .unique_packages = try Bitset.initFull(allocator, 0),
         .string_pool = StringPool.init(allocator),
@@ -1574,7 +1573,7 @@ pub const Scratch = struct {
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,
 
-    pub fn init(allocator: std.mem.Allocator) Scratch {
+    pub fn init(allocator: Allocator) Scratch {
         return Scratch{
             .dependency_list_queue = DependencyQueue.init(allocator),
             .duplicate_checker_map = DuplicateCheckerMap.init(allocator),
@@ -1583,15 +1582,11 @@ pub const Scratch = struct {
 };
 
 pub const StringBuilder = struct {
-    const Allocator = @import("std").mem.Allocator;
-    const assert = @import("std").debug.assert;
-    const copy = @import("std").mem.copy;
-
     len: usize = 0,
     cap: usize = 0,
     off: usize = 0,
     ptr: ?[*]u8 = null,
-    lockfile: *Lockfile = undefined,
+    lockfile: *Lockfile,
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
         if (String.canInline(slice)) return;
@@ -1646,14 +1641,16 @@ pub const StringBuilder = struct {
                 else => @compileError("Invalid type passed to StringBuilder"),
             }
         }
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.len <= this.cap); // didn't count everything
+            std.debug.assert(this.ptr != null); // must call allocate first
+        }
 
-        copy(u8, this.ptr.?[this.len..this.cap], slice);
+        bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
         const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
         this.len += slice.len;
 
-        assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
         switch (Type) {
             String => {
@@ -1679,19 +1676,21 @@ pub const StringBuilder = struct {
             }
         }
 
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.len <= this.cap); // didn't count everything
+            std.debug.assert(this.ptr != null); // must call allocate first
+        }
 
         var string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
         if (!string_entry.found_existing) {
-            copy(u8, this.ptr.?[this.len..this.cap], slice);
+            bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
             this.len += slice.len;
 
             string_entry.value_ptr.* = String.init(this.lockfile.buffers.string_bytes.items, final_slice);
         }
 
-        assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
         switch (Type) {
             String => {
@@ -2003,7 +2002,7 @@ pub const Package = extern struct {
     }
 
     pub fn fromNPM(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lockfile: *Lockfile,
         log: *logger.Log,
         manifest: *const Npm.PackageManifest,
@@ -2225,7 +2224,7 @@ pub const Package = extern struct {
         };
 
         pub fn generate(
-            _: std.mem.Allocator,
+            _: Allocator,
             from_lockfile: *Lockfile,
             to_lockfile: *Lockfile,
             from: *Lockfile.Package,
@@ -2286,7 +2285,7 @@ pub const Package = extern struct {
     pub fn parseMain(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime features: Features,
@@ -2297,7 +2296,7 @@ pub const Package = extern struct {
     pub fn parse(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime ResolverContext: type,
@@ -2331,7 +2330,7 @@ pub const Package = extern struct {
 
     fn parseDependency(
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime group: DependencyGroup,
@@ -2455,7 +2454,7 @@ pub const Package = extern struct {
 
     fn processWorkspaceNamesArray(
         workspace_names_ptr: *[]string,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         arr: *JSAst.E.Array,
         source: *const logger.Source,
@@ -2578,7 +2577,7 @@ pub const Package = extern struct {
     fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         json: Expr,
@@ -2833,7 +2832,7 @@ pub const Package = extern struct {
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
 
         const total_len = lockfile.buffers.dependencies.items.len + total_dependencies_count;
-        if (Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+        if (comptime Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
         const off = lockfile.buffers.dependencies.items.len;
 
         var package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
@@ -2903,7 +2902,7 @@ pub const Package = extern struct {
                                 std.debug.assert(i == extern_strings.len);
                                 package.bin = .{
                                     .tag = .map,
-                                    .value = .{ .map = @import("./install.zig").ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
+                                    .value = .{ .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
                                 };
                             },
                         }
@@ -3216,7 +3215,7 @@ pub const Package = extern struct {
         pub fn load(
             stream: *Stream,
             end: usize,
-            allocator: std.mem.Allocator,
+            allocator: Allocator,
         ) !Lockfile.Package.List {
             var reader = stream.reader();
 
@@ -3279,7 +3278,7 @@ const Buffers = struct {
     // node_modules_package_ids: PackageIDList = PackageIDList{},
     string_bytes: StringBuffer = .{},
 
-    pub fn deinit(this: *Buffers, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Buffers, allocator: Allocator) void {
         this.trees.deinit(allocator);
         this.resolutions.deinit(allocator);
         this.dependencies.deinit(allocator);
@@ -3287,7 +3286,7 @@ const Buffers = struct {
         this.string_bytes.deinit(allocator);
     }
 
-    pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
+    pub fn preallocate(this: *Buffers, that: Buffers, allocator: Allocator) !void {
         try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);
         try this.resolutions.ensureTotalCapacity(allocator, that.resolutions.items.len);
         try this.dependencies.ensureTotalCapacity(allocator, that.dependencies.items.len);
@@ -3335,7 +3334,7 @@ const Buffers = struct {
         };
     };
 
-    pub fn readArray(stream: *Stream, allocator: std.mem.Allocator, comptime ArrayList: type) !ArrayList {
+    pub fn readArray(stream: *Stream, allocator: Allocator, comptime ArrayList: type) !ArrayList {
         const arraylist: ArrayList = undefined;
 
         const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
@@ -3401,7 +3400,7 @@ const Buffers = struct {
         }
     }
 
-    pub fn save(this: Buffers, allocator: std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
+    pub fn save(this: Buffers, allocator: Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
         inline for (sizes.names) |name| {
             if (PackageManager.instance.options.log_level.isVerbose()) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(this, name).items.len, name });
@@ -3461,7 +3460,7 @@ const Buffers = struct {
         return error.@"Lockfile is missing resolution data";
     }
 
-    pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
+    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
@@ -3571,7 +3570,7 @@ pub const Serializer = struct {
     pub fn load(
         lockfile: *Lockfile,
         stream: *Stream,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
     ) !void {
         var reader = stream.reader();
@@ -3641,7 +3640,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 

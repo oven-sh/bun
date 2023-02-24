@@ -1,9 +1,9 @@
 const std = @import("std");
 const bun = @import("bun");
 fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
-    std.mem.copy(u8, buf, segment);
+    bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
-    std.mem.copy(u8, buf[segment.len + 1 ..], bin);
+    bun.copy(u8, buf[segment.len + 1 ..], bin);
     buf[segment.len + 1 + bin.len ..][0] = 0;
     const filepath = buf[0 .. segment.len + 1 + bin.len :0];
     if (!checkPath(filepath)) return null;
@@ -23,7 +23,7 @@ pub fn which(buf: *[bun.MAX_PATH_BYTES]u8, path: []const u8, cwd: []const u8, bi
 
     // handle absolute paths
     if (std.fs.path.isAbsolute(bin)) {
-        std.mem.copy(u8, buf, bin);
+        bun.copy(u8, buf, bin);
         buf[bin.len] = 0;
         var binZ: [:0]u8 = buf[0..bin.len :0];
         if (checkPath(binZ)) return binZ;

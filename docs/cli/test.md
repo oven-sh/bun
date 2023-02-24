@@ -112,7 +112,7 @@ afterEach(() => {
 // tests...
 ```
 
-Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the `*scope* is the current file; in a `describe` block, the scope is the block itself.
+Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the *scope* is the current file; in a `describe` block, the scope is the block itself.
 
 ```ts
 import { expect, test, beforeAll, afterAll } from "bun:test";

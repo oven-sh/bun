@@ -436,10 +436,7 @@ pub const Body = struct {
             }
         }
 
-        pub fn fromJS(
-            globalThis: *JSGlobalObject,
-            value: JSValue
-        ) ?Value {
+        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
             value.ensureStillAlive();
 
             if (value.isEmptyOrUndefinedOrNull()) {

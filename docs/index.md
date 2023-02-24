@@ -1,11 +1,22 @@
-Bun is an all-in-one toolkit for building JavaSript and TypeScript apps. It ships as a single executable called `bun`.
+Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun​`.
 
-At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood. Use `bun run <file>` to execute JavaScript and TypeScript files with Bun.
+At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
-The `bun` command-line tool also implements an npm-compatible package manager, test runner, and bundler, all written in Zig and designed for speed. Use `bun` to speed up your development workflow, even if you aren't using the runtime.
+```bash
+$ bun run index.tsx  # TS and JSX supported out of the box
+```
+
+​​The `bun​` command-line tool also implements a test runner, package runner, and npm-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
+
+```bash
+$ bun test                      # run tests
+$ bun run start                 # run the `start` script
+$ bun install <pkg>​             # install a package
+$ bunx cowsay "Hello, world!"   # execute a package
+```
 
 {% callout type="note" %}
-**Bun is not yet ready for use in production**. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keeps tabs on future releases.
+**​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keeps tabs on future releases.
 {% /callout %}
 
 ### Get started

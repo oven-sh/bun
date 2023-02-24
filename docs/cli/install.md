@@ -1,6 +1,4 @@
-The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`.
-
-It can be be used as a drop-in replacement for these tools, _regardless of whether you're using Bun's runtime_.
+The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`. It's designed for Node.js compatibility; use it in any Bun or Node.js project.
 
 {% callout %}
 

@@ -1,8 +1,22 @@
 Bun ships with a built-in test runner.
 
 ```bash
-$ bun wiptest
+$ bun test
 ```
+
+Tests are written in JavaScript or TypeScript with a Jest-like API.
+
+```ts#math.test.ts
+import { expect, test } from "bun:test";
+
+test("2 + 2", () => {
+  expect(2 + 2).toBe(4);
+});
+```
+
+It's fast.
+
+{% image src="/images/buntest.jpeg" caption="Bun runs 266 React SSR tests faster than Jest can print its version number." /%}
 
 The runner recursively searches the working directory for files that match the following patterns:
 
@@ -11,10 +25,10 @@ The runner recursively searches the working directory for files that match the f
 - `*.spec.{js|jsx|ts|tsx}`
 - `*_spec.{js|jsx|ts|tsx}`
 
-You can filter the set of tests to run by passing additional positional arguments to `wiptest`. Any file in the directory with an _absolute path_ that contains one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
+You can filter the set of tests to run by passing additional positional arguments to `bun test`. Any file in the directory with an _absolute path_ that contains one of the filters will run. Commonly, these filters will be file or directory names; glob patterns are not yet supported.
 
 ```bash
-$ bun wiptest <filter> <filter> ...
+$ bun test <filter> <filter> ...
 ```
 
 <!--
@@ -33,13 +47,13 @@ Consider the following directory structure:
 To run both `a.test.ts` files:
 
 ```
-$ bun wiptest a
+$ bun test a
 ```
 
 To run all tests in the `foo` directory:
 
 ```
-$ bun wiptest foo
+$ bun test foo
 ```
 
 Any test file in the directory with an _absolute path_ that contains one of the targets will run. Glob patterns are not yet supported. -->
@@ -112,7 +126,7 @@ afterEach(() => {
 // tests...
 ```
 
-Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the *scope* is the current file; in a `describe` block, the scope is the block itself.
+Perform per-scope setup and teardown logic with `beforeAll` and `afterAll`. At the top-level, the _scope_ is the current file; in a `describe` block, the scope is the block itself.
 
 ```ts
 import { expect, test, beforeAll, afterAll } from "bun:test";

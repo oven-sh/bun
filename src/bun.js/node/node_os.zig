@@ -458,9 +458,8 @@ pub const Os = struct {
 
             // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
             if (addr.any.family == std.os.AF.INET6) {
-                const as_in6 = @ptrCast(*std.os.sockaddr.in6, @alignCast(@alignOf(*std.os.sockaddr.in6), iface.ifa_addr));
                 interface.put(globalThis, JSC.ZigString.static("scope_id"),
-                                          JSC.JSValue.jsNumber(as_in6.scope_id));
+                                          JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
             }
 
 

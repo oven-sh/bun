@@ -743,7 +743,7 @@ pub const ifaddrs = extern struct {
 	ifa_addr: ?*std.os.sockaddr,
 	ifa_netmask: ?*std.os.sockaddr,
 	ifa_dstaddr: ?*std.os.sockaddr,
-	ifa_data: *void,
+	ifa_data: *anyopaque,
 };
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;

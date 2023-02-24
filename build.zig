@@ -600,6 +600,9 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
 
+    // Disable staack probing on x86 so we don't need to include compiler_rt
+    if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
+
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;
         obj.link_emit_relocs = true;

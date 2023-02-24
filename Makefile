@@ -692,7 +692,7 @@ build-obj-wasm:
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Drelease-small -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding --prominent-compile-errors
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
@@ -719,7 +719,7 @@ wasm: api build-obj-wasm-small
 
 .PHONY: build-obj-safe
 build-obj-safe:
-	$(ZIG) build obj -Drelease-safe
+	$(ZIG) build obj -Doptimize=ReleaseSafe
 
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=$(CXX_VERSION) -fno-exceptions

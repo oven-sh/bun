@@ -1057,7 +1057,7 @@ pub fn hashHeaderName(name: string) u64 {
     while (remain.len > 0) {
         const end = @min(hasher.buf.len, remain.len);
 
-        hasher.update(strings.copyLowercase(remain[0..end], &buf));
+        hasher.update(strings.copyLowercaseIfNeeded(remain[0..end], &buf));
         remain = remain[end..];
     }
 

@@ -529,7 +529,7 @@ pub const Body = struct {
 
                     if (bytes.len == 0) {
                         return Body.Value{
-                            .Used = {},
+                            .Empty = {},
                         };
                     }
 

@@ -1,6 +1,3 @@
-{% callout %}
-**⚠️ Warning** — Bun currently needs about 22 GB of RAM to compile. If you have less than that, it will be difficult or impossible to building Bun locally. We're working on improving this.
-{% /callout %}
 
 Configuring a development environment for Bun usually takes 30-90 minutes depending on your operating system.
 

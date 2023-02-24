@@ -1,17 +1,17 @@
-const string = @import("string_types.zig").string;
-const Allocator = @import("std").mem.Allocator;
-const assert = @import("std").debug.assert;
-const copy = @import("std").mem.copy;
-const Env = @import("./env.zig");
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const bun = @import("bun");
+const Env = @import("./env.zig");
+const string = @import("string_types.zig").string;
 const StringBuilder = @This();
+
 const DebugHashTable = if (Env.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
 len: usize = 0,
 cap: usize = 0,
 ptr: ?[*]u8 = null,
 
-debug_only_checker: DebugHashTable = DebugHashTable{},
+debug_only_checker: DebugHashTable = .{},
 
 pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
@@ -37,12 +37,9 @@ pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
 
 pub fn append(this: *StringBuilder, slice: string) string {
     if (comptime Env.allow_assert) {
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
-    }
-
-    if (comptime Env.allow_assert) {
-        assert(this.debug_only_checker.contains(bun.hash(slice)));
+        std.debug.assert(this.len <= this.cap); // didn't count everything
+        std.debug.assert(this.ptr != null); // must call allocate first
+        std.debug.assert(this.debug_only_checker.contains(bun.hash(slice)));
     }
 
     bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
@@ -50,17 +47,16 @@ pub fn append(this: *StringBuilder, slice: string) string {
     this.len += slice.len;
 
     if (Env.allow_assert) {
-        assert(this.len <= this.cap);
+        std.debug.assert(this.len <= this.cap);
     }
 
     return result;
 }
 
-const std = @import("std");
 pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     if (Env.allow_assert) {
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
+        std.debug.assert(this.len <= this.cap); // didn't count everything
+        std.debug.assert(this.ptr != null); // must call allocate first
     }
 
     var buf = this.ptr.?[this.len..this.cap];
@@ -68,7 +64,7 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     this.len += out.len;
 
     if (Env.allow_assert) {
-        assert(this.len <= this.cap);
+        std.debug.assert(this.len <= this.cap);
     }
 
     return out;

@@ -23,6 +23,7 @@
 const DiffMatchPatch = @This();
 
 const std = @import("std");
+const bun = @import("bun");
 const testing = std.testing;
 const ArrayListUnmanaged = std.ArrayListUnmanaged;
 const DiffList = ArrayListUnmanaged(Diff);
@@ -817,8 +818,8 @@ fn diffCleanupMerge(allocator: std.mem.Allocator, diffs: *DiffList) DiffError!vo
                                 var nt = try allocator.alloc(u8, diffs.items[ii].text.len + common_length);
 
                                 // try diffs.items[pointer - count_delete - count_insert - 1].text.append(allocator, text_insert.items[0..common_length]);
-                                std.mem.copy(u8, nt, diffs.items[ii].text);
-                                std.mem.copy(u8, nt[diffs.items[ii].text.len..], text_insert.items[0..common_length]);
+                                bun.copy(u8, nt, diffs.items[ii].text);
+                                bun.copy(u8, nt[diffs.items[ii].text.len..], text_insert.items[0..common_length]);
 
                                 // allocator.free(diffs.items[ii].text);
                                 diffs.items[ii].text = nt;
@@ -870,8 +871,8 @@ fn diffCleanupMerge(allocator: std.mem.Allocator, diffs: *DiffList) DiffError!vo
                     var nt = try allocator.alloc(u8, diffs.items[pointer - 1].text.len + diffs.items[pointer].text.len);
 
                     // try diffs.items[pointer - count_delete - count_insert - 1].text.append(allocator, text_insert.items[0..common_length]);
-                    std.mem.copy(u8, nt, diffs.items[pointer - 1].text);
-                    std.mem.copy(u8, nt[diffs.items[pointer - 1].text.len..], diffs.items[pointer].text);
+                    bun.copy(u8, nt, diffs.items[pointer - 1].text);
+                    bun.copy(u8, nt[diffs.items[pointer - 1].text.len..], diffs.items[pointer].text);
 
                     // allocator.free(diffs.items[pointer - 1].text);
                     diffs.items[pointer - 1].text = nt;

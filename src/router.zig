@@ -668,17 +668,13 @@ pub const Route = struct {
             if (public_dir.len > 0) {
                 route_file_buf[0] = '/';
                 buf = buf[1..];
-                std.mem.copy(
-                    u8,
-                    buf,
-                    public_dir,
-                );
+                bun.copy(u8, buf, public_dir);
             }
             buf[public_dir.len] = '/';
             buf = buf[public_dir.len + 1 ..];
-            std.mem.copy(u8, buf, base);
+            bun.copy(u8, buf, base);
             buf = buf[base.len..];
-            std.mem.copy(u8, buf, extname);
+            bun.copy(u8, buf, extname);
             buf = buf[extname.len..];
             break :brk route_file_buf[0 .. @ptrToInt(buf.ptr) - @ptrToInt(&route_file_buf)];
         };

@@ -696,7 +696,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             } else if (comptime Environment.isLinux) {
                 // var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
                 // var buf: [bun.MAX_PATH_BYTES+1]u8 = undefined;
-                // std.mem.copy(u8, &buf, file_path_to_use_);
+                // bun.copy(u8, &buf, file_path_to_use_);
                 // buf[file_path_to_use_.len] = 0;
                 var buf = file_path_.ptr;
                 var slice: [:0]const u8 = buf[0..file_path_.len :0];
@@ -778,7 +778,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             } else if (Environment.isLinux) {
                 var file_path_to_use_ = std.mem.trimRight(u8, file_path_, "/");
                 var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-                std.mem.copy(u8, &buf, file_path_to_use_);
+                bun.copy(u8, &buf, file_path_to_use_);
                 buf[file_path_to_use_.len] = 0;
                 var slice: [:0]u8 = buf[0..file_path_to_use_.len :0];
                 index = try INotify.watchDir(slice);

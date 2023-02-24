@@ -369,7 +369,7 @@ pub fn get_system_loadavg() [3]f64 {
 pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.version, 0);
-    std.mem.copy(u8, name_buffer, result);
+    bun.copy(u8, name_buffer, result);
 
     return name_buffer[0..result.len];
 }
@@ -377,7 +377,7 @@ pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
 pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = bun.sliceTo(&uts.release, 0);
-    std.mem.copy(u8, name_buffer, result);
+    bun.copy(u8, name_buffer, result);
 
     return name_buffer[0..result.len];
 }

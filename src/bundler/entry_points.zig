@@ -85,9 +85,9 @@ pub const ClientEntryPoint = struct {
         var joined_base_and_dir_parts = [_]string{ original_path.dir, original_path.base };
         var generated_path = Fs.FileSystem.instance.absBuf(&joined_base_and_dir_parts, outbuffer);
 
-        std.mem.copy(u8, outbuffer[generated_path.len..], ".entry");
+        bun.copy(u8, outbuffer[generated_path.len..], ".entry");
         generated_path = outbuffer[0 .. generated_path.len + ".entry".len];
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_path.ext);
+        bun.copy(u8, outbuffer[generated_path.len..], original_path.ext);
         return outbuffer[0 .. generated_path.len + original_path.ext.len];
     }
 
@@ -99,7 +99,7 @@ pub const ClientEntryPoint = struct {
             original_ext = original_path.ext[entry_i + "entry".len ..];
         }
 
-        std.mem.copy(u8, outbuffer[generated_path.len..], original_ext);
+        bun.copy(u8, outbuffer[generated_path.len..], original_ext);
 
         return outbuffer[0 .. generated_path.len + original_ext.len];
     }
@@ -299,7 +299,7 @@ pub const MacroEntryPoint = struct {
         macro_label_: string,
     ) !void {
         const dir_to_use: string = import_path.dirWithTrailingSlash();
-        std.mem.copy(u8, entry.code_buffer[0..macro_label_.len], macro_label_);
+        bun.copy(u8, &entry.code_buffer, macro_label_);
         const macro_label = entry.code_buffer[0..macro_label_.len];
 
         const code = try std.fmt.bufPrint(

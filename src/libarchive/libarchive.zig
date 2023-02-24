@@ -450,7 +450,7 @@ pub const Archive = struct {
                                 break :brk __pathname[0..index];
                             };
                             var temp_buf: [1024]u8 = undefined;
-                            std.mem.copy(u8, &temp_buf, path_to_use_);
+                            bun.copy(u8, &temp_buf, path_to_use_);
                             var path_to_use: string = temp_buf[0..path_to_use_.len];
                             if (!is_already_top_level) {
                                 temp_buf[path_to_use_.len] = std.fs.path.sep;

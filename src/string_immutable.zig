@@ -269,8 +269,8 @@ pub const SplitIterator = struct {
 
 pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string {
     var out = try allocator.alloc(u8, first.len + second.len);
-    std.mem.copy(u8, out, first);
-    std.mem.copy(u8, out[first.len..], second);
+    bun.copy(u8, out, first);
+    bun.copy(u8, out[first.len..], second);
     return out;
 }
 
@@ -367,18 +367,16 @@ pub const StringOrTinyString = struct {
 };
 
 pub fn copyLowercase(in: string, out: []u8) string {
-    var in_slice: string = in;
-    var out_slice: []u8 = out[0..in.len];
+    var in_slice = in;
+    var out_slice = out;
 
-    begin: while (out_slice.len > 0) {
+    begin: while (in_slice.len > 0) {
         for (in_slice, 0..) |c, i| {
             switch (c) {
                 'A'...'Z' => {
-                    // @memcpy(out_slice.ptr, in_slice.ptr, i);
-                    std.mem.copy(u8, out_slice, in_slice);
+                    bun.copy(u8, out_slice, in_slice[0..i]);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
-                    if (end >= out_slice.len) break :begin;
                     in_slice = in_slice[end..];
                     out_slice = out_slice[end..];
                     continue :begin;
@@ -387,8 +385,7 @@ pub fn copyLowercase(in: string, out: []u8) string {
             }
         }
 
-        // @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
-        std.mem.copy(u8, out_slice, in_slice);
+        bun.copy(u8, out_slice, in_slice);
         break :begin;
     }
 
@@ -904,7 +901,7 @@ pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8
     comptime var i: usize = 0;
     inline while (i < parts_len) : (i += 1) {
         const part = parts[i];
-        std.mem.copy(u8, remain, part);
+        bun.copy(u8, remain, part);
         remain = remain[part.len..];
         count += part.len;
     }
@@ -2233,8 +2230,8 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             }
 
             var buf = allocator.alloc(u16, first_16.len + second_16.len) catch unreachable;
-            std.mem.copy(u16, buf, first_16);
-            std.mem.copy(u16, buf[first_16.len..], second_16);
+            bun.copy(u16, buf, first_16);
+            bun.copy(u16, buf[first_16.len..], second_16);
             return Escaped(u16){ .allocated = buf };
         },
 
@@ -4164,7 +4161,7 @@ pub fn cloneNormalizingSeparators(
 
     while (tokenized.next()) |token| {
         if (token.len == 0) continue;
-        std.mem.copy(u8, remain, token);
+        bun.copy(u8, remain, token);
         remain[token.len..][0] = std.fs.path.sep;
         remain = remain[token.len + 1 ..];
     }

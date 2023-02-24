@@ -466,7 +466,7 @@ pub const ZigStackTrace = extern struct {
                 var remain_buf = source_line_buf[0..];
                 var i: usize = 0;
                 while (source_lines_iter.next()) |source| {
-                    std.mem.copy(u8, remain_buf, source.text);
+                    bun.copy(u8, remain_buf, source.text);
                     const copied_line = remain_buf[0..source.text.len];
                     remain_buf = remain_buf[source.text.len..];
                     source_lines[i] = .{ .text = copied_line, .line = source.line };

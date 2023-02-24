@@ -494,8 +494,8 @@ pub const RequestContext = struct {
 
         // Is it the index file?
         if (relative_unrooted_path.len == 0) {
-            // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
-            // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
+            // bun.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
+            // bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
             // Search for /index.html
             if (this.bundler.options.routes.single_page_app_routing and
                 this.bundler.options.routes.single_page_app_fd != 0)
@@ -520,8 +520,8 @@ pub const RequestContext = struct {
         while (_file == null and relative_unrooted_path.len > 1) {
             // When no extension is provided, it might be html
             if (extension.len == 0) {
-                std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
+                bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
 
                 if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
                     _file = file;
@@ -531,12 +531,12 @@ pub const RequestContext = struct {
 
                 var _path: []u8 = undefined;
                 if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
-                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
-                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
+                    bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
+                    bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
                     _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len - 1 + "/index.html".len];
                 } else {
-                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
+                    bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                    bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
 
                     _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
                 }

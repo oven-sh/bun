@@ -60,12 +60,12 @@ pub const PackageJSON = struct {
         var hashy: [1024]u8 = undefined;
         std.mem.set(u8, &hashy, 0);
         var used: usize = 0;
-        std.mem.copy(u8, &hashy, package_json.name);
+        bun.copy(u8, &hashy, package_json.name);
         used = package_json.name.len;
 
         hashy[used] = '@';
         used += 1;
-        std.mem.copy(u8, hashy[used..], package_json.version);
+        bun.copy(u8, hashy[used..], package_json.version);
         used += package_json.version.len;
 
         package_json.hash = std.hash.Murmur3_32.hash(hashy[0..used]);
@@ -80,9 +80,8 @@ pub const PackageJSON = struct {
             if (strings.indexOf(parent, fs.FileSystem.instance.top_level_dir)) |i| {
                 const relative_dir = parent[i + fs.FileSystem.instance.top_level_dir.len ..];
                 var out_dir = try allocator.alloc(u8, relative_dir.len + 2);
-                std.mem.copy(u8, out_dir[2..], relative_dir);
-                out_dir[0] = '.';
-                out_dir[1] = '/';
+                bun.copy(u8, out_dir[2..], relative_dir);
+                out_dir[0..2].* = ("." ++ std.fs.path.sep_str).*;
                 return out_dir;
             }
 
@@ -1346,8 +1345,8 @@ pub const ESModule = struct {
         }
 
         pub fn parseSubpath(subpath: *[]const u8, specifier: string, subpath_buf: []u8) void {
-            std.mem.copy(u8, subpath_buf[1..], specifier);
             subpath_buf[0] = '.';
+            bun.copy(u8, subpath_buf[1..], specifier);
             subpath.* = subpath_buf[0 .. specifier.len + 1];
         }
     };

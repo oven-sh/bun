@@ -391,13 +391,13 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                         instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     []const u8, []u8, [:0]const u8, [:0]u8 => {
-                        std.mem.copy(u8, instance.backing_buf[start .. instance.backing_buf_used - 1], _value);
+                        bun.copy(u8, instance.backing_buf[start .. instance.backing_buf_used - 1], _value);
                         instance.backing_buf[instance.backing_buf_used - 1] = 0;
                     },
                     else => {
                         var remainder = instance.backing_buf[start..];
                         for (_value) |val| {
-                            std.mem.copy(u8, remainder, val);
+                            bun.copy(u8, remainder, val);
                             remainder = remainder[val.len..];
                         }
                         remainder[0] = 0;
@@ -411,12 +411,12 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
                 switch (comptime AppendType) {
                     EmptyType => {},
                     []const u8, []u8, [:0]const u8, [:0]u8 => {
-                        std.mem.copy(u8, value_buf, _value);
+                        bun.copy(u8, value_buf, _value);
                     },
                     else => {
                         var remainder = value_buf;
                         for (_value) |val| {
-                            std.mem.copy(u8, remainder, val);
+                            bun.copy(u8, remainder, val);
                             remainder = remainder[val.len..];
                         }
                     },
@@ -683,7 +683,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
                 const start = instance.key_list_buffer_used;
                 instance.key_list_buffer_used += key.len;
                 slice = instance.key_list_buffer[start..instance.key_list_buffer_used];
-                std.mem.copy(u8, slice, key);
+                bun.copy(u8, slice, key);
             } else {
                 slice = try self.map.allocator.dupe(u8, key);
             }

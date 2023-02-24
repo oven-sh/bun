@@ -385,38 +385,80 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    std.debug.assert(dest.len >= src.len);
-    var input = std.mem.sliceAsBytes(src);
-    var output = std.mem.sliceAsBytes(dest);
-    var input_end = input.ptr + input.len;
-    const output_end = output.ptr + output.len;
+    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (src.ptr == dest.ptr) return;
 
-    if (@ptrToInt(input.ptr) <= @ptrToInt(output.ptr) and @ptrToInt(output_end) <= @ptrToInt(input_end)) {
-        // // input is overlapping with output
-        if (input.len > strings.ascii_vector_size) {
-            const input_end_vectorized = input.ptr + input.len - (input.len % strings.ascii_vector_size);
-            while (input.ptr != input_end_vectorized) {
-                const input_vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
-                output[0..strings.ascii_vector_size].* = input_vec;
+    var input: []const u8 = std.mem.sliceAsBytes(src);
+    var output: []u8 = std.mem.sliceAsBytes(dest);
+
+    if (@ptrToInt(output.ptr) < @ptrToInt(input.ptr)) {
+        const output_end = output.ptr + input.len;
+
+        // |--- dest ---|
+        //        |--- src ---|
+        if (@ptrToInt(input.ptr) < @ptrToInt(output_end)) brk: {
+            while (input.len >= strings.ascii_vector_size) {
+                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
+                output[0..strings.ascii_vector_size].* = vec;
                 input = input[strings.ascii_vector_size..];
                 output = output[strings.ascii_vector_size..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
+                input = input[@sizeOf(usize)..];
+                output = output[@sizeOf(usize)..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
+            }
+
+            while (input.len > 0) {
+                output[0] = input[0];
+                input = input[1..];
+                output = output[1..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
             }
         }
-
-        while (input.len >= @sizeOf(usize)) {
-            output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
-            input = input[@sizeOf(usize)..];
-            output = output[@sizeOf(usize)..];
-        }
-
-        while (input.ptr != input_end) {
-            output[0] = input[0];
-            input = input[1..];
-            output = output[1..];
-        }
     } else {
-        @memcpy(output.ptr, input.ptr, input.len);
+        var input_end = input.ptr + input.len;
+
+        // |--- src ---|
+        //        |--- dest ---|
+        if (@ptrToInt(output.ptr) < @ptrToInt(input_end)) brk: {
+            while (input.len >= strings.ascii_vector_size) {
+                const input_start = input.len - strings.ascii_vector_size;
+                const output_start = output.len - strings.ascii_vector_size;
+                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[input_start..][0..strings.ascii_vector_size].*);
+                output[output_start..][0..strings.ascii_vector_size].* = vec;
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= strings.ascii_vector_size;
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                const input_start = input.len - @sizeOf(usize);
+                const output_start = output.len - @sizeOf(usize);
+                output[output_start..][0..@sizeOf(usize)].* = input[input_start..][0..@sizeOf(usize)].*;
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= @sizeOf(usize);
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                const input_start = input.len - 1;
+                const output_start = output.len - 1;
+                output[output_start] = input[input_start];
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= 1;
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+        }
     }
+
+    @memcpy(output.ptr, input.ptr, input.len);
 }
 
 pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });

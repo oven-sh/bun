@@ -420,7 +420,7 @@ pub const Os = struct {
                 const maybe_ll_addr = while (ll_it) |ll_iface| : (ll_it = ll_iface.ifa_next) {
                     if (helpers.skip(ll_iface) or !helpers.isLinkLayer(ll_iface)) continue;
 
-                    const ll_name = std.mem.sliceTo(ll_iface.ifa_name, 0);
+                    const ll_name = bun.sliceTo(ll_iface.ifa_name, 0);
                     if (!strings.hasPrefix(ll_name, interface_name)) continue;
                     if (ll_name.len > interface_name.len and ll_name[interface_name.len] != ':') continue;
 

@@ -370,7 +370,7 @@ pub fn copyLowercase(in: string, out: []u8) string {
     var in_slice = in;
     var out_slice = out;
 
-    begin: while (in_slice.len > 0) {
+    begin: while (true) {
         for (in_slice, 0..) |c, i| {
             switch (c) {
                 'A'...'Z' => {
@@ -393,18 +393,17 @@ pub fn copyLowercase(in: string, out: []u8) string {
 }
 
 pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
-    var in_slice: string = in;
-    var out_slice: []u8 = out[0..in.len];
+    var in_slice = in;
+    var out_slice = out;
     var any = false;
 
-    begin: while (out_slice.len > 0) {
+    begin: while (true) {
         for (in_slice, 0..) |c, i| {
             switch (c) {
                 'A'...'Z' => {
-                    @memcpy(out_slice.ptr, in_slice.ptr, i);
+                    bun.copy(u8, out_slice, in_slice[0..i]);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
-                    if (end >= out_slice.len) break :begin;
                     in_slice = in_slice[end..];
                     out_slice = out_slice[end..];
                     any = true;
@@ -414,19 +413,11 @@ pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
             }
         }
 
-        if (!any) {
-            return in;
-        }
-
-        @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        if (any) bun.copy(u8, out_slice, in_slice);
         break :begin;
     }
 
-    if (!any) {
-        return in;
-    }
-
-    return out[0..in.len];
+    return if (any) out[0..in.len] else in;
 }
 
 test "indexOf" {

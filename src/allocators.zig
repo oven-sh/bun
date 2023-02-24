@@ -349,7 +349,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             self.mutex.lock();
             defer self.mutex.unlock();
 
-            for (_value) |c, i| {
+            for (_value, 0..) |c, i| {
                 lowercase_append_buf[i] = std.ascii.toLower(c);
             }
             var slice = lowercase_append_buf[0.._value.len];

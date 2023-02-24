@@ -187,7 +187,7 @@ test "iso-first-monday" {
     // Created using python
     const years = [20]u16{ 1816, 1823, 1839, 1849, 1849, 1870, 1879, 1882, 1909, 1910, 1917, 1934, 1948, 1965, 1989, 2008, 2064, 2072, 2091, 2096 };
     const output = [20]u32{ 662915, 665470, 671315, 674969, 674969, 682641, 685924, 687023, 696886, 697250, 699805, 706014, 711124, 717340, 726104, 733041, 753495, 756421, 763358, 765185 };
-    for (years) |year, i| {
+    for (years, 0..) |year, i| {
         try testing.expectEqual(daysBeforeFirstMonday(year), output[i]);
     }
 }
@@ -785,7 +785,7 @@ test "date-isocalendar" {
         ISOCalendar{ .year = 2024, .week = 3, .weekday = 2 },
     };
 
-    for (dates) |d, i| {
+    for (dates, 0..) |d, i| {
         const date = try Date.parseIso(d);
         const cal = date.isoCalendar();
         try testing.expectEqual(cal, expect[i]);

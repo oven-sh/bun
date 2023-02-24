@@ -1076,7 +1076,7 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj --prominent-compile-errors
+	$(ZIG) build obj --prominent-compile-errors -freference-trace
 
 .PHONY: dev-obj-linux
 dev-obj-linux:

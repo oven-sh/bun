@@ -364,7 +364,7 @@ const RouteLoader = struct {
         var dynamic_start: ?usize = null;
         var index_id: ?usize = null;
 
-        for (this.all_routes.items) |route, i| {
+        for (this.all_routes.items, 0..) |route, i| {
             if (@enumToInt(route.kind) > @enumToInt(Pattern.Tag.static) and dynamic_start == null) {
                 dynamic_start = i;
             }
@@ -926,7 +926,8 @@ fn makeTest(cwd_path: string, data: anytype) !void {
             try cwd.makePath(dir);
         }
         var file = try cwd.createFile(field.name, .{ .truncate = true });
-        try file.writeAll(std.mem.span(value));
+        try file.writeAll(value);
+
         file.close();
     }
 }
@@ -1540,7 +1541,7 @@ test "Pattern Match" {
                     }
 
                     if (comptime entries.len > 0) {
-                        for (parameters.items(.name)) |entry_name, i| {
+                        for (parameters.items(.name), 0..) |entry_name, i| {
                             if (!strings.eql(entry_name, entries[i].name)) {
                                 failures += 1;
                                 Output.prettyErrorln("{s} -- Expected name <b>\"{s}\"<r> but received <b>\"{s}\"<r> for path {s}", .{ pattern, entries[i].name, parameters.get(i).name, pathname });

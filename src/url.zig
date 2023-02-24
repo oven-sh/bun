@@ -1464,7 +1464,7 @@ test "QueryStringMap (full)" {
     var target: [fixture.ext.len]string = undefined;
     try expect((map.getAll("ext", &target)) == fixture.ext.len);
 
-    for (target) |item, i| {
+    for (target, 0..) |item, i| {
         try expectString(
             fixture.ext[i],
             item,
@@ -1478,7 +1478,7 @@ test "QueryStringMap not encoded" {
         .hey = "1",
         .wow = "true",
     };
-    const url_slice = std.mem.span(url);
+    const url_slice = bun.asByteSlice(url);
     var map = (try QueryStringMap.init(std.testing.allocator, url_slice)) orelse return try std.testing.expect(false);
     try expect(map.buffer.len == 0);
     try expect(url_slice.ptr == map.slice.ptr);
@@ -1522,7 +1522,7 @@ test "QueryStringMap Iterator" {
     var map = (try QueryStringMap.init(std.testing.allocator, url)) orelse return try std.testing.expect(false);
     defer map.deinit();
     var buf_: [48]string = undefined;
-    var buf = std.mem.span(&buf_);
+    var buf = buf_[0..48];
     var iter = map.iter();
 
     var result: QueryStringMap.Iterator.Result = iter.next(buf) orelse return try expect(false);
@@ -1592,7 +1592,7 @@ test "QueryStringMap Iterator" {
     result = iter.next(buf) orelse return try expect(false);
     try expectString("ext", result.name);
     try expectEqual(result.values.len, fixture.ext.len);
-    for (fixture.ext) |ext, i| {
+    for (fixture.ext, 0..) |ext, i| {
         try expectString(ext, result.values[i]);
     }
 

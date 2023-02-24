@@ -566,31 +566,31 @@ pub const Fetch = struct {
         var errors = JSTypeErrorEnum.initUndefined();
         errors.set(
             JSType.kJSTypeUndefined,
-            std.mem.span(fetch_type_error_string_values[0]),
+            bun.asByteSlice(fetch_type_error_string_values[0]),
         );
         errors.set(
             JSType.kJSTypeNull,
-            std.mem.span(fetch_type_error_string_values[1]),
+            bun.asByteSlice(fetch_type_error_string_values[1]),
         );
         errors.set(
             JSType.kJSTypeBoolean,
-            std.mem.span(fetch_type_error_string_values[2]),
+            bun.asByteSlice(fetch_type_error_string_values[2]),
         );
         errors.set(
             JSType.kJSTypeNumber,
-            std.mem.span(fetch_type_error_string_values[3]),
+            bun.asByteSlice(fetch_type_error_string_values[3]),
         );
         errors.set(
             JSType.kJSTypeString,
-            std.mem.span(fetch_type_error_string_values[4]),
+            bun.asByteSlice(fetch_type_error_string_values[4]),
         );
         errors.set(
             JSType.kJSTypeObject,
-            std.mem.span(fetch_type_error_string_values[5]),
+            bun.asByteSlice(fetch_type_error_string_values[5]),
         );
         errors.set(
             JSType.kJSTypeSymbol,
-            std.mem.span(fetch_type_error_string_values[6]),
+            bun.asByteSlice(fetch_type_error_string_values[6]),
         );
         break :brk errors;
     };

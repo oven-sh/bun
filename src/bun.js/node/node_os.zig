@@ -47,8 +47,8 @@ pub const Os = struct {
         return module;
     }
 
-    pub const EOL = if (Environment.isWindows) "\r\n" else "\n";
-    pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
+    pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
+    pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
@@ -65,7 +65,7 @@ pub const Os = struct {
             sys: u64 = 0,
             idle: u64 = 0,
             irq: u64 = 0,
-        } = .{}
+        } = .{},
     };
 
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -73,14 +73,14 @@ pub const Os = struct {
 
         var cpu_buffer: [8192]CPU = undefined;
         const cpus_or_error = if (comptime Environment.isLinux)
-                                cpusImplLinux(&cpu_buffer)
-                              else
-                                @as(anyerror![]CPU, cpu_buffer[0..0]);  // unsupported platform -> empty array
+            cpusImplLinux(&cpu_buffer)
+        else
+            @as(anyerror![]CPU, cpu_buffer[0..0]); // unsupported platform -> empty array
 
         if (cpus_or_error) |list| {
             // Convert the CPU list to a JS Array
             const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
-            for (list) |cpu, cpu_index| {
+            for (list, 0..) |cpu, cpu_index| {
                 const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
                 obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
@@ -88,14 +88,12 @@ pub const Os = struct {
                 const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
                 const times = JSC.JSValue.createEmptyObject(globalThis, 5);
                 inline for (timesFields) |fieldName| {
-                    times.put(globalThis, JSC.ZigString.static(fieldName),
-                                    JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
+                    times.put(globalThis, JSC.ZigString.static(fieldName), JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
                 }
                 obj.put(globalThis, JSC.ZigString.static("times"), times);
                 values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
             }
             return values;
-
         } else |zig_err| {
             const msg = switch (zig_err) {
                 error.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
@@ -113,7 +111,7 @@ pub const Os = struct {
 
     fn cpusImplLinux(cpu_buffer: []CPU) ![]CPU {
         // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
-        var line_buffer: [1024*8]u8 = undefined;
+        var line_buffer: [1024 * 8]u8 = undefined;
         var num_cpus: usize = 0;
 
         // Read /proc/stat to get number of CPUs and times
@@ -126,7 +124,6 @@ pub const Os = struct {
 
             // Read each CPU line
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
                 if (num_cpus >= cpu_buffer.len) return error.too_many_cpus;
 
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
@@ -141,10 +138,10 @@ pub const Os = struct {
                 const scale = 10;
                 cpu_buffer[num_cpus].times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
                 cpu_buffer[num_cpus].times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
-                cpu_buffer[num_cpus].times.sys  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.sys = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
                 cpu_buffer[num_cpus].times.idle = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
                 _ = try (toks.next() orelse error.eol); // skip iowait
-                cpu_buffer[num_cpus].times.irq  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                cpu_buffer[num_cpus].times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
 
                 num_cpus += 1;
             }
@@ -163,13 +160,11 @@ pub const Os = struct {
 
             var cpu_index: usize = 0;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
                 if (std.mem.startsWith(u8, line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(usize, digits, 10);
                     if (cpu_index >= slice.len) return error.too_may_cpus;
-
                 } else if (std.mem.startsWith(u8, line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
@@ -182,7 +177,7 @@ pub const Os = struct {
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        for (slice) |*cpu, cpu_index| {
+        for (&slice, 0..) |*cpu, cpu_index| {
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
             if (std.fs.openFileAbsolute(path, .{})) |file| {
@@ -263,11 +258,17 @@ pub const Os = struct {
     pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var dir: string = "unknown";
-        if (comptime Environment.isWindows)
-            dir = bun.getenvZ("USERPROFILE") orelse "unknown"
-        else
-            dir = bun.getenvZ("HOME") orelse "unknown";
+        const dir: []const u8 = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("USERPROFILE")) |env|
+                    break :brk bun.asByteSlice(env);
+            } else {
+                if (bun.getenvZ("HOME")) |env|
+                    break :brk bun.asByteSlice(env);
+            }
+
+            break :brk "unknown";
+        };
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
@@ -376,20 +377,21 @@ pub const Os = struct {
     pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var dir: string = "unknown";
-        if (comptime Environment.isWindows) {
-            if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
-                dir = tmpdir_;
+        const dir: []const u8 = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
+                    break :brk tmpdir_;
+                }
+
+                if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
+                    break :brk systemdir_ ++ "\\temp";
+                }
+            } else {
+                break :brk bun.asByteSlice(bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp");
             }
 
-            if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
-                dir = systemdir_ + "\\temp";
-            }
-
-            dir = "unknown";
-        } else {
-            dir = bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp";
-        }
+            break :brk "unknown";
+        };
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }

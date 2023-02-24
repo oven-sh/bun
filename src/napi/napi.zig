@@ -231,7 +231,7 @@ pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status 
 }
 const prefilled_undefined_args_array: [128]JSC.JSValue = brk: {
     var args: [128]JSC.JSValue = undefined;
-    for (args) |_, i| {
+    for (args, 0..) |_, i| {
         args[i] = JSValue.jsUndefined();
     }
     break :brk args;

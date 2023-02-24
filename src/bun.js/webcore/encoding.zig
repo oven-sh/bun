@@ -1139,7 +1139,7 @@ pub const Encoder = struct {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
                 var input_bytes = std.mem.sliceAsBytes(input[0..len]);
                 @memcpy(to.ptr, input_bytes.ptr, input_bytes.len);
-                for (to[0..len]) |c, i| {
+                for (to[0..len], 0..) |c, i| {
                     to[i] = @as(u8, @truncate(u7, c));
                 }
 

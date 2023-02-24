@@ -295,7 +295,7 @@ pub const FileSystem = struct {
 
         pub fn getComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) ?Entry.Lookup {
             comptime var query: [query_str.len]u8 = undefined;
-            comptime for (query_str) |c, i| {
+            comptime for (query_str, 0..) |c, i| {
                 query[i] = std.ascii.toLower(c);
             };
 
@@ -332,7 +332,7 @@ pub const FileSystem = struct {
 
         pub fn hasComptimeQuery(entry: *const DirEntry, comptime query_str: anytype) bool {
             comptime var query: [query_str.len]u8 = undefined;
-            comptime for (query_str) |c, i| {
+            comptime for (query_str, 0..) |c, i| {
                 query[i] = std.ascii.toLower(c);
             };
 
@@ -521,7 +521,7 @@ pub const FileSystem = struct {
         const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
         Output.print("{{\n", .{});
 
-        inline for (LIMITS) |limit_type, i| {
+        inline for (LIMITS, 0..) |limit_type, i| {
             const limit = std.os.getrlimit(limit_type) catch return;
 
             if (i == 0) {
@@ -664,7 +664,7 @@ pub const FileSystem = struct {
         // Always try to max out how many files we can keep open
         pub fn adjustUlimit() !usize {
             const LIMITS = [_]std.os.rlimit_resource{ std.os.rlimit_resource.STACK, std.os.rlimit_resource.NOFILE };
-            inline for (LIMITS) |limit_type, i| {
+            inline for (LIMITS, 0..) |limit_type, i| {
                 const limit = try std.os.getrlimit(limit_type);
 
                 if (limit.cur < limit.max) {

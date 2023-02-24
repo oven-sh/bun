@@ -483,7 +483,7 @@ pub const Loader = struct {
         var node_path_to_use = override_node;
         if (node_path_to_use.len == 0) {
             var node = this.getNodePath(fs, &buf) orelse return false;
-            node_path_to_use = try fs.dirname_store.append([]const u8, std.mem.span(node));
+            node_path_to_use = try fs.dirname_store.append([]const u8, bun.asByteSlice(node));
         }
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
@@ -533,7 +533,7 @@ pub const Loader = struct {
         var key_buf: []u8 = "";
         // Frameworks determine an allowlist of values
 
-        for (framework_defaults.keys) |key, i| {
+        for (framework_defaults.keys, 0..) |key, i| {
             if (key.len > "process.env.".len and strings.eqlComptime(key[0.."process.env.".len], "process.env.")) {
                 const hashable_segment = key["process.env.".len..];
                 string_map_hashes[i] = std.hash.Wyhash.hash(0, hashable_segment);
@@ -658,7 +658,7 @@ pub const Loader = struct {
             }
         }
 
-        for (framework_defaults.keys) |key, i| {
+        for (framework_defaults.keys, 0..) |key, i| {
             var value = framework_defaults.values[i];
 
             if (!to_string.contains(key) and !to_json.contains(key)) {
@@ -768,7 +768,7 @@ pub const Loader = struct {
         Output.printElapsed(elapsed);
         Output.prettyError(" <d>", .{});
 
-        for (loaded) |yes, i| {
+        for (loaded, 0..) |yes, i| {
             if (yes) {
                 loaded_i += 1;
                 if (count == 1 or (loaded_i >= count and count > 1)) {
@@ -1136,8 +1136,8 @@ test "DotEnv Loader - copyForDefine" {
     const framework_keys = [_]string{ "process.env.BACON", "process.env.HOSTNAME" };
     const framework_values = [_]string{ "true", "\"localhost\"" };
     const framework = Api.StringMap{
-        .keys = std.mem.span(&framework_keys),
-        .values = std.mem.span(&framework_values),
+        .keys = framework_keys[0..],
+        .value = framework_values[0..],
     };
 
     const user_overrides: string =

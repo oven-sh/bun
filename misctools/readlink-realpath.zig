@@ -24,7 +24,7 @@ pub fn main() anyerror!void {
     var fixed_buffer = std.heap.FixedBufferAllocator.init(&args_buffer);
     var allocator = fixed_buffer.allocator();
 
-    var args = std.mem.span(try std.process.argsAlloc(allocator));
+    var args = std.mem.bytesAsSlice([]u8, try std.process.argsAlloc(allocator));
 
     const to_resolve = args[args.len - 1];
     var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;

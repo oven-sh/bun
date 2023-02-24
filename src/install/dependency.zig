@@ -165,7 +165,7 @@ pub inline fn isSCPLikePath(dependency: string) bool {
 
     var at_index: ?usize = null;
 
-    for (dependency) |c, i| {
+    for (dependency, 0..) |c, i| {
         switch (c) {
             '@' => {
                 if (at_index == null) at_index = i;
@@ -189,7 +189,7 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
     var hash_index: usize = 0;
     var slash_index: usize = 0;
 
-    for (dependency) |c, i| {
+    for (dependency, 0..) |c, i| {
         switch (c) {
             '/' => {
                 if (i == 0) return false;
@@ -492,7 +492,7 @@ pub const Version = struct {
                 'n' => {
                     if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
                         const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
-                        for (remain) |c, i| {
+                        for (remain, 0..) |c, i| {
                             if (c == '@') {
                                 return infer(remain[i + 1 ..]);
                             }
@@ -772,7 +772,7 @@ pub fn parseWithTag(
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
-            for (input) |c, i| {
+            for (input, 0..) |c, i| {
                 switch (c) {
                     '/' => {
                         slash_index = i;

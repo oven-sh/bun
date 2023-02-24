@@ -62,7 +62,7 @@ pub const BuildCommand = struct {
 
                 var all_paths = try ctx.allocator.alloc([]const u8, result.output_files.len);
                 var max_path_len: usize = 0;
-                for (result.output_files) |f, i| {
+                for (result.output_files, 0..) |f, i| {
                     all_paths[i] = f.input.text;
                 }
 

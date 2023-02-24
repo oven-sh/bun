@@ -1002,7 +1002,7 @@ pub const ExportsMap = struct {
                 },
                 .e_array => |e_array| {
                     var array = this.allocator.alloc(Entry, e_array.items.len) catch unreachable;
-                    for (e_array.items.slice()) |item, i| {
+                    for (e_array.items.slice(), 0..) |item, i| {
                         array[i] = this.visit(item);
                     }
                     return Entry{
@@ -1025,7 +1025,7 @@ pub const ExportsMap = struct {
                     var is_conditional_sugar = false;
                     first_token.loc = expr.loc;
                     first_token.len = 1;
-                    for (e_obj.properties.slice()) |prop, i| {
+                    for (e_obj.properties.slice(), 0..) |prop, i| {
                         const key: string = prop.key.?.data.e_string.string(this.allocator) catch unreachable;
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
@@ -1154,7 +1154,7 @@ pub const ExportsMap = struct {
                 .map => {
                     var slice = this.data.map.list.slice();
                     const keys = slice.items(.key);
-                    for (keys) |key, i| {
+                    for (keys, 0..) |key, i| {
                         if (strings.eql(key, key_)) {
                             return slice.items(.value)[i];
                         }
@@ -1697,7 +1697,7 @@ pub const ESModule = struct {
 
                 const slice = object.list.slice();
                 const keys = slice.items(.key);
-                for (keys) |key, i| {
+                for (keys, 0..) |key, i| {
                     if (strings.eqlComptime(key, "default") or r.conditions.contains(key)) {
                         if (r.debug_logs) |log| {
                             log.addNoteFmt("The key \"{s}\" matched", .{key});
@@ -1852,7 +1852,7 @@ pub const ESModule = struct {
             var slices = map.list.slice();
             var keys = slices.items(.key);
             var values = slices.items(.value);
-            for (keys) |key, i| {
+            for (keys, 0..) |key, i| {
                 if (r.resolveTargetReverse(query, key, values[i], .exact)) |result| {
                     return result;
                 }
@@ -1935,7 +1935,7 @@ pub const ESModule = struct {
             .map => |map| {
                 const slice = map.list.slice();
                 const keys = slice.items(.key);
-                for (keys) |map_key, i| {
+                for (keys, 0..) |map_key, i| {
                     if (strings.eqlComptime(map_key, "default") or r.conditions.contains(map_key)) {
                         if (r.resolveTargetReverse(query, key, slice.items(.value)[i], kind)) |result| {
                             return result;

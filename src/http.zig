@@ -478,7 +478,7 @@ pub const RequestContext = struct {
         if (!this.bundler.options.routes.static_dir_enabled) return null;
         const relative_path = this.url.path;
         var extension = this.url.extname;
-        var tmp_buildfile_buf = std.mem.span(&Bundler.tmp_buildfile_buf);
+        var tmp_buildfile_buf = Bundler.tmp_buildfile_buf[0..];
 
         // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
         const public_dir: std.fs.Dir = this.bundler.options.routes.static_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.routes.static_dir, .{}) catch |err| {
@@ -2387,7 +2387,7 @@ pub const RequestContext = struct {
 
                         if (send_sourcemap_info) {
                             // This will be cleared by the arena
-                            source_map_url = std.mem.span(chunky.rctx.getFullURLForSourceMap());
+                            source_map_url = bun.asByteSlice(chunky.rctx.getFullURLForSourceMap());
 
                             chunky.rctx.appendHeader("SourceMap", source_map_url);
                         }
@@ -3362,7 +3362,7 @@ pub const Server = struct {
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
                         for (affected) |changed_name_ptr| {
-                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+                            const changed_name: []u8 = (changed_name_ptr orelse continue)[0..];
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
@@ -3376,7 +3376,7 @@ pub const Server = struct {
                                         file_ent.entry.need_stat = true;
                                         path_string = file_ent.entry.abs_path;
                                         file_hash = Watcher.getHash(path_string.slice());
-                                        for (hashes) |hash, entry_id| {
+                                        for (hashes, 0..) |hash, entry_id| {
                                             if (hash == file_hash) {
                                                 file_descriptors[entry_id] = 0;
                                                 break;

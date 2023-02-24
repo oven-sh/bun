@@ -950,20 +950,24 @@ pub fn BodyMixin(comptime Type: type) type {
     return struct {
         pub fn getText(
             this: *Type,
-            globalThis: *JSC.JSGlobalObject,
+            globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
-                return handleBodyAlreadyUsed(globalThis);
+                return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalThis, .{ .getText = void{} });
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
+
+                return value.Locked.setPromise(globalObject, .{ .getText = void{} });
             }
 
             var blob = value.useAsAnyBlob();
-            return JSC.JSPromise.wrap(globalThis, blob.toString(globalThis, .transfer));
+            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
         }
 
         pub fn getBody(
@@ -998,6 +1002,9 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
                 return value.Locked.setPromise(globalObject, .{ .getJSON = void{} });
             }
 
@@ -1024,6 +1031,9 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = void{} });
             }
 
@@ -1040,6 +1050,12 @@ pub fn BodyMixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
             }
 
             var encoder = this.getFormDataEncoding() orelse {
@@ -1089,6 +1105,10 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
+
                 return value.Locked.setPromise(globalObject, .{ .getBlob = void{} });
             }
 

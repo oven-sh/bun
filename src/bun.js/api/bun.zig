@@ -456,7 +456,7 @@ pub fn getArgv(
     var allocator = argv_list.get();
     var argv = allocator.alloc(ZigString, std.os.argv.len) catch unreachable;
     defer if (argv.len > 128) allocator.free(argv);
-    for (std.os.argv) |arg, i| {
+    for (std.os.argv, 0..) |arg, i| {
         argv[i] = ZigString.init(std.mem.span(arg));
     }
 
@@ -504,7 +504,7 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
         var temp_strings_list: [32]string = undefined;
         var temp_strings_list_len: u8 = 0;
         defer {
-            for (temp_strings_list[0..temp_strings_list_len]) |_, i| {
+            for (temp_strings_list[0..temp_strings_list_len], 0..) |_, i| {
                 temp_strings_list[i] = "";
             }
         }
@@ -680,7 +680,7 @@ pub fn getRouteFiles(
     const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getPublicPaths() catch unreachable;
 
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -701,7 +701,7 @@ pub fn getRouteNames(
     const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getNames() catch unreachable;
 
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -1452,7 +1452,7 @@ pub const Crypto = struct {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(std.mem.span(@tagName(entry.key)));
+                    entry.value.* = ZigString.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -1612,7 +1612,7 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return ZigString.fromUTF8(std.mem.span(@tagName(this.evp.algorithm))).toValueGC(globalObject);
+            return ZigString.fromUTF8(bun.asByteSlice(@tagName(this.evp.algorithm))).toValueGC(globalObject);
         }
 
         pub fn getAlgorithms(
@@ -3976,7 +3976,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         const keys = vm.bundler.env.map.map.keys();
         const max = @min(names.len, keys.len);
-        for (keys[0..max]) |key, i| {
+        for (keys[0..max], 0..) |key, i| {
             names[i] = ZigString.initUTF8(key);
         }
         return keys.len;

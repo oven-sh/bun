@@ -112,7 +112,7 @@ pub const Arguments = struct {
         if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
                 var cwd = try std.process.getCwd(&cwd_buf);
-                var parts = [_]string{std.mem.span(file_path)};
+                var parts = [_]string{file_path};
                 var absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
                 file_path_buf[absolute_path.len] = 0;
                 file_path_buf[absolute_path.len + 1] = 0;
@@ -136,7 +136,7 @@ pub const Arguments = struct {
             var raw_arg_i: usize = 0;
             while (raw_arg_i < raw_args.items.len) : (raw_arg_i += 1) {
                 const arg = raw_args.items[raw_arg_i];
-                if (MethodNames.get(std.mem.span(arg))) |method_| {
+                if (MethodNames.get(arg[0..])) |method_| {
                     method = method_;
                     _ = raw_args.swapRemove(raw_arg_i);
                 }

@@ -1,10 +1,11 @@
 // @link "deps/zlib/libz.a"
 
 const std = @import("std");
+const bun = @import("bun");
 
 test "Zlib Read" {
     const expected_text = @embedFile("./zlib.test.txt");
-    const input = std.mem.span(@embedFile("./zlib.test.gz"));
+    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
     std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
     var output = std.ArrayList(u8).init(std.heap.c_allocator);
     var writer = output.writer();
@@ -19,7 +20,7 @@ test "Zlib Read" {
 
 test "ZlibArrayList Read" {
     const expected_text = @embedFile("./zlib.test.txt");
-    const input = std.mem.span(@embedFile("./zlib.test.gz"));
+    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
     std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
     var list = std.ArrayListUnmanaged(u8){};
     try list.ensureUnusedCapacity(std.heap.c_allocator, 4096);

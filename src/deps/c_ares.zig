@@ -186,7 +186,7 @@ pub const struct_hostent = extern struct {
 
         // A cname lookup always returns a single record but we follow the common API here.
         if (comptime strings.eqlComptime(lookup_name, "cname")) {
-            if(this.h_name != null){
+            if (this.h_name != null) {
                 const array = JSC.JSValue.createEmptyArray(globalThis, 1);
                 const h_name_len = bun.len(this.h_name);
                 const h_name_slice = this.h_name[0..h_name_len];
@@ -195,10 +195,10 @@ pub const struct_hostent = extern struct {
             }
             return JSC.JSValue.createEmptyArray(globalThis, 0);
         } else {
-            if (this.h_aliases == null){
+            if (this.h_aliases == null) {
                 return JSC.JSValue.createEmptyArray(globalThis, 0);
             }
-            
+
             var count: u32 = 0;
             while (this.h_aliases[count] != null) {
                 count += 1;
@@ -502,7 +502,7 @@ pub const Channel = opaque {
         };
 
         var hints_buf: [3]AddrInfo_hints = bun.zero([3]AddrInfo_hints);
-        for (hints[0..@min(hints.len, 2)]) |hint, i| {
+        for (hints[0..@min(hints.len, 2)], 0..) |hint, i| {
             hints_buf[i] = hint;
         }
         var hints_: [*c]const AddrInfo_hints = if (hints.len > 0) &hints_buf else null;

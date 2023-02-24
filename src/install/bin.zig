@@ -85,7 +85,7 @@ pub const Bin = extern struct {
                 .value = .{ .dir = builder.append(String, this.value.dir.slice(buf)) },
             },
             .map => {
-                for (this.value.map.get(prev_external_strings)) |extern_string, i| {
+                for (this.value.map.get(prev_external_strings), 0..) |extern_string, i| {
                     extern_strings_slice[i] = builder.append(ExternalString, extern_string.slice(buf));
                 }
 

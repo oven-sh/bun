@@ -647,7 +647,7 @@ pub const VirtualMachine = struct {
         if (is_bindgen)
             return &[_]js.JSClassRef{};
         var classes = default_allocator.alloc(js.JSClassRef, GlobalClasses.len) catch return &[_]js.JSClassRef{};
-        inline for (GlobalClasses) |Class, i| {
+        inline for (GlobalClasses, 0..) |Class, i| {
             classes[i] = Class.get().*;
         }
 
@@ -668,7 +668,7 @@ pub const VirtualMachine = struct {
         else
             VirtualMachine.get().allocator.alloc(JSC.JSValue, GlobalConstructors.len) catch unreachable;
 
-        inline for (GlobalConstructors) |Class, i| {
+        inline for (GlobalConstructors, 0..) |Class, i| {
             var ref = Class.constructor(globalObject.ref()).?;
             JSC.C.JSValueProtect(globalObject.ref(), ref);
             slice[i] = JSC.JSValue.fromRef(
@@ -779,7 +779,7 @@ pub const VirtualMachine = struct {
         }
 
         var global_classes: [GlobalClasses.len]js.JSClassRef = undefined;
-        inline for (GlobalClasses) |Class, i| {
+        inline for (GlobalClasses, 0..) |Class, i| {
             global_classes[i] = Class.get().*;
         }
         vm.global = ZigGlobalObject.create(
@@ -1353,7 +1353,7 @@ pub const VirtualMachine = struct {
 
                 var errors = errors_stack[0..@min(log.msgs.items.len, errors_stack.len)];
 
-                for (log.msgs.items) |msg, i| {
+                for (log.msgs.items, 0..) |msg, i| {
                     errors[i] = switch (msg.metadata) {
                         .build => BuildError.create(globalThis, globalThis.allocator(), msg).?,
                         .resolve => ResolveError.create(
@@ -1798,7 +1798,7 @@ pub const VirtualMachine = struct {
         var frames: []JSC.ZigStackFrame = exception.stack.frames_ptr[0..exception.stack.frames_len];
         if (this.hide_bun_stackframes) {
             var start_index: ?usize = null;
-            for (frames) |frame, i| {
+            for (frames, 0..) |frame, i| {
                 if (frame.source_url.eqlComptime("bun:wrap") or
                     frame.function_name.eqlComptime("::bunternal::"))
                 {
@@ -1859,7 +1859,7 @@ pub const VirtualMachine = struct {
                 std.mem.set(i32, source_line_numbers, 0);
 
                 var lines_ = lines[0..@min(lines.len, source_lines.len)];
-                for (lines_) |line, j| {
+                for (lines_, 0..) |line, j| {
                     source_lines[(lines_.len - 1) - j] = ZigString.init(line);
                     source_line_numbers[j] = top.position.line - @intCast(i32, j) + 1;
                 }
@@ -2822,7 +2822,7 @@ pub const HotReloader = struct {
 
                             // if a file descriptor is stale, we need to close it
                             if (event.op.delete and entries_option != null) {
-                                for (parents) |parent_hash, entry_id| {
+                                for (parents, 0..) |parent_hash, entry_id| {
                                     if (parent_hash == id) {
                                         const affected_path = file_paths[entry_id];
                                         const was_deleted = check: {
@@ -2862,7 +2862,7 @@ pub const HotReloader = struct {
                             const changed_name: []const u8 = if (comptime Environment.isMac)
                                 changed_name_
                             else
-                                std.mem.span(changed_name_.?);
+                                bun.asByteSlice(changed_name_.?);
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
@@ -2877,7 +2877,7 @@ pub const HotReloader = struct {
                                         file_ent.entry.need_stat = true;
                                         path_string = file_ent.entry.abs_path;
                                         file_hash = Watcher.getHash(path_string.slice());
-                                        for (hashes) |hash, entry_id| {
+                                        for (hashes, 0..) |hash, entry_id| {
                                             if (hash == file_hash) {
                                                 if (file_descriptors[entry_id] != 0) {
                                                     if (prev_entry_id != entry_id) {

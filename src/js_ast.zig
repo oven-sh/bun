@@ -1533,7 +1533,7 @@ pub const E = struct {
         }
 
         pub fn asProperty(obj: *const Object, name: string) ?Expr.Query {
-            for (obj.properties.slice()) |prop, i| {
+            for (obj.properties.slice(), 0..) |prop, i| {
                 const value = prop.value orelse continue;
                 const key = prop.key orelse continue;
                 if (std.meta.activeTag(key.data) != .e_string) continue;
@@ -5248,7 +5248,7 @@ pub const Macro = struct {
                     0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
                     1...255 => {
                         var slice = temporary_call_args_array[0..args.len];
-                        for (slice) |_, i| {
+                        for (slice, 0..) |_, i| {
                             var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                             node.* = JSNode.initExpr(args.ptr[i]);
                             slice[i] = JSNode.Class.make(ctx, node);
@@ -5292,7 +5292,7 @@ pub const Macro = struct {
                     0 => return js.JSObjectMakeArray(ctx, 0, null, exception),
                     1...255 => {
                         var slice = temporary_call_args_array[0..args.len];
-                        for (slice) |_, i| {
+                        for (slice, 0..) |_, i| {
                             var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                             node.* = JSNode{ .data = .{ .g_property = &args[i] }, .loc = this.loc };
                             slice[i] = JSNode.Class.make(ctx, node);
@@ -5355,7 +5355,7 @@ pub const Macro = struct {
                     return js.JSObjectMakeArray(ctx, 0, null, exception);
                 }
 
-                for (items) |expr, i| {
+                for (items, 0..) |expr, i| {
                     var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                     node.* = JSNode.initExpr(expr);
                     temporary_call_args_array[i] = JSNode.Class.make(ctx, node);
@@ -5371,7 +5371,7 @@ pub const Macro = struct {
                 }
 
                 var node: JSNode = undefined;
-                for (items) |expr, i| {
+                for (items, 0..) |expr, i| {
                     node = JSNode.initExpr(expr);
                     temporary_call_args_array[i] = toPrimitive(&node, ctx, exception);
                 }
@@ -5396,7 +5396,7 @@ pub const Macro = struct {
 
                 defer if (did_allocate) getAllocator(ctx).free(properties_list);
 
-                for (obj.properties.slice()) |_, i| {
+                for (obj.properties.slice(), 0..) |_, i| {
                     var node = JSCBase.getAllocator(ctx).create(JSNode) catch unreachable;
                     node.* = JSNode{
                         .data = .{
@@ -6221,7 +6221,7 @@ pub const Macro = struct {
                 }
 
                 fn indexOfPropertyByName(props: []G.Property, comptime name: string) ?u32 {
-                    for (props) |prop, i| {
+                    for (props, 0..) |prop, i| {
                         const key = prop.key orelse continue;
                         if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
                         if (strings.eqlComptime(key.data.e_string.data, name)) return @intCast(u32, i);

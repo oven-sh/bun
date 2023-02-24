@@ -582,7 +582,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         var last_event_index: usize = 0;
                         var last_event_id: INotify.EventListIndex = std.math.maxInt(INotify.EventListIndex);
 
-                        for (all_events) |_, i| {
+                        for (all_events, 0..) |_, i| {
                             if (all_events[i].name_len > 0) {
                                 this.changed_filepaths[name_off] = temp_name_list[all_events[i].name_off];
                                 all_events[i].name_off = name_off;
@@ -609,7 +609,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         pub fn indexOf(this: *Watcher, hash: HashType) ?u32 {
-            for (this.watchlist.items(.hash)) |other, i| {
+            for (this.watchlist.items(.hash), 0..) |other, i| {
                 if (hash == other) {
                     return @truncate(u32, i);
                 }
@@ -658,7 +658,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             const watchlist_id = this.watchlist.len;
 
             const file_path_: string = if (comptime copy_file_path)
-                std.mem.span(try this.allocator.dupeZ(u8, file_path))
+                bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
             else
                 file_path;
 
@@ -704,7 +704,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             }
 
             this.watchlist.appendAssumeCapacity(.{
-                .file_path = std.mem.span(file_path_),
+                .file_path = file_path_,
                 .fd = fd,
                 .hash = hash,
                 .count = 0,
@@ -734,7 +734,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             var index: PlatformWatcher.EventListIndex = std.math.maxInt(PlatformWatcher.EventListIndex);
 
             const file_path_: string = if (comptime copy_file_path)
-                std.mem.span(try this.allocator.dupeZ(u8, file_path))
+                bun.asByteSlice(try this.allocator.dupeZ(u8, file_path))
             else
                 file_path;
 

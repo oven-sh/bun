@@ -261,13 +261,13 @@ pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
         pub fn forMac() Analytics.Platform {
-            std.mem.set(u8, std.mem.span(&osversion_name), 0);
+            @memset(&osversion_name, 0, osversion_name.len);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
             if (std.c.sysctlbyname("kern.osrelease", &osversion_name, &len, null, 0) == -1) return platform;
 
-            platform.version = std.mem.span(std.mem.sliceTo(std.mem.span(&osversion_name), @as(u8, 0)));
+            platform.version = bun.sliceTo(&osversion_name, 0);
             return platform;
         }
 

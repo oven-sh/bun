@@ -1119,8 +1119,9 @@ pub const Subprocess = struct {
                             };
 
                             if (key.eqlComptime("PATH")) {
-                                PATH = bun.span(line["PATH=".len..]);
+                                PATH = bun.asByteSlice(line["PATH=".len..]);
                             }
+
                             env_array.append(allocator, line) catch {
                                 globalThis.throw("out of memory", .{});
                                 return .zero;

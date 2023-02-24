@@ -46,6 +46,21 @@ for (let [gcTick, label] of [
         expect(exitCode2).toBe(1);
         gcTick();
       });
+
+      it("AbortController.abort() works", async () => {
+        const controller = new AbortController();
+        controller.abort(); //is sync so will only abort if already start aborted
+        const process = Bun.spawnSync({
+          cmd: ["bash", "-c", "sleep 2"],
+          stdout: "pipe",
+          signal: controller.signal
+        });
+        gcTick();
+        await process.exited;
+        expect(process.exitCode instanceof DOMException).toBe(true);
+        expect(process?.exitCode.name).toBe("AbortError");
+        expect(process?.exitCode.message).toBe("The operation was aborted.");
+      });
     });
 
     describe("spawn", () => {
@@ -375,6 +390,22 @@ for (let [gcTick, label] of [
             });
           });
         }
+      });
+
+      it("AbortController.abort() works", async () => {
+        const controller = new AbortController();
+        const process = Bun.spawn({
+          cmd: ["bash", "-c", "sleep 2"],
+          stdout: "pipe",
+          signal: controller.signal
+        });
+        gcTick();
+        await Bun.sleep(500);
+        controller.abort();
+        await process.exited;
+        expect(process.exitCode instanceof DOMException).toBe(true);
+        expect(process?.exitCode.name).toBe("AbortError");
+        expect(process?.exitCode.message).toBe("The operation was aborted.");
       });
     });
   });

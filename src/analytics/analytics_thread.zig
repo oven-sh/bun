@@ -292,7 +292,7 @@ pub const GenerateHeader = struct {
                 @compileError("This function is only implemented on Linux");
             }
             _ = forOS();
-            const release = std.mem.span(&linux_os_name.release);
+            const release = bun.sliceTo(&linux_os_name.release, 0);
             const sliced_string = Semver.SlicedString.init(release, release);
             const result = Semver.Version.parse(sliced_string, bun.default_allocator);
             // we only care about major, minor, patch so we don't care about the string
@@ -304,8 +304,8 @@ pub const GenerateHeader = struct {
 
             _ = std.c.uname(&linux_os_name);
 
-            const release = std.mem.span(&linux_os_name.release);
-            const version = std.mem.sliceTo(std.mem.span(&linux_os_name.version).ptr, @as(u8, 0));
+            const release = bun.sliceTo(&linux_os_name.release, 0);
+            const version = std.mem.sliceTo(&linux_os_name.version, @as(u8, 0));
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
                 return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = version, .arch = platform_arch };

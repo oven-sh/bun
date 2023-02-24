@@ -177,7 +177,7 @@ pub const Os = struct {
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        for (&slice, 0..) |*cpu, cpu_index| {
+        for (slice, 0..) |*cpu, cpu_index| {
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
             if (std.fs.openFileAbsolute(path, .{})) |file| {

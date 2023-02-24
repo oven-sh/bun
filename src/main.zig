@@ -43,8 +43,3 @@ test "panic" {
 
 pub const build_options = @import("build_options");
 pub const bun = @import("./bun.zig");
-
-comptime {
-    if (!bun.Environment.isRelease)
-        _ = @import("compiler_rt");
-}

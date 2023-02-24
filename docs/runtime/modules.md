@@ -193,7 +193,7 @@ Once a version or version range has been determined, Bun will:
 
 ### Installation
 
-Packages are installed and cached into `<cache>/<pkg>@<version>`, so multiple versions of the same package can be cached at once. Additional, a symlink is created under `<cache>/<pkg>/<version>` to make it faster to look up all versions of a package exist in the cache.
+Packages are installed and cached into `<cache>/<pkg>@<version>`, so multiple versions of the same package can be cached at once. Additionally, a symlink is created under `<cache>/<pkg>/<version>` to make it faster to look up all versions of a package that exist in the cache.
 
 ### Version specifiers
 

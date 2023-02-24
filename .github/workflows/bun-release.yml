@@ -28,6 +28,12 @@ jobs:
           TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-gpg
+        name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - id: setup-bun
         name: Setup Bun
         uses: oven-sh/setup-bun@v1
@@ -103,9 +109,7 @@ jobs:
           bun-version: canary
       - id: bun-install
         name: Install Dependencies
-        run: |
-          bun upgrade --canary
-          bun install
+        run: bun install
       - id: bun-run
         name: Build
         run: bun run build

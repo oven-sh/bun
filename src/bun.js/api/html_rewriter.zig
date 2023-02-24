@@ -162,6 +162,7 @@ pub const HTMLRewriter = struct {
         var handler = getAllocator(global).create(DocumentHandler) catch unreachable;
         handler.* = handler_;
 
+        // If this fails, subsequent calls to write or end should throw
         this.builder.addDocumentContentHandlers(
             DocumentHandler,
             DocumentHandler.onDocType,
@@ -190,9 +191,7 @@ pub const HTMLRewriter = struct {
                 handler
             else
                 null,
-        ) catch {
-            return throwLOLHTMLError(global);
-        };
+        );
 
         this.context.document_handlers.append(bun.default_allocator, handler) catch unreachable;
         return JSValue.fromRef(thisObject);

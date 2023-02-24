@@ -83,7 +83,7 @@ pub const HTMLRewriter = opaque {
             text_handler_user_data: ?*anyopaque,
             doc_end_handler: ?lol_html_doc_end_handler_t,
             doc_end_user_data: ?*anyopaque,
-        ) c_int;
+        ) void;
 
         pub fn init() *HTMLRewriter.Builder {
             auto_disable();
@@ -121,10 +121,10 @@ pub const HTMLRewriter = opaque {
             comptime DocEndHandler: type,
             comptime end_tag_handler: ?DirectiveFunctionTypeForHandler(DocEnd, DocEndHandler),
             end_tag_handler_data: ?*DocEndHandler,
-        ) Error!void {
+        ) void {
             auto_disable();
 
-            return switch (builder.lol_html_rewriter_builder_add_document_content_handlers(
+            builder.lol_html_rewriter_builder_add_document_content_handlers(
                 if (doctype_handler_data != null)
                     DirectiveHandler(DocType, DocTypeHandler, doctype_handler.?)
                 else
@@ -145,11 +145,7 @@ pub const HTMLRewriter = opaque {
                 else
                     null,
                 end_tag_handler_data,
-            )) {
-                0 => void{},
-                -1 => error.Fail,
-                else => unreachable,
-            };
+            );
         }
 
         /// Adds element content handlers to the builder for the

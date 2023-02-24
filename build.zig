@@ -170,11 +170,7 @@ pub fn build(b: *Build) !void {
 
     if (std.mem.eql(u8, os_tagname, "macos")) {
         os_tagname = "darwin";
-        if (arch.isAARCH64()) {
-            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
-        } else if (arch.isX86()) {
-            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
-        }
+        target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
     } else if (target.isLinux()) {
         target.setGnuLibCVersion(2, 27, 0);
     }

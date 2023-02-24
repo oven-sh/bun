@@ -209,9 +209,9 @@ export const Socket = (function (InternalSocket) {
         var {
           port,
           host,
-          // TODOs
           localAddress,
           localPort,
+          // TODOs
           family,
           hints,
           lookup,
@@ -219,6 +219,8 @@ export const Socket = (function (InternalSocket) {
           keepAlive,
           keepAliveInitialDelay,
         } = port;
+        this.localAddress = localAddress;
+        this.localPort = localPort;
       }
       this.connecting = true;
       this.remotePort = port;
@@ -258,7 +260,11 @@ export const Socket = (function (InternalSocket) {
     }
 
     get localAddress() {
-      return "127.0.0.1";
+      return this.#socket?.localAddress;
+    }
+
+    set localAddress(localAddress) {
+      return this.#socket?.localAddress = localAddress
     }
 
     get localFamily() {
@@ -267,6 +273,10 @@ export const Socket = (function (InternalSocket) {
 
     get localPort() {
       return this.#socket?.localPort;
+    }
+
+    set localPort(localPort) {
+      return this.#socket?.localPort = localPort
     }
 
     get pending() {

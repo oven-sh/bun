@@ -60,8 +60,8 @@ declare module "net" {
   interface TcpSocketConnectOpts extends ConnectOpts {
     port: number;
     host?: string | undefined;
-    // localAddress?: string | undefined;
-    // localPort?: number | undefined;
+    localAddress?: string | undefined;
+    localPort?: number | undefined;
     // hints?: number | undefined;
     // family?: number | undefined;
     // lookup?: LookupFunction | undefined;

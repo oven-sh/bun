@@ -419,7 +419,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
     }.log;
 }
 
-// Valid colors:
+// Valid "colors":
 // <black>
 // <blue>
 // <cyan>
@@ -432,7 +432,7 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
 // <d> - dim
 // </r> - reset
 // <r> - reset
-pub const ED = "\x1b[";
+const ED = "\x1b[";
 pub const color_map = ComptimeStringMap(string, .{
     &.{ "black", ED ++ "30m" },
     &.{ "blue", ED ++ "34m" },
@@ -446,7 +446,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "white", ED ++ "37m" },
     &.{ "yellow", ED ++ "33m" },
 });
-pub const RESET = "\x1b[0m";
+const RESET: string = "\x1b[0m";
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
     comptime var new_fmt_i: usize = 0;
@@ -458,9 +458,11 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         switch (c) {
             '\\' => {
                 i += 1;
-                if (fmt.len < i) {
+                if (i < fmt.len) {
                     switch (fmt[i]) {
                         '<', '>' => {
+                            new_fmt[new_fmt_i] = fmt[i];
+                            new_fmt_i += 1;
                             i += 1;
                         },
                         else => {
@@ -468,6 +470,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                             new_fmt_i += 1;
                             new_fmt[new_fmt_i] = fmt[i];
                             new_fmt_i += 1;
+                            i += 1;
                         },
                     }
                 }
@@ -502,20 +505,11 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
                         @compileError("Invalid color name passed: " ++ color_name);
                     }
                 };
-                var orig = new_fmt_i;
 
                 if (is_enabled) {
-                    if (!is_reset) {
-                        orig = new_fmt_i;
-                        new_fmt_i += color_str.len;
-                        std.mem.copy(u8, new_fmt[orig..new_fmt_i], color_str);
-                    }
-
-                    if (is_reset) {
-                        const reset_sequence = RESET;
-                        orig = new_fmt_i;
-                        new_fmt_i += reset_sequence.len;
-                        std.mem.copy(u8, new_fmt[orig..new_fmt_i], reset_sequence);
+                    for (if (is_reset) RESET else color_str) |ch| {
+                        new_fmt[new_fmt_i] = ch;
+                        new_fmt_i += 1;
                     }
                 }
             },

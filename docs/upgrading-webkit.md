@@ -1,5 +1,3 @@
-# Upgrading WebKit
-
 Bun uses [a fork](https://github.com/oven-sh/WebKit) of WebKit with a small number of changes.
 
 It's important to periodically update WebKit for many reasons:
@@ -9,24 +7,24 @@ It's important to periodically update WebKit for many reasons:
 - Compatibility
 - …and many more.
 
-To upgrade, first find the commit in **bun's WebKit fork** (not bun!) between when we last upgraded and now.
+To upgrade, first find the commit in **Bun's WebKit fork** (not Bun!) between when we last upgraded and now.
 
 ```bash
-cd src/bun.js/WebKit # In the WebKit directory! not bun
-git checkout $COMMIT
+$ cd src/bun.js/WebKit # In the WebKit directory! not bun
+$ git checkout $COMMIT
 ```
 
 This is the main command to run:
 
 ```bash
-git pull https://github.com/WebKit/WebKit.git main --no-rebase --allow-unrelated-histories -X theirs
+$ git pull https://github.com/WebKit/WebKit.git main --no-rebase --allow-unrelated-histories -X theirs
 ```
 
 Then, you will likely see some silly merge conflicts. Fix them and then run:
 
 ```bash
 # You might have to run this multiple times.
-rm -rf WebKitBuild
+$ rm -rf WebKitBuild
 
 # Go to Bun's directory! Not WebKit.
 cd ../../../../

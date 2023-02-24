@@ -55,6 +55,10 @@ export default [
       bodyUsed: {
         getter: "getBodyUsed",
       },
+      signal: {
+        getter: "getSignal",
+        cache: true,
+      },
     },
   }),
   define({

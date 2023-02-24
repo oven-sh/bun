@@ -138,11 +138,14 @@ pub extern fn JSC__JSModuleLoader__loadAndEvaluateModule(arg0: *bindings.JSGloba
 pub extern fn JSC__AbortSignal__aborted(arg0: ?*bindings.AbortSignal) bool;
 pub extern fn JSC__AbortSignal__abortReason(arg0: ?*bindings.AbortSignal) JSC__JSValue;
 pub extern fn JSC__AbortSignal__addListener(arg0: ?*bindings.AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSC__JSValue) callconv(.C) void) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__cleanNativeBindings(arg0: ?*bindings.AbortSignal, arg1: ?*anyopaque) void;
+pub extern fn JSC__AbortSignal__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__createAbortError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__createTimeoutError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__fromJS(JSValue0: JSC__JSValue) ?*bindings.AbortSignal;
 pub extern fn JSC__AbortSignal__ref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn JSC__AbortSignal__signal(arg0: ?*bindings.AbortSignal, JSValue1: JSC__JSValue) ?*bindings.AbortSignal;
+pub extern fn JSC__AbortSignal__toJS(arg0: ?*bindings.AbortSignal, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__AbortSignal__unref(arg0: ?*bindings.AbortSignal) ?*bindings.AbortSignal;
 pub extern fn JSC__JSPromise__asValue(arg0: ?*bindings.JSPromise, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSPromise__create(arg0: *bindings.JSGlobalObject) ?*bindings.JSPromise;
@@ -209,6 +212,7 @@ pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSVa
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.VM, *bindings.JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
+pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: *bindings.JSGlobalObject, arg1: u64) JSC__JSValue;

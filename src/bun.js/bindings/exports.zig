@@ -466,7 +466,7 @@ pub const ZigStackTrace = extern struct {
                 var remain_buf = source_line_buf[0..];
                 var i: usize = 0;
                 while (source_lines_iter.next()) |source| {
-                    std.mem.copy(u8, remain_buf, source.text);
+                    bun.copy(u8, remain_buf, source.text);
                     const copied_line = remain_buf[0..source.text.len];
                     remain_buf = remain_buf[source.text.len..];
                     source_lines[i] = .{ .text = copied_line, .line = source.line };
@@ -481,7 +481,7 @@ pub const ZigStackTrace = extern struct {
                 var stack_frames = try allocator.alloc(Api.StackFrame, _frames.len);
                 stack_trace.frames = stack_frames;
 
-                for (_frames) |frame, i| {
+                for (_frames, 0..) |frame, i| {
                     stack_frames[i] = try frame.toAPI(
                         root_path,
                         origin,
@@ -527,7 +527,7 @@ pub const ZigStackTrace = extern struct {
 
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
         var i: usize = 0;
-        for (this.source_lines_numbers[0..this.source_lines_len]) |num, j| {
+        for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
             if (num > 0) {
                 i = j;
             }
@@ -964,9 +964,11 @@ pub const ZigConsoleClient = struct {
                 @TypeOf(buffered_writer.unbuffered_writer.context),
                 Writer,
                 writer,
-                enable_colors,
-                true,
-                true,
+                .{
+                    .enable_colors = enable_colors,
+                    .add_newline = true,
+                    .flush = true,
+                },
             )
         else if (message_type == .Log) {
             _ = console.writer.write("\n") catch 0;
@@ -1004,6 +1006,14 @@ pub const ZigConsoleClient = struct {
             ) catch unreachable;
     }
 
+    pub const FormatOptions = struct {
+        enable_colors: bool,
+        add_newline: bool,
+        flush: bool,
+        ordered_properties: bool = false,
+        quote_strings: bool = false,
+    };
+
     pub fn format(
         level: MessageLevel,
         global: *JSGlobalObject,
@@ -1012,9 +1022,7 @@ pub const ZigConsoleClient = struct {
         comptime RawWriter: type,
         comptime Writer: type,
         writer: Writer,
-        enable_colors: bool,
-        add_newline: bool,
-        flush: bool,
+        options: FormatOptions,
     ) void {
         var fmt: ZigConsoleClient.Formatter = undefined;
         defer {
@@ -1026,7 +1034,12 @@ pub const ZigConsoleClient = struct {
         }
 
         if (len == 1) {
-            fmt = ZigConsoleClient.Formatter{ .remaining_values = &[_]JSValue{}, .globalThis = global };
+            fmt = ZigConsoleClient.Formatter{
+                .remaining_values = &[_]JSValue{},
+                .globalThis = global,
+                .ordered_properties = options.ordered_properties,
+                .quote_strings = options.quote_strings,
+            };
             const tag = ZigConsoleClient.Formatter.Tag.get(vals[0], global);
 
             var unbuffered_writer = if (comptime Writer != RawWriter)
@@ -1035,7 +1048,7 @@ pub const ZigConsoleClient = struct {
                 writer;
 
             if (tag.tag == .String) {
-                if (enable_colors) {
+                if (options.enable_colors) {
                     if (level == .Error) {
                         unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
                     }
@@ -1060,14 +1073,14 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                if (add_newline) _ = unbuffered_writer.write("\n") catch 0;
+                if (options.add_newline) _ = unbuffered_writer.write("\n") catch 0;
             } else {
                 defer {
                     if (comptime Writer != RawWriter) {
-                        if (flush) writer.context.flush() catch {};
+                        if (options.flush) writer.context.flush() catch {};
                     }
                 }
-                if (enable_colors) {
+                if (options.enable_colors) {
                     fmt.format(
                         tag,
                         Writer,
@@ -1086,7 +1099,7 @@ pub const ZigConsoleClient = struct {
                         false,
                     );
                 }
-                if (add_newline) _ = writer.write("\n") catch 0;
+                if (options.add_newline) _ = writer.write("\n") catch 0;
             }
 
             return;
@@ -1094,16 +1107,21 @@ pub const ZigConsoleClient = struct {
 
         defer {
             if (comptime Writer != RawWriter) {
-                if (flush) writer.context.flush() catch {};
+                if (options.flush) writer.context.flush() catch {};
             }
         }
 
         var this_value: JSValue = vals[0];
-        fmt = ZigConsoleClient.Formatter{ .remaining_values = vals[0..len][1..], .globalThis = global };
+        fmt = ZigConsoleClient.Formatter{
+            .remaining_values = vals[0..len][1..],
+            .globalThis = global,
+            .ordered_properties = options.ordered_properties,
+            .quote_strings = options.quote_strings,
+        };
         var tag: ZigConsoleClient.Formatter.Tag.Result = undefined;
 
         var any = false;
-        if (enable_colors) {
+        if (options.enable_colors) {
             if (level == .Error) {
                 writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch unreachable;
             }
@@ -1149,7 +1167,7 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        if (add_newline) _ = writer.write("\n") catch 0;
+        if (options.add_newline) _ = writer.write("\n") catch 0;
     }
 
     pub const Formatter = struct {
@@ -1163,6 +1181,7 @@ pub const ZigConsoleClient = struct {
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
+        ordered_properties: bool = false,
 
         pub fn goodTimeForANewLine(this: *@This()) bool {
             if (this.estimated_line_length > 80) {
@@ -2016,7 +2035,7 @@ pub const ZigConsoleClient = struct {
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
-                            if (was_good_time) {
+                            if (this.ordered_properties or was_good_time) {
                                 this.resetLine();
                                 writer.writeAll("[");
                                 writer.writeAll("\n");
@@ -2038,7 +2057,7 @@ pub const ZigConsoleClient = struct {
                         var i: u32 = 1;
                         while (i < len) : (i += 1) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (this.goodTimeForANewLine()) {
+                            if (this.ordered_properties or this.goodTimeForANewLine()) {
                                 writer.writeAll("\n");
                                 this.writeIndent(Writer, writer_) catch unreachable;
                             } else {
@@ -2058,7 +2077,7 @@ pub const ZigConsoleClient = struct {
                         }
                     }
 
-                    if (was_good_time or this.goodTimeForANewLine()) {
+                    if (this.ordered_properties or was_good_time or this.goodTimeForANewLine()) {
                         this.resetLine();
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
@@ -2094,6 +2113,20 @@ pub const ZigConsoleClient = struct {
                             .Object,
                             enable_ansi_colors,
                         );
+                    } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
+                        this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                        if (timer.kind == .setInterval) {
+                            this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@intCast(u64, @max(timer.id, 0))));
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        } else {
+                            writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                                timer.id,
+                            });
+                        }
+
+                        return;
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);
@@ -2541,7 +2574,11 @@ pub const ZigConsoleClient = struct {
                         .parent = value,
                     };
 
-                    value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+                    if (this.ordered_properties) {
+                        value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
+                    } else {
+                        value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
+                    }
 
                     if (iter.i == 0) {
                         if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
@@ -2570,7 +2607,7 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
 
                     const slice = arrayBuffer.byteSlice();
-                    writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
+                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
 
                     writer.print("({d}) [ ", .{arrayBuffer.len});
                     if (slice.len > 0) {

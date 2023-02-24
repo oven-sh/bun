@@ -125,7 +125,7 @@ pub const BunxCommand = struct {
         var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, std.os.argv.len -| 1);
         var package_name_for_update_request = [1]string{""};
         {
-            var argv = std.mem.span(std.os.argv)[1..];
+            var argv = std.os.argv[1..];
 
             var found_subcommand_name = false;
 
@@ -262,7 +262,7 @@ pub const BunxCommand = struct {
             this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
-            const out = std.mem.span(destination);
+            const out = bun.asByteSlice(destination);
             _ = try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
@@ -291,7 +291,7 @@ pub const BunxCommand = struct {
                     this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
-                    const out = std.mem.span(destination);
+                    const out = bun.asByteSlice(destination);
                     _ = try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
@@ -381,7 +381,7 @@ pub const BunxCommand = struct {
             this_bundler.fs.top_level_dir,
             absolute_in_cache_dir,
         )) |destination| {
-            const out = std.mem.span(destination);
+            const out = bun.asByteSlice(destination);
             _ = try Run.runBinary(
                 ctx,
                 try this_bundler.fs.dirname_store.append(@TypeOf(out), out),
@@ -411,7 +411,7 @@ pub const BunxCommand = struct {
                     this_bundler.fs.top_level_dir,
                     absolute_in_cache_dir,
                 )) |destination| {
-                    const out = std.mem.span(destination);
+                    const out = bun.asByteSlice(destination);
                     _ = try Run.runBinary(
                         ctx,
                         try this_bundler.fs.dirname_store.append(@TypeOf(out), out),

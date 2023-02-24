@@ -159,6 +159,68 @@ pub fn toExternal(this: Dependency) External {
     return bytes;
 }
 
+pub inline fn isSCPLikePath(dependency: string) bool {
+    // Shortest valid expression: h:p
+    if (dependency.len < 3) return false;
+
+    var at_index: ?usize = null;
+
+    for (dependency, 0..) |c, i| {
+        switch (c) {
+            '@' => {
+                if (at_index == null) at_index = i;
+            },
+            ':' => {
+                if (strings.hasPrefixComptime(dependency[i..], "://")) return false;
+                return i > if (at_index) |index| index + 1 else 0;
+            },
+            '/' => return if (at_index) |index| i > index + 1 else false,
+            else => {},
+        }
+    }
+
+    return false;
+}
+
+pub inline fn isGitHubRepoPath(dependency: string) bool {
+    // Shortest valid expression: u/r
+    if (dependency.len < 3) return false;
+
+    var hash_index: usize = 0;
+    var slash_index: usize = 0;
+
+    for (dependency, 0..) |c, i| {
+        switch (c) {
+            '/' => {
+                if (i == 0) return false;
+                if (slash_index > 0) return false;
+                slash_index = i;
+            },
+            '#' => {
+                if (i == 0) return false;
+                if (hash_index > 0) return false;
+                if (slash_index == 0) return false;
+                hash_index = i;
+            },
+            // Not allowed in username
+            '.', '_' => {
+                if (slash_index == 0) return false;
+            },
+            // Must be alphanumeric
+            '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
+            else => return false,
+        }
+    }
+
+    return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
+}
+
+// This won't work for query string params, but I'll let someone file an issue
+// before I add that.
+pub inline fn isTarball(dependency: string) bool {
+    return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
+}
+
 pub const Version = struct {
     tag: Dependency.Version.Tag = .uninitialized,
     literal: String = .{},
@@ -276,45 +338,6 @@ pub const Version = struct {
 
         pub inline fn isNPM(this: Tag) bool {
             return @enumToInt(this) < 3;
-        }
-
-        pub inline fn isGitHubRepoPath(dependency: string) bool {
-            // Shortest valid expression: u/r
-            if (dependency.len < 3) return false;
-
-            var hash_index: usize = 0;
-            var slash_index: usize = 0;
-
-            for (dependency) |c, i| {
-                switch (c) {
-                    '/' => {
-                        if (i == 0) return false;
-                        if (slash_index > 0) return false;
-                        slash_index = i;
-                    },
-                    '#' => {
-                        if (i == 0) return false;
-                        if (hash_index > 0) return false;
-                        if (slash_index == 0) return false;
-                        hash_index = i;
-                    },
-                    // Not allowed in username
-                    '.', '_' => {
-                        if (slash_index == 0) return false;
-                    },
-                    // Must be alphanumeric
-                    '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
-                    else => return false,
-                }
-            }
-
-            return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
-        }
-
-        // this won't work for query string params
-        // i'll let someone file an issue before I add that
-        pub inline fn isTarball(dependency: string) bool {
-            return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
         }
 
         pub fn infer(dependency: string) Tag {
@@ -469,7 +492,7 @@ pub const Version = struct {
                 'n' => {
                     if (strings.hasPrefixComptime(dependency, "npm:") and dependency.len > "npm:".len) {
                         const remain = dependency["npm:".len + @boolToInt(dependency["npm:".len] == '@') ..];
-                        for (remain) |c, i| {
+                        for (remain, 0..) |c, i| {
                             if (c == '@') {
                                 return infer(remain[i + 1 ..]);
                             }
@@ -482,9 +505,11 @@ pub const Version = struct {
                 // verilog
                 // verilog.tar.gz
                 // verilog/repo
+                // virt@example.com:repo.git
                 'v' => {
                     if (isTarball(dependency)) return .tarball;
                     if (isGitHubRepoPath(dependency)) return .github;
+                    if (isSCPLikePath(dependency)) return .git;
                     if (dependency.len == 1) return .dist_tag;
                     return switch (dependency[1]) {
                         '0'...'9' => .npm,
@@ -514,6 +539,8 @@ pub const Version = struct {
             // user/repo
             // user/repo#main
             if (isGitHubRepoPath(dependency)) return .github;
+            // git@example.com:path/to/repo.git
+            if (isSCPLikePath(dependency)) return .git;
             // beta
             return .dist_tag;
         }
@@ -561,14 +588,6 @@ pub fn eql(
     rhs_buf: []const u8,
 ) bool {
     return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
-}
-
-pub fn eqlResolved(a: *const Dependency, b: *const Dependency) bool {
-    if (a.isNPM() and b.tag.isNPM()) {
-        return a.resolution == b.resolution;
-    }
-
-    return @as(Dependency.Version.Tag, a.version) == @as(Dependency.Version.Tag, b.version) and a.resolution == b.resolution;
 }
 
 pub inline fn parse(
@@ -749,11 +768,11 @@ pub fn parseWithTag(
                 }
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(Version.Tag.isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
-            for (input) |c, i| {
+            for (input, 0..) |c, i| {
                 switch (c) {
                     '/' => {
                         slash_index = i;

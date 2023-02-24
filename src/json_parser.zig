@@ -471,7 +471,7 @@ pub const PackageJSONVersionChecker = struct {
                                     p.found_name_buf.len,
                                 );
 
-                                std.mem.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
+                                bun.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
                             } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
@@ -479,7 +479,7 @@ pub const PackageJSONVersionChecker = struct {
                                     value.data.e_string.data.len,
                                     p.found_version_buf.len,
                                 );
-                                std.mem.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
+                                bun.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
                                 p.found_version = p.found_version_buf[0..len];
                                 p.has_found_version = true;
                             }
@@ -628,7 +628,7 @@ pub fn toAST(
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
+        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
         .Union => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
@@ -918,7 +918,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
         Stmt.Data.Store.reset();
     }
     var contents = default_allocator.alloc(u8, _contents.len + 1) catch unreachable;
-    std.mem.copy(u8, contents, _contents);
+    bun.copy(u8, contents, _contents);
     contents[contents.len - 1] = ';';
     var log = logger.Log.init(default_allocator);
     defer log.msgs.deinit();

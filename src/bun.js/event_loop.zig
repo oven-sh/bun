@@ -173,7 +173,6 @@ pub const AnyTask = struct {
     }
 };
 
-
 pub const CppTask = opaque {
     extern fn Bun__performTask(globalObject: *JSGlobalObject, task: *CppTask) void;
     pub fn run(this: *CppTask, global: *JSGlobalObject) void {

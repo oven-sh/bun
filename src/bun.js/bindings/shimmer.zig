@@ -105,7 +105,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             const FunctionsType = @TypeOf(Functions);
             return comptime brk: {
                 var functions: [std.meta.fieldNames(FunctionsType).len]StaticExport = undefined;
-                for (std.meta.fieldNames(FunctionsType)) |fn_name, i| {
+                for (std.meta.fieldNames(FunctionsType), 0..) |fn_name, i| {
                     const Function = @TypeOf(@field(Functions, fn_name));
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));

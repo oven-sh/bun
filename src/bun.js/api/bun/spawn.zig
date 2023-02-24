@@ -207,7 +207,9 @@ pub const PosixSpawn = struct {
         );
         if (comptime bun.Environment.allow_assert)
             JSC.Node.Syscall.syslog("posix_spawn({s}) = {d} ({d})", .{
-                path, rc, pid,
+                path,
+                rc,
+                pid,
             });
 
         if (comptime bun.Environment.isLinux) {

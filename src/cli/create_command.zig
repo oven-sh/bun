@@ -130,7 +130,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     }
 
     Output.pretty("\n<r><d>$<b>", .{});
-    for (argv) |arg, i| {
+    for (argv, 0..) |arg, i| {
         if (i > argv.len - 1) {
             Output.print(" {s} ", .{arg});
         } else {
@@ -165,7 +165,7 @@ pub const ProgressBuf = struct {
 
     pub fn print(comptime fmt: string, args: anytype) !string {
         buf_index += 1;
-        return try std.fmt.bufPrint(std.mem.span(&bufs[buf_index % 2]), fmt, args);
+        return try std.fmt.bufPrint(&bufs[buf_index % 2], fmt, args);
     }
 
     pub fn pretty(comptime fmt: string, args: anytype) !string {
@@ -1109,7 +1109,7 @@ pub const CreateCommand = struct {
                     pub const bun_bun_for_nextjs_task: string = "bun bun --use next";
                 };
 
-                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(std.mem.span(&InjectionPrefill.bun_macro_relay_properties));
+                InjectionPrefill.bun_macro_relay_object.properties = js_ast.G.Property.List.init(InjectionPrefill.bun_macro_relay_properties[0..]);
                 InjectionPrefill.bun_macros_relay_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_object_properties);
                 InjectionPrefill.bun_macros_relay_only_object.properties = js_ast.G.Property.List.init(&InjectionPrefill.bun_macros_relay_only_object_properties);
 
@@ -1251,7 +1251,7 @@ pub const CreateCommand = struct {
                         var entry_point_file_path_base = filesystem.absBuf(&entry_point_file_parts, &bun_path_buf);
 
                         for (file_extensions_to_try) |ext| {
-                            std.mem.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
+                            bun.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
                             entry_point_path = bun_path_buf[0 .. entry_point_file_path_base.len + ext.len];
                             std.fs.accessAbsolute(entry_point_path, .{}) catch continue;
                             found_file = true;
@@ -1303,7 +1303,7 @@ pub const CreateCommand = struct {
                         //     const head_i: usize = std.mem.indexOf(u8, outfile, "<head>") orelse break :inject_css;
                         //     if (std.mem.indexOf(u8, outfile, "/src/index.css") != null) break :inject_css;
 
-                        //     std.mem.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
+                        //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
                         //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
                         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
                         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
@@ -1644,7 +1644,7 @@ pub const CreateCommand = struct {
 
         if (create_options.open) {
             if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
-                var argv = [_]string{std.mem.span(bin)};
+                var argv = [_]string{bun.asByteSlice(bin)};
                 var child = std.ChildProcess.init(&argv, ctx.allocator);
                 child.cwd = destination;
                 child.stdin_behavior = .Inherit;
@@ -1761,9 +1761,9 @@ pub const Example = struct {
                                     }
                                 }
 
-                                std.mem.copy(u8, &home_dir_buf, entry.name);
+                                bun.copy(u8, &home_dir_buf, entry.name);
                                 home_dir_buf[entry.name.len] = std.fs.path.sep;
-                                std.mem.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
+                                bun.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
                                 home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
 
                                 var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];
@@ -2076,7 +2076,7 @@ pub const Example = struct {
                 const count = q.expr.data.e_object.properties.len;
 
                 var list = try ctx.allocator.alloc(Example, count);
-                for (q.expr.data.e_object.properties.slice()) |property, i| {
+                for (q.expr.data.e_object.properties.slice(), 0..) |property, i| {
                     const name = property.key.?.data.e_string.data;
                     list[i] = Example{
                         .name = if (std.mem.indexOfScalar(u8, name, '/')) |slash|
@@ -2204,9 +2204,9 @@ const GitHandler = struct {
 
         if (which(&bun_path_buf, PATH, destination, "git")) |git| {
             const git_commands = .{
-                &[_]string{ std.mem.span(git), "init", "--quiet" },
-                &[_]string{ std.mem.span(git), "add", destination, "--ignore-errors" },
-                &[_]string{ std.mem.span(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
+                &[_]string{ bun.asByteSlice(git), "init", "--quiet" },
+                &[_]string{ bun.asByteSlice(git), "add", destination, "--ignore-errors" },
+                &[_]string{ bun.asByteSlice(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {

@@ -29,7 +29,7 @@ loop:
 		-e 'if windows is not {} then perform action "AXRaise" of item 1 of windows' \
 		-e 'end tell'
 	sleep 0.5
-	cd src; zig run -Drelease-fast ../color-looper.zig -- ./colors.css:0 $(SLEEP_INTERVAL)
+	cd src; zig run -Doptimize=ReleaseFast ../color-looper.zig -- ./colors.css:0 $(SLEEP_INTERVAL)
 	cp src/colors.css.blob $(PROJECT)/colors.css.blob
 
 loop-emotion:
@@ -40,7 +40,7 @@ loop-emotion:
 		-e 'if windows is not {} then perform action "AXRaise" of item 1 of windows' \
 		-e 'end tell'
 	sleep 0.5
-	cd src; zig run -Drelease-fast ../color-looper.emotion.zig -- ./css-in-js-styles.tsx:0 $(SLEEP_INTERVAL)
+	cd src; zig run -Doptimize=ReleaseFast ../color-looper.emotion.zig -- ./css-in-js-styles.tsx:0 $(SLEEP_INTERVAL)
 	cp src/css-in-js-styles.tsx.blob $(PROJECT)/css-in-js-styles.blob
 
 process_video: 

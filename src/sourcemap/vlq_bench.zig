@@ -94,7 +94,7 @@ const SourceMap = struct {
         @setEvalBranchQuota(9999);
         var bytes = [_]u7{std.math.maxInt(u7)} ** std.math.maxInt(u7);
 
-        for (base64) |c, i| {
+        for (base64, 0..) |c, i| {
             bytes[c] = i;
         }
 
@@ -146,14 +146,14 @@ pub fn main() anyerror!void {
 
     std.debug.print("Random values:\n\n", .{});
 
-    for (numbers) |_, i| {
+    for (numbers, 0..) |_, i| {
         numbers[i] = rand.random().int(i32);
     }
 
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQ(n);
         }
         const elapsed = timer.read();
@@ -163,7 +163,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQWithLookupTable(n);
         }
         const elapsed = timer.read();
@@ -173,7 +173,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (results) |n, i| {
+        for (results, 0..) |n, i| {
             numbers[i] = SourceMap.decodeVLQ(n.bytes[0..n.len], 0).value;
         }
 
@@ -196,7 +196,7 @@ pub fn main() anyerror!void {
         var timer = try std.time.Timer.start();
         var stream = std.io.fixedBufferStream(leb_buf);
         var reader = stream.reader();
-        for (numbers) |_, i| {
+        for (numbers, 0..) |_, i| {
             numbers[i] = std.leb.readILEB128(i32, reader) catch unreachable;
         }
         const elapsed = timer.read();
@@ -205,14 +205,14 @@ pub fn main() anyerror!void {
 
     std.debug.print("\nNumbers between 0 - 8096:\n\n", .{});
 
-    for (numbers) |_, i| {
+    for (numbers, 0..) |_, i| {
         numbers[i] = rand.random().intRangeAtMost(i32, 0, 8096);
     }
 
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQ(n);
         }
         const elapsed = timer.read();
@@ -222,7 +222,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQWithLookupTable(n);
         }
         const elapsed = timer.read();
@@ -232,7 +232,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (results) |n, i| {
+        for (results, 0..) |n, i| {
             numbers[i] = SourceMap.decodeVLQ(n.bytes[0..n.len], 0).value;
         }
 
@@ -255,7 +255,7 @@ pub fn main() anyerror!void {
         var timer = try std.time.Timer.start();
         var stream = std.io.fixedBufferStream(leb_buf);
         var reader = stream.reader();
-        for (numbers) |_, i| {
+        for (numbers, 0..) |_, i| {
             numbers[i] = std.leb.readILEB128(i32, reader) catch unreachable;
         }
         const elapsed = timer.read();
@@ -264,14 +264,14 @@ pub fn main() anyerror!void {
 
     std.debug.print("\nNumbers between 0 - 255:\n\n", .{});
 
-    for (numbers) |_, i| {
+    for (numbers, 0..) |_, i| {
         numbers[i] = rand.random().intRangeAtMost(i32, 0, 255);
     }
 
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQ(n);
         }
         const elapsed = timer.read();
@@ -281,7 +281,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (numbers) |n, i| {
+        for (numbers, 0..) |n, i| {
             results[i] = SourceMap.encodeVLQWithLookupTable(n);
         }
         const elapsed = timer.read();
@@ -291,7 +291,7 @@ pub fn main() anyerror!void {
     {
         var timer = try std.time.Timer.start();
 
-        for (results) |n, i| {
+        for (results, 0..) |n, i| {
             numbers[i] = SourceMap.decodeVLQ(n.bytes[0..n.len], 0).value;
         }
 
@@ -314,7 +314,7 @@ pub fn main() anyerror!void {
         var timer = try std.time.Timer.start();
         var stream = std.io.fixedBufferStream(leb_buf);
         var reader = stream.reader();
-        for (numbers) |_, i| {
+        for (numbers, 0..) |_, i| {
             numbers[i] = std.leb.readILEB128(i32, reader) catch unreachable;
         }
         const elapsed = timer.read();

@@ -47,8 +47,8 @@ pub const Os = struct {
         return module;
     }
 
-    pub const EOL = if (Environment.isWindows) "\r\n" else "\n";
-    pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
+    pub const EOL: []const u8 = if (Environment.isWindows) "\r\n" else "\n";
+    pub const devNull: []const u8 = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
@@ -99,7 +99,6 @@ pub const Os = struct {
                    }
                else
                    JSC.JSValue.createEmptyArray(globalThis, 0);
-
     }
 
     fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
@@ -109,6 +108,7 @@ pub const Os = struct {
 
         // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
         var line_buffer: [1024*8]u8 = undefined;
+
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
@@ -127,6 +127,7 @@ pub const Os = struct {
 
                 //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
                 const scale = 10;
+
                 var times = CPUTimes{};
                 times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
                 times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
@@ -155,7 +156,6 @@ pub const Os = struct {
 
             var cpu_index: u32 = 0;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
                 if (std.mem.startsWith(u8, line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
@@ -184,6 +184,7 @@ pub const Os = struct {
         var cpu_index: u32 = 0;
         while (cpu_index < num_cpus) : (cpu_index += 1) {
             const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
             if (std.fs.openFileAbsolute(path, .{})) |file| {
@@ -343,11 +344,17 @@ pub const Os = struct {
     pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var dir: string = "unknown";
-        if (comptime Environment.isWindows)
-            dir = bun.getenvZ("USERPROFILE") orelse "unknown"
-        else
-            dir = bun.getenvZ("HOME") orelse "unknown";
+        const dir: []const u8 = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("USERPROFILE")) |env|
+                    break :brk bun.asByteSlice(env);
+            } else {
+                if (bun.getenvZ("HOME")) |env|
+                    break :brk bun.asByteSlice(env);
+            }
+
+            break :brk "unknown";
+        };
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
@@ -456,20 +463,21 @@ pub const Os = struct {
     pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var dir: string = "unknown";
-        if (comptime Environment.isWindows) {
-            if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
-                dir = tmpdir_;
+        const dir: []const u8 = brk: {
+            if (comptime Environment.isWindows) {
+                if (bun.getenvZ("TEMP") orelse bun.getenvZ("TMP")) |tmpdir_| {
+                    break :brk tmpdir_;
+                }
+
+                if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
+                    break :brk systemdir_ ++ "\\temp";
+                }
+            } else {
+                break :brk bun.asByteSlice(bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp");
             }
 
-            if (bun.getenvZ("SYSTEMROOT") orelse bun.getenvZ("WINDIR")) |systemdir_| {
-                dir = systemdir_ + "\\temp";
-            }
-
-            dir = "unknown";
-        } else {
-            dir = bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp";
-        }
+            break :brk "unknown";
+        };
 
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }

@@ -13,6 +13,7 @@ it("should keep process alive only when active", async () => {
       BUN_DEBUG_QUIET_LOGS: 1,
     },
   });
+
   expect(await exited).toBe(0);
   expect(await new Response(stderr).text()).toBe("");
   var lines = (await new Response(stdout).text()).split(/\r?\n/);

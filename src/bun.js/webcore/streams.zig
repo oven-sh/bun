@@ -1892,8 +1892,8 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         const ThisSink = @This();
 
-        pub const shim = JSC.Shimmer("", std.mem.span(name_), @This());
-        pub const name = std.fmt.comptimePrint("{s}", .{std.mem.span(name_)});
+        pub const shim = JSC.Shimmer("", name_, @This());
+        pub const name = std.fmt.comptimePrint("{s}", .{name_});
 
         // This attaches it to JS
         pub const SinkSignal = extern struct {
@@ -2938,8 +2938,8 @@ pub fn ReadableStreamSource(
         const supports_ref = setRefUnrefFn != null;
 
         pub const JSReadableStreamSource = struct {
-            pub const shim = JSC.Shimmer(std.mem.span(name_), "JSReadableStreamSource", @This());
-            pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{std.mem.span(name_)});
+            pub const shim = JSC.Shimmer(name_, "JSReadableStreamSource", @This());
+            pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{name_});
 
             pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 JSC.markBinding(@src());

@@ -31,8 +31,9 @@
 //!   allocator, in order to save space.
 
 const std = @import("std");
-const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const bun = @import("bun");
+const Environment = bun.Environment;
 
 /// Returns the optimal static bit set type for the specified number
 /// of elements.  The returned type will perform no allocations,
@@ -85,7 +86,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         /// Returns true if the bit at the specified index
         /// is present in the set, false otherwise.
         pub fn isSet(self: Self, index: usize) bool {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             return (self.mask & maskBit(index)) != 0;
         }
 
@@ -97,7 +98,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
         /// Changes the value of the specified bit of the bit
         /// set to match the passed boolean.
         pub fn setValue(self: *Self, index: usize, value: bool) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (MaskInt == u0) return;
             const bit = maskBit(index);
             const new_bit = bit & std.math.boolMask(MaskInt, value);
@@ -106,15 +107,17 @@ pub fn IntegerBitSet(comptime size: u16) type {
 
         /// Adds a specific bit to the bit set
         pub fn set(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             self.mask |= maskBit(index);
         }
 
         /// Changes the value of all bits in the specified range to
         /// match the passed boolean.
         pub fn setRangeValue(self: *Self, range: Range, value: bool) void {
-            assert(range.end <= bit_length);
-            assert(range.start <= range.end);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(range.end <= bit_length);
+                std.debug.assert(range.start <= range.end);
+            }
             if (range.start == range.end) return;
             if (MaskInt == u0) return;
 
@@ -137,7 +140,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
 
         /// Removes a specific bit from the bit set
         pub fn unset(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             // Workaround for #7953
             if (MaskInt == u0) return;
             self.mask &= ~maskBit(index);
@@ -145,7 +148,7 @@ pub fn IntegerBitSet(comptime size: u16) type {
 
         /// Flips a specific bit in the bit set
         pub fn toggle(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             self.mask ^= maskBit(index);
         }
 
@@ -400,7 +403,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// Returns true if the bit at the specified index
         /// is present in the set, false otherwise.
         pub fn isSet(self: *const Self, index: usize) bool {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return false; // doesn't compile in this case
             return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
         }
@@ -417,7 +420,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// Changes the value of the specified bit of the bit
         /// set to match the passed boolean.
         pub fn setValue(self: *Self, index: usize, value: bool) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return; // doesn't compile in this case
             const bit = maskBit(index);
             const mask_index = maskIndex(index);
@@ -427,7 +430,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
 
         /// Adds a specific bit to the bit set
         pub fn set(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return; // doesn't compile in this case
             self.masks[maskIndex(index)] |= maskBit(index);
         }
@@ -435,8 +438,10 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// Changes the value of all bits in the specified range to
         /// match the passed boolean.
         pub fn setRangeValue(self: *Self, range: Range, value: bool) void {
-            assert(range.end <= bit_length);
-            assert(range.start <= range.end);
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(range.end <= bit_length);
+                std.debug.assert(range.start <= range.end);
+            }
             if (range.start == range.end) return;
             if (num_masks == 0) return;
 
@@ -479,14 +484,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
 
         /// Removes a specific bit from the bit set
         pub fn unset(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return; // doesn't compile in this case
             self.masks[maskIndex(index)] &= ~maskBit(index);
         }
 
         /// Flips a specific bit in the bit set
         pub fn toggle(self: *Self, index: usize) void {
-            assert(index < bit_length);
+            if (comptime Environment.allow_assert) std.debug.assert(index < bit_length);
             if (num_masks == 0) return; // doesn't compile in this case
             self.masks[maskIndex(index)] ^= maskBit(index);
         }
@@ -495,14 +500,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// in the toggles bit set.
         pub fn toggleSet(self: *Self, toggles: *const Self) void {
             const other = &toggles.masks;
-            for (self.masks) |*mask, i| {
+            for (&self.masks, 0..) |*mask, i| {
                 mask.* ^= other[i];
             }
         }
 
         /// Flips every bit in the bit set.
         pub fn toggleAll(self: *Self) void {
-            for (self.masks) |*mask| {
+            for (&self.masks) |*mask| {
                 mask.* = ~mask.*;
             }
 
@@ -516,7 +521,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (self.masks) |*mask, i| {
+            for (&self.masks, 0..) |*mask, i| {
                 mask.* |= other.masks[i];
             }
         }
@@ -525,7 +530,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// the result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in both inputs.
         pub fn setIntersection(self: *Self, other: *const Self) void {
-            for (self.masks) |*mask, i| {
+            for (&self.masks, 0..) |*mask, i| {
                 mask.* &= other.masks[i];
             }
         }
@@ -545,7 +550,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// If no bits are set, returns null.
         pub fn toggleFirstSet(self: *Self) ?usize {
             var offset: usize = 0;
-            const mask = for (self.masks) |*mask| {
+            const mask = for (&self.masks) |*mask| {
                 if (mask.* != 0) break mask;
                 offset += @bitSizeOf(MaskInt);
             } else return null;
@@ -702,7 +707,7 @@ pub const DynamicBitSetUnmanaged = struct {
         const old_allocation = (self.masks - 1)[0..(self.masks - 1)[0]];
 
         if (new_masks == 0) {
-            assert(new_len == 0);
+            if (comptime Environment.allow_assert) std.debug.assert(new_len == 0);
             allocator.free(old_allocation);
             self.masks = empty_masks_ptr;
             self.bit_length = 0;
@@ -765,7 +770,7 @@ pub const DynamicBitSetUnmanaged = struct {
         const num_masks = numMasks(self.bit_length);
         var copy = Self{};
         try copy.resize(new_allocator, self.bit_length, false);
-        std.mem.copy(MaskInt, copy.masks[0..num_masks], self.masks[0..num_masks]);
+        bun.copy(MaskInt, copy.masks, self.masks[0..num_masks]);
         return copy;
     }
 
@@ -777,7 +782,7 @@ pub const DynamicBitSetUnmanaged = struct {
     /// Returns true if the bit at the specified index
     /// is present in the set, false otherwise.
     pub fn isSet(self: Self, index: usize) bool {
-        assert(index < self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(index < self.bit_length);
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 
@@ -795,7 +800,7 @@ pub const DynamicBitSetUnmanaged = struct {
     /// Changes the value of the specified bit of the bit
     /// set to match the passed boolean.
     pub fn setValue(self: *Self, index: usize, value: bool) void {
-        assert(index < self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(index < self.bit_length);
         const bit = maskBit(index);
         const mask_index = maskIndex(index);
         const new_bit = bit & std.math.boolMask(MaskInt, value);
@@ -804,15 +809,15 @@ pub const DynamicBitSetUnmanaged = struct {
 
     /// Adds a specific bit to the bit set
     pub fn set(self: *Self, index: usize) void {
-        assert(index < self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(index < self.bit_length);
         self.masks[maskIndex(index)] |= maskBit(index);
     }
 
     /// Changes the value of all bits in the specified range to
     /// match the passed boolean.
     pub fn setRangeValue(self: *Self, range: Range, value: bool) void {
-        assert(range.end <= self.bit_length);
-        assert(range.start <= range.end);
+        if (comptime Environment.allow_assert) std.debug.assert(range.end <= self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(range.start <= range.end);
         if (range.start == range.end) return;
 
         const start_mask_index = maskIndex(range.start);
@@ -854,13 +859,13 @@ pub const DynamicBitSetUnmanaged = struct {
 
     /// Removes a specific bit from the bit set
     pub fn unset(self: *Self, index: usize) void {
-        assert(index < self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(index < self.bit_length);
         self.masks[maskIndex(index)] &= ~maskBit(index);
     }
 
     /// Flips a specific bit in the bit set
     pub fn toggle(self: *Self, index: usize) void {
-        assert(index < self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(index < self.bit_length);
         self.masks[maskIndex(index)] ^= maskBit(index);
     }
 
@@ -868,9 +873,9 @@ pub const DynamicBitSetUnmanaged = struct {
     /// in the toggles bit set.  Both sets must have the
     /// same bit_length.
     pub fn toggleSet(self: *Self, toggles: Self) void {
-        assert(toggles.bit_length == self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(toggles.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* ^= toggles.masks[i];
         }
     }
@@ -882,7 +887,7 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask| {
+        for (&self.masks[0..num_masks]) |*mask| {
             mask.* = ~mask.*;
         }
 
@@ -897,7 +902,7 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* = other.masks[i];
         }
 
@@ -911,9 +916,9 @@ pub const DynamicBitSetUnmanaged = struct {
     /// set if the corresponding bits were set in either input.
     /// The two sets must both be the same bit_length.
     pub fn setUnion(self: *Self, other: Self) void {
-        assert(other.bit_length == self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* |= other.masks[i];
         }
     }
@@ -923,26 +928,26 @@ pub const DynamicBitSetUnmanaged = struct {
     /// set if the corresponding bits were set in both inputs.
     /// The two sets must both be the same bit_length.
     pub fn setIntersection(self: *Self, other: Self) void {
-        assert(other.bit_length == self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* &= other.masks[i];
         }
     }
 
     pub fn setExcludeTwo(self: *Self, other: Self, third: Self) void {
-        assert(other.bit_length == self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* &= ~other.masks[i];
             mask.* &= ~third.masks[i];
         }
     }
 
     pub fn setExclude(self: *Self, other: Self) void {
-        assert(other.bit_length == self.bit_length);
+        if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (self.masks[0..num_masks]) |*mask, i| {
+        for (&self.masks[0..num_masks], 0..) |*mask, i| {
             mask.* &= ~other.masks[i];
         }
     }

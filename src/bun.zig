@@ -282,7 +282,57 @@ pub fn len(value: anytype) usize {
     };
 }
 
-pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
+fn Span(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .Optional => |optional_info| {
+            return ?Span(optional_info.child);
+        },
+        .Pointer => |ptr_info| {
+            var new_ptr_info = ptr_info;
+            switch (ptr_info.size) {
+                .One => switch (@typeInfo(ptr_info.child)) {
+                    .Array => |info| {
+                        new_ptr_info.child = info.child;
+                        new_ptr_info.sentinel = info.sentinel;
+                    },
+                    else => @compileError("invalid type given to std.mem.Span"),
+                },
+                .C => {
+                    new_ptr_info.sentinel = &@as(ptr_info.child, 0);
+                    new_ptr_info.is_allowzero = false;
+                },
+                .Many, .Slice => {},
+            }
+            new_ptr_info.size = .Slice;
+            return @Type(.{ .Pointer = new_ptr_info });
+        },
+        else => @compileError("invalid type given to std.mem.Span"),
+    }
+}
+// fn Span(comptime T: type) type {
+//     switch (@typeInfo(T)) {
+//         .Optional => |optional_info| {
+//             return ?Span(optional_info.child);
+//         },
+//         .Pointer => |ptr_info| {
+//             var new_ptr_info = ptr_info;
+//             switch (ptr_info.size) {
+//                 .C => {
+//                     new_ptr_info.sentinel = &@as(ptr_info.child, 0);
+//                     new_ptr_info.is_allowzero = false;
+//                 },
+//                 .Many => if (ptr_info.sentinel == null) @compileError("invalid type given to bun.span: " ++ @typeName(T)),
+//                 else => {},
+//             }
+//             new_ptr_info.size = .Slice;
+//             return @Type(.{ .Pointer = new_ptr_info });
+//         },
+//         else => {},
+//     }
+//     @compileError("invalid type given to bun.span: " ++ @typeName(T));
+// }
+
+pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
     if (@typeInfo(@TypeOf(ptr)) == .Optional) {
         if (ptr) |non_null| {
             return span(non_null);
@@ -290,7 +340,7 @@ pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
             return null;
         }
     }
-    const Result = std.mem.Span(@TypeOf(ptr));
+    const Result = Span(@TypeOf(ptr));
     const l = len(ptr);
     const ptr_info = @typeInfo(Result).Pointer;
     if (ptr_info.sentinel) |s_ptr| {
@@ -335,38 +385,80 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    std.debug.assert(dest.len >= src.len);
-    var input = std.mem.sliceAsBytes(src);
-    var output = std.mem.sliceAsBytes(dest);
-    var input_end = input.ptr + input.len;
-    const output_end = output.ptr + output.len;
+    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (src.ptr == dest.ptr) return;
 
-    if (@ptrToInt(input.ptr) <= @ptrToInt(output.ptr) and @ptrToInt(output_end) <= @ptrToInt(input_end)) {
-        // // input is overlapping with output
-        if (input.len > strings.ascii_vector_size) {
-            const input_end_vectorized = input.ptr + input.len - (input.len % strings.ascii_vector_size);
-            while (input.ptr != input_end_vectorized) {
-                const input_vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
-                output[0..strings.ascii_vector_size].* = input_vec;
+    var input: []const u8 = std.mem.sliceAsBytes(src);
+    var output: []u8 = std.mem.sliceAsBytes(dest);
+
+    if (@ptrToInt(output.ptr) < @ptrToInt(input.ptr)) {
+        const output_end = output.ptr + input.len;
+
+        // |--- dest ---|
+        //        |--- src ---|
+        if (@ptrToInt(input.ptr) < @ptrToInt(output_end)) brk: {
+            while (input.len >= strings.ascii_vector_size) {
+                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
+                output[0..strings.ascii_vector_size].* = vec;
                 input = input[strings.ascii_vector_size..];
                 output = output[strings.ascii_vector_size..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
+                input = input[@sizeOf(usize)..];
+                output = output[@sizeOf(usize)..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
+            }
+
+            while (input.len > 0) {
+                output[0] = input[0];
+                input = input[1..];
+                output = output[1..];
+                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
             }
         }
-
-        while (input.len >= @sizeOf(usize)) {
-            output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
-            input = input[@sizeOf(usize)..];
-            output = output[@sizeOf(usize)..];
-        }
-
-        while (input.ptr != input_end) {
-            output[0] = input[0];
-            input = input[1..];
-            output = output[1..];
-        }
     } else {
-        @memcpy(output.ptr, input.ptr, input.len);
+        var input_end = input.ptr + input.len;
+
+        // |--- src ---|
+        //        |--- dest ---|
+        if (@ptrToInt(output.ptr) < @ptrToInt(input_end)) brk: {
+            while (input.len >= strings.ascii_vector_size) {
+                const input_start = input.len - strings.ascii_vector_size;
+                const output_start = output.len - strings.ascii_vector_size;
+                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[input_start..][0..strings.ascii_vector_size].*);
+                output[output_start..][0..strings.ascii_vector_size].* = vec;
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= strings.ascii_vector_size;
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                const input_start = input.len - @sizeOf(usize);
+                const output_start = output.len - @sizeOf(usize);
+                output[output_start..][0..@sizeOf(usize)].* = input[input_start..][0..@sizeOf(usize)].*;
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= @sizeOf(usize);
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+
+            while (input.len >= @sizeOf(usize)) {
+                const input_start = input.len - 1;
+                const output_start = output.len - 1;
+                output[output_start] = input[input_start];
+                input = input[0..input_start];
+                output = output[0..output_start];
+                input_end -= 1;
+                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
+            }
+        }
     }
+
+    @memcpy(output.ptr, input.ptr, input.len);
 }
 
 pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });
@@ -376,8 +468,8 @@ pub fn cloneWithType(comptime T: type, item: T, allocator: std.mem.Allocator) !T
         assertDefined(item);
 
         if (comptime hasCloneFn(Child)) {
-            var slice = try allocator.alloc(Child, std.mem.len(item));
-            for (slice) |*val, i| {
+            var slice = try allocator.alloc(Child, item.len);
+            for (slice, 0..) |*val, i| {
                 val.* = try item[i].clone(allocator);
             }
             return slice;
@@ -595,7 +687,7 @@ pub const MimallocArena = @import("./mimalloc_arena.zig").Arena;
 /// Zig's sliceTo(0) is scalar
 pub fn getenvZ(path_: [:0]const u8) ?[]const u8 {
     const ptr = std.c.getenv(path_.ptr) orelse return null;
-    return span(ptr);
+    return sliceTo(ptr, 0);
 }
 
 // These wrappers exist to use our strings.eqlLong function
@@ -691,7 +783,7 @@ pub const SignalCode = enum(u8) {
 
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@enumToInt(value) <= @enumToInt(SignalCode.SIGSYS)) {
-            return std.mem.span(@tagName(value));
+            return asByteSlice(@tagName(value));
         }
 
         return null;
@@ -947,3 +1039,18 @@ pub fn cstring(input: []const u8) [:0]const u8 {
 }
 
 pub const Semver = @import("./install/semver.zig");
+
+pub fn asByteSlice(buffer: anytype) []const u8 {
+    return switch (@TypeOf(buffer)) {
+        []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
+        [*:0]u8, [*:0]const u8 => buffer[0..len(buffer)],
+        [*c]const u8, [*c]u8 => span(buffer),
+        else => |T| {
+            if (comptime std.meta.trait.isPtrTo(.Array)(T)) {
+                return @as([]const u8, buffer);
+            }
+
+            @compileError("Unsupported type " ++ @typeName(T));
+        },
+    };
+}

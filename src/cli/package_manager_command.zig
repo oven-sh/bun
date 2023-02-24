@@ -91,7 +91,7 @@ pub const PackageManagerCommand = struct {
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {
-            var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, std.mem.span(pm.options.bin_path));
+            var output_path = Path.joinAbs(Fs.FileSystem.instance.top_level_dir, .auto, bun.asByteSlice(pm.options.bin_path));
             Output.prettyln("{s}", .{output_path});
             if (Output.stdout_descriptor_type == .terminal) {
                 Output.prettyln("\n", .{});
@@ -173,10 +173,10 @@ pub const PackageManagerCommand = struct {
             defer directories.deinit();
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 const path = try ctx.allocator.alloc(u8, node_modules.relative_path.len);
-                std.mem.copy(u8, path, node_modules.relative_path);
+                bun.copy(u8, path, node_modules.relative_path);
 
                 const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
-                std.mem.copy(PackageID, dependencies, node_modules.dependencies);
+                bun.copy(PackageID, dependencies, node_modules.dependencies);
 
                 const folder = NodeModulesFolder{
                     .relative_path = @ptrCast(stringZ, path),
@@ -208,7 +208,7 @@ pub const PackageManagerCommand = struct {
                 const names = lockfile.packages.items(.name);
                 const string_bytes = lockfile.buffers.string_bytes.items;
 
-                for (package_ids) |package_id, i| {
+                for (package_ids, 0..) |package_id, i| {
                     if (package_id >= lockfile.packages.len) continue;
 
                     if (i == package_ids.len - 1) {
@@ -308,11 +308,10 @@ fn printNodeModulesFolderStructure(
         }
     }
 
-    for (directory.dependencies) |dependency_id, index| {
+    for (directory.dependencies, 0..) |dependency_id, index| {
         const package_name_ = lockfile.buffers.dependencies.items[dependency_id].name.slice(string_bytes);
-        const package_name = allocator.alloc(u8, package_name_.len) catch unreachable;
+        const package_name = allocator.dupe(u8, package_name_) catch unreachable;
         defer allocator.free(package_name);
-        std.mem.copy(u8, package_name, package_name_);
 
         var possible_path = std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name }) catch unreachable;
         defer allocator.free(possible_path);

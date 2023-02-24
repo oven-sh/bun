@@ -239,11 +239,9 @@ test("deepEquals throw getters", () => {
     }
   }
 
-  try {
+  expect(() => {
     expect(new B()).not.toEqual(new C());
-  } catch (e) {
-    expect(e.message).toContain("b");
-  }
+  }).toThrow();
 
   let o = [
     {
@@ -2071,12 +2069,12 @@ it("should return non-zero exit code for invalid syntax", async () => {
   try {
     await writeFile(join(test_dir, "bad.test.js"), "!!!");
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "wiptest", "bad.test.js"],
+      cmd: [bunExe(), "test", "bad.test.js"],
       cwd: test_dir,
       stdout: null,
       stdin: "pipe",
       stderr: "pipe",
-      bunEnv,
+      env: bunEnv,
     });
     const err = await new Response(stderr).text();
     expect(err).toContain("error: Unexpected end of file");

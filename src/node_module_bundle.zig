@@ -99,7 +99,7 @@ pub const NodeModuleBundle = struct {
         );
         var prev_package_ids_for_name: []u32 = &[_]u32{};
 
-        for (this.bundle.packages) |package, _package_id| {
+        for (this.bundle.packages, 0..) |package, _package_id| {
             const package_id = @truncate(u32, _package_id);
             std.debug.assert(package.hash != 0);
             this.package_id_map.putAssumeCapacityNoClobber(package.hash, @truncate(u32, package_id));
@@ -201,7 +201,7 @@ pub const NodeModuleBundle = struct {
         package: *const Api.JavascriptBundledPackage,
         _query: string,
     ) ?u32 {
-        for (modulesIn(&this.bundle, package)) |mod, i| {
+        for (modulesIn(&this.bundle, package), 0..) |mod, i| {
             if (strings.eql(this.str(mod.path), _query)) {
                 return @truncate(u32, i + package.modules_offset);
             }
@@ -233,7 +233,7 @@ pub const NodeModuleBundle = struct {
 
                 const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
 
-                for (lhs_name[0..traversal_length]) |char, i| {
+                for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
                         .lt, .gt => |order| {
                             return order;
@@ -291,7 +291,7 @@ pub const NodeModuleBundle = struct {
 
                 const traversal_length = std.math.min(lhs_name.len, rhs_name.len);
 
-                for (lhs_name[0..traversal_length]) |char, i| {
+                for (lhs_name[0..traversal_length], 0..) |char, i| {
                     switch (std.math.order(char, rhs_name[i])) {
                         .lt, .gt => |order| {
                             return order;
@@ -386,7 +386,7 @@ pub const NodeModuleBundle = struct {
                 .{ this.str(pkg.name), this.str(pkg.version) },
             );
 
-            for (modules) |module, module_i| {
+            for (modules, 0..) |module, module_i| {
                 const size_level: SizeLevel =
                     switch (module.code.length) {
                     0...5_000 => .good,

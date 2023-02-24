@@ -295,8 +295,9 @@ pub const DebugLogs = struct {
         const len = d.indent.len();
         if (len > 0) {
             var __text = d.notes.allocator.alloc(u8, text.len + len) catch unreachable;
-            std.mem.copy(u8, __text, d.indent.list.items);
-            std.mem.copy(u8, __text[len..__text.len], _text);
+            bun.copy(u8, __text, d.indent.list.items);
+            bun.copy(u8, __text[len..], _text);
+            text = __text;
             d.notes.allocator.free(_text);
         }
 
@@ -593,7 +594,7 @@ pub const Resolver = struct {
             }
 
             prefixed_package_buf[0..bunFrameworkPackagePrefix.len].* = bunFrameworkPackagePrefix.*;
-            std.mem.copy(u8, prefixed_package_buf[bunFrameworkPackagePrefix.len..], package);
+            bun.copy(u8, prefixed_package_buf[bunFrameworkPackagePrefix.len..], package);
             const prefixed_name = prefixed_package_buf[0 .. bunFrameworkPackagePrefix.len + package.len];
             return r._resolveFramework(prefixed_name, pair, preference, load_defines) catch |err| {
                 switch (err) {
@@ -692,7 +693,7 @@ pub const Resolver = struct {
             };
 
             var out = try r.allocator.alloc(u8, chosen_dir.len + 1);
-            std.mem.copy(u8, out, chosen_dir);
+            bun.copy(u8, out, chosen_dir);
             out[out.len - 1] = '/';
             pair.router.dir = out;
             pair.router.routes_enabled = true;
@@ -709,7 +710,7 @@ pub const Resolver = struct {
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
-            .url, .at_conditional, .at => std.mem.span(&options.BundleOptions.Defaults.CSSExtensionOrder),
+            .url, .at_conditional, .at => options.BundleOptions.Defaults.CSSExtensionOrder[0..],
             .entry_point, .stmt, .dynamic => r.opts.esm_extension_order,
             else => r.opts.extension_order,
         };
@@ -1577,7 +1578,7 @@ pub const Resolver = struct {
                             string_buf = package_json.dependencies.source_buf;
                         }
 
-                        for (dependencies_list) |dependency, dependency_id| {
+                        for (dependencies_list, 0..) |dependency, dependency_id| {
                             const dep_name = dependency.name.slice(string_buf);
                             if (dep_name.len == esm.name.len) {
                                 if (!strings.eqlLong(dep_name, esm.name, false)) {
@@ -1839,7 +1840,7 @@ pub const Resolver = struct {
                 error.FileNotFound => unreachable,
                 else => {
                     // TODO: handle this error better
-                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{std.mem.span(@errorName(err))}) catch unreachable;
+                    r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Unable to open directory: {s}", .{bun.asByteSlice(@errorName(err))}) catch unreachable;
                     return err;
                 },
             }
@@ -2036,10 +2037,10 @@ pub const Resolver = struct {
 
                     // Try to have a friendly error message if people forget the extension
                     if (ends_with_star) {
-                        std.mem.copy(u8, &load_as_file_buf, base);
+                        bun.copy(u8, &load_as_file_buf, base);
                         for (extension_order) |ext| {
                             var file_name = load_as_file_buf[0 .. base.len + ext.len];
-                            std.mem.copy(u8, file_name[base.len..], ext);
+                            bun.copy(u8, file_name[base.len..], ext);
                             if (entries.get(file_name) != null) {
                                 if (r.debug_logs) |*debug| {
                                     const parts = [_]string{ package_json.name, package_subpath };
@@ -2063,10 +2064,10 @@ pub const Resolver = struct {
                         if (r.dirInfoCached(abs_esm_path) catch null) |dir_info| {
                             if (dir_info.getEntries()) |dir_entries| {
                                 const index = "index";
-                                std.mem.copy(u8, &load_as_file_buf, index);
+                                bun.copy(u8, &load_as_file_buf, index);
                                 for (extension_order) |ext| {
                                     var file_name = load_as_file_buf[0 .. index.len + ext.len];
-                                    std.mem.copy(u8, file_name[index.len..], ext);
+                                    bun.copy(u8, file_name[index.len..], ext);
                                     const index_query = dir_entries.get(file_name);
                                     if (index_query != null and index_query.?.entry.kind(&r.fs.fs) == .file) {
                                         missing_suffix = std.fmt.allocPrint(r.allocator, "/{s}", .{file_name}) catch unreachable;
@@ -2268,7 +2269,7 @@ pub const Resolver = struct {
         }
 
         var i: i32 = 1;
-        std.mem.copy(u8, &dir_info_uncached_path_buf, _path);
+        bun.copy(u8, &dir_info_uncached_path_buf, _path);
         var path = dir_info_uncached_path_buf[0.._path.len];
 
         _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
@@ -2701,11 +2702,11 @@ pub const Resolver = struct {
                 return true;
             }
 
-            std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, cleaned);
+            bun.copy(u8, &TemporaryBuffer.ExtensionPathBuf, cleaned);
 
             // If that failed, try adding implicit extensions
             for (this.extension_order) |ext| {
-                std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[cleaned.len .. cleaned.len + ext.len], ext);
+                bun.copy(u8, TemporaryBuffer.ExtensionPathBuf[cleaned.len..], ext);
                 const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. cleaned.len + ext.len];
                 // if (r.debug_logs) |*debug| {
                 //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
@@ -2732,10 +2733,10 @@ pub const Resolver = struct {
                 return true;
             }
 
-            std.mem.copy(u8, &TemporaryBuffer.ExtensionPathBuf, index_path);
+            bun.copy(u8, &TemporaryBuffer.ExtensionPathBuf, index_path);
 
             for (this.extension_order) |ext| {
-                std.mem.copy(u8, TemporaryBuffer.ExtensionPathBuf[index_path.len .. index_path.len + ext.len], ext);
+                bun.copy(u8, TemporaryBuffer.ExtensionPathBuf[index_path.len..], ext);
                 const new_path = TemporaryBuffer.ExtensionPathBuf[0 .. index_path.len + ext.len];
                 // if (r.debug_logs) |*debug| {
                 //     debug.addNoteFmt("Checking for \"{s}\" ", .{new_path});
@@ -2805,7 +2806,7 @@ pub const Resolver = struct {
             switch (comptime kind) {
                 .AbsolutePath => {
                     BrowserMapPath.abs_to_rel_buf[0..2].* = "./".*;
-                    std.mem.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
+                    bun.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
                     if (checker.checkPath(BrowserMapPath.abs_to_rel_buf[0 .. checker.input_path.len + 2])) {
                         return checker.remapped;
                     }
@@ -2825,7 +2826,7 @@ pub const Resolver = struct {
 
                     if (isInSamePackage) {
                         BrowserMapPath.abs_to_rel_buf[0..2].* = "./".*;
-                        std.mem.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
+                        bun.copy(u8, BrowserMapPath.abs_to_rel_buf[2..], checker.input_path);
 
                         if (checker.checkPath(BrowserMapPath.abs_to_rel_buf[0 .. checker.input_path.len + 2])) {
                             return checker.remapped;
@@ -2916,7 +2917,7 @@ pub const Resolver = struct {
         for (extension_order) |ext| {
             var base = TemporaryBuffer.ExtensionPathBuf[0 .. "index".len + ext.len];
             base[0.."index".len].* = "index".*;
-            std.mem.copy(u8, base["index".len..base.len], ext);
+            bun.copy(u8, base["index".len..], ext);
 
             if (dir_info.getEntries()) |entries| {
                 if (entries.get(base)) |lookup| {
@@ -2966,7 +2967,7 @@ pub const Resolver = struct {
         // In order for our path handling logic to be correct, it must end with a trailing slash.
         var path = path_;
         if (!strings.endsWithChar(path_, std.fs.path.sep)) {
-            std.mem.copy(u8, &remap_path_trailing_slash, path);
+            bun.copy(u8, &remap_path_trailing_slash, path);
             remap_path_trailing_slash[path.len] = std.fs.path.sep;
             remap_path_trailing_slash[path.len + 1] = 0;
             path = remap_path_trailing_slash[0 .. path.len + 1];
@@ -3241,10 +3242,10 @@ pub const Resolver = struct {
         }
 
         // Try the path with extensions
-        std.mem.copy(u8, &load_as_file_buf, path);
+        bun.copy(u8, &load_as_file_buf, path);
         for (extension_order) |ext| {
             var buffer = load_as_file_buf[0 .. path.len + ext.len];
-            std.mem.copy(u8, buffer[path.len..buffer.len], ext);
+            bun.copy(u8, buffer[path.len..], ext);
             const file_name = buffer[path.len - base.len .. buffer.len];
 
             if (r.debug_logs) |*debug| {
@@ -3295,7 +3296,7 @@ pub const Resolver = struct {
             if (strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx")) {
                 const segment = base[0..last_dot];
                 var tail = load_as_file_buf[path.len - base.len ..];
-                std.mem.copy(u8, tail, segment);
+                bun.copy(u8, tail, segment);
 
                 const exts = .{ ".ts", ".tsx" };
 

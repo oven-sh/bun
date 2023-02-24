@@ -478,7 +478,7 @@ pub const RequestContext = struct {
         if (!this.bundler.options.routes.static_dir_enabled) return null;
         const relative_path = this.url.path;
         var extension = this.url.extname;
-        var tmp_buildfile_buf = std.mem.span(&Bundler.tmp_buildfile_buf);
+        var tmp_buildfile_buf = Bundler.tmp_buildfile_buf[0..];
 
         // On Windows, we don't keep the directory handle open forever because Windows doesn't like that.
         const public_dir: std.fs.Dir = this.bundler.options.routes.static_dir_handle orelse std.fs.openDirAbsolute(this.bundler.options.routes.static_dir, .{}) catch |err| {
@@ -494,8 +494,8 @@ pub const RequestContext = struct {
 
         // Is it the index file?
         if (relative_unrooted_path.len == 0) {
-            // std.mem.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
-            // std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
+            // bun.copy(u8, &tmp_buildfile_buf, relative_unrooted_path);
+            // bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/"
             // Search for /index.html
             if (this.bundler.options.routes.single_page_app_routing and
                 this.bundler.options.routes.single_page_app_fd != 0)
@@ -520,8 +520,8 @@ pub const RequestContext = struct {
         while (_file == null and relative_unrooted_path.len > 1) {
             // When no extension is provided, it might be html
             if (extension.len == 0) {
-                std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
+                bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], ".html");
 
                 if (public_dir.openFile(tmp_buildfile_buf[0 .. relative_unrooted_path.len + ".html".len], .{})) |file| {
                     _file = file;
@@ -531,12 +531,12 @@ pub const RequestContext = struct {
 
                 var _path: []u8 = undefined;
                 if (relative_unrooted_path[relative_unrooted_path.len - 1] == '/') {
-                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
-                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
+                    bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0 .. relative_unrooted_path.len - 1]);
+                    bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len - 1 ..], "/index.html");
                     _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len - 1 + "/index.html".len];
                 } else {
-                    std.mem.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
-                    std.mem.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
+                    bun.copy(u8, tmp_buildfile_buf, relative_unrooted_path[0..relative_unrooted_path.len]);
+                    bun.copy(u8, tmp_buildfile_buf[relative_unrooted_path.len..], "/index.html");
 
                     _path = tmp_buildfile_buf[0 .. relative_unrooted_path.len + "/index.html".len];
                 }
@@ -2387,7 +2387,7 @@ pub const RequestContext = struct {
 
                         if (send_sourcemap_info) {
                             // This will be cleared by the arena
-                            source_map_url = std.mem.span(chunky.rctx.getFullURLForSourceMap());
+                            source_map_url = bun.asByteSlice(chunky.rctx.getFullURLForSourceMap());
 
                             chunky.rctx.appendHeader("SourceMap", source_map_url);
                         }
@@ -3362,7 +3362,7 @@ pub const Server = struct {
                     if (entries_option) |dir_ent| {
                         var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
                         for (affected) |changed_name_ptr| {
-                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+                            const changed_name: []u8 = (changed_name_ptr orelse continue)[0..];
                             if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
 
                             const loader = (ctx.bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
@@ -3376,7 +3376,7 @@ pub const Server = struct {
                                         file_ent.entry.need_stat = true;
                                         path_string = file_ent.entry.abs_path;
                                         file_hash = Watcher.getHash(path_string.slice());
-                                        for (hashes) |hash, entry_id| {
+                                        for (hashes, 0..) |hash, entry_id| {
                                             if (hash == file_hash) {
                                                 file_descriptors[entry_id] = 0;
                                                 break;

@@ -363,7 +363,10 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
-                .Used, .Empty => {
+                .Empty => {
+                    return JSValue.jsNull();
+                },
+                .Used => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
                 .InternalBlob,
@@ -435,7 +438,7 @@ pub const Body = struct {
 
         pub fn fromJS(
             globalThis: *JSGlobalObject,
-            value: JSValue,
+            value: JSValue
         ) ?Value {
             value.ensureStillAlive();
 
@@ -526,7 +529,7 @@ pub const Body = struct {
 
                     if (bytes.len == 0) {
                         return Body.Value{
-                            .Empty = {},
+                            .Used = {},
                         };
                     }
 
@@ -972,6 +975,10 @@ pub fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
 
+            if (body.* == .Empty) {
+                return JSValue.jsNull();
+            }
+
             if (body.* == .Used) {
                 // TODO: make this closed
                 return JSC.WebCore.ReadableStream.empty(globalThis);
@@ -993,6 +1000,7 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }

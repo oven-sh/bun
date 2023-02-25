@@ -13,6 +13,12 @@ pub fn load() void {
     boring.SSL_load_error_strings();
     boring.ERR_load_BIO_strings();
     boring.OpenSSL_add_all_algorithms();
+
+    if (!builtin.is_test) {
+        std.mem.doNotOptimizeAway(&OPENSSL_memory_alloc);
+        std.mem.doNotOptimizeAway(&OPENSSL_memory_free);
+        std.mem.doNotOptimizeAway(&OPENSSL_memory_get_size);
+    }
 }
 
 var ctx_: ?*boring.SSL_CTX = null;
@@ -69,12 +75,4 @@ export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
 
 test "load" {
     load();
-}
-
-comptime {
-    if (!builtin.is_test) {
-        _ = OPENSSL_memory_alloc;
-        _ = OPENSSL_memory_free;
-        _ = OPENSSL_memory_get_size;
-    }
 }

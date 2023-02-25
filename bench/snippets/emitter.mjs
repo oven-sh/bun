@@ -1,7 +1,12 @@
-const EventEmitterNative = require("events").EventEmitter;
+// **so this file can run in node**
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+// --
+
+const EventEmitterNative = require("node:events").EventEmitter;
 const TypedEmitter = require("tiny-typed-emitter").TypedEmitter;
 const EventEmitter3 = require("eventemitter3").EventEmitter;
-import { bench, run } from "mitata";
+import { bench, run } from "../../node_modules/mitata/src/cli.mjs";
 const event = new Event("hello");
 var id = 0;
 for (let [EventEmitter, className] of [
@@ -11,20 +16,14 @@ for (let [EventEmitter, className] of [
 ]) {
   const emitter = new EventEmitter();
 
-  emitter.on("hello", (event) => {
+  emitter.on("hello", event => {
     event.preventDefault();
   });
 
-  bench(`${className}.emit`, () => {
-    emitter.emit("hello", {
-      preventDefault() {
-        id++;
-      },
-    });
-  });
+  bench(`${className}.emit`, () => {});
 
   bench(`${className}.on x 10_000 (handler)`, () => {
-    var cb = (event) => {
+    var cb = event => {
       event.preventDefault();
     };
     emitter.on("hey", cb);
@@ -43,7 +42,7 @@ for (let [EventEmitter, className] of [
 
   if (EventEmitter !== EventEmitter3) {
     var monkey = Object.assign({}, EventEmitter.prototype);
-    monkey.on("hello", (event) => {
+    monkey.on("hello", event => {
       event.preventDefault();
     });
 
@@ -78,7 +77,7 @@ for (let [EventEmitter, className] of [
 }
 
 var target = new EventTarget();
-target.addEventListener("hello", (event) => {});
+target.addEventListener("hello", event => {});
 bench("EventTarget.dispatch", () => {
   target.dispatchEvent(event);
 });
@@ -86,7 +85,7 @@ bench("EventTarget.dispatch", () => {
 var hey = new Event("hey");
 
 bench("EventTarget.on x 10_000 (handler)", () => {
-  var handler = (event) => {};
+  var handler = event => {};
   target.addEventListener("hey", handler);
 
   for (let i = 0; i < 10_000; i++) target.dispatchEvent(hey);

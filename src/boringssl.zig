@@ -15,9 +15,12 @@ pub fn load() void {
     boring.OpenSSL_add_all_algorithms();
 
     if (!builtin.is_test) {
-        std.mem.doNotOptimizeAway(&OPENSSL_memory_alloc);
+        comptime {
+            @export(bun.Mimalloc.mi_malloc, .{ .name = "OPENSSL_memory_alloc", .linkage = .Strong });
+            @export(bun.Mimalloc.mi_usable_size, .{ .name = "OPENSSL_memory_get_size", .linkage = .Strong });
+        }
+
         std.mem.doNotOptimizeAway(&OPENSSL_memory_free);
-        std.mem.doNotOptimizeAway(&OPENSSL_memory_get_size);
     }
 }
 
@@ -59,9 +62,9 @@ pub fn initClient() *boring.SSL {
 // into the process, including pthreads locks. Failing to meet these constraints
 // may result in deadlocks, crashes, or memory corruption.
 
-export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
-    return bun.Mimalloc.mi_malloc(size);
-}
+// export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
+//     return
+// }
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
@@ -69,9 +72,9 @@ export fn OPENSSL_memory_free(ptr: *anyopaque) void {
     bun.Mimalloc.mi_free(ptr);
 }
 
-export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
-    return bun.Mimalloc.mi_usable_size(ptr);
-}
+// export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
+//     return bun.Mimalloc.mi_usable_size(ptr);
+// }
 
 test "load" {
     load();

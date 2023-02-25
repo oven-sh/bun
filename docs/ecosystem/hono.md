@@ -1,4 +1,4 @@
-[Hono](https://github.com/honojs/hono) is a lightwaight ultrafast web framework designed for the edge.
+[Hono](https://github.com/honojs/hono) is a lightweight ultrafast web framework designed for the edge.
 
 ```ts
 import { Hono } from 'hono'

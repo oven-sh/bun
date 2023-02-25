@@ -8,6 +8,7 @@ export type NavPage = {
   slug: string;
   title: string;
   disabled?: boolean;
+  href?: string;
 };
 type NavDivider = {
   type: "divider";
@@ -15,7 +16,7 @@ type NavDivider = {
 };
 
 
-function page(slug: string, title: string, props?: {disabled?: boolean}): NavPage {
+function page(slug: string, title: string, props?: {disabled?: boolean; href?: string}): NavPage {
   return { type: "page", slug, title, ...props };
 }
 function divider(title: string): NavDivider {

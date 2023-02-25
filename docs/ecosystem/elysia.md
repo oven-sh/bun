@@ -13,7 +13,7 @@ console.log(`🦊 Elysia is running at on port ${app.server.port}...`)
 Get started with `bun create`.
 
 ```bash
-$ bun create hono ./myapp
+$ bun create elysia ./myapp
 $ cd myapp
 $ bun run dev
 ```

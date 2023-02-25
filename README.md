@@ -102,7 +102,7 @@ bun upgrade --canary
   - [Hot reloading](https://bun.sh/docs/runtime/hot)
   - [Plugins](https://bun.sh/docs/runtime/plugins)
 - Ecosystem
-  - [Node.js](https://bun.sh/docs/ecosystem/nodejs-apis)
+  - [Node.js](https://bun.sh/docs/ecosystem/nodejs)
   - [TypeScript](https://bun.sh/docs/ecosystem/typescript)
   - [React](https://bun.sh/docs/ecosystem/react)
   - [Elysia](https://bun.sh/docs/ecosystem/elysia)

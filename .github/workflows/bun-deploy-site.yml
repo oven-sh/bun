@@ -1,0 +1,17 @@
+# redeploy Vercel site when a file in `docs` changes
+# using VERCEL_DEPLOY_HOOK environment variable
+
+name: Deploy site
+on:
+  push:
+    paths:
+      - "docs/**"
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Deploy site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel build
+        run: curl ${{ secrets.VERCEL_DEPLOY_HOOK }}

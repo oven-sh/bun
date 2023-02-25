@@ -79,7 +79,7 @@ plugin({
 <!--
 Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration. -->
 
-Plugins are primarily used to extend Bun with loaders for additional file types. Let's look at a simple plugin that exposes envLet's look at a sample plugin that implements a loader for `.yaml` files.
+Plugins are primarily used to extend Bun with loaders for additional file types. Let's look at a simple plugin that implements a loader for `.yaml` files.
 
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
@@ -179,7 +179,7 @@ In this case we're using `"object"`—a special loader (intended for use by plug
 
 {% /callout %}
 
-Loading a YAML file is useful, but plugins support more than just data loading. Lets look at a plugin that lets Bun import `*.svelte` files.
+Loading a YAML file is useful, but plugins support more than just data loading. Let's look at a plugin that lets Bun import `*.svelte` files.
 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
@@ -234,7 +234,7 @@ type PluginBuilder = {
   onLoad: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string }) => {
-      loader?: "js" | "jsx" | "ts" | "tsx" | "json" | "yaml" | "object";
+      loader?: "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "object";
       contents?: string;
       exports?: Record<string, any>;
     },

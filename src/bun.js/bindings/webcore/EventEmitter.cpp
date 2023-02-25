@@ -177,12 +177,14 @@ void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
     if (!data)
         return;
 
-    SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
-
-    if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
-        innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto* listenersVector = data->eventListenerMap.find(eventType);
+    if (UNLIKELY(!listenersVector))
         return;
-    }
+
+    bool prevFiringEventListeners = data->isFiringEventListeners;
+    data->isFiringEventListeners = true;
+    innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    data->isFiringEventListeners = prevFiringEventListeners;
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
@@ -204,39 +206,45 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         if (UNLIKELY(registeredListener->wasRemoved()))
             continue;
 
+        auto& callback = registeredListener->callback();
+
         // Make sure the JS wrapper and function stay alive until the end of this scope. Otherwise,
         // event listeners with 'once' flag may get collected as soon as they get unregistered below,
         // before we call the js function.
-        JSC::EnsureStillAliveScope wrapperProtector(registeredListener->callback().wrapper());
-        JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
+        JSObject* jsFunction = callback.jsFunction();
+        JSC::EnsureStillAliveScope wrapperProtector(callback.wrapper());
+        JSC::EnsureStillAliveScope jsFunctionProtector(jsFunction);
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, registeredListener->callback());
+            removeListener(eventType, callback);
 
-        if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
-            JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
-            auto callData = JSC::getCallData(jsFunction);
-            if (callData.type == JSC::CallData::Type::None)
-                continue;
+        if (UNLIKELY(!jsFunction))
+            continue;
 
-            WTF::NakedPtr<JSC::Exception> exceptionPtr;
-            JSC::call(jsFunction->globalObject(), jsFunction, callData, thisValue, arguments, exceptionPtr);
-            if (auto* exception = exceptionPtr.get()) {
-                auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
-                auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-                if (!hasErrorListener || eventType == errorIdentifier) {
-                    // If the event type is error, report the exception to the console.
-                    Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
-                } else if (hasErrorListener) {
-                    MarkedArgumentBuffer expcep;
-                    JSValue errorValue = exception->value();
-                    if (!errorValue) {
-                        errorValue = JSC::jsUndefined();
-                    }
-                    expcep.append(errorValue);
-                    fireEventListeners(errorIdentifier, WTFMove(expcep));
+        JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
+        auto callData = JSC::getCallData(jsFunction);
+        if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+            continue;
+
+        WTF::NakedPtr<JSC::Exception> exceptionPtr;
+        JSC::call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
+        auto* exception = exceptionPtr.get();
+
+        if (UNLIKELY(exception)) {
+            auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
+            auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
+            if (!hasErrorListener || eventType == errorIdentifier) {
+                // If the event type is error, report the exception to the console.
+                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(JSValue(exception)));
+            } else if (hasErrorListener) {
+                MarkedArgumentBuffer expcep;
+                JSValue errorValue = exception->value();
+                if (!errorValue) {
+                    errorValue = JSC::jsUndefined();
                 }
+                expcep.append(errorValue);
+                fireEventListeners(errorIdentifier, WTFMove(expcep));
             }
         }
     }

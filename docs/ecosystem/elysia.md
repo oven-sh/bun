@@ -1,4 +1,4 @@
-Elysia is a Bun-first web framework that takes full advantage of Bun's HTTP, file system, and hot reloading APIs.
+[Elysia](https://elysiajs.com) is a Bun-first web framework that takes full advantage of Bun's HTTP, file system, and hot reloading APIs.
 
 ```ts#server.ts
 import { Elysia } from 'elysia'

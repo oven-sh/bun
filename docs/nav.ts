@@ -7,18 +7,21 @@ export type NavPage = {
   type: "page";
   slug: string;
   title: string;
+  disabled?: boolean;
 };
 type NavDivider = {
   type: "divider";
   title: string;
 };
 
-function page(slug: string, title: string): NavPage {
-  return { type: "page", slug, title };
+
+function page(slug: string, title: string, props?: {disabled?: boolean}): NavPage {
+  return { type: "page", slug, title, ...props };
 }
 function divider(title: string): NavDivider {
   return { type: "divider", title };
 }
+
 
 export default {
   items: [
@@ -34,6 +37,8 @@ export default {
     page("cli/test", "`bun test`"),
     page("cli/create", "`bun create`"),
     page("cli/bunx", "`bunx`"),
+    page("cli/deploy", "`bun deploy`", {disabled: true}),
+
     // page("bundler", "Bundler"),
     // page("cli/bun-install", "`bun install`"),
     // page("cli/bun-create", "`bun create`"),
@@ -51,6 +56,7 @@ export default {
     page("runtime/hot", "Hot reloading"),
     // page("runtime/loaders", "Loaders"),
     page("runtime/plugins", "Plugins"),
+    page("runtime/framework", "Framework API", {disabled: true}),
     // page("runtime/nodejs", "Node.js APIs"),
 
     divider("Ecosystem"),

@@ -27,7 +27,7 @@ Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a s
 At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
 ```bash
-$ bun run index.tsx  # TS and JSX supported out of the box
+$ bun run index.tsx             # TS and JSX supported out of the box
 ```
 
 ​​The `bun​` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager. Instead of 1,000 node_modules for development, you only need `bun`. Bun's built-in tools are significantly faster than existing options and usable in existing Node.js projects with little to no changes.
@@ -47,26 +47,26 @@ $ bunx cowsay "Hello, world!"   # execute a package
 
 Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon). If you want to use Bun on Windows, you will need to use Windows Subsystem for Linux. Bun will [soon](https://github.com/oven-sh/bun/issues/43) support Windows, natively.
 
-`curl`:
+`curl`
 
 ```sh
 curl -fsSL https://bun.sh/install | bash
 ```
 
-`npm`:
+`npm`
 
 ```sh
 npm install -g bun
 ```
 
-Homebrew:
+`brew`
 
 ```sh
 brew tap oven-sh/bun
 brew install bun
 ```
 
-Docker:
+`docker`
 
 ```sh
 docker pull oven/bun
@@ -134,8 +134,8 @@ bun upgrade --canary
 
 ## Contributing
 
-Refer to the [Project > Contributing](https://bun.sh/docs/project/developing) to get started contributing to Bun.
+Refer to the [Project > Contributing](https://bun.sh/docs/project/developing) guide to start contributing to Bun.
 
 ## License
 
-Refer to the [Project > License guide](https://bun.sh/docs/project/licensing) for information about Bun's licensing.
+Refer to the [Project > License](https://bun.sh/docs/project/licensing) page for information about Bun's licensing.

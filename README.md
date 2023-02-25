@@ -43,9 +43,6 @@ bun install <pkg>​             # install a package
 bunx cowsay "Hello, world!"   # execute a package
 ```
 
-
-
-
 ## Install
 
 Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon). If you want to use Bun on Windows, you will need to use Windows Subsystem for Linux. Bun will [soon](https://github.com/oven-sh/bun/issues/43) support Windows, natively.

@@ -36,7 +36,7 @@ $ bunx my-cli
 
 As with `npx`, `bunx` will check for a locally installed package first, then fall back to auto-installing the package from `npm`. Installed packages will be stored in Bun's global cache for future use.
 
-### Arguments and flags
+## Arguments and flags
 
 To pass additional command-line flags and arguments through to the executable, place them after the executable name.
 
@@ -44,7 +44,7 @@ To pass additional command-line flags and arguments through to the executable, p
 $ bunx my-cli --foo bar
 ```
 
-### Shebangs
+## Shebangs
 
 By default, Bun respects shebangs. If an executable is marked with `#!/usr/bin/env node`, Bun will spin up a `node` process to execute the file. However, in some cases it may be desirable to run executables using [Bun's runtime](/docs/runtime), even if the executable indicates otherwise. To do so, include the `--bun` flag.
 

@@ -102,7 +102,7 @@ Support for additional file types can be implemented with [Plugins](/docs/runtim
 
 ## Node.js compatibility
 
-Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Runtime > Node.js API](/docs/runtime/nodejs).
+Long-term, Bun aims for complete Node.js compatibility. Most Node.js packages already work with Bun out of the box, but certain low-level APIs like `dgram` are still unimplemented. Track the current compatibility status at [Runtime > Node.js API](/docs/ecosystem/nodejs).
 
 Bun implements the Node.js module resolution algorithm, so dependencies can still be managed with `package.json`, `node_modules`, and CommonJS-style imports.
 

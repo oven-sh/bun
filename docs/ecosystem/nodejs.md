@@ -33,7 +33,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_child_process" %} [`node:child_process`](https://nodejs.org/api/child_process.html) {% /anchor %}
 - 🟡
-- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization
+- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization.
 
 ---
 

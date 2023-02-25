@@ -78,8 +78,7 @@ $ bun run start
 ```
 
 {% callout %}
-⚡️ **Performance** — With Bun's fast startup times, this script executes in roughly `6ms`.
-By contrast `npm run` adds roughly `170ms` of overhead when executing scripts.
+⚡️ **Performance** — `bun run` is roughly 28x faster than `npm run` (6ms vs 170ms of overhead).
 {% /callout %}
 
 ## Install a package

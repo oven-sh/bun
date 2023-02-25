@@ -36,8 +36,8 @@ private:
     Ref<EventListener> m_callback;
 };
 
-using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 0, CrashOnOverflow, 2>;
-using EntriesVector = Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 0, CrashOnOverflow, 4>;
+using SimpleEventListenerVector = Vector<RefPtr<SimpleRegisteredEventListener>, 2, CrashOnOverflow, 6>;
+using EntriesVector = Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>, 4, CrashOnOverflow, 8>;
 
 class IdentifierEventListenerMap {
 public:

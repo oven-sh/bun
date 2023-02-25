@@ -109,7 +109,7 @@ bun upgrade --canary
   - [Hot reloading](https://bun.sh/docs/runtime/hot)
   - [Plugins](https://bun.sh/docs/runtime/plugins)
 - Ecosystem
-  - [Node.js](https://bun.sh/docs/ecosystem/nodejs)
+  - [Node.js](https://bun.sh/docs/ecosystem/nodejs-apis)
   - [TypeScript](https://bun.sh/docs/ecosystem/typescript)
   - [React](https://bun.sh/docs/ecosystem/react)
   - [Express](https://bun.sh/docs/ecosystem/express)
@@ -120,7 +120,7 @@ bun upgrade --canary
   - [File I/O](https://bun.sh/docs/api/file-io)
   - [SQLite](https://bun.sh/docs/api/sqlite)
   - [FileSystemRouter](https://bun.sh/docs/api/file-system-router)
-  - [Globals"](https://bun.sh/docs/api/globals)
+  - [Globals](https://bun.sh/docs/api/globals)
   - [Spawn](https://bun.sh/docs/api/spawn)
   - [Transpiler](https://bun.sh/docs/api/transpiler)
   - [Console](https://bun.sh/docs/api/console)

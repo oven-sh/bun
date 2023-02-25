@@ -2,24 +2,45 @@
 
 <p align="center">
   <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
-  <br />
-  <br />
-  <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
 </p>
 
-bun is a new:
+<p align="center">
+<a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
+<img src="https://img.shields.io/github/stars/oven-sh/bun" alt="stars">
+<a href="https://twitter.com/jarredsumner/status/1542824445810642946"><img src="https://img.shields.io/static/v1?label=speed&message=fast&color=success" alt="Bun speed" /></a>
+</p>
 
-- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
-- JavaScript/TypeScript/JSX transpiler
-- JavaScript & CSS bundler
-- Task runner for package.json scripts
-- npm-compatible package manager
+<div align="center">
+  <a href="https://bun.sh/docs">Documentation</a>
+  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+  <a href="https://discord.com/invite/CXdq2DP29u">Discord</a>
+  <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
+  <a href="https://github.com/oven-sh/zod/issues/new">Issues</a>
+  <br />
+</div>
 
-All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
-**bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
 
-Today, bun's primary focus is bun.js: bun's JavaScript runtime.
+Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun​`.
+
+At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
+
+```bash
+$ bun run index.tsx  # TS and JSX supported out of the box
+```
+
+​​The `bun​` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager. Instead of 1,000 node_modules for development, you only need `bun`. Bun's built-in tools are significantly faster than existing options and usable in existing Node.js projects with little to no changes.
+
+```bash
+$ bun test                      # run tests
+$ bun run start                 # run the `start` script
+$ bun install <pkg>​             # install a package
+$ bunx cowsay "Hello, world!"   # execute a package
+```
+
+
+> **​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keeps tabs on future releases.
+
 
 ## Install
 

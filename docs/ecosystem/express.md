@@ -1,4 +1,8 @@
-Projects that use Express and other major Node.js HTTP libraries should work out of the box.
+Projects that use Express and other major Node.js HTTP libraries should work out of the box. 
+
+{% callout %}
+If you run into bugs, [please file an issue](https://bun.sh/issues) *in Bun's repo*, not the library. It is Bun's responsibility to address Node.js compatibility issues.
+{% /callout %}
 
 ```ts
 import express from "express";

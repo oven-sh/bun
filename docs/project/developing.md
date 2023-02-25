@@ -102,7 +102,7 @@ $ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 **⚠️ Warning** — You must use the same version of Zig used by Bun in [oven-sh/zig](https://github.com/oven-sh/zig). Installing with `brew` or via Zig's download page will not work!
 {% /callout %}
 
-Use [`zigup`](<[zigup](https://github.com/marler8997/zigup)>) to install the version of Zig (`ZIG_VERSION`) specified in the official [`Dockerfile`](https://github.com/oven-sh/bun/blob/main/Dockerfile). For example:
+Use [`zigup`](https://github.com/marler8997/zigup) to install the version of Zig (`ZIG_VERSION`) specified in the official [`Dockerfile`](https://github.com/oven-sh/bun/blob/main/Dockerfile). For example:
 
 ```bash
 $ zigup 0.11.0-dev.1393+38eebf3c4

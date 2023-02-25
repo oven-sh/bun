@@ -4,7 +4,7 @@ Bun supports `.jsx` and `.tsx` files out of the box. Bun's internal transpiler c
 function Component(props: {message: string}) {
   return (
     <body>
-      <h1 style={{fontSize: 'red'}}>{props.message}</h1>
+      <h1 style={{color: 'red'}}>{props.message}</h1>
     </body>
   );
 }
@@ -27,7 +27,7 @@ import {renderToReadableStream} from 'react-dom/server';
 function Component(props: {message: string}) {
   return (
     <body>
-      <h1 style={{fontSize: 'red'}}>{props.message}</h1>
+      <h1 style={{color: 'red'}}>{props.message}</h1>
     </body>
   );
 }

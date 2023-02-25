@@ -72,7 +72,7 @@ optional = true
 # whether to install devDependencies
 dev = true
 
-# whether to install devDependencies
+# whether to install peerDependencies
 peer = false
 
 # equivalent to `--production` flag

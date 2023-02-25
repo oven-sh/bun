@@ -45,35 +45,28 @@ bunx cowsay "Hello, world!"   # execute a package
 
 ## Install
 
-Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon). If you want to use Bun on Windows, you will need to use Windows Subsystem for Linux. Bun will [soon](https://github.com/oven-sh/bun/issues/43) support Windows, natively.
+Bun supports Linux (x64 & arm64) and macOS (x64 & Apple Silicon).
 
-`curl`
+> **Linux users** — Kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
+> 
+> **Windows users** — Bun does not currently provide a native Windows build. We're working on this; progress can be tracked at [this issue](https://github.com/oven-sh/bun/issues/43). In the meantime, use one of the installation methods below for Windows Subsystem for Linux.
 
 ```sh
+# with install script (recommended)
 curl -fsSL https://bun.sh/install | bash
-```
 
-`npm`
-
-```sh
+# with npm
 npm install -g bun
-```
 
-`brew`
-
-```sh
+# with Homebrew
 brew tap oven-sh/bun
 brew install bun
-```
 
-`docker`
-
-```sh
+# with Docker
 docker pull oven/bun
 docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
-> If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
 ### Upgrade
 
@@ -112,7 +105,10 @@ bun upgrade --canary
   - [Node.js](https://bun.sh/docs/ecosystem/nodejs-apis)
   - [TypeScript](https://bun.sh/docs/ecosystem/typescript)
   - [React](https://bun.sh/docs/ecosystem/react)
+  - [Elysia](https://bun.sh/docs/ecosystem/elysia)
+  - [Hono](https://bun.sh/docs/ecosystem/hono)
   - [Express](https://bun.sh/docs/ecosystem/express)
+  - [awesome-bun](https://github.com/apvarun/awesome-bun)
 - API
   - [HTTP](https://bun.sh/docs/api/http)
   - [WebSockets](https://bun.sh/docs/api/websockets)

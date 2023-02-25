@@ -58,6 +58,8 @@ export default {
     page("ecosystem/typescript", "TypeScript"),
     page("ecosystem/react", "React"),
     page("ecosystem/express", "Express"),
+    page("ecosystem/hono", "Hono"),
+    page("ecosystem/elysia", "Elysia"),
 
     divider("API"),
     page("api/http", "HTTP"), // "`Bun.serve`"),

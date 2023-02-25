@@ -11,7 +11,7 @@ describe("Server", () => {
 
     expect(server.port).not.toBe(0);
     expect(server.port).toBeDefined();
-    server.stop();
+    server.stop(true);
   });
 
   test("allows connecting to server", async () => {
@@ -24,10 +24,10 @@ describe("Server", () => {
 
     const response = await fetch(`http://${server.hostname}:${server.port}`);
     expect(await response.text()).toBe("Hello");
-    server.stop();
+    server.stop(true);
   });
 
-  test('abort signal on server', async ()=> {
+  test("abort signal on server", async () => {
     {
       let signalOnServer = false;
       const server = Bun.serve({
@@ -35,19 +35,17 @@ describe("Server", () => {
           req.signal.addEventListener("abort", () => {
             signalOnServer = true;
           });
-          await Bun.sleep(3000);
+          await Bun.sleep(15);
           return new Response("Hello");
         },
-        port: 54321,
+        port: 0,
       });
-    
+
       try {
-        await fetch("http://localhost:54321", { signal: AbortSignal.timeout(100) });
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: AbortSignal.timeout(10) });
       } catch {}
-      await Bun.sleep(300);
       expect(signalOnServer).toBe(true);
-      server.stop();
+      server.stop(true);
     }
-    
-  })
+  });
 });

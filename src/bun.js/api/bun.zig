@@ -1497,6 +1497,8 @@ pub const Crypto = struct {
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
+            BoringSSL.load();
+
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
             _ = BoringSSL.EVP_DigestInit_ex(&ctx, md, engine);

@@ -177,7 +177,7 @@ Bun implements the following matchers. Full Jest compatibility is on the roadmap
 - [ ] [`.any()`](https://jestjs.io/docs/expect#expectanyconstructor)
 - [ ] [`.arrayContaining()`](https://jestjs.io/docs/expect#expectarraycontainingarray)
 - [ ] [`.assertions()`](https://jestjs.io/docs/expect#expectassertionsnumber)
-- [ ] [`.closeTo()`(number, numDigit](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
+- [ ] [`.closeTo()`](https://jestjs.io/docs/expect#expectclosetonumber-numdigits)
 - [ ] [`.hasAssertions()`](https://jestjs.io/docs/expect#expecthasassertions)
 - [ ] [`.objectContaining()`](https://jestjs.io/docs/expect#expectobjectcontainingobject)
 - [ ] [`.stringContaining()`](https://jestjs.io/docs/expect#expectstringcontainingstring)

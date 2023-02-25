@@ -67,6 +67,9 @@ export default {
     page("ecosystem/express", "Express"),
     page("ecosystem/hono", "Hono"),
     page("ecosystem/elysia", "Elysia"),
+    page("ecosystem/awesome", "Awesome", {
+      href:"https://github.com/apvarun/awesome-bun"
+    }),
 
     divider("API"),
     page("api/http", "HTTP"), // "`Bun.serve`"),

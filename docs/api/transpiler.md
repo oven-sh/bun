@@ -83,7 +83,7 @@ If your code uses a macro, it will potentially spawn a new copy of Bun's JavaScr
 
 ## `.scan()`
 
-The `Transpiler` instance can also scan some source code and return a list of its imports and exports, plus additional metadata about each one. [Type-only](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-8.html#type-only-imports-and-export)imports and exports are ignored.
+The `Transpiler` instance can also scan some source code and return a list of its imports and exports, plus additional metadata about each one. [Type-only](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-8.html#type-only-imports-and-export) imports and exports are ignored.
 
 {% codetabs %}
 

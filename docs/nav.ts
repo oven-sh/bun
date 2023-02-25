@@ -64,9 +64,9 @@ export default {
     page("ecosystem/nodejs", "Node.js"),
     page("ecosystem/typescript", "TypeScript"),
     page("ecosystem/react", "React"),
-    page("ecosystem/express", "Express"),
-    page("ecosystem/hono", "Hono"),
     page("ecosystem/elysia", "Elysia"),
+    page("ecosystem/hono", "Hono"),
+    page("ecosystem/express", "Express"),
     page("ecosystem/awesome", "Awesome", {
       href:"https://github.com/apvarun/awesome-bun"
     }),

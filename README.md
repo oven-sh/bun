@@ -20,7 +20,9 @@
   <br />
 </div>
 
-[**Read the docs**](https://bun.sh/docs)
+### [Read the docs →](https://bun.sh/docs)
+
+## What is Bun?
 
 Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun​`.
 

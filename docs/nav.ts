@@ -58,6 +58,7 @@ export default {
     page("ecosystem/typescript", "TypeScript"),
     page("ecosystem/react", "React"),
     page("ecosystem/express", "Express"),
+    page("ecosystem/awesome", "Awesome Bun"),
 
     divider("API"),
     page("api/http", "HTTP"), // "`Bun.serve`"),

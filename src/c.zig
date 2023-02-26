@@ -443,3 +443,4 @@ pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
 
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
+pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;

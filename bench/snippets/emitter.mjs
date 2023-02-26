@@ -20,7 +20,13 @@ for (let [EventEmitter, className] of [
     event.preventDefault();
   });
 
-  bench(`${className}.emit`, () => {});
+  bench(`${className}.emit`, () => {
+    emitter.emit("hello", {
+      preventDefault() {
+        id++;
+      },
+    });
+  });
 
   bench(`${className}.on x 10_000 (handler)`, () => {
     var cb = event => {

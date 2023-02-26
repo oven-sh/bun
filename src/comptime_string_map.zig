@@ -71,7 +71,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
         const keys_list: []const []const KeyType = blk: {
             var k: [kvs.len][]const KeyType = undefined;
-            for (kvs) |kv, i| {
+            for (kvs, 0..) |kv, i| {
                 k[i] = kv.key;
             }
             break :blk k[0..];

@@ -295,11 +295,11 @@ pub fn Do(
     const Runner = struct {
         pub fn call(ctx_: WaitContext, values_: ValuesType, i: usize) void {
             if (comptime as_ptr) {
-                for (values_) |*v, j| {
+                for (values_, 0..) |*v, j| {
                     Function(ctx_.ctx, v, i + j);
                 }
             } else {
-                for (values_) |v, j| {
+                for (values_, 0..) |v, j| {
                     Function(ctx_.ctx, v, i + j);
                 }
             }

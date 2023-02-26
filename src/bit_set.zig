@@ -500,14 +500,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// in the toggles bit set.
         pub fn toggleSet(self: *Self, toggles: *const Self) void {
             const other = &toggles.masks;
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* ^= other[i];
+            for (self.masks, other) |*mask, b| {
+                mask.* ^= b;
             }
         }
 
         /// Flips every bit in the bit set.
         pub fn toggleAll(self: *Self) void {
-            for (&self.masks) |*mask| {
+            for (self.masks) |*mask| {
                 mask.* = ~mask.*;
             }
 
@@ -521,8 +521,8 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* |= other.masks[i];
+            for (self.masks, other[0..self.masks.len]) |*mask, alt| {
+                mask.* |= alt;
             }
         }
 
@@ -530,8 +530,8 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// the result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in both inputs.
         pub fn setIntersection(self: *Self, other: *const Self) void {
-            for (&self.masks, 0..) |*mask, i| {
-                mask.* &= other.masks[i];
+            for (self.masks, other[0..self.masks.len]) |*mask, alt| {
+                mask.* &= alt;
             }
         }
 
@@ -770,7 +770,7 @@ pub const DynamicBitSetUnmanaged = struct {
         const num_masks = numMasks(self.bit_length);
         var copy = Self{};
         try copy.resize(new_allocator, self.bit_length, false);
-        bun.copy(MaskInt, copy.masks, self.masks[0..num_masks]);
+        bun.copy(MaskInt, copy.masks[0..num_masks], self.masks[0..num_masks]);
         return copy;
     }
 

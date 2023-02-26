@@ -406,7 +406,7 @@ pub const BundleV2 = struct {
 
                 if (framework.override_modules.keys.len > 0) {
                     bundler.options.framework.?.override_modules_hashes = allocator.alloc(u64, framework.override_modules.keys.len) catch unreachable;
-                    for (framework.override_modules.keys) |key, i| {
+                    for (framework.override_modules.keys, 0..) |key, i| {
                         bundler.options.framework.?.override_modules_hashes[i] = std.hash.Wyhash.hash(0, key);
                     }
                 }
@@ -430,7 +430,7 @@ pub const BundleV2 = struct {
 
                 if (framework.override_modules.keys.len > 0) {
                     bundler.options.framework.?.override_modules_hashes = allocator.alloc(u64, framework.override_modules.keys.len) catch unreachable;
-                    for (framework.override_modules.keys) |key, i| {
+                    for (framework.override_modules.keys, 0..) |key, i| {
                         bundler.options.framework.?.override_modules_hashes[i] = wyhash(0, key);
                     }
                 }
@@ -1434,7 +1434,7 @@ const LinkerGraph = struct {
         var dependencies = &part.dependencies;
         const part_ids = g.topLevelSymbolToParts(id, ref);
         try dependencies.ensureUnusedCapacity(g.allocator, part_ids.len);
-        for (part_ids) |_, part_id| {
+        for (part_ids, 0..) |_, part_id| {
             dependencies.appendAssumeCapacity(.{
                 .source_index = source_index_to_import_from,
                 .part_index = @truncate(u32, part_id),
@@ -1478,7 +1478,7 @@ const LinkerGraph = struct {
                 @memset(output_was_auto_generated.ptr, 0, output_was_auto_generated.len);
             }
 
-            for (entry_points) |i, j| {
+            for (entry_points, 0..) |i, j| {
                 const source = sources[i.get()];
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(source.index.get() == i.get());
@@ -1492,7 +1492,7 @@ const LinkerGraph = struct {
         // Setup files
         {
             var stable_source_indices = try this.allocator.alloc(Index, sources.len);
-            for (this.reachable_files) |_, i| {
+            for (this.reachable_files, 0..) |_, i| {
                 stable_source_indices[i] = Index.source(i);
             }
 
@@ -1648,7 +1648,7 @@ const LinkerContext = struct {
         var entry_source_indices = this.graph.entry_points.items(.source_index);
 
         // Create chunks for entry points
-        for (entry_source_indices) |source_index, entry_id_| {
+        for (entry_source_indices, 0..) |source_index, entry_id_| {
             const entry_bit = @truncate(Chunk.EntryPoint.ID, entry_id_);
 
             var entry_bits = try bun.bit_set.AutoBitSet.initEmpty(this.allocator, this.graph.entry_points.len);
@@ -1705,7 +1705,7 @@ const LinkerContext = struct {
         // Map from the entry point file to this chunk. We will need this later if
         // a file contains a dynamic import to this entry point, since we'll need
         // to look up the path for this chunk to use with the import.
-        for (chunks) |*chunk, chunk_id| {
+        for (chunks, 0..) |*chunk, chunk_id| {
             if (chunk.entry_point.is_entry_point) {
                 entry_point_chunk_indices[chunk.entry_point.source_index] = @truncate(u32, chunk_id);
             }
@@ -1831,7 +1831,7 @@ const LinkerContext = struct {
 
                 const records = v.import_records[source_index].slice();
 
-                for (parts) |*part, part_index_| {
+                for (parts, 0..) |*part, part_index_| {
                     const part_index = @truncate(u32, part_index_);
                     const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
 
@@ -2280,7 +2280,7 @@ const LinkerContext = struct {
                 if (is_entry_point and this.options.output_format == .esm) {
                     var copies = this.allocator.alloc(Ref, aliases.len) catch unreachable;
 
-                    for (aliases) |alias, i| {
+                    for (aliases, 0..) |alias, i| {
                         const original_name = bufPrint(buf, "export_{}", .{strings.fmtIdentifier(alias)}) catch unreachable;
                         buf = buf[original_name.len..];
                         copies[i] = this.graph.generateNewSymbol(source_index, .other, original_name);
@@ -2457,7 +2457,7 @@ const LinkerContext = struct {
                 var import_records = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
 
-                for (parts) |*part, part_index| {
+                for (parts, 0..) |*part, part_index| {
                     var to_esm_uses: u32 = 0;
                     var to_common_js_uses: u32 = 0;
                     var runtime_require_uses: u32 = 0;
@@ -2945,7 +2945,7 @@ const LinkerContext = struct {
         var parts = &c.graph.ast.items(.parts)[id];
         var parts_slice: []js_ast.Part = parts.slice();
         var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
-        for (parts_slice) |*part, part_index| {
+        for (parts_slice, 0..) |*part, part_index| {
 
             // TODO: inline const TypeScript enum here
 
@@ -2953,7 +2953,7 @@ const LinkerContext = struct {
 
             // note: if we crash on append, it is due to threadlocal heaps in mimalloc
             const symbol_uses = part.symbol_uses.keys();
-            for (symbol_uses) |ref, j| {
+            for (symbol_uses, 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
@@ -3056,7 +3056,7 @@ const LinkerContext = struct {
         // has to happen after tree shaking because there is an implicit dependency
         // between live parts within the same file. All liveness has to be computed
         // first before determining which entry points can reach which files.
-        for (entry_points) |entry_point, i| {
+        for (entry_points, 0..) |entry_point, i| {
             c.markFileReachableForCodeSplitting(
                 entry_point,
                 i,
@@ -3269,7 +3269,7 @@ const LinkerContext = struct {
         );
 
         // Mark imported symbols as exported in the chunk from which they are declared
-        for (chunks) |*chunk, chunk_index| {
+        for (chunks, 0..) |*chunk, chunk_index| {
             if (chunk.content != .javascript) {
                 continue;
             }
@@ -3300,7 +3300,7 @@ const LinkerContext = struct {
             // this entry point, even if there are no imports. We need to make sure
             // these chunks are evaluated for their side effects too.
             if (chunk.entry_point.is_entry_point) {
-                for (chunks) |*other_chunk, other_chunk_index| {
+                for (chunks, 0..) |*other_chunk, other_chunk_index| {
                     if (other_chunk_index == chunk_index or other_chunk.content != .javascript) continue;
 
                     if (other_chunk.entry_bits.isSet(chunk.entry_point.entry_point_id)) {
@@ -3653,6 +3653,7 @@ const LinkerContext = struct {
     }
 
     fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
+        _ = chunk_index;
         defer ctx.wg.done();
         var worker = ThreadPool.Worker.get();
         const allocator = worker.allocator;
@@ -3677,7 +3678,7 @@ const LinkerContext = struct {
         js_ast.Stmt.Data.Store.create(allocator);
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        for (part_ranges) |part_range, i| {
+        for (part_ranges, 0..) |part_range, i| {
             if (i > 0) arena.reset(.retain_capacity);
             c.generateCodeForFileInChunkJS(
                 allocator,
@@ -4882,7 +4883,7 @@ const LinkerContext = struct {
         if (@as(usize, id) >= c.graph.ast.len)
             return;
         var _parts = parts[id].slice();
-        for (_parts) |*part, part_index| {
+        for (_parts, 0..) |*part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             // Also include any statement-level imports
@@ -5257,7 +5258,7 @@ const LinkerContext = struct {
 
                 // generate a dummy part that depends on the "__commonJS" symbol
                 var dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch unreachable;
-                for (common_js_parts) |part, i| {
+                for (common_js_parts, 0..) |part, i| {
                     dependencies[i] = .{
                         .part_index = part,
                         .source_index = Index.runtime,
@@ -5310,7 +5311,7 @@ const LinkerContext = struct {
 
                 // generate a dummy part that depends on the "__esm" symbol
                 var dependencies = c.allocator.alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
-                for (esm_parts) |part, i| {
+                for (esm_parts, 0..) |part, i| {
                     dependencies[i] = .{
                         .part_index = part,
                         .source_index = Index.runtime,

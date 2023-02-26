@@ -9,6 +9,7 @@ fn NewHasher(comptime digest_size: comptime_int, comptime ContextType: type, com
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
+            BoringSSL.load();
             var this: @This() = .{
                 .hasher = undefined,
             };
@@ -45,6 +46,8 @@ fn NewEVP(
         pub const digest: comptime_int = digest_size;
 
         pub fn init() @This() {
+            BoringSSL.load();
+
             const md = @call(.auto, @field(BoringSSL, MDName), .{});
             var this: @This() = .{
                 .ctx = undefined,
@@ -188,7 +191,7 @@ pub fn main() anyerror!void {
 
     var engine = BoringSSL.ENGINE_new().?;
 
-    inline for (boring) |BoringHasher, i| {
+    inline for (boring, 0..) |BoringHasher, i| {
         const ZigHasher = zig[i];
         std.debug.print(
             comptime labels[i] ++ " - hashing {.3f}:\n",

@@ -515,7 +515,12 @@ pub const Bundler = struct {
                 var dir: *Fs.FileSystem.DirEntry = ((this.resolver.readDirInfo(this.fs.top_level_dir) catch return) orelse return).getEntries() orelse return;
 
                 // Process always has highest priority.
+                const was_production = this.options.production;
                 this.env.loadProcess();
+                if (!was_production and this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
+
                 if (this.options.production) {
                     try this.env.load(&this.fs.fs, dir, false);
                 } else {
@@ -524,6 +529,9 @@ pub const Bundler = struct {
             },
             .disable => {
                 this.env.loadProcess();
+                if (this.env.isProduction()) {
+                    this.options.setProduction(true);
+                }
             },
             else => {},
         }
@@ -683,7 +691,7 @@ pub const Bundler = struct {
                     var dir_info = dir_info_ orelse return;
 
                     this.options.routes.dir = dir_info.abs_path;
-                    this.options.routes.extensions = std.mem.span(&options.RouteConfig.DefaultExtensions);
+                    this.options.routes.extensions = options.RouteConfig.DefaultExtensions[0..];
                     this.options.routes.routes_enabled = true;
                     this.router = try Router.init(this.fs, this.allocator, this.options.routes);
                     try this.router.?.loadRoutes(
@@ -1108,8 +1116,8 @@ pub const Bundler = struct {
             .wasm, .file, .napi => {
                 var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
-                std.mem.copy(u8, pathname, hashed_name);
-                std.mem.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
+                bun.copy(u8, pathname, hashed_name);
+                bun.copy(u8, pathname[hashed_name.len..], file_path.name.ext);
                 const dir = if (bundler.options.output_dir_handle) |output_handle| output_handle.fd else 0;
 
                 output_file.value = .{
@@ -1548,16 +1556,18 @@ pub const Bundler = struct {
 
                 if (strings.eqlComptime(absolute_pathname_pathname.ext, ".entry")) {
                     const trail_dir = absolute_pathname.dirWithTrailingSlash();
-                    var len: usize = trail_dir.len;
-                    std.mem.copy(u8, tmp_buildfile_buf2[0..len], trail_dir);
+                    var len = trail_dir.len;
 
-                    std.mem.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname_pathname.base);
+                    bun.copy(u8, &tmp_buildfile_buf2, trail_dir);
+                    bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname_pathname.base);
                     len += absolute_pathname_pathname.base.len;
-                    std.mem.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
+                    bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
                     len += absolute_pathname.ext.len;
-                    std.debug.assert(len > 0);
+
+                    if (comptime Environment.allow_assert) std.debug.assert(len > 0);
+
                     const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
-                    break :brk (try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point));
+                    break :brk try bundler.resolver.resolve(bundler.fs.top_level_dir, decoded_entry_point_path, .entry_point);
                 }
             }
 
@@ -1625,7 +1635,7 @@ pub const Bundler = struct {
             var __entry = bundler.allocator.alloc(u8, "./".len + entry.len) catch unreachable;
             __entry[0] = '.';
             __entry[1] = '/';
-            std.mem.copy(u8, __entry[2..__entry.len], entry);
+            bun.copy(u8, __entry[2..__entry.len], entry);
             entry = __entry;
         }
 

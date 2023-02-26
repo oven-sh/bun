@@ -63,7 +63,7 @@ pub const MutableString = struct {
     pub const ensureUnusedCapacity = growIfNeeded;
 
     pub fn initCopy(allocator: std.mem.Allocator, str: anytype) !MutableString {
-        var mutable = try MutableString.init(allocator, std.mem.len(str));
+        var mutable = try MutableString.init(allocator, str.len);
         try mutable.copy(str);
         return mutable;
     }
@@ -144,12 +144,12 @@ pub const MutableString = struct {
     }
 
     pub fn copy(self: *MutableString, str: anytype) !void {
-        try self.list.ensureTotalCapacity(self.allocator, std.mem.len(str[0..]));
+        try self.list.ensureTotalCapacity(self.allocator, str[0..].len);
 
         if (self.list.items.len == 0) {
             try self.list.insertSlice(self.allocator, 0, str);
         } else {
-            try self.list.replaceRange(self.allocator, 0, std.mem.len(str[0..]), str[0..]);
+            try self.list.replaceRange(self.allocator, 0, str[0..].len, str[0..]);
         }
     }
 

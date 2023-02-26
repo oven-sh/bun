@@ -78,7 +78,7 @@ pub const BufferVectorized = struct {
         const minimum_contents = contents;
         while (buf.len >= contents.len) {
             const min_len = @min(contents.len, buf.len);
-            std.mem.copy(u8, buf[0..min_len], contents[0..min_len]);
+            bun.copy(u8, buf, contents[0..min_len]);
             if (buf.len <= contents.len) {
                 break;
             }
@@ -88,7 +88,7 @@ pub const BufferVectorized = struct {
 
         while (buf.len > 0) {
             const to_fill = @min(minimum_contents.len, buf.len);
-            std.mem.copy(u8, buf[0..to_fill], minimum_contents[0..to_fill]);
+            bun.copy(u8, buf, minimum_contents[0..to_fill]);
             buf = buf[to_fill..];
         }
     }

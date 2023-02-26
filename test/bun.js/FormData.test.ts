@@ -252,7 +252,7 @@ describe("FormData", () => {
 
   it("file upload on HTTP server (receive)", async () => {
     const server = Bun.serve({
-      port: 4021,
+      port: 0,
       development: false,
       async fetch(req) {
         const formData = await req.formData();
@@ -276,7 +276,7 @@ describe("FormData", () => {
 
   it("file send on HTTP server (receive)", async () => {
     const server = Bun.serve({
-      port: 4022,
+      port: 0,
       development: false,
       async fetch(req) {
         const formData = await req.formData();

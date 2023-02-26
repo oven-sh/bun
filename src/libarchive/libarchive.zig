@@ -424,7 +424,7 @@ pub const Archive = struct {
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
                     var pathname: [:0]const u8 = std.mem.sliceTo(lib.archive_entry_pathname(entry).?, 0);
-                    var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
+                    var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
                         if (tokenizer.next() == null) continue :loop;
@@ -432,7 +432,7 @@ pub const Archive = struct {
 
                     var pathname_ = tokenizer.rest();
                     pathname = std.mem.sliceTo(pathname_.ptr[0..pathname_.len :0], 0);
-                    const dirname = std.mem.trim(u8, std.fs.path.dirname(std.mem.span(pathname)) orelse "", std.fs.path.sep_str);
+                    const dirname = std.mem.trim(u8, std.fs.path.dirname(bun.asByteSlice(pathname)) orelse "", std.fs.path.sep_str);
 
                     const size = @intCast(usize, std.math.max(lib.archive_entry_size(entry), 0));
                     if (size > 0) {
@@ -442,7 +442,7 @@ pub const Archive = struct {
                         if (stat.size > 0) {
                             const is_already_top_level = dirname.len == 0;
                             const path_to_use_: string = brk: {
-                                const __pathname: string = std.mem.span(pathname);
+                                const __pathname: string = bun.asByteSlice(pathname);
 
                                 if (is_already_top_level) break :brk __pathname;
 
@@ -450,7 +450,7 @@ pub const Archive = struct {
                                 break :brk __pathname[0..index];
                             };
                             var temp_buf: [1024]u8 = undefined;
-                            std.mem.copy(u8, &temp_buf, path_to_use_);
+                            bun.copy(u8, &temp_buf, path_to_use_);
                             var path_to_use: string = temp_buf[0..path_to_use_.len];
                             if (!is_already_top_level) {
                                 temp_buf[path_to_use_.len] = std.fs.path.sep;
@@ -501,11 +501,11 @@ pub const Archive = struct {
 
                     if (comptime ContextType != void and @hasDecl(std.meta.Child(ContextType), "onFirstDirectoryName")) {
                         if (appender.needs_first_dirname) {
-                            appender.onFirstDirectoryName(strings.withoutTrailingSlash(std.mem.span(pathname)));
+                            appender.onFirstDirectoryName(strings.withoutTrailingSlash(bun.asByteSlice(pathname)));
                         }
                     }
 
-                    var tokenizer = std.mem.tokenize(u8, std.mem.span(pathname), std.fs.path.sep_str);
+                    var tokenizer = std.mem.tokenize(u8, bun.asByteSlice(pathname), std.fs.path.sep_str);
                     comptime var depth_i: usize = 0;
 
                     inline while (depth_i < depth_to_skip) : (depth_i += 1) {
@@ -518,7 +518,7 @@ pub const Archive = struct {
 
                     const kind = C.kindFromMode(lib.archive_entry_filetype(entry));
 
-                    const slice = std.mem.span(pathname);
+                    const slice = bun.asByteSlice(pathname);
 
                     if (comptime log) {
                         Output.prettyln(" {s}", .{pathname});
@@ -623,13 +623,13 @@ pub const Archive = struct {
                                         lib.ARCHIVE_OK => break :possibly_retry,
                                         lib.ARCHIVE_RETRY => {
                                             if (comptime log) {
-                                                Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ std.mem.span(pathname_), retries_remaining, 5 });
+                                                Output.prettyErrorln("[libarchive] Error extracting {s}, retry {d} / {d}", .{ pathname_, retries_remaining, 5 });
                                             }
                                         },
                                         else => {
                                             if (comptime log) {
                                                 const archive_error = std.mem.span(lib.archive_error_string(archive));
-                                                Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ std.mem.span(pathname_), archive_error });
+                                                Output.prettyErrorln("[libarchive] Error extracting {s}: {s}", .{ pathname_, archive_error });
                                             }
                                             return error.Fail;
                                         },

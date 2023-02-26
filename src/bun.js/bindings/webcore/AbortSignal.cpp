@@ -115,6 +115,15 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
     dispatchEvent(Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
+void AbortSignal::cleanNativeBindings(void* ref) {
+    auto callbacks = std::exchange(m_native_callbacks, {});
+
+    callbacks.removeAllMatching([=](auto callback){
+        const auto [ ctx, func ] = callback;
+        return ctx == ref;
+    });
+}
+
 // https://dom.spec.whatwg.org/#abortsignal-follow
 void AbortSignal::signalFollow(AbortSignal& signal)
 {

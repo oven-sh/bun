@@ -1680,6 +1680,28 @@ pub const JSRequest = struct {
         return result;
     }
 
+    extern fn RequestPrototype__signalSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
+
+    extern fn RequestPrototype__signalGetCachedValue(JSC.JSValue) JSC.JSValue;
+
+    /// `Request.signal` setter
+    /// This value will be visited by the garbage collector.
+    pub fn signalSetCached(thisValue: JSC.JSValue, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        RequestPrototype__signalSetCachedValue(thisValue, globalObject, value);
+    }
+
+    /// `Request.signal` getter
+    /// This value will be visited by the garbage collector.
+    pub fn signalGetCached(thisValue: JSC.JSValue) ?JSC.JSValue {
+        JSC.markBinding(@src());
+        const result = RequestPrototype__signalGetCachedValue(thisValue);
+        if (result == .zero)
+            return null;
+
+        return result;
+    }
+
     extern fn RequestPrototype__urlSetCachedValue(JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) void;
 
     extern fn RequestPrototype__urlGetCachedValue(JSC.JSValue) JSC.JSValue;
@@ -1799,6 +1821,9 @@ pub const JSRequest = struct {
         if (@TypeOf(Request.getReferrerPolicy) != GetterType)
             @compileLog("Expected Request.getReferrerPolicy to be a getter");
 
+        if (@TypeOf(Request.getSignal) != GetterType)
+            @compileLog("Expected Request.getSignal to be a getter");
+
         if (@TypeOf(Request.getText) != CallbackType)
             @compileLog("Expected Request.getText to be a callback but received " ++ @typeName(@TypeOf(Request.getText)));
         if (@TypeOf(Request.getUrl) != GetterType)
@@ -1825,6 +1850,7 @@ pub const JSRequest = struct {
             @export(Request.getRedirect, .{ .name = "RequestPrototype__getRedirect" });
             @export(Request.getReferrer, .{ .name = "RequestPrototype__getReferrer" });
             @export(Request.getReferrerPolicy, .{ .name = "RequestPrototype__getReferrerPolicy" });
+            @export(Request.getSignal, .{ .name = "RequestPrototype__getSignal" });
             @export(Request.getText, .{ .name = "RequestPrototype__getText" });
             @export(Request.getUrl, .{ .name = "RequestPrototype__getUrl" });
         }
@@ -3585,6 +3611,74 @@ pub const JSTextDecoder = struct {
         }
     }
 };
+pub const JSTimeout = struct {
+    const Timeout = Classes.Timeout;
+    const GetterType = fn (*Timeout, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const GetterTypeWithThisValue = fn (*Timeout, JSC.JSValue, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Timeout, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const SetterTypeWithThisValue = fn (*Timeout, JSC.JSValue, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Timeout, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Timeout {
+        JSC.markBinding(@src());
+        return Timeout__fromJS(value);
+    }
+
+    /// Create a new instance of Timeout
+    pub fn toJS(this: *Timeout, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding(@src());
+        if (comptime Environment.allow_assert) {
+            const value__ = Timeout__create(globalObject, this);
+            std.debug.assert(value__.as(Timeout).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Timeout__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Timeout.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Timeout) bool {
+        JSC.markBinding(@src());
+        return Timeout__dangerouslySetPtr(value, ptr);
+    }
+
+    /// Detach the ptr from the thisValue
+    pub fn detachPtr(_: *Timeout, value: JSC.JSValue) void {
+        JSC.markBinding(@src());
+        std.debug.assert(Timeout__dangerouslySetPtr(value, null));
+    }
+
+    extern fn Timeout__fromJS(JSC.JSValue) ?*Timeout;
+    extern fn Timeout__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Timeout__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Timeout) JSC.JSValue;
+
+    extern fn Timeout__dangerouslySetPtr(JSC.JSValue, ?*Timeout) bool;
+
+    comptime {
+        if (@TypeOf(Timeout.finalize) != (fn (*Timeout) callconv(.C) void)) {
+            @compileLog("Timeout.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Timeout.toPrimitive) != CallbackType)
+            @compileLog("Expected Timeout.toPrimitive to be a callback but received " ++ @typeName(@TypeOf(Timeout.toPrimitive)));
+        if (@TypeOf(Timeout.hasRef) != CallbackType)
+            @compileLog("Expected Timeout.hasRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.hasRef)));
+        if (@TypeOf(Timeout.doRef) != CallbackType)
+            @compileLog("Expected Timeout.doRef to be a callback but received " ++ @typeName(@TypeOf(Timeout.doRef)));
+        if (@TypeOf(Timeout.doUnref) != CallbackType)
+            @compileLog("Expected Timeout.doUnref to be a callback but received " ++ @typeName(@TypeOf(Timeout.doUnref)));
+        if (!JSC.is_bindgen) {
+            @export(Timeout.doRef, .{ .name = "TimeoutPrototype__doRef" });
+            @export(Timeout.doUnref, .{ .name = "TimeoutPrototype__doUnref" });
+            @export(Timeout.finalize, .{ .name = "TimeoutClass__finalize" });
+            @export(Timeout.hasRef, .{ .name = "TimeoutPrototype__hasRef" });
+            @export(Timeout.toPrimitive, .{ .name = "TimeoutPrototype__toPrimitive" });
+        }
+    }
+};
 pub const JSTranspiler = struct {
     const Transpiler = Classes.Transpiler;
     const GetterType = fn (*Transpiler, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -3691,5 +3785,6 @@ comptime {
     _ = JSTCPSocket;
     _ = JSTLSSocket;
     _ = JSTextDecoder;
+    _ = JSTimeout;
     _ = JSTranspiler;
 }

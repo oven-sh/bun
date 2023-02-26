@@ -675,7 +675,7 @@ pub const Crypto = struct {
             0 => {},
             // 512 bytes or less we reuse from the same cache as UUID generation.
             1...JSC.RareData.EntropyCache.size / 8 => {
-                std.mem.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
+                bun.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
             },
             else => {
                 bun.rand(slice);

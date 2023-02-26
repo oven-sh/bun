@@ -10,9 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 
 const std = @import("std");
-const assert = std.debug.assert;
-const mem = std.mem;
-const Allocator = mem.Allocator;
+const Allocator = std.mem.Allocator;
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
@@ -33,7 +31,7 @@ pub const PercentEncoding = struct {
 
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn isPchar(str: []const u8) bool {
-        if (Environment.allow_assert) assert(str.len > 0);
+        if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
             '%' => str.len > 3 and isHex(str[1]) and isHex(str[2]),
@@ -55,7 +53,7 @@ pub const PercentEncoding = struct {
                 }
                 if (ret == null) {
                     ret = try allocator.alloc(u8, path.len);
-                    mem.copy(u8, ret.?, path[0..i]);
+                    bun.copy(u8, ret, path[0..i]);
                     ret_index = i;
                 }
 

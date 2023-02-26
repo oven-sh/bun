@@ -1,3 +1,5 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -8,7 +10,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const std = @import("std");
+const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
 pub const String = extern struct {
@@ -301,11 +303,6 @@ pub const String = extern struct {
     }
 
     pub const Builder = struct {
-        const Allocator = @import("std").mem.Allocator;
-        const assert = @import("std").debug.assert;
-        const copy = @import("std").mem.copy;
-        const IdentityContext = @import("../identity_context.zig").IdentityContext;
-
         len: usize = 0,
         cap: usize = 0,
         ptr: ?[*]u8 = null,
@@ -335,7 +332,7 @@ pub const String = extern struct {
             else
                 &[_]u8{};
         }
-        pub fn allocate(this: *Builder, allocator: std.mem.Allocator) !void {
+        pub fn allocate(this: *Builder, allocator: Allocator) !void {
             var ptr_ = try allocator.alloc(u8, this.cap);
             this.ptr = ptr_.ptr;
         }
@@ -359,14 +356,16 @@ pub const String = extern struct {
                 }
             }
 
-            assert(this.len <= this.cap); // didn't count everything
-            assert(this.ptr != null); // must call allocate first
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.len <= this.cap); // didn't count everything
+                std.debug.assert(this.ptr != null); // must call allocate first
+            }
 
-            copy(u8, this.ptr.?[this.len..this.cap], slice_);
+            bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -392,14 +391,16 @@ pub const String = extern struct {
                     else => @compileError("Invalid type passed to StringBuilder"),
                 }
             }
-            assert(this.len <= this.cap); // didn't count everything
-            assert(this.ptr != null); // must call allocate first
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.len <= this.cap); // didn't count everything
+                std.debug.assert(this.ptr != null); // must call allocate first
+            }
 
-            copy(u8, this.ptr.?[this.len..this.cap], slice_);
+            bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -425,19 +426,21 @@ pub const String = extern struct {
                 }
             }
 
-            assert(this.len <= this.cap); // didn't count everything
-            assert(this.ptr != null); // must call allocate first
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(this.len <= this.cap); // didn't count everything
+                std.debug.assert(this.ptr != null); // must call allocate first
+            }
 
             var string_entry = this.string_pool.getOrPut(hash) catch unreachable;
             if (!string_entry.found_existing) {
-                copy(u8, this.ptr.?[this.len..this.cap], slice_);
+                bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
                 const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
                 this.len += slice_.len;
 
                 string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
             }
 
-            assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -765,7 +768,7 @@ pub const Version = extern struct {
                 pre = this.pre.value;
             } else {
                 const pre_slice = this.pre.slice(slice);
-                std.mem.copy(u8, buf.*, pre_slice);
+                bun.copy(u8, buf.*, pre_slice);
                 pre = String.init(buf.*, buf.*[0..pre_slice.len]);
                 buf.* = buf.*[pre_slice.len..];
             }
@@ -774,7 +777,7 @@ pub const Version = extern struct {
                 build = this.build.value;
             } else {
                 const build_slice = this.build.slice(slice);
-                std.mem.copy(u8, buf.*, build_slice);
+                bun.copy(u8, buf.*, build_slice);
                 build = String.init(buf.*, buf.*[0..build_slice.len]);
                 buf.* = buf.*[build_slice.len..];
             }
@@ -811,11 +814,11 @@ pub const Version = extern struct {
         var multi_tag_warn = false;
         // TODO: support multiple tags
 
-        pub fn parse(allocator: std.mem.Allocator, sliced_string: SlicedString) TagResult {
+        pub fn parse(allocator: Allocator, sliced_string: SlicedString) TagResult {
             return parseWithPreCount(allocator, sliced_string, 0);
         }
 
-        pub fn parseWithPreCount(_: std.mem.Allocator, sliced_string: SlicedString, initial_pre_count: u32) TagResult {
+        pub fn parseWithPreCount(_: Allocator, sliced_string: SlicedString, initial_pre_count: u32) TagResult {
             var input = sliced_string.slice;
             var build_count: u32 = 0;
             var pre_count: u32 = initial_pre_count;
@@ -929,7 +932,7 @@ pub const Version = extern struct {
         stopped_at: u32 = 0,
     };
 
-    pub fn parse(sliced_string: SlicedString, allocator: std.mem.Allocator) ParseResult {
+    pub fn parse(sliced_string: SlicedString, allocator: Allocator) ParseResult {
         var input = sliced_string.slice;
         var result = ParseResult{};
 
@@ -1338,7 +1341,7 @@ pub const Query = struct {
             return lhs_next.eql(rhs_next);
         }
 
-        pub fn andRange(self: *List, allocator: std.mem.Allocator, range: Range) !void {
+        pub fn andRange(self: *List, allocator: Allocator, range: Range) !void {
             if (!self.head.range.hasLeft() and !self.head.range.hasRight()) {
                 self.head.range = range;
                 return;
@@ -1359,7 +1362,7 @@ pub const Query = struct {
     pub const Group = struct {
         head: List = List{},
         tail: ?*List = null,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         input: string = "",
 
         flags: FlagsBitSet = FlagsBitSet.initEmpty(),
@@ -1686,7 +1689,7 @@ pub const Query = struct {
     };
 
     pub fn parse(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         input: string,
         sliced: SlicedString,
     ) !Group {

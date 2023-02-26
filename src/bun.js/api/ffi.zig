@@ -217,7 +217,7 @@ pub const FFI = struct {
         }
         JSC.markBinding(@src());
         var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
-        for (symbols.values()) |*function, i| {
+        for (symbols.values(), 0..) |*function, i| {
             var arraylist = std.ArrayList(u8).init(allocator);
             var writer = arraylist.writer();
             function.printSourceCode(&writer) catch {
@@ -330,9 +330,9 @@ pub const FFI = struct {
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global);
+                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name_slice.slice() }, global);
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -345,12 +345,12 @@ pub const FFI = struct {
 
             function.compile(allocator) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
-                    std.mem.span(@errorName(err)),
-                    std.mem.span(function_name),
+                    bun.asByteSlice(@errorName(err)),
+                    bun.asByteSlice(function_name),
                     name_slice.slice(),
                 }, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -360,7 +360,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
 
@@ -372,7 +372,7 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -380,7 +380,7 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const str = ZigString.init(std.mem.span(function_name));
+                    const str = ZigString.init(bun.asByteSlice(function_name));
                     const cb = JSC.NewRuntimeFunction(
                         global,
                         &str,
@@ -433,9 +433,9 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{std.mem.span(function_name)}, global);
+                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{bun.asByteSlice(function_name)}, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -444,11 +444,11 @@ pub const FFI = struct {
 
             function.compile(allocator) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
-                    std.mem.span(@errorName(err)),
-                    std.mem.span(function_name),
+                    bun.asByteSlice(@errorName(err)),
+                    bun.asByteSlice(function_name),
                 }, global);
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                    allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -457,7 +457,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
 
@@ -468,14 +468,14 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        allocator.free(bun.constStrToU8(bun.asByteSlice(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
                     return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |*compiled| {
-                    const name = &ZigString.init(std.mem.span(function_name));
+                    const name = &ZigString.init(bun.asByteSlice(function_name));
 
                     const cb = JSC.NewRuntimeFunction(
                         global,
@@ -632,7 +632,7 @@ pub const FFI = struct {
             }
             function.base_name = try prop.toOwnedSliceZ(allocator);
 
-            symbols.putAssumeCapacity(std.mem.span(function.base_name.?), function);
+            symbols.putAssumeCapacity(bun.asByteSlice(function.base_name.?), function);
         }
 
         return null;
@@ -656,8 +656,8 @@ pub const FFI = struct {
             JSC.markBinding(@src());
 
             if (val.base_name) |base_name| {
-                if (std.mem.span(base_name).len > 0) {
-                    allocator.free(bun.constStrToU8(std.mem.span(base_name)));
+                if (bun.asByteSlice(base_name).len > 0) {
+                    allocator.free(bun.constStrToU8(bun.asByteSlice(base_name)));
                 }
             }
 
@@ -1058,7 +1058,7 @@ pub const FFI = struct {
             }
 
             if (comptime Environment.isRelease) {
-                try writer.writeAll(std.mem.span(FFI_HEADER));
+                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
             } else {
                 try writer.writeAll(ffiHeader());
             }
@@ -1067,10 +1067,10 @@ pub const FFI = struct {
             try writer.writeAll("/* --- The Function To Call */\n");
             try this.return_type.typename(writer);
             try writer.writeAll(" ");
-            try writer.writeAll(std.mem.span(this.base_name.?));
+            try writer.writeAll(bun.asByteSlice(this.base_name.?));
             try writer.writeAll("(");
             var first = true;
-            for (this.arg_types.items) |arg, i| {
+            for (this.arg_types.items, 0..) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
                 }
@@ -1092,7 +1092,7 @@ pub const FFI = struct {
                     \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
                     \\
                 );
-                for (this.arg_types.items) |arg, i| {
+                for (this.arg_types.items, 0..) |arg, i| {
                     if (arg.needsACastInC()) {
                         if (i < this.arg_types.items.len - 1) {
                             try writer.print(
@@ -1152,10 +1152,10 @@ pub const FFI = struct {
                 try this.return_type.typename(writer);
                 try writer.writeAll(" return_value = ");
             }
-            try writer.print("{s}(", .{std.mem.span(this.base_name.?)});
+            try writer.print("{s}(", .{bun.asByteSlice(this.base_name.?)});
             first = true;
             arg_buf[0..3].* = "arg".*;
-            for (this.arg_types.items) |arg, i| {
+            for (this.arg_types.items, 0..) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
                 }
@@ -1229,7 +1229,7 @@ pub const FFI = struct {
             }
 
             if (comptime Environment.isRelease) {
-                try writer.writeAll(std.mem.span(FFI_HEADER));
+                try writer.writeAll(bun.asByteSlice(FFI_HEADER));
             } else {
                 try writer.writeAll(ffiHeader());
             }
@@ -1241,7 +1241,7 @@ pub const FFI = struct {
             try writer.writeAll(" my_callback_function");
             try writer.writeAll("(");
             var first = true;
-            for (this.arg_types.items) |arg, i| {
+            for (this.arg_types.items, 0..) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
                 }
@@ -1256,7 +1256,7 @@ pub const FFI = struct {
 
             try writer.writeAll(" my_callback_function");
             try writer.writeAll("(");
-            for (this.arg_types.items) |arg, i| {
+            for (this.arg_types.items, 0..) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
                 }
@@ -1279,7 +1279,7 @@ pub const FFI = struct {
                 try writer.print(" ZIG_REPR_TYPE arguments[{d}];\n", .{this.arg_types.items.len});
 
                 arg_buf[0.."arg".len].* = "arg".*;
-                for (this.arg_types.items) |arg, i| {
+                for (this.arg_types.items, 0..) |arg, i| {
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed.len];
                     try writer.print("arguments[{d}] = {any}.asZigRepr;\n", .{ i, arg.toJS(arg_name) });
@@ -1424,7 +1424,7 @@ pub const FFI = struct {
         };
         pub const map_to_js_object = brk: {
             var count: usize = 2;
-            for (map) |item, i| {
+            for (map, 0..) |item, i| {
                 var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
                 count += std.fmt.count("{}", .{fmt});
                 count += @boolToInt(i > 0);
@@ -1434,7 +1434,7 @@ pub const FFI = struct {
             buf[0] = '{';
             buf[buf.len - 1] = '}';
             var end: usize = 1;
-            for (map) |item, i| {
+            for (map, 0..) |item, i| {
                 var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
                 if (i > 0) {
                     buf[end] = ',';
@@ -1470,7 +1470,7 @@ pub const FFI = struct {
                     },
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         if (self.exact)
-                            try writer.print("({s})", .{std.mem.span(@tagName(self.tag))});
+                            try writer.print("({s})", .{bun.asByteSlice(@tagName(self.tag))});
 
                         try writer.writeAll("JSVALUE_TO_INT32(");
                     },

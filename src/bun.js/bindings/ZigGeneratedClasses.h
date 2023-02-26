@@ -618,6 +618,7 @@ public:
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_body;
     mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+    mutable JSC::WriteBarrier<JSC::Unknown> m_signal;
     mutable JSC::WriteBarrier<JSC::Unknown> m_url;
 };
 
@@ -1402,6 +1403,56 @@ public:
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
     mutable JSC::WriteBarrier<JSC::Unknown> m_encoding;
+};
+
+class JSTimeout final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSTimeout* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSTimeout, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForTimeout.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTimeout = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForTimeout.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForTimeout = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    ;
+
+    ~JSTimeout();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSTimeout, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSTimeout(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
 };
 
 class JSTranspiler final : public JSC::JSDestructibleObject {

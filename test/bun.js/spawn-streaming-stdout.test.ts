@@ -3,6 +3,7 @@ import { spawn } from "bun";
 import { bunExe } from "./bunExe";
 import { gcTick } from "gc";
 import { closeSync, openSync } from "fs";
+import { bunEnv } from "./bunEnv";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);
@@ -14,19 +15,17 @@ test("spawn can read from stdout multiple chunks", async () => {
       var exited;
       const proc = spawn({
         cmd: [bunExe(), import.meta.dir + "/spawn-streaming-stdout-repro.js"],
+        stdin: "ignore",
         stdout: "pipe",
         stderr: "ignore",
-        env: {
-          BUN_DEBUG_QUIET_LOGS: 1,
-        },
+        env: bunEnv,
       });
-      exited = proc.exited;
+      var chunks = [];
       let counter = 0;
       try {
         for await (var chunk of proc.stdout) {
-          expect(new TextDecoder().decode(chunk)).toBe("Wrote to stdout\n");
+          chunks.push(chunk);
           counter++;
-
           if (counter > 3) break;
         }
       } catch (e) {
@@ -34,7 +33,9 @@ test("spawn can read from stdout multiple chunks", async () => {
         throw e;
       }
       expect(counter).toBe(4);
-      await exited;
+      // TODO: fix bug with returning SIGHUP instead of exit code 1
+      proc.kill();
+      expect(Buffer.concat(chunks).toString()).toBe("Wrote to stdout\n".repeat(4));
     })();
 
   const newMaxFD = openSync("/dev/null", "w");

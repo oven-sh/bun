@@ -63,7 +63,7 @@ it("should add existing package", async () => {
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     "",
-    ` installed file:${add_path}@${add_path}`,
+    ` installed foo@${add_path}`,
     "",
     "",
     " 1 packages installed",
@@ -99,7 +99,7 @@ it("should reject missing package", async () => {
   const err = await new Response(stderr).text();
   expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
     "bun add",
-    `error: file:${add_path}@file:${add_path} failed to resolve`,
+    `error: file:${add_path} failed to resolve`,
     "",
   ]);
   expect(stdout).toBeDefined();
@@ -140,7 +140,7 @@ it("should reject invalid path without segfault", async () => {
   const err = await new Response(stderr).text();
   expect(err.replace(/^(.*?) v[^\n]+/, "$1").split(/\r?\n/)).toEqual([
     "bun add",
-    `error: file://${add_path}@file://${add_path} failed to resolve`,
+    `error: file://${add_path} failed to resolve`,
     "",
   ]);
   expect(stdout).toBeDefined();
@@ -237,6 +237,55 @@ it("should handle @scoped names", async () => {
   } catch (err: any) {
     expect(err.code).toBe("ENOENT");
   }
+});
+
+it("should add dependency with capital letters", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "BaR", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed BaR@0.0.2",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/BaR`, `${root_url}/BaR-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      BaR: "^0.0.2",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
 });
 
 it("should add dependency with specified semver", async () => {
@@ -713,4 +762,100 @@ it("should install version tagged with `latest` by default", async () => {
     },
   });
   await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle Git URL in dependencies (SCP-style)", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  const {
+    stdout: stdout1,
+    stderr: stderr1,
+    exited: exited1,
+  } = spawn({
+    cmd: [bunExe(), "add", "bun@github.com:mishoo/UglifyJS.git", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr1).toBeDefined();
+  const err1 = await new Response(stderr1).text();
+  expect(err1).toContain("Saved lockfile");
+  expect(stdout1).toBeDefined();
+  let out1 = await new Response(stdout1).text();
+  out1 = out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "");
+  out1 = out1.replace(/(\.git)#[a-f0-9]+/, "$1");
+  expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed uglify-js@git+ssh://bun@github.com:mishoo/UglifyJS.git with binaries:",
+    "  - uglifyjs",
+    "",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited1).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      "uglify-js": "bun@github.com:mishoo/UglifyJS.git",
+    },
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "uglify-js"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["uglifyjs"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "uglifyjs"))).toBe(
+    join("..", "uglify-js", "bin", "uglifyjs"),
+  );
+  expect((await readdirSorted(join(package_dir, "node_modules", ".cache")))[0]).toBe("9d05c118f06c3b4c.git");
+  expect(await readdirSorted(join(package_dir, "node_modules", "uglify-js"))).toEqual([
+    ".bun-tag",
+    ".gitattributes",
+    ".github",
+    ".gitignore",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "README.md",
+    "bin",
+    "lib",
+    "package.json",
+    "test",
+    "tools",
+  ]);
+  const package_json = await file(join(package_dir, "node_modules", "uglify-js", "package.json")).json();
+  expect(package_json.name).toBe("uglify-js");
+  await access(join(package_dir, "bun.lockb"));
+  const {
+    stdout: stdout2,
+    stderr: stderr2,
+    exited: exited2,
+  } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr2).toBeDefined();
+  const err2 = await new Response(stderr2).text();
+  expect(err2).not.toContain("Saved lockfile");
+  expect(stdout2).toBeDefined();
+  const out2 = await new Response(stdout2).text();
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "Checked 1 installs across 2 packages (no changes)",
+  ]);
+  expect(await exited2).toBe(0);
+  expect(urls.sort()).toEqual([]);
+  expect(requested).toBe(0);
 });

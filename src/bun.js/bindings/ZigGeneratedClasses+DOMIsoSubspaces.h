@@ -22,5 +22,6 @@ std::unique_ptr<IsoSubspace> m_subspaceForStatsConstructor;std::unique_ptr<IsoSu
 std::unique_ptr<IsoSubspace> m_subspaceForTCPSocket;
 std::unique_ptr<IsoSubspace> m_subspaceForTLSSocket;
 std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
-std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTranspiler;
+std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForTimeout;
+std::unique_ptr<IsoSubspace> m_subspaceForTranspiler;
 std::unique_ptr<IsoSubspace> m_subspaceForTranspilerConstructor;

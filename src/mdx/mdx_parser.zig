@@ -1474,7 +1474,7 @@ pub const MDParser = struct {
         // level of lists.
         this.containers.len = 0;
         var blocks = this.blocks.slice();
-        for (blocks) |*block| {}
+        for (&blocks) |*block| {}
     }
     fn isContainerCompatible(pivot: *const Container, container: *const Container) bool {
         // Block quote has no "items" like lists.

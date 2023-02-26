@@ -1026,15 +1026,17 @@ const Arguments = struct {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists(ctx.ptr(), "flags")) |flags_| {
+                    if (val.getTruthy(ctx.ptr(), "flags")) |flags_| {
                         flags = FileSystemFlags.fromJS(ctx, flags_, exception) orelse flags;
                     }
 
-                    if (val.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (val.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse mode;
                     }
                 } else if (!val.isEmpty()) {
-                    flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
+                    if (!val.isUndefinedOrNull())
+                        // error is handled below
+                        flags = FileSystemFlags.fromJS(ctx, val, exception) orelse flags;
 
                     if (arguments.nextEat()) |next| {
                         mode = JSC.Node.modeFromJS(ctx, next, exception) orelse mode;
@@ -1507,7 +1509,7 @@ const Arguments = struct {
                         }
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
+                    if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1598,23 +1600,21 @@ const Arguments = struct {
                         return null;
                     };
                 } else if (arg.isObject()) {
-                    if (arg.getIfPropertyExists(ctx.ptr(), "encoding")) |encoding_| {
-                        if (!encoding_.isUndefinedOrNull()) {
-                            encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
-                                if (exception.* == null) {
-                                    JSC.throwInvalidArguments(
-                                        "Invalid encoding",
-                                        .{},
-                                        ctx,
-                                        exception,
-                                    );
-                                }
-                                return null;
-                            };
-                        }
+                    if (arg.getTruthy(ctx.ptr(), "encoding")) |encoding_| {
+                        encoding = Encoding.fromStringValue(encoding_, ctx.ptr()) orelse {
+                            if (exception.* == null) {
+                                JSC.throwInvalidArguments(
+                                    "Invalid encoding",
+                                    .{},
+                                    ctx,
+                                    exception,
+                                );
+                            }
+                            return null;
+                        };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flag")) |flag_| {
+                    if (arg.getTruthy(ctx.ptr(), "flag")) |flag_| {
                         flag = FileSystemFlags.fromJS(ctx, flag_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1628,7 +1628,7 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "mode")) |mode_| {
+                    if (arg.getTruthy(ctx.ptr(), "mode")) |mode_| {
                         mode = JSC.Node.modeFromJS(ctx, mode_, exception) orelse {
                             if (exception.* == null) {
                                 JSC.throwInvalidArguments(
@@ -1879,9 +1879,9 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                    if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
+                            if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},
@@ -2013,9 +2013,9 @@ const Arguments = struct {
                         };
                     }
 
-                    if (arg.getIfPropertyExists(ctx.ptr(), "flags")) |flags| {
+                    if (arg.getTruthy(ctx.ptr(), "flags")) |flags| {
                         stream.flags = FileSystemFlags.fromJS(ctx, flags, exception) orelse {
-                            if (exception.* != null) {
+                            if (exception.* == null) {
                                 JSC.throwInvalidArguments(
                                     "Invalid flags",
                                     .{},

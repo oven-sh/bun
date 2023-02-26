@@ -31,7 +31,7 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             }
         }).lenAsc;
         if (KeyType == u8) {
-            for (kvs_list) |kv, i| {
+            for (kvs_list, 0..) |kv, i| {
                 if (V != void) {
                     sorted_kvs[i] = .{ .key = kv.@"0", .value = kv.@"1" };
                 } else {

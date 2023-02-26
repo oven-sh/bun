@@ -228,17 +228,17 @@ pub const RunCommand = struct {
         log("Script: \"{s}\"", .{combined_script});
 
         if (passthrough.len > 0) {
-            var combined_script_len: usize = script.len;
+            var combined_script_len = script.len;
             for (passthrough) |p| {
                 combined_script_len += p.len + 1;
             }
             var combined_script_buf = try allocator.alloc(u8, combined_script_len);
-            std.mem.copy(u8, combined_script_buf, script);
+            bun.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |part| {
                 var p = part;
                 remaining_script_buf[0] = ' ';
-                std.mem.copy(u8, remaining_script_buf[1..], p);
+                bun.copy(u8, remaining_script_buf[1..], p);
                 remaining_script_buf = remaining_script_buf[p.len + 1 ..];
             }
             combined_script = combined_script_buf;
@@ -701,7 +701,7 @@ pub const RunCommand = struct {
                             const value = entry.value_ptr.*;
                             if (value.kind(&this_bundler.fs.fs) == .file) {
                                 if (!has_copied) {
-                                    std.mem.copy(u8, &path_buf, value.dir);
+                                    bun.copy(u8, &path_buf, value.dir);
                                     dir_slice = path_buf[0..value.dir.len];
                                     if (!strings.endsWithChar(value.dir, std.fs.path.sep)) {
                                         dir_slice = path_buf[0 .. value.dir.len + 1];
@@ -710,7 +710,7 @@ pub const RunCommand = struct {
                                 }
 
                                 const base = value.base();
-                                std.mem.copy(u8, path_buf[dir_slice.len..], base);
+                                bun.copy(u8, path_buf[dir_slice.len..], base);
                                 path_buf[dir_slice.len + base.len] = 0;
                                 var slice = path_buf[0 .. dir_slice.len + base.len :0];
                                 std.os.accessZ(slice, std.os.X_OK) catch continue;
@@ -1001,7 +1001,7 @@ pub const RunCommand = struct {
                                 ctx.debug.silent,
                             )) return false;
 
-                            std.mem.copy(u8, temp_script_buffer, "post");
+                            temp_script_buffer[0.."post".len].* = "post".*;
 
                             if (scripts.get(temp_script_buffer)) |postscript| {
                                 if (!try runPackageScript(
@@ -1061,7 +1061,7 @@ pub const RunCommand = struct {
 
                 // // file.close();
 
-                const out = std.mem.span(destination);
+                const out = bun.asByteSlice(destination);
                 return try runBinary(
                     ctx,
                     try this_bundler.fs.dirname_store.append(@TypeOf(out), out),

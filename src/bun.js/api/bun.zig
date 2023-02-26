@@ -243,9 +243,11 @@ pub fn inspect(
         Writer,
         Writer,
         writer,
-        false,
-        false,
-        false,
+        .{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+        },
     );
     buffered_writer.flush() catch {
         return JSC.C.JSValueMakeUndefined(ctx);
@@ -454,7 +456,7 @@ pub fn getArgv(
     var allocator = argv_list.get();
     var argv = allocator.alloc(ZigString, std.os.argv.len) catch unreachable;
     defer if (argv.len > 128) allocator.free(argv);
-    for (std.os.argv) |arg, i| {
+    for (std.os.argv, 0..) |arg, i| {
         argv[i] = ZigString.init(std.mem.span(arg));
     }
 
@@ -502,7 +504,7 @@ pub fn getFilePath(ctx: js.JSContextRef, arguments: []const js.JSValueRef, buf: 
         var temp_strings_list: [32]string = undefined;
         var temp_strings_list_len: u8 = 0;
         defer {
-            for (temp_strings_list[0..temp_strings_list_len]) |_, i| {
+            for (temp_strings_list[0..temp_strings_list_len], 0..) |_, i| {
                 temp_strings_list[i] = "";
             }
         }
@@ -678,7 +680,7 @@ pub fn getRouteFiles(
     const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getPublicPaths() catch unreachable;
 
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -699,7 +701,7 @@ pub fn getRouteNames(
     const router = &VirtualMachine.get().bundler.router.?;
     const list = router.getNames() catch unreachable;
 
-    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)]) |_, i| {
+    for (routes_list_strings[0..@min(list.len, routes_list_strings.len)], 0..) |_, i| {
         routes_list_strings[i] = ZigString.init(list[i]);
     }
 
@@ -1450,7 +1452,7 @@ pub const Crypto = struct {
                 var all = std.EnumArray(Algorithm, ZigString).initUndefined();
                 var iter = all.iterator();
                 while (iter.next()) |entry| {
-                    entry.value.* = ZigString.init(std.mem.span(@tagName(entry.key)));
+                    entry.value.* = ZigString.init(@tagName(entry.key));
                 }
                 break :brk all;
             };
@@ -1495,6 +1497,8 @@ pub const Crypto = struct {
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
+            BoringSSL.load();
+
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
             _ = BoringSSL.EVP_DigestInit_ex(&ctx, md, engine);
@@ -1537,13 +1541,7 @@ pub const Crypto = struct {
         }
 
         pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
-
-            // none of the names are longer than 255
-            var buf: [256]u8 = undefined;
-            const len = @min(name.len, buf.len - 1);
-            _ = strings.copyLowercase(name, &buf);
-
-            if (Algorithm.map.get(buf[0..len])) |algorithm| {
+            if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCIIIgnoreLength)) |algorithm| {
                 if (algorithm == .blake2b256) {
                     return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine);
                 }
@@ -1610,7 +1608,7 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
-            return ZigString.fromUTF8(std.mem.span(@tagName(this.evp.algorithm))).toValueGC(globalObject);
+            return ZigString.fromUTF8(bun.asByteSlice(@tagName(this.evp.algorithm))).toValueGC(globalObject);
         }
 
         pub fn getAlgorithms(
@@ -2775,12 +2773,19 @@ pub const Timer = struct {
     warned: bool = false,
 
     // We split up the map here to avoid storing an extra "repeat" boolean
+    maps: struct {
+        setTimeout: TimeoutMap = .{},
+        setInterval: TimeoutMap = .{},
+        setImmediate: TimeoutMap = .{},
 
-    /// Used by setTimeout()
-    timeout_map: TimeoutMap = TimeoutMap{},
-
-    /// Used by setInterval()
-    interval_map: TimeoutMap = TimeoutMap{},
+        pub inline fn get(this: *@This(), kind: Timeout.Kind) *TimeoutMap {
+            return switch (kind) {
+                .setTimeout => &this.setTimeout,
+                .setInterval => &this.setInterval,
+                .setImmediate => &this.setImmediate,
+            };
+        }
+    } = .{},
 
     /// TimeoutMap is map of i32 to nullable Timeout structs
     /// i32 is exposed to JavaScript and can be used with clearTimeout, clearInterval, etc.
@@ -2810,7 +2815,7 @@ pub const Timer = struct {
         globalThis: *JSC.JSGlobalObject,
         callback: JSC.Strong = .{},
         arguments: JSC.Strong = .{},
-        repeat: bool = false,
+        kind: Timeout.Kind = .setTimeout,
 
         pub const Task = JSC.AnyTask.New(CallbackJob, perform);
 
@@ -2847,12 +2852,13 @@ pub const Timer = struct {
         pub fn perform(this: *CallbackJob) void {
             var globalThis = this.globalThis;
             var vm = globalThis.bunVM();
-            var map: *TimeoutMap = if (this.repeat) &vm.timer.interval_map else &vm.timer.timeout_map;
+            const kind = this.kind;
+            var map: *TimeoutMap = vm.timer.maps.get(kind);
 
             // This doesn't deinit the timer
             // Timers are deinit'd separately
             // We do need to handle when the timer is cancelled after the job has been enqueued
-            if (!this.repeat) {
+            if (kind != .setInterval) {
                 if (map.fetchSwapRemove(this.id) == null) {
                     // if the timeout was cancelled, don't run the callback
                     this.deinit();
@@ -2932,6 +2938,47 @@ pub const Timer = struct {
         }
     };
 
+    pub const TimerObject = struct {
+        id: i32 = -1,
+        kind: Timeout.Kind = .setTimeout,
+        ref_count: u16 = 1,
+
+        pub usingnamespace JSC.Codegen.JSTimeout;
+
+        pub fn doRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            if (this.ref_count > 0)
+                this.ref_count +|= 1;
+
+            return JSValue.jsUndefined();
+        }
+
+        pub fn doUnref(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            this.ref_count -|= 1;
+            if (this.ref_count == 0) {
+                switch (this.kind) {
+                    .setTimeout, .setImmediate => {
+                        _ = clearTimeout(globalObject, JSValue.jsNumber(this.id));
+                    },
+                    .setInterval => {
+                        _ = clearInterval(globalObject, JSValue.jsNumber(this.id));
+                    },
+                }
+            }
+
+            return JSValue.jsUndefined();
+        }
+        pub fn hasRef(this: *TimerObject, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            return JSValue.jsBoolean(this.ref_count > 0 and globalObject.bunVM().timer.maps.get(this.kind).contains(this.id));
+        }
+        pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            return JSValue.jsNumber(this.id);
+        }
+
+        pub fn finalize(this: *TimerObject) callconv(.C) void {
+            bun.default_allocator.destroy(this);
+        }
+    };
+
     pub const Timeout = struct {
         callback: JSC.Strong = .{},
         globalThis: *JSC.JSGlobalObject,
@@ -2939,11 +2986,21 @@ pub const Timer = struct {
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
         arguments: JSC.Strong = .{},
 
+        pub const Kind = enum(u32) {
+            setTimeout,
+            setInterval,
+            setImmediate,
+        };
+
         // this is sized to be the same as one pointer
         pub const ID = extern struct {
             id: i32,
 
-            repeat: u32 = 0,
+            kind: Kind = Kind.setTimeout,
+
+            pub fn repeats(this: ID) bool {
+                return this.kind == .setInterval;
+            }
         };
 
         pub fn run(timer: *uws.Timer) callconv(.C) void {
@@ -2953,9 +3010,9 @@ pub const Timer = struct {
             // to handle the timeout being cancelled after already enqueued
             var vm = JSC.VirtualMachine.get();
 
-            const repeats = timer_id.repeat > 0;
+            const repeats = timer_id.repeats();
 
-            var map = if (repeats) &vm.timer.interval_map else &vm.timer.timeout_map;
+            var map = vm.timer.maps.get(timer_id.kind);
 
             var this_: ?Timeout = map.get(
                 timer_id.id,
@@ -2998,7 +3055,7 @@ pub const Timer = struct {
                     this.arguments,
                 .globalThis = globalThis,
                 .id = timer_id.id,
-                .repeat = timer_id.repeat > 0,
+                .kind = timer_id.kind,
             };
 
             // This allows us to:
@@ -3052,19 +3109,18 @@ pub const Timer = struct {
             if (repeat) @as(i32, 1) else 0,
         );
 
-        var map = if (repeat)
-            &vm.timer.interval_map
-        else
-            &vm.timer.timeout_map;
+        const kind: Timeout.Kind = if (repeat) .setInterval else .setTimeout;
+
+        var map = vm.timer.maps.get(kind);
 
         // setImmediate(foo)
         // setTimeout(foo, 0)
-        if (interval == 0) {
+        if (kind == .setTimeout and interval == 0) {
             var cb: CallbackJob = .{
                 .callback = JSC.Strong.create(callback, globalThis),
                 .globalThis = globalThis,
                 .id = id,
-                .repeat = false,
+                .kind = kind,
             };
 
             if (arguments_array_or_zero != .zero) {
@@ -3091,7 +3147,7 @@ pub const Timer = struct {
                 vm.uws_event_loop.?,
                 Timeout.ID{
                     .id = id,
-                    .repeat = @as(u32, @boolToInt(repeat)),
+                    .kind = kind,
                 },
             ),
         };
@@ -3106,11 +3162,11 @@ pub const Timer = struct {
         timeout.timer.set(
             Timeout.ID{
                 .id = id,
-                .repeat = if (repeat) 1 else 0,
+                .kind = kind,
             },
             Timeout.run,
             interval,
-            @as(i32, @boolToInt(repeat)) * interval,
+            @as(i32, @boolToInt(kind == .setInterval)) * interval,
         );
     }
 
@@ -3127,7 +3183,13 @@ pub const Timer = struct {
         Timer.set(id, globalThis, callback, countdown, arguments, false) catch
             return JSValue.jsUndefined();
 
-        return JSValue.jsNumberWithType(i32, id);
+        var timer = globalThis.allocator().create(TimerObject) catch unreachable;
+        timer.* = .{
+            .id = id,
+            .kind = .setTimeout,
+        };
+
+        return timer.toJS(globalThis);
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -3142,21 +3204,37 @@ pub const Timer = struct {
         Timer.set(id, globalThis, callback, countdown, arguments, true) catch
             return JSValue.jsUndefined();
 
-        return JSValue.jsNumberWithType(i32, id);
+        var timer = globalThis.allocator().create(TimerObject) catch unreachable;
+        timer.* = .{
+            .id = id,
+            .kind = .setInterval,
+        };
+
+        return timer.toJS(globalThis);
     }
 
-    pub fn clearTimer(timer_id: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
+    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, repeats: bool) void {
         JSC.markBinding(@src());
 
-        var map = if (repeats) &VirtualMachine.get().timer.interval_map else &VirtualMachine.get().timer.timeout_map;
-        if (!timer_id.isAnyInt()) {
-            return;
-        }
+        const kind: Timeout.Kind = if (repeats) .setInterval else .setTimeout;
+
+        var map = globalThis.bunVM().timer.maps.get(kind);
 
         const id: Timeout.ID = .{
-            .id = timer_id.coerce(i32, globalThis),
-            .repeat = @as(u32, @boolToInt(repeats)),
+            .id = brk: {
+                if (timer_id_value.isAnyInt()) {
+                    break :brk timer_id_value.coerce(i32, globalThis);
+                }
+
+                if (TimerObject.fromJS(timer_id_value)) |timer_obj| {
+                    break :brk timer_obj.id;
+                }
+
+                return;
+            },
+            .kind = kind,
         };
+
         var timer = map.fetchSwapRemove(id.id) orelse return;
         if (timer.value == null) {
             // this timer was scheduled to run but was cancelled before it was run
@@ -3894,7 +3972,7 @@ pub const EnvironmentVariables = struct {
         var vm = globalObject.bunVM();
         const keys = vm.bundler.env.map.map.keys();
         const max = @min(names.len, keys.len);
-        for (keys[0..max]) |key, i| {
+        for (keys[0..max], 0..) |key, i| {
             names[i] = ZigString.initUTF8(key);
         }
         return keys.len;

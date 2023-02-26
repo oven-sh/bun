@@ -37,7 +37,7 @@ const Router = @import("./router.zig");
 const NodeModuleBundle = @import("./node_module_bundle.zig").NodeModuleBundle;
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
-
+const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
@@ -208,7 +208,7 @@ pub const Arguments = struct {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
                 @errorName(err),
-                std.mem.span(config_path),
+                config_path,
             });
             Global.exit(1);
         };
@@ -217,7 +217,7 @@ pub const Arguments = struct {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                 @errorName(err),
-                std.mem.span(config_path),
+                config_path,
             });
             Global.exit(1);
         };
@@ -233,7 +233,7 @@ pub const Arguments = struct {
             ctx.log.level = original_level;
         }
         ctx.log.level = logger.Log.Level.warn;
-        try Bunfig.parse(allocator, logger.Source.initPathString(std.mem.span(config_path), contents), ctx, cmd);
+        try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
     fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
@@ -372,7 +372,7 @@ pub const Arguments = struct {
 
         if (args.options("--external").len > 0) {
             var externals = try allocator.alloc([]u8, args.options("--external").len);
-            for (args.options("--external")) |external, i| {
+            for (args.options("--external"), 0..) |external, i| {
                 externals[i] = constStrToU8(external);
             }
             opts.external = externals;
@@ -410,7 +410,7 @@ pub const Arguments = struct {
         const print_help = args.flag("--help");
         if (print_help) {
             const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
-            clap.help(Output.writer(), std.mem.span(params_to_use[0..params_len])) catch {};
+            clap.help(Output.writer(), params_to_use[0..params_len]) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
@@ -893,7 +893,7 @@ pub const Command = struct {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
-        const first_arg_name = std.mem.span(next_arg);
+        const first_arg_name = next_arg;
         const RootCommandMatcher = strings.ExactSizeMatcher(16);
 
         return switch (RootCommandMatcher.match(first_arg_name)) {
@@ -919,12 +919,12 @@ pub const Command = struct {
             },
             RootCommandMatcher.case("c"), RootCommandMatcher.case("create") => .CreateCommand,
 
-            RootCommandMatcher.case("wiptest") => .TestCommand,
+            RootCommandMatcher.case(TestCommand.name), RootCommandMatcher.case(TestCommand.old_name) => .TestCommand,
 
             RootCommandMatcher.case("pm") => .PackageManagerCommand,
 
             RootCommandMatcher.case("add"), RootCommandMatcher.case("update"), RootCommandMatcher.case("a") => .AddCommand,
-            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm") => .RemoveCommand,
+            RootCommandMatcher.case("r"), RootCommandMatcher.case("remove"), RootCommandMatcher.case("rm"), RootCommandMatcher.case("uninstall") => .RemoveCommand,
 
             RootCommandMatcher.case("b"), RootCommandMatcher.case("build") => .BuildCommand,
             RootCommandMatcher.case("run") => .RunCommand,
@@ -975,7 +975,7 @@ pub const Command = struct {
         const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
         const RunCommand = @import("./cli/run_command.zig").RunCommand;
         const ShellCompletions = @import("./cli/shell_completions.zig");
-        const TestCommand = @import("./cli/test_command.zig").TestCommand;
+
         const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
         const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 
@@ -1092,7 +1092,7 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
-                for (filter) |item, i| {
+                for (filter, 0..) |item, i| {
                     if (strings.eqlComptime(item, "getcompletes")) {
                         if (i + 1 < filter.len) {
                             filter = filter[i + 1 ..];
@@ -1186,7 +1186,7 @@ pub const Command = struct {
                     var remainder = args[2..];
                     var remainder_i: usize = 0;
                     while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        var slice = std.mem.trim(u8, std.mem.span(remainder[remainder_i]), " \t\n;");
+                        var slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
                         if (slice.len > 0) {
                             positionals[positional_i] = slice;
                             positional_i += 1;

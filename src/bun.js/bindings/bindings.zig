@@ -211,12 +211,12 @@ pub const ZigString = extern struct {
 
     pub fn substring(this: ZigString, offset: usize, maxlen: usize) ZigString {
         var len: usize = undefined;
-        if(maxlen == 0){
+        if (maxlen == 0) {
             len = this.len;
-        }else {
+        } else {
             len = @max(this.len, maxlen);
         }
-        
+
         if (this.is16Bit()) {
             return ZigString.from16Slice(this.utf16SliceAligned()[@min(this.len, offset)..len]);
         }
@@ -295,14 +295,14 @@ pub const ZigString = extern struct {
     }
 
     pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
-        if (this.len != other.len)
-            return false;
-
         if (this.is16Bit()) {
             return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
         }
 
         if (comptime strings.isAllASCIISimple(other)) {
+            if (this.len != other.len)
+                return false;
+
             return strings.eqlComptimeIgnoreLen(this.slice(), other);
         }
 
@@ -391,7 +391,7 @@ pub const ZigString = extern struct {
                 return "";
             }
 
-            std.mem.copy(u8, buf[0..this.len], this.slice());
+            bun.copy(u8, buf, this.slice());
             buf[this.len] = 0;
             return bun.cstring(buf[0..this.len]);
         }
@@ -987,12 +987,12 @@ pub const FetchHeaders = opaque {
         });
     }
 
-    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8) void {
-        if (this.has(&ZigString.init(name_))) {
+    pub fn putDefault(this: *FetchHeaders, name_: []const u8, value: []const u8, global: *JSGlobalObject) void {
+        if (this.has(&ZigString.init(name_), global)) {
             return;
         }
 
-        this.put_(&ZigString.init(name_), &ZigString.init(value));
+        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
     }
 
     pub fn from(
@@ -1064,11 +1064,13 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: *const ZigString,
         value: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("append", .{
             this,
             name_,
             value,
+            global,
         });
     }
 
@@ -1076,11 +1078,13 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: *const ZigString,
         value: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("put_", .{
             this,
             name_,
             value,
+            global,
         });
     }
 
@@ -1088,28 +1092,32 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: []const u8,
         value: []const u8,
+        global: *JSGlobalObject,
     ) void {
-        this.put_(&ZigString.init(name_), &ZigString.init(value));
+        this.put_(&ZigString.init(name_), &ZigString.init(value), global);
     }
 
     pub fn get_(
         this: *FetchHeaders,
         name_: *const ZigString,
         out: *ZigString,
+        global: *JSGlobalObject,
     ) void {
         shim.cppFn("get_", .{
             this,
             name_,
             out,
+            global,
         });
     }
 
     pub fn get(
         this: *FetchHeaders,
         name_: []const u8,
+        global: *JSGlobalObject,
     ) ?[]const u8 {
         var out = ZigString.Empty;
-        get_(this, &ZigString.init(name_), &out);
+        get_(this, &ZigString.init(name_), &out, global);
         if (out.len > 0) {
             return out.slice();
         }
@@ -1120,10 +1128,12 @@ pub const FetchHeaders = opaque {
     pub fn has(
         this: *FetchHeaders,
         name_: *const ZigString,
+        global: *JSGlobalObject,
     ) bool {
         return shim.cppFn("has", .{
             this,
             name_,
+            global,
         });
     }
 
@@ -1285,10 +1295,12 @@ pub const FetchHeaders = opaque {
     pub fn remove(
         this: *FetchHeaders,
         name_: *const ZigString,
+        global: *JSGlobalObject,
     ) void {
         return shim.cppFn("remove", .{
             this,
             name_,
+            global,
         });
     }
 
@@ -1328,9 +1340,11 @@ pub const FetchHeaders = opaque {
 
     pub fn cloneThis(
         this: *FetchHeaders,
+        global: *JSGlobalObject,
     ) ?*FetchHeaders {
         return shim.cppFn("cloneThis", .{
             this,
+            global,
         });
     }
 
@@ -1663,7 +1677,7 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
             arguments_len: usize,
         ) callconv(.C) JSValue {
             return CallbackFunction(@ptrCast(*Type, @alignCast(@alignOf(*Type), ctx.?)), globalThis, arguments[0..arguments_len]) catch |err| brk: {
-                break :brk ZigString.init(std.mem.span(@errorName(err))).toErrorInstance(globalThis);
+                break :brk ZigString.init(bun.asByteSlice(@errorName(err))).toErrorInstance(globalThis);
             };
         }
     }.callback;
@@ -1676,6 +1690,26 @@ pub const AbortSignal = extern opaque {
     pub const name = "JSC::AbortSignal";
     pub const namespace = "JSC";
 
+    pub fn listen(
+        this: *AbortSignal,
+        comptime Context: type,
+        ctx: *Context,
+        comptime cb: *const fn (*Context, JSValue) void,
+    ) *AbortSignal {
+        const Wrapper = struct {
+            const call = cb;
+            pub fn callback(
+                ptr: ?*anyopaque,
+                reason: JSValue,
+            ) callconv(.C) void {
+                var val = bun.cast(*Context, ptr.?);
+                call(val, reason);
+            }
+        };
+
+        return this.addListener(@ptrCast(?*anyopaque, ctx), Wrapper.callback);
+    }
+
     pub fn addListener(
         this: *AbortSignal,
         ctx: ?*anyopaque,
@@ -1683,6 +1717,11 @@ pub const AbortSignal = extern opaque {
     ) *AbortSignal {
         return cppFn("addListener", .{ this, ctx, callback });
     }
+
+    pub fn cleanNativeBindings(this: *AbortSignal, ctx: ?*anyopaque) void {
+        return cppFn("cleanNativeBindings", .{ this, ctx });
+    }
+
     pub fn signal(
         this: *AbortSignal,
         reason: JSValue,
@@ -1690,10 +1729,12 @@ pub const AbortSignal = extern opaque {
         return cppFn("signal", .{ this, reason });
     }
 
+    /// This function is not threadsafe. aborted is a boolean, not an atomic!
     pub fn aborted(this: *AbortSignal) bool {
         return cppFn("aborted", .{this});
     }
 
+    /// This function is not threadsafe. JSValue cannot safely be passed between threads.
     pub fn abortReason(this: *AbortSignal) JSValue {
         return cppFn("abortReason", .{this});
     }
@@ -1714,6 +1755,14 @@ pub const AbortSignal = extern opaque {
         return cppFn("fromJS", .{value});
     }
 
+    pub fn toJS(this: *AbortSignal, global: *JSGlobalObject) JSValue {
+        return cppFn("toJS", .{ this, global });
+    }
+
+    pub fn create(global: *JSGlobalObject) JSValue {
+        return cppFn("create", .{global});
+    }
+
     pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
         return cppFn("createAbortError", .{ message, code, global });
     }
@@ -1722,17 +1771,7 @@ pub const AbortSignal = extern opaque {
         return cppFn("createTimeoutError", .{ message, code, global });
     }
 
-    pub const Extern = [_][]const u8{
-        "createAbortError",
-        "createTimeoutError",
-        "ref",
-        "unref",
-        "signal",
-        "abortReason",
-        "aborted",
-        "addListener",
-        "fromJS",
-    };
+    pub const Extern = [_][]const u8{ "createAbortError", "createTimeoutError", "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
 };
 
 pub const JSPromise = extern struct {
@@ -2337,7 +2376,7 @@ pub const JSGlobalObject = extern struct {
         const names = comptime std.meta.fieldNames(@TypeOf(module));
         var export_names: [names.len]ZigString = undefined;
         var export_values: [names.len]JSValue = undefined;
-        inline for (comptime names) |export_name, i| {
+        inline for (comptime names, 0..) |export_name, i| {
             export_names[i] = ZigString.init(export_name);
             const function = @field(module, export_name).@"0";
             const len = @field(module, export_name).@"1";
@@ -2876,22 +2915,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(ptr)));
     }
 
-    pub const Formatter = struct {
-        value: JSValue,
-        global: *JSGlobalObject,
-
-        pub fn format(formatter: Formatter, comptime fmt: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
-            const self = formatter.value;
-            const kind: JSType = jsType(self);
-            if (kind.isStringLike()) {
-                var zig_str = self.getZigString();
-                return try zig_str.format(fmt, opts, writer);
-            }
-
-            if (kind) {}
-        }
-    };
-
     pub fn coerceToInt32(this: JSValue, globalThis: *JSC.JSGlobalObject) i32 {
         return cppFn("coerceToInt32", .{ this, globalThis });
     }
@@ -2911,6 +2934,15 @@ pub const JSValue = enum(JSValueReprInt) {
         callback: PropertyIteratorFn,
     ) void {
         cppFn("forEachProperty", .{ this, globalThis, ctx, callback });
+    }
+
+    pub fn forEachPropertyOrdered(
+        this: JSValue,
+        globalObject: *JSC.JSGlobalObject,
+        ctx: ?*anyopaque,
+        callback: PropertyIteratorFn,
+    ) void {
+        cppFn("forEachPropertyOrdered", .{ this, globalObject, ctx, callback });
     }
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
@@ -3046,6 +3078,10 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
         JSC.markBinding(@src());
         return JSBuffer__isBuffer(global, value);
+    }
+
+    pub fn isRegExp(this: JSValue) bool {
+        return this.jsType() == .RegExpObject;
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
@@ -3540,14 +3576,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("eqlCell", .{ this, other });
     }
 
-    pub const BuiltinName = enum(u8) {
-        method,
-        headers,
-        status,
-        url,
-        body,
-        data,
-    };
+    pub const BuiltinName = enum(u8) { method, headers, status, url, body, data };
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
@@ -3638,6 +3667,21 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn strictDeepEquals(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
         return cppFn("strictDeepEquals", .{ this, other, global });
+    }
+
+    pub const DiffMethod = enum(u8) {
+        none,
+        character,
+        word,
+        line,
+    };
+
+    pub fn determineDiffMethod(this: JSValue, other: JSValue, global: *JSGlobalObject) DiffMethod {
+        if ((this.isString() and other.isString()) or (this.isBuffer(global) and other.isBuffer(global))) return .character;
+        if ((this.isRegExp() and other.isObject()) or (this.isObject() and other.isRegExp())) return .character;
+        if (this.isObject() and other.isObject()) return .line;
+
+        return .none;
     }
 
     pub fn asString(this: JSValue) *JSString {
@@ -3854,6 +3898,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "fastGet_",
         "forEach",
         "forEachProperty",
+        "forEachPropertyOrdered",
         "fromEntries",
         "fromInt64NoTruncate",
         "fromUInt64NoTruncate",

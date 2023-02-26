@@ -55,7 +55,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             var enumFields: [Types.len]std.builtin.Type.EnumField = undefined;
             var decls = [_]std.builtin.Type.Declaration{};
 
-            inline for (Types) |field, i| {
+            inline for (Types, 0..) |field, i| {
                 enumFields[i] = .{
                     .name = comptime typeBaseName(@typeName(field)),
                     .value = 1024 - i,
@@ -75,7 +75,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             var enumFields: [Fields.len]std.builtin.Type.EnumField = undefined;
             var decls = [_]std.builtin.Type.Declaration{};
 
-            inline for (Fields) |field, i| {
+            inline for (Fields, 0..) |field, i| {
                 enumFields[i] = .{
                     .name = comptime typeBaseName(@typeName(field.default_value.?)),
                     .value = 1024 - i,

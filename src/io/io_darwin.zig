@@ -787,7 +787,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
 }
 
 fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
-    for (events) |*kevent, flushed| {
+    for (events, 0..) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
         const event_info = switch (completion.operation) {

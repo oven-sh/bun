@@ -128,11 +128,11 @@ pub const Body = struct {
         status_code: u16,
         method: Method = Method.GET,
 
-        pub fn clone(this: Init, _: *JSGlobalObject) Init {
+        pub fn clone(this: Init, ctx: *JSGlobalObject) Init {
             var that = this;
             var headers = this.headers;
             if (headers) |head| {
-                that.headers = head.cloneThis();
+                that.headers = head.cloneThis(ctx);
             }
 
             return that;
@@ -149,7 +149,7 @@ pub const Body = struct {
                 // we can skip calling JS getters
                 if (response_init.as(Request)) |req| {
                     if (req.headers) |headers| {
-                        result.headers = headers.cloneThis();
+                        result.headers = headers.cloneThis(ctx);
                     }
 
                     result.method = req.method;
@@ -163,7 +163,7 @@ pub const Body = struct {
 
             if (response_init.fastGet(ctx, .headers)) |headers| {
                 if (headers.as(FetchHeaders)) |orig| {
-                    result.headers = orig.cloneThis();
+                    result.headers = orig.cloneThis(ctx);
                 } else {
                     result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
                 }
@@ -363,7 +363,10 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
-                .Used, .Empty => {
+                .Empty => {
+                    return JSValue.jsNull();
+                },
+                .Used => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
                 .InternalBlob,
@@ -433,10 +436,7 @@ pub const Body = struct {
             }
         }
 
-        pub fn fromJS(
-            globalThis: *JSGlobalObject,
-            value: JSValue,
-        ) ?Value {
+        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
             value.ensureStillAlive();
 
             if (value.isEmptyOrUndefinedOrNull()) {
@@ -950,20 +950,24 @@ pub fn BodyMixin(comptime Type: type) type {
     return struct {
         pub fn getText(
             this: *Type,
-            globalThis: *JSC.JSGlobalObject,
+            globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
-                return handleBodyAlreadyUsed(globalThis);
+                return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalThis, .{ .getText = void{} });
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
+
+                return value.Locked.setPromise(globalObject, .{ .getText = void{} });
             }
 
             var blob = value.useAsAnyBlob();
-            return JSC.JSPromise.wrap(globalThis, blob.toString(globalThis, .transfer));
+            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
         }
 
         pub fn getBody(
@@ -971,6 +975,10 @@ pub fn BodyMixin(comptime Type: type) type {
             globalThis: *JSC.JSGlobalObject,
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
+
+            if (body.* == .Empty) {
+                return JSValue.jsNull();
+            }
 
             if (body.* == .Used) {
                 // TODO: make this closed
@@ -993,11 +1001,15 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
                 return value.Locked.setPromise(globalObject, .{ .getJSON = void{} });
             }
 
@@ -1024,6 +1036,9 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
                 return value.Locked.setPromise(globalObject, .{ .getArrayBuffer = void{} });
             }
 
@@ -1040,6 +1055,12 @@ pub fn BodyMixin(comptime Type: type) type {
 
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
+            }
+
+            if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
             }
 
             var encoder = this.getFormDataEncoding() orelse {
@@ -1089,6 +1110,10 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
+                if (value.Locked.promise != null) {
+                    return handleBodyAlreadyUsed(globalObject);
+                }
+
                 return value.Locked.setPromise(globalObject, .{ .getBlob = void{} });
             }
 

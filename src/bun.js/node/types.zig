@@ -26,7 +26,7 @@ pub fn DeclEnum(comptime T: type) type {
     const fieldInfos = std.meta.declarations(T);
     var enumFields: [fieldInfos.len]std.builtin.Type.EnumField = undefined;
     var decls = [_]std.builtin.Type.Declaration{};
-    inline for (fieldInfos) |field, i| {
+    inline for (fieldInfos, 0..) |field, i| {
         enumFields[i] = .{
             .name = field.name,
             .value = i,
@@ -105,7 +105,7 @@ pub fn Maybe(comptime ResultType: type) type {
                         if (ResultType == []u8) {
                             return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
                         }
-                        return JSC.ZigString.init(std.mem.span(r)).withEncoding().toValueAuto(globalThis);
+                        return JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalThis);
                     }
 
                     if (comptime @typeInfo(ReturnType) == .Bool) {
@@ -178,7 +178,7 @@ pub fn Maybe(comptime ResultType: type) type {
                 .SUCCESS => null,
                 else => |err| @This(){
                     // always truncate
-                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = std.mem.span(path) },
+                    .err = .{ .errno = @truncate(Syscall.Error.Int, @enumToInt(err)), .syscall = syscall, .path = bun.asByteSlice(path) },
                 },
             };
         }
@@ -643,7 +643,7 @@ pub const PathLike = union(Tag) {
                     arguments.protectEat();
 
                     if (zig_str.is16Bit()) {
-                        var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
+                        var printed = bun.asByteSlice(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);
                         return PathLike{ .string = PathString.init(printed.ptr[0 .. printed.len + 1]) };
                     }
 
@@ -964,67 +964,122 @@ pub const FileSystemFlags = enum(Mode) {
     const O_SYNC: Mode = 0;
     const O_TRUNC: Mode = std.os.O.TRUNC;
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
-        if (val.isUndefinedOrNull()) {
-            return @intToEnum(FileSystemFlags, O_RDONLY);
-        }
+    const map = bun.ComptimeStringMap(Mode, .{
+        .{ "r", O_RDONLY },
+        .{ "rs", O_RDONLY | O_SYNC },
+        .{ "sr", O_RDONLY | O_SYNC },
+        .{ "r+", O_RDWR },
+        .{ "rs+", O_RDWR | O_SYNC },
+        .{ "sr+", O_RDWR | O_SYNC },
 
+        .{ "R", O_RDONLY },
+        .{ "RS", O_RDONLY | O_SYNC },
+        .{ "SR", O_RDONLY | O_SYNC },
+        .{ "R+", O_RDWR },
+        .{ "RS+", O_RDWR | O_SYNC },
+        .{ "SR+", O_RDWR | O_SYNC },
+
+        .{ "w", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "wx", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xw", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "W", O_TRUNC | O_CREAT | O_WRONLY },
+        .{ "WX", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XW", O_TRUNC | O_CREAT | O_WRONLY | O_EXCL },
+
+        .{ "w+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "wx+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xw+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "W+", O_TRUNC | O_CREAT | O_RDWR },
+        .{ "WX+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XW+", O_TRUNC | O_CREAT | O_RDWR | O_EXCL },
+
+        .{ "a", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "ax", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "xa", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "as", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "sa", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "A", O_APPEND | O_CREAT | O_WRONLY },
+        .{ "AX", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "XA", O_APPEND | O_CREAT | O_WRONLY | O_EXCL },
+        .{ "AS", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+        .{ "SA", O_APPEND | O_CREAT | O_WRONLY | O_SYNC },
+
+        .{ "a+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "ax+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "xa+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "as+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "sa+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+
+        .{ "A+", O_APPEND | O_CREAT | O_RDWR },
+        .{ "AX+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "XA+", O_APPEND | O_CREAT | O_RDWR | O_EXCL },
+        .{ "AS+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+        .{ "SA+", O_APPEND | O_CREAT | O_RDWR | O_SYNC },
+    });
+
+    pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
-            const number = val.toInt32();
-            return @intToEnum(FileSystemFlags, number);
+            const number = val.coerce(i32, ctx);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, @max(number, 0)));
         }
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            var zig_str = JSC.ZigString.init("");
-            val.toZigString(&zig_str, ctx.ptr());
+            const str = val.getZigString(ctx);
+            if (str.isEmpty()) {
+                JSC.throwInvalidArguments(
+                    "Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
+            // it's definitely wrong when the string is super long
+            else if (str.len > 12) {
+                JSC.throwInvalidArguments(
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
+                    ctx,
+                    exception,
+                );
+                return null;
+            }
 
-            var buf: [4]u8 = .{ 0, 0, 0, 0 };
-            @memcpy(&buf, zig_str.ptr, @min(buf.len, zig_str.len));
-            const Matcher = strings.ExactSizeMatcher(4);
+            const flags = brk: {
+                switch (str.is16Bit()) {
+                    inline else => |is_16bit| {
+                        const chars = if (is_16bit) str.utf16SliceAligned() else str.slice();
 
-            // https://github.com/nodejs/node/blob/8c3637cd35cca352794e2c128f3bc5e6b6c41380/lib/internal/fs/utils.js#L565
-            const flags = switch (Matcher.match(buf[0..4])) {
-                Matcher.case("r") => O_RDONLY,
-                Matcher.case("rs"), Matcher.case("sr") => O_RDONLY | O_SYNC,
-                Matcher.case("r+") => O_RDWR,
-                Matcher.case("rs+"), Matcher.case("sr+") => O_RDWR | O_SYNC,
+                        if (std.ascii.isDigit(@truncate(u8, chars[0]))) {
+                            // node allows "0o644" as a string :(
+                            if (is_16bit) {
+                                const slice = str.toSlice(bun.default_allocator);
+                                defer slice.deinit();
 
-                Matcher.case("w") => O_TRUNC | O_CREAT | O_WRONLY,
-                Matcher.case("wx"), Matcher.case("xw") => O_TRUNC | O_CREAT | O_WRONLY | O_EXCL,
+                                break :brk std.fmt.parseInt(Mode, slice.slice(), 10) catch null;
+                            } else {
+                                break :brk std.fmt.parseInt(Mode, chars, 10) catch null;
+                            }
+                        }
+                    },
+                }
 
-                Matcher.case("w+") => O_TRUNC | O_CREAT | O_RDWR,
-                Matcher.case("wx+"), Matcher.case("xw+") => O_TRUNC | O_CREAT | O_RDWR | O_EXCL,
-
-                Matcher.case("a") => O_APPEND | O_CREAT | O_WRONLY,
-                Matcher.case("ax"), Matcher.case("xa") => O_APPEND | O_CREAT | O_WRONLY | O_EXCL,
-                Matcher.case("as"), Matcher.case("sa") => O_APPEND | O_CREAT | O_WRONLY | O_SYNC,
-
-                Matcher.case("a+") => O_APPEND | O_CREAT | O_RDWR,
-                Matcher.case("ax+"), Matcher.case("xa+") => O_APPEND | O_CREAT | O_RDWR | O_EXCL,
-                Matcher.case("as+"), Matcher.case("sa+") => O_APPEND | O_CREAT | O_RDWR | O_SYNC,
-
-                Matcher.case("") => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag: string can't be empty",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
-                else => {
-                    JSC.throwInvalidArguments(
-                        "Invalid flag. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
-                        .{},
-                        ctx,
-                        exception,
-                    );
-                    return null;
-                },
+                break :brk map.getWithEql(str, JSC.ZigString.eqlComptime);
+            } orelse {
+                JSC.throwInvalidArguments(
+                    "Invalid flag '{any}'. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags",
+                    .{str},
+                    ctx,
+                    exception,
+                );
+                return null;
             };
 
-            return @intToEnum(FileSystemFlags, flags);
+            return @intToEnum(FileSystemFlags, @intCast(Mode, flags));
         }
 
         return null;
@@ -1371,7 +1426,7 @@ pub const Emitter = struct {
             pub fn remove(this: *List, ctx: JSC.C.JSContextRef, callback: JSC.JSValue) bool {
                 const callbacks = this.list.items(.callback);
 
-                for (callbacks) |item, i| {
+                for (callbacks, 0..) |item, i| {
                     if (callback.eqlValue(item)) {
                         JSC.C.JSValueUnprotect(ctx, callback.asObjectRef());
                         this.once_count -|= @as(u32, @boolToInt(this.list.items(.once)[i]));
@@ -1665,7 +1720,7 @@ pub const Path = struct {
         var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var to_join = allocator.alloc(string, args_len) catch unreachable;
         var possibly_utf16 = false;
-        for (args_ptr[0..args_len]) |arg, i| {
+        for (args_ptr[0..args_len], 0..) |arg, i| {
             const zig_str: JSC.ZigString = arg.getZigString(globalThis);
             if (zig_str.is16Bit()) {
                 // TODO: remove this string conversion

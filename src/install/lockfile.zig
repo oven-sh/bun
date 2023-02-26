@@ -1,3 +1,5 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
 const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
@@ -8,10 +10,10 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const std = @import("std");
+const JSAst = bun.JSAst;
 
 const JSLexer = bun.js_lexer;
-const logger = @import("bun").logger;
+const logger = bun.logger;
 
 const js_parser = bun.js_parser;
 const Expr = @import("../js_ast.zig").Expr;
@@ -31,19 +33,17 @@ const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-const HeaderBuilder = @import("bun").HTTP.HeaderBuilder;
+const HeaderBuilder = bun.HTTP.HeaderBuilder;
 const Fs = @import("../fs.zig");
 const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const URL = @import("../url.zig").URL;
-const AsyncHTTP = @import("bun").HTTP.AsyncHTTP;
-const HTTPChannel = @import("bun").HTTP.HTTPChannel;
-const NetworkThread = @import("bun").HTTP.NetworkThread;
+const AsyncHTTP = bun.HTTP.AsyncHTTP;
+const HTTPChannel = bun.HTTP.HTTPChannel;
+const NetworkThread = bun.HTTP.NetworkThread;
 
 const Integrity = @import("./integrity.zig").Integrity;
-const clap = @import("bun").clap;
+const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
@@ -58,33 +58,32 @@ const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
-const StructBuilder = @import("../builder.zig");
 const Bin = @import("./bin.zig").Bin;
 const Dependency = @import("./dependency.zig");
 const Behavior = Dependency.Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
-const PackageManager = @import("./install.zig").PackageManager;
-const ExternalSlice = @import("./install.zig").ExternalSlice;
-const ExternalSliceAligned = @import("./install.zig").ExternalSliceAligned;
-const PackageID = @import("./install.zig").PackageID;
-const DependencyID = @import("./install.zig").DependencyID;
-const Features = @import("./install.zig").Features;
-const PackageInstall = @import("./install.zig").PackageInstall;
-const PackageNameHash = @import("./install.zig").PackageNameHash;
-const Aligner = @import("./install.zig").Aligner;
-const ExternalStringMap = @import("./install.zig").ExternalStringMap;
-const alignment_bytes_to_repeat_buffer = @import("./install.zig").alignment_bytes_to_repeat_buffer;
+const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
+const ExternalSlice = Install.ExternalSlice;
+const ExternalSliceAligned = Install.ExternalSliceAligned;
+const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
+const Features = Install.Features;
+const PackageInstall = Install.PackageInstall;
+const PackageNameHash = Install.PackageNameHash;
+const Aligner = Install.Aligner;
+const ExternalStringMap = Install.ExternalStringMap;
+const alignment_bytes_to_repeat_buffer = Install.alignment_bytes_to_repeat_buffer;
+const initializeStore = Install.initializeStore;
+const invalid_package_id = Install.invalid_package_id;
+const ExternalStringList = Install.ExternalStringList;
 const Resolution = @import("./resolution.zig").Resolution;
-const initializeStore = @import("./install.zig").initializeStore;
-const invalid_package_id = @import("./install.zig").invalid_package_id;
-const JSAst = bun.JSAst;
-const Origin = @import("./install.zig").Origin;
+const Origin = Install.Origin;
 const Crypto = @import("../sha.zig").Hashers;
-pub const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
-const zero_hash = std.mem.zeroes(MetaHash);
-
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 
+const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
+const zero_hash = std.mem.zeroes(MetaHash);
 const NameHashMap = std.ArrayHashMapUnmanaged(u32, String, ArrayIdentityContext, false);
 
 // Serialized data
@@ -93,16 +92,16 @@ format: FormatVersion = .v1,
 
 meta_hash: MetaHash = zero_hash,
 
-packages: Lockfile.Package.List = Lockfile.Package.List{},
-buffers: Buffers = Buffers{},
+packages: Lockfile.Package.List = .{},
+buffers: Buffers = .{},
 
 /// name -> PackageID || [*]PackageID
 /// Not for iterating.
 package_index: PackageIndex.Map,
 unique_packages: Bitset,
 string_pool: StringPool,
-allocator: std.mem.Allocator,
-scratch: Scratch = Scratch{},
+allocator: Allocator,
+scratch: Scratch = .{},
 
 scripts: Scripts = .{},
 workspace_paths: NameHashMap = .{},
@@ -134,7 +133,7 @@ pub const Scripts = struct {
             this.postprepare.items.len) > 0;
     }
 
-    pub fn run(this: *Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+    pub fn run(this: *Scripts, allocator: Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
         for (@field(this, hook).items) |entry| {
             std.debug.assert(Fs.FileSystem.instance_loaded);
             const cwd = Path.joinAbsString(
@@ -148,7 +147,7 @@ pub const Scripts = struct {
         }
     }
 
-    pub fn deinit(this: *Scripts, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Scripts, allocator: Allocator) void {
         this.preinstall.deinit(allocator);
         this.install.deinit(allocator);
         this.postinstall.deinit(allocator);
@@ -179,7 +178,7 @@ pub const LoadFromDiskResult = union(Tag) {
     };
 };
 
-pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
+pub fn loadFromDisk(this: *Lockfile, allocator: Allocator, log: *logger.Log, filename: stringZ) LoadFromDiskResult {
     std.debug.assert(FileSystem.instance_loaded);
     var file = std.io.getStdIn();
 
@@ -199,7 +198,7 @@ pub fn loadFromDisk(this: *Lockfile, allocator: std.mem.Allocator, log: *logger.
     return this.loadFromBytes(buf, allocator, log);
 }
 
-pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, log: *logger.Log) LoadFromDiskResult {
+pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: Allocator, log: *logger.Log) LoadFromDiskResult {
     var stream = Stream{ .buffer = buf, .pos = 0 };
 
     this.format = FormatVersion.current;
@@ -324,7 +323,7 @@ pub const Tree = struct {
 
                         const tree_id = this.depth_stack[depth_buf_len];
                         const name = this.dependencies[this.trees[tree_id].dependency_id].name.slice(string_buf);
-                        std.mem.copy(u8, this.path_buf[path_written..], name);
+                        bun.copy(u8, this.path_buf[path_written..], name);
                         path_written += name.len;
 
                         this.path_buf[path_written..][0.."/node_modules".len].* = (std.fs.path.sep_str ++ "node_modules").*;
@@ -345,7 +344,7 @@ pub const Tree = struct {
     };
 
     const Builder = struct {
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         name_hashes: []const PackageNameHash,
         list: ArrayList = .{},
         resolutions: []const PackageID,
@@ -375,7 +374,7 @@ pub const Tree = struct {
             var dependency_ids = try DependencyIDList.initCapacity(z_allocator, total);
             var next = PackageIDSlice{};
 
-            for (trees) |*tree, id| {
+            for (trees, 0..) |*tree, id| {
                 if (tree.dependencies.len > 0) {
                     var child = dependencies[id];
                     const len = @truncate(PackageID, child.items.len);
@@ -525,7 +524,7 @@ pub fn maybeCloneFilteringRootPackages(
     var any_changes = false;
     const end = @truncate(PackageID, old.packages.len);
 
-    for (root_dependencies) |dependency, i| {
+    for (root_dependencies, 0..) |dependency, i| {
         if (!dependency.behavior.isEnabled(features) and resolutions[i] < end) {
             resolutions[i] = invalid_package_id;
             any_changes = true;
@@ -550,7 +549,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 
             for (updates) |update| {
                 if (update.version.tag == .uninitialized) {
-                    for (root_deps) |dep, i| {
+                    for (root_deps, 0..) |dep, i| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             const old_resolution = old_resolutions[i];
                             if (old_resolution > old.packages.len) continue;
@@ -577,9 +576,9 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
             const old_resolutions: []const PackageID = old_resolutions_list.get(old.buffers.resolutions.items);
             const resolutions_of_yore: []const Resolution = old.packages.items(.resolution);
 
-            for (updates) |update, update_i| {
+            for (updates, 0..) |update, update_i| {
                 if (update.version.tag == .uninitialized) {
-                    for (root_deps) |*dep, i| {
+                    for (root_deps, 0..) |*dep, i| {
                         if (dep.name_hash == String.Builder.stringHash(update.name)) {
                             const old_resolution = old_resolutions[i];
                             if (old_resolution > old.packages.len) continue;
@@ -698,15 +697,15 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         const res_list = slice.items(.resolutions)[0];
         const root_deps: []const Dependency = dep_list.get(new.buffers.dependencies.items);
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
+        const string_buf = new.buffers.string_bytes.items;
 
         for (updates) |*update| {
             if (update.resolution.tag == .uninitialized) {
-                const name_hash = String.Builder.stringHash(update.name);
-                for (root_deps) |dep, i| {
-                    if (dep.name_hash == name_hash) {
+                for (root_deps, 0..) |dep, i| {
+                    if (update.matches(dep, string_buf)) {
                         const package_id = resolved_ids[i];
                         if (package_id > new.packages.len) continue;
-                        update.version_buf = new.buffers.string_bytes.items;
+                        update.version_buf = string_buf;
                         update.version = dep.version;
                         update.resolution = resolutions[package_id];
                         update.resolved_name = names[package_id];
@@ -840,7 +839,7 @@ pub const Printer = struct {
     var lockfile_path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 
     pub fn print(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         lockfile_path_: string,
         format: Format,
@@ -856,7 +855,7 @@ pub const Printer = struct {
             lockfile_path_buf2[lockfile_path__.len] = 0;
             lockfile_path = lockfile_path_buf2[0..lockfile_path__.len :0];
         } else {
-            std.mem.copy(u8, &lockfile_path_buf1, lockfile_path);
+            bun.copy(u8, &lockfile_path_buf1, lockfile_path);
             lockfile_path_buf1[lockfile_path_.len] = 0;
             lockfile_path = lockfile_path_buf1[0..lockfile_path_.len :0];
         }
@@ -893,7 +892,7 @@ pub const Printer = struct {
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
-                    std.mem.span(lockfile_path),
+                    std.mem.sliceAsBytes(lockfile_path),
                 });
                 Global.crash();
             },
@@ -907,7 +906,7 @@ pub const Printer = struct {
     }
 
     pub fn printWithLockfile(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lockfile: *Lockfile,
         format: Format,
         comptime Writer: type,
@@ -988,10 +987,9 @@ pub const Printer = struct {
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        const name_hash = dependency.name_hash;
-                        for (this.updates) |update, update_id| {
+                        for (this.updates, 0..) |update, update_id| {
                             if (update.failed) return;
-                            if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                            if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
                                     id_map[update_id] = @truncate(DependencyID, dep_id);
                                 }
@@ -1020,18 +1018,16 @@ pub const Printer = struct {
                     );
                 }
             } else {
-                outer: for (dependencies_buffer) |dependency, dep_id| {
+                outer: for (dependencies_buffer, 0..) |dependency, dep_id| {
                     if (dependency.behavior.isPeer()) continue;
                     const package_id = resolutions_buffer[dep_id];
                     if (package_id >= end) continue;
                     const package_name = dependency.name.slice(string_buf);
 
                     if (this.updates.len > 0) {
-                        const name_hash = dependency.name_hash;
-                        for (this.updates) |update, update_id| {
+                        for (this.updates, 0..) |update, update_id| {
                             if (update.failed) return;
-
-                            if (update.name.len == package_name.len and name_hash == update.name_hash) {
+                            if (update.matches(dependency, string_buf)) {
                                 if (id_map[update_id] == invalid_package_id) {
                                     id_map[update_id] = @truncate(DependencyID, dep_id);
                                 }
@@ -1346,8 +1342,8 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
     const string_buf = this.buffers.string_bytes.items;
 
     const root_list = resolutions_list[0];
-    for (resolutions_list) |list, parent_id| {
-        for (list.get(resolutions_buffer)) |package_id, j| {
+    for (resolutions_list, 0..) |list, parent_id| {
+        for (list.get(resolutions_buffer), 0..) |package_id, j| {
             if (package_id >= end) {
                 const failed_dep: Dependency = dependency_lists[parent_id].get(dependencies_buffer)[j];
                 if (failed_dep.behavior.isPeer() or !failed_dep.behavior.isEnabled(
@@ -1356,14 +1352,24 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
                     else
                         remote_features,
                 )) continue;
-                if (log_level != .silent)
-                    Output.prettyErrorln(
-                        "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
-                        .{
-                            failed_dep.name.slice(string_buf),
-                            failed_dep.version.literal.fmt(string_buf),
-                        },
-                    );
+                if (log_level != .silent) {
+                    if (failed_dep.name.isEmpty()) {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{}<r><d> failed to resolve<r>\n",
+                            .{
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    } else {
+                        Output.prettyErrorln(
+                            "<r><red>error<r><d>:<r> <b>{s}<r><d>@<b>{}<r><d> failed to resolve<r>\n",
+                            .{
+                                failed_dep.name.slice(string_buf),
+                                failed_dep.version.literal.fmt(string_buf),
+                            },
+                        );
+                    }
+                }
                 // track this so we can log each failure instead of just the first
                 any_failed = true;
             }
@@ -1444,11 +1450,11 @@ inline fn strWithType(this: *Lockfile, comptime Type: type, slicable: Type) stri
     return slicable.slice(this.buffers.string_bytes.items);
 }
 
-pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
-    this.* = Lockfile{
+pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
+    this.* = .{
         .format = Lockfile.FormatVersion.current,
-        .packages = Lockfile.Package.List{},
-        .buffers = Buffers{},
+        .packages = .{},
+        .buffers = .{},
         .package_index = PackageIndex.Map.initContext(allocator, .{}),
         .unique_packages = try Bitset.initFull(allocator, 0),
         .string_pool = StringPool.init(allocator),
@@ -1567,7 +1573,7 @@ pub const Scratch = struct {
     duplicate_checker_map: DuplicateCheckerMap = undefined,
     dependency_list_queue: DependencyQueue = undefined,
 
-    pub fn init(allocator: std.mem.Allocator) Scratch {
+    pub fn init(allocator: Allocator) Scratch {
         return Scratch{
             .dependency_list_queue = DependencyQueue.init(allocator),
             .duplicate_checker_map = DuplicateCheckerMap.init(allocator),
@@ -1576,35 +1582,34 @@ pub const Scratch = struct {
 };
 
 pub const StringBuilder = struct {
-    const Allocator = @import("std").mem.Allocator;
-    const assert = @import("std").debug.assert;
-    const copy = @import("std").mem.copy;
-
     len: usize = 0,
     cap: usize = 0,
     off: usize = 0,
     ptr: ?[*]u8 = null,
-    lockfile: *Lockfile = undefined,
+    lockfile: *Lockfile,
 
     pub inline fn count(this: *StringBuilder, slice: string) void {
         if (String.canInline(slice)) return;
-        return countWithHash(this, slice, String.Builder.stringHash(slice));
+        this._countWithHash(slice, String.Builder.stringHash(slice));
     }
 
     pub inline fn countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
         if (String.canInline(slice)) return;
+        this._countWithHash(slice, hash);
+    }
+
+    inline fn _countWithHash(this: *StringBuilder, slice: string, hash: u64) void {
         if (!this.lockfile.string_pool.contains(hash)) {
             this.cap += slice.len;
         }
     }
 
     pub fn allocatedSlice(this: *StringBuilder) []const u8 {
-        if (this.ptr == null) return "";
-        return this.ptr.?[0..this.cap];
+        return if (this.ptr) |ptr| ptr[0..this.cap] else "";
     }
 
     pub fn clamp(this: *StringBuilder) void {
-        std.debug.assert(this.cap >= this.len);
+        if (comptime Environment.allow_assert) std.debug.assert(this.cap >= this.len);
 
         const excess = this.cap - this.len;
 
@@ -1629,75 +1634,63 @@ pub const StringBuilder = struct {
     // SlicedString is not supported due to inline strings.
     pub fn appendWithoutPool(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
         if (String.canInline(slice)) {
-            switch (Type) {
-                String => {
-                    return String.init(this.lockfile.buffers.string_bytes.items, slice);
-                },
-                ExternalString => {
-                    return ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash);
-                },
+            return switch (Type) {
+                String => String.init(this.lockfile.buffers.string_bytes.items, slice),
+                ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash),
                 else => @compileError("Invalid type passed to StringBuilder"),
-            }
+            };
         }
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.len <= this.cap); // didn't count everything
+            std.debug.assert(this.ptr != null); // must call allocate first
+        }
 
-        copy(u8, this.ptr.?[this.len..this.cap], slice);
+        bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
         const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
         this.len += slice.len;
 
-        assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
-        switch (Type) {
-            String => {
-                return String.init(this.lockfile.buffers.string_bytes.items, final_slice);
-            },
-            ExternalString => {
-                return ExternalString.init(this.lockfile.buffers.string_bytes.items, final_slice, hash);
-            },
+        return switch (Type) {
+            String => String.init(this.lockfile.buffers.string_bytes.items, final_slice),
+            ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, final_slice, hash),
             else => @compileError("Invalid type passed to StringBuilder"),
-        }
+        };
     }
 
     pub fn appendWithHash(this: *StringBuilder, comptime Type: type, slice: string, hash: u64) Type {
         if (String.canInline(slice)) {
-            switch (Type) {
-                String => {
-                    return String.init(this.lockfile.buffers.string_bytes.items, slice);
-                },
-                ExternalString => {
-                    return ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash);
-                },
+            return switch (Type) {
+                String => String.init(this.lockfile.buffers.string_bytes.items, slice),
+                ExternalString => ExternalString.init(this.lockfile.buffers.string_bytes.items, slice, hash),
                 else => @compileError("Invalid type passed to StringBuilder"),
-            }
+            };
         }
 
-        assert(this.len <= this.cap); // didn't count everything
-        assert(this.ptr != null); // must call allocate first
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(this.len <= this.cap); // didn't count everything
+            std.debug.assert(this.ptr != null); // must call allocate first
+        }
 
         var string_entry = this.lockfile.string_pool.getOrPut(hash) catch unreachable;
         if (!string_entry.found_existing) {
-            copy(u8, this.ptr.?[this.len..this.cap], slice);
+            bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice.len];
             this.len += slice.len;
 
             string_entry.value_ptr.* = String.init(this.lockfile.buffers.string_bytes.items, final_slice);
         }
 
-        assert(this.len <= this.cap);
+        if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
 
-        switch (Type) {
-            String => {
-                return string_entry.value_ptr.*;
-            },
-            ExternalString => {
-                return ExternalString{
-                    .value = string_entry.value_ptr.*,
-                    .hash = hash,
-                };
+        return switch (Type) {
+            String => string_entry.value_ptr.*,
+            ExternalString => .{
+                .value = string_entry.value_ptr.*,
+                .hash = hash,
             },
             else => @compileError("Invalid type passed to StringBuilder"),
-        }
+        };
     }
 };
 
@@ -1871,7 +1864,7 @@ pub const Package = extern struct {
 
         package_id_mapping[this.meta.id] = new_package.meta.id;
 
-        for (old_dependencies) |dependency, i| {
+        for (old_dependencies, 0..) |dependency, i| {
             dependencies[i] = try dependency.clone(
                 old_string_buf,
                 *Lockfile.StringBuilder,
@@ -1883,7 +1876,7 @@ pub const Package = extern struct {
 
         cloner.trees_count += @as(u32, @boolToInt(old_resolutions.len > 0));
 
-        for (old_resolutions) |old_resolution, i| {
+        for (old_resolutions, 0..) |old_resolution, i| {
             if (old_resolution >= max_package_id) continue;
 
             const mapped = package_id_mapping[old_resolution];
@@ -1996,7 +1989,7 @@ pub const Package = extern struct {
     }
 
     pub fn fromNPM(
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         lockfile: *Lockfile,
         log: *logger.Log,
         manifest: *const Npm.PackageManifest,
@@ -2058,7 +2051,7 @@ pub const Package = extern struct {
 
                 if (comptime Environment.isDebug) std.debug.assert(keys.len == version_strings.len);
 
-                for (keys) |key, i| {
+                for (keys, 0..) |key, i| {
                     string_builder.count(key.slice(string_buf));
                     string_builder.count(version_strings[i].slice(string_buf));
                 }
@@ -2153,7 +2146,7 @@ pub const Package = extern struct {
 
                     // If a dependency appears in both "dependencies" and "optionalDependencies", it is considered optional!
                     if (comptime group.behavior.isOptional()) {
-                        for (start_dependencies[0 .. total_dependencies_count - dependencies.len]) |dep, j| {
+                        for (start_dependencies[0 .. total_dependencies_count - dependencies.len], 0..) |dep, j| {
                             if (dep.name_hash == key.hash) {
                                 // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#optionaldependencies
                                 // > Entries in optionalDependencies will override entries of the same name in dependencies, so it's usually best to only put in one place.
@@ -2218,7 +2211,7 @@ pub const Package = extern struct {
         };
 
         pub fn generate(
-            _: std.mem.Allocator,
+            _: Allocator,
             from_lockfile: *Lockfile,
             to_lockfile: *Lockfile,
             from: *Lockfile.Package,
@@ -2229,13 +2222,13 @@ pub const Package = extern struct {
             const to_deps = to.dependencies.get(to_lockfile.buffers.dependencies.items);
             const from_deps = from.dependencies.get(from_lockfile.buffers.dependencies.items);
 
-            for (from_deps) |*from_dep, i| {
+            for (from_deps, 0..) |*from_dep, i| {
                 // common case: dependency is present in both versions and in the same position
                 const to_i = if (to_deps.len > i and to_deps[i].name_hash == from_dep.name_hash)
                     i
                 else brk: {
                     // less common, o(n^2) case
-                    for (to_deps) |to_dep, j| {
+                    for (to_deps, 0..) |to_dep, j| {
                         if (from_dep.name_hash == to_dep.name_hash) break :brk j;
                     }
 
@@ -2255,7 +2248,7 @@ pub const Package = extern struct {
                 summary.update += 1;
             }
 
-            outer: for (to_deps) |to_dep, i| {
+            outer: for (to_deps, 0..) |to_dep, i| {
                 if (from_deps.len > i and from_deps[i].name_hash == to_dep.name_hash) continue;
 
                 for (from_deps) |from_dep| {
@@ -2279,7 +2272,7 @@ pub const Package = extern struct {
     pub fn parseMain(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime features: Features,
@@ -2290,7 +2283,7 @@ pub const Package = extern struct {
     pub fn parse(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime ResolverContext: type,
@@ -2324,7 +2317,7 @@ pub const Package = extern struct {
 
     fn parseDependency(
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         comptime group: DependencyGroup,
@@ -2414,7 +2407,7 @@ pub const Package = extern struct {
             if (entry.found_existing) {
                 // duplicate dependencies are allowed in optionalDependencies
                 if (comptime group.behavior.isOptional()) {
-                    for (package_dependencies[0 .. package_dependencies.len - dependencies.len]) |package_dep, j| {
+                    for (package_dependencies[0 .. package_dependencies.len - dependencies.len], 0..) |package_dep, j| {
                         if (package_dep.name_hash == this_dep.name_hash) {
                             package_dependencies[j] = this_dep;
                             break;
@@ -2446,10 +2439,132 @@ pub const Package = extern struct {
         return this_dep;
     }
 
+    fn processWorkspaceNamesArray(
+        workspace_names_ptr: *[]string,
+        allocator: Allocator,
+        log: *logger.Log,
+        arr: *JSAst.E.Array,
+        source: *const logger.Source,
+        loc: logger.Loc,
+        string_builder: *StringBuilder,
+    ) !u32 {
+        var workspace_names = try allocator.alloc(string, arr.items.len);
+        defer workspace_names_ptr.* = workspace_names;
+
+        var fallback = std.heap.stackFallback(1024, allocator);
+        var workspace_allocator = fallback.get();
+
+        const orig_msgs_len = log.msgs.items.len;
+
+        for (arr.slice(), 0..) |item, i| {
+            defer fallback.fixed_buffer_allocator.reset();
+            const path = item.asString(allocator) orelse {
+                log.addErrorFmt(source, item.loc, allocator,
+                    \\Workspaces expects an array of strings, e.g.
+                    \\"workspaces": [
+                    \\  "path/to/package"
+                    \\]
+                , .{}) catch {};
+                return error.InvalidPackageJSON;
+            };
+
+            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        source,
+                        item.loc,
+                        allocator,
+                        "Workspace not found \"{s}\" in \"{s}\"",
+                        .{
+                            path,
+                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                        },
+                    ) catch {};
+                } else log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} opening workspace package \"{s}\" from \"{s}\"",
+                    .{
+                        @errorName(err),
+                        path,
+                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
+                    },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_dir.close();
+
+            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
+                if (err == error.FileNotFound) {
+                    log.addErrorFmt(
+                        source,
+                        item.loc,
+                        allocator,
+                        "package.json not found in workspace package \"{s}\" from \"{s}\"",
+                        .{ path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                    ) catch {};
+                } else log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
+                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_file.close();
+
+            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
+                log.addErrorFmt(
+                    source,
+                    item.loc,
+                    allocator,
+                    "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
+                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                ) catch {};
+                workspace_names[i] = "";
+                // report errors for multiple workspaces
+                continue;
+            };
+            defer workspace_allocator.free(workspace_bytes);
+            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
+
+            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
+
+            _ = try workspace_json.parseExpr();
+            if (!workspace_json.has_found_name) {
+                log.addErrorFmt(
+                    source,
+                    loc,
+                    allocator,
+                    "Missing \"name\" from package.json in {s}",
+                    .{workspace_source.path.text},
+                ) catch {};
+                // report errors for multiple workspaces
+                continue;
+            }
+
+            const workspace_name = workspace_json.found_name;
+
+            string_builder.count(workspace_name);
+            string_builder.count(path);
+            string_builder.cap += bun.MAX_PATH_BYTES;
+            workspace_names[i] = try allocator.dupe(u8, workspace_name);
+        }
+
+        if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
+        return @truncate(u32, arr.items.len);
+    }
+
     fn parseWithJSON(
         package: *Lockfile.Package,
         lockfile: *Lockfile,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
         source: logger.Source,
         json: Expr,
@@ -2601,105 +2716,44 @@ pub const Package = extern struct {
                         }
                         if (arr.items.len == 0) break :brk;
 
-                        workspace_names = try allocator.alloc(string, arr.items.len);
-
-                        var fallback = std.heap.stackFallback(1024, allocator);
-                        var workspace_allocator = fallback.get();
-
-                        const orig_msgs_len = log.msgs.items.len;
-
-                        for (arr.slice()) |item, i| {
-                            defer fallback.fixed_buffer_allocator.reset();
-                            const path = item.asString(allocator) orelse {
-                                log.addErrorFmt(&source, item.loc, allocator,
-                                    \\Workspaces expects an array of strings, e.g.
-                                    \\"workspaces": [
-                                    \\  "path/to/package"
-                                    \\]
-                                , .{}) catch {};
-                                return error.InvalidPackageJSON;
-                            };
-
-                            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
-                                if (err == error.FileNotFound) {
-                                    log.addErrorFmt(
-                                        &source,
-                                        item.loc,
-                                        allocator,
-                                        "Workspace not found \"{s}\" in \"{s}\"",
-                                        .{
-                                            path,
-                                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                                        },
-                                    ) catch {};
-                                } else log.addErrorFmt(
-                                    &source,
-                                    item.loc,
-                                    allocator,
-                                    "{s} opening workspace package \"{s}\" from \"{s}\"",
-                                    .{
-                                        @errorName(err),
-                                        path,
-                                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                                    },
-                                ) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_dir.close();
-
-                            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
-                                log.addErrorFmt(
-                                    &source,
-                                    item.loc,
-                                    allocator,
-                                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
-                                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
-                                ) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_file.close();
-
-                            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
-                                log.addErrorFmt(&source, item.loc, allocator, "{s} reading package.json for workspace package \"{s}\" from \"{s}\"", .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable }) catch {};
-                                workspace_names[i] = "";
-                                // report errors for multiple workspaces
-                                continue;
-                            };
-                            defer workspace_allocator.free(workspace_bytes);
-                            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
-
-                            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
-
-                            _ = try workspace_json.parseExpr();
-                            if (!workspace_json.has_found_name) {
-                                log.addErrorFmt(
-                                    &source,
-                                    dependencies_q.loc,
-                                    allocator,
-                                    "Missing \"name\" from package.json in {s}",
-                                    .{workspace_source.path.text},
-                                ) catch {};
-                                // report errors for multiple workspaces
-                                continue;
-                            }
-
-                            const workspace_name = workspace_json.found_name;
-
-                            string_builder.count(workspace_name);
-                            string_builder.count(path);
-                            string_builder.cap += bun.MAX_PATH_BYTES;
-                            workspace_names[i] = try allocator.dupe(u8, workspace_name);
-                        }
-
-                        if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
-                        total_dependencies_count += @truncate(u32, arr.items.len);
+                        total_dependencies_count += try processWorkspaceNamesArray(
+                            &workspace_names,
+                            allocator,
+                            log,
+                            arr,
+                            &source,
+                            dependencies_q.loc,
+                            &string_builder,
+                        );
                     },
                     .e_object => |obj| {
                         if (group.behavior.isWorkspace()) {
+
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if (obj.get("packages")) |packages_query| {
+                                if (packages_query.data == .e_array) {
+                                    if (packages_query.data.e_array.items.len == 0) break :brk;
+
+                                    total_dependencies_count += try processWorkspaceNamesArray(
+                                        &workspace_names,
+                                        allocator,
+                                        log,
+                                        packages_query.data.e_array,
+                                        &source,
+                                        packages_query.loc,
+                                        &string_builder,
+                                    );
+                                    break :brk;
+                                }
+                            }
+
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
                                 \\Workspaces expects an array of strings, e.g.
                                 \\"workspaces": [
@@ -2765,7 +2819,7 @@ pub const Package = extern struct {
         try lockfile.buffers.resolutions.ensureUnusedCapacity(lockfile.allocator, total_dependencies_count);
 
         const total_len = lockfile.buffers.dependencies.items.len + total_dependencies_count;
-        if (Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
+        if (comptime Environment.allow_assert) std.debug.assert(lockfile.buffers.dependencies.items.len == lockfile.buffers.resolutions.items.len);
         const off = lockfile.buffers.dependencies.items.len;
 
         var package_dependencies = lockfile.buffers.dependencies.items.ptr[off..total_len];
@@ -2835,7 +2889,7 @@ pub const Package = extern struct {
                                 std.debug.assert(i == extern_strings.len);
                                 package.bin = .{
                                     .tag = .map,
-                                    .value = .{ .map = @import("./install.zig").ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
+                                    .value = .{ .map = ExternalStringList.init(lockfile.buffers.extern_strings.items, extern_strings) },
                                 };
                             },
                         }
@@ -2894,7 +2948,7 @@ pub const Package = extern struct {
                     .e_array => |arr| {
                         if (arr.items.len == 0) break :brk;
 
-                        for (arr.slice()) |item, i| {
+                        for (arr.slice(), 0..) |item, i| {
                             const name = workspace_names[i];
                             defer allocator.free(name);
 
@@ -2927,6 +2981,56 @@ pub const Package = extern struct {
                         allocator.free(workspace_names);
                     },
                     .e_object => |obj| {
+                        if (group.behavior.isWorkspace()) {
+                            // yarn workspaces expects a "workspaces" property shaped like this:
+                            //
+                            //    "workspaces": {
+                            //        "packages": [
+                            //           "path/to/package"
+                            //        ]
+                            //    }
+                            //
+                            if (obj.get("packages")) |packages_q| {
+                                if (packages_q.data == .e_array) {
+                                    var arr = packages_q.data.e_array;
+                                    if (arr.items.len == 0) break :brk;
+
+                                    for (arr.slice(), 0..) |item, i| {
+                                        const name = workspace_names[i];
+                                        defer allocator.free(name);
+
+                                        const external_name = string_builder.append(ExternalString, name);
+                                        const path = item.asString(allocator).?;
+
+                                        if (try parseDependency(
+                                            lockfile,
+                                            allocator,
+                                            log,
+                                            source,
+                                            group,
+                                            &string_builder,
+                                            features,
+                                            package_dependencies,
+                                            dependencies,
+                                            in_workspace,
+                                            .workspace,
+                                            null,
+                                            external_name,
+                                            path,
+                                            item,
+                                            item,
+                                        )) |dep| {
+                                            dependencies[0] = dep;
+                                            dependencies = dependencies[1..];
+                                        }
+                                    }
+
+                                    allocator.free(workspace_names);
+                                    break :brk;
+                                }
+                            }
+                        }
+
                         for (obj.properties.slice()) |item| {
                             const key = item.key.?;
                             const value = item.value.?;
@@ -3030,7 +3134,7 @@ pub const Package = extern struct {
                 Type: type,
             };
             var data: [fields.len]Data = undefined;
-            for (fields) |field_info, i| {
+            for (fields, 0..) |field_info, i| {
                 data[i] = .{
                     .size = @sizeOf(field_info.type),
                     .size_index = i,
@@ -3049,7 +3153,7 @@ pub const Package = extern struct {
             var sizes_bytes: [fields.len]usize = undefined;
             var field_indexes: [fields.len]usize = undefined;
             var Types: [fields.len]type = undefined;
-            for (data) |elem, i| {
+            for (data, 0..) |elem, i| {
                 sizes_bytes[i] = elem.size;
                 field_indexes[i] = elem.size_index;
                 Types[i] = elem.Type;
@@ -3098,7 +3202,7 @@ pub const Package = extern struct {
         pub fn load(
             stream: *Stream,
             end: usize,
-            allocator: std.mem.Allocator,
+            allocator: Allocator,
         ) !Lockfile.Package.List {
             var reader = stream.reader();
 
@@ -3161,7 +3265,7 @@ const Buffers = struct {
     // node_modules_package_ids: PackageIDList = PackageIDList{},
     string_bytes: StringBuffer = .{},
 
-    pub fn deinit(this: *Buffers, allocator: std.mem.Allocator) void {
+    pub fn deinit(this: *Buffers, allocator: Allocator) void {
         this.trees.deinit(allocator);
         this.resolutions.deinit(allocator);
         this.dependencies.deinit(allocator);
@@ -3169,7 +3273,7 @@ const Buffers = struct {
         this.string_bytes.deinit(allocator);
     }
 
-    pub fn preallocate(this: *Buffers, that: Buffers, allocator: std.mem.Allocator) !void {
+    pub fn preallocate(this: *Buffers, that: Buffers, allocator: Allocator) !void {
         try this.trees.ensureTotalCapacity(allocator, that.trees.items.len);
         try this.resolutions.ensureTotalCapacity(allocator, that.resolutions.items.len);
         try this.dependencies.ensureTotalCapacity(allocator, that.dependencies.items.len);
@@ -3186,7 +3290,7 @@ const Buffers = struct {
             alignment: usize,
         };
         var data: [fields.len]Data = undefined;
-        for (fields) |field_info, i| {
+        for (fields, 0..) |field_info, i| {
             data[i] = .{
                 .size = @sizeOf(field_info.type),
                 .name = field_info.name,
@@ -3205,7 +3309,7 @@ const Buffers = struct {
         var sizes_bytes: [fields.len]usize = undefined;
         var names: [fields.len][]const u8 = undefined;
         var types: [fields.len]type = undefined;
-        for (data) |elem, i| {
+        for (data, 0..) |elem, i| {
             sizes_bytes[i] = elem.size;
             names[i] = elem.name;
             types[i] = elem.type;
@@ -3217,7 +3321,7 @@ const Buffers = struct {
         };
     };
 
-    pub fn readArray(stream: *Stream, allocator: std.mem.Allocator, comptime ArrayList: type) !ArrayList {
+    pub fn readArray(stream: *Stream, allocator: Allocator, comptime ArrayList: type) !ArrayList {
         const arraylist: ArrayList = undefined;
 
         const PointerType = std.meta.Child(@TypeOf(arraylist.items.ptr));
@@ -3283,7 +3387,7 @@ const Buffers = struct {
         }
     }
 
-    pub fn save(this: Buffers, allocator: std.mem.Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
+    pub fn save(this: Buffers, allocator: Allocator, comptime StreamType: type, stream: StreamType, comptime Writer: type, writer: Writer) !void {
         inline for (sizes.names) |name| {
             if (PackageManager.instance.options.log_level.isVerbose()) {
                 Output.prettyErrorln("Saving {d} {s}", .{ @field(this, name).items.len, name });
@@ -3336,18 +3440,18 @@ const Buffers = struct {
         switch (package_id) {
             0 => return Tree.root_dep_id,
             invalid_package_id => return invalid_package_id,
-            else => for (this.resolutions.items) |pkg_id, dep_id| {
+            else => for (this.resolutions.items, 0..) |pkg_id, dep_id| {
                 if (pkg_id == package_id) return @truncate(DependencyID, dep_id);
             },
         }
         return error.@"Lockfile is missing resolution data";
     }
 
-    pub fn load(stream: *Stream, allocator: std.mem.Allocator, log: *logger.Log) !Buffers {
+    pub fn load(stream: *Stream, allocator: Allocator, log: *logger.Log) !Buffers {
         var this = Buffers{};
         var external_dependency_list_: std.ArrayListUnmanaged(Dependency.External) = std.ArrayListUnmanaged(Dependency.External){};
 
-        inline for (sizes.names) |name, i| {
+        inline for (sizes.names, 0..) |name, i| {
             const Type = @TypeOf(@field(this, name));
 
             var pos: usize = 0;
@@ -3367,7 +3471,7 @@ const Buffers = struct {
                 this.trees = try Tree.List.initCapacity(allocator, tree_list.items.len);
                 this.trees.items.len = tree_list.items.len;
 
-                for (tree_list.items) |tree, j| {
+                for (tree_list.items, 0..) |tree, j| {
                     this.trees.items[j] = Tree.toTree(tree);
                 }
             } else {
@@ -3453,7 +3557,7 @@ pub const Serializer = struct {
     pub fn load(
         lockfile: *Lockfile,
         stream: *Stream,
-        allocator: std.mem.Allocator,
+        allocator: Allocator,
         log: *logger.Log,
     ) !void {
         var reader = stream.reader();
@@ -3501,7 +3605,7 @@ pub const Serializer = struct {
             const slice = lockfile.packages.slice();
             const name_hashes = slice.items(.name_hash);
             const resolutions = slice.items(.resolution);
-            for (name_hashes) |name_hash, id| {
+            for (name_hashes, 0..) |name_hash, id| {
                 try lockfile.getOrPutID(@truncate(PackageID, id), name_hash);
 
                 const resolution = resolutions[id];
@@ -3523,7 +3627,7 @@ pub fn hasMetaHashChanged(this: *Lockfile, print_name_version_string: bool) !boo
     this.meta_hash = try this.generateMetaHash(print_name_version_string);
     return !strings.eqlLong(&previous_meta_hash, &this.meta_hash, false);
 }
-pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
+fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaHash {
     if (this.packages.len <= 1)
         return zero_hash;
 

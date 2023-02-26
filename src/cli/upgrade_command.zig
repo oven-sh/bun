@@ -544,10 +544,10 @@ pub const UpgradeCommand = struct {
                 // xattrs are used for codesigning
                 // it'd be easy to mess that up
                 var unzip_argv = [_]string{
-                    std.mem.span(unzip_exe),
+                    bun.asByteSlice(unzip_exe),
                     "-q",
                     "-o",
-                    std.mem.span(tmpname),
+                    tmpname,
                 };
 
                 var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);

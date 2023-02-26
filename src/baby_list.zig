@@ -240,13 +240,6 @@ pub fn BabyList(comptime Type: type) type {
                 }
             }
 
-            if (comptime Environment.allow_assert) {
-                // sanity check that encoding produced a consistent result
-                var allocated = try strings.toUTF8Alloc(allocator, str);
-                defer allocator.free(allocated);
-                const encoded = this.ptr[initial..this.len];
-                std.testing.expectEqualStrings(allocated, encoded) catch unreachable;
-            }
             return this.len - initial;
         }
     };

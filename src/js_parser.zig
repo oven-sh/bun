@@ -292,9 +292,9 @@ const JSXTag = struct {
             }
 
             var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
-            std.mem.copy(u8, _name, name);
+            bun.copy(u8, _name, name);
             _name[name.len] = '.';
-            std.mem.copy(u8, _name[name.len + 1 .. _name.len], member);
+            bun.copy(u8, _name[name.len + 1 .. _name.len], member);
             name = _name;
             tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
             tag = p.newExpr(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
@@ -3316,19 +3316,19 @@ pub const Parser = struct {
             var remaining_parts = _parts;
             if (before_len > 0) {
                 const parts_to_copy = before.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (parts_len > 0) {
                 const parts_to_copy = parts.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (after_len > 0) {
                 const parts_to_copy = after.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
             }
 
             parts_slice = _parts;
@@ -4078,7 +4078,7 @@ fn NewParser_(
                 if (merge and parts_.len > 1) {
                     var first_none_part: usize = parts_.len;
                     var stmts_count: usize = 0;
-                    for (parts_) |part, i| {
+                    for (parts_, 0..) |part, i| {
                         if (part.tag == .none) {
                             stmts_count += part.stmts.len;
                             first_none_part = @min(i, first_none_part);
@@ -4091,7 +4091,7 @@ fn NewParser_(
 
                         for (parts_) |part| {
                             if (part.tag == .none) {
-                                std.mem.copy(Stmt, stmts_remain, part.stmts);
+                                bun.copy(Stmt, stmts_remain, part.stmts);
                                 stmts_remain = stmts_remain[part.stmts.len..];
                             }
                         }
@@ -4216,7 +4216,7 @@ fn NewParser_(
             var symbol_use_values = part.symbol_uses.values();
             var symbols = p.symbols.items;
 
-            for (symbol_use_refs) |ref, i| {
+            for (symbol_use_refs, 0..) |ref, i| {
                 symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
             }
             const declared_refs = part.declared_symbols.refs.items;
@@ -4586,16 +4586,12 @@ fn NewParser_(
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(allocator, imports.len);
-            std.mem.copy(u8, namespace_identifier[0..suffix.len], suffix);
-            std.mem.copy(
-                u8,
-                namespace_identifier[suffix.len..namespace_identifier.len],
-                import_path_identifier[0..import_path_identifier.len],
-            );
+            bun.copy(u8, namespace_identifier, suffix);
+            bun.copy(u8, namespace_identifier[suffix.len..], import_path_identifier);
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
-            try p.module_scope.generated.push(allocator, namespace_ref);
-            for (imports) |alias, i| {
+            try p.module_scope.generated.append(allocator, namespace_ref);
+            for (imports, 0..) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
                 clause_items[i] = js_ast.ClauseItem{
@@ -5459,7 +5455,7 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.slice()) |_, i| {
+            for (0..scope.children.slice().len) |i| {
                 p.hoistSymbols(scope.children.mut(i).*);
             }
         }
@@ -5579,7 +5575,7 @@ fn NewParser_(
                     // p.markSyntaxFeature(Destructing)
                     var items = List(js_ast.ArrayBinding).initCapacity(p.allocator, ex.items.len) catch unreachable;
                     var is_spread = false;
-                    for (ex.items.slice()) |_, i| {
+                    for (ex.items.slice(), 0..) |_, i| {
                         var item = ex.items.ptr[i];
                         if (item.data == .e_spread) {
                             is_spread = true;
@@ -6629,7 +6625,7 @@ fn NewParser_(
             if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
                 var plugin_i: usize = std.math.maxInt(usize);
                 const items = stmt.items;
-                for (items) |item, i| {
+                for (items, 0..) |item, i| {
                     // Mark Bun.plugin()
                     // TODO: remove if they have multiple imports of the same name?
                     if (strings.eqlComptime(item.alias, "plugin")) {
@@ -9815,7 +9811,7 @@ fn NewParser_(
                 },
 
                 .b_array => |bind| {
-                    for (bind.items) |_, i| {
+                    for (bind.items, 0..) |_, i| {
                         p.declareBinding(kind, &bind.items[i].binding, opts) catch unreachable;
                     }
                 },
@@ -12746,7 +12742,7 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
+                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag \\</{s}> to match opening tag \\<{s}>", .{
                                 end_tag.name,
                                 tag.name,
                             });
@@ -12854,7 +12850,7 @@ fn NewParser_(
                     if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
                         var previous_parts: []js_ast.Part = parts.items;
 
-                        for (previous_parts) |*previous_part, j| {
+                        for (previous_parts, 0..) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
                             var refs = previous_part.declared_symbols.refs.items;
@@ -13314,7 +13310,7 @@ fn NewParser_(
                             };
 
                             const jsx_props = e_.properties.slice();
-                            for (jsx_props) |property, i| {
+                            for (jsx_props, 0..) |property, i| {
                                 if (property.kind != .spread) {
                                     e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
                                 }
@@ -13347,7 +13343,7 @@ fn NewParser_(
                                     p.source,
                                     tag.loc,
                                     p.allocator,
-                                    "<{s} /> is a void element and must not have \"children\"",
+                                    "\\<{s} /> is a void element and must not have \"children\"",
                                     .{tag.data.e_string.slice(p.allocator)},
                                 ) catch {};
                             }
@@ -13366,7 +13362,7 @@ fn NewParser_(
                                     if (e_.properties.len > 0) {
                                         if (e_.key) |key| {
                                             var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
-                                            std.mem.copy(G.Property, props, e_.properties.slice());
+                                            bun.copy(G.Property, props, e_.properties.slice());
                                             props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
                                             args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                         } else {
@@ -14632,7 +14628,7 @@ fn NewParser_(
                         if (is_macro_ref)
                             p.options.ignore_dce_annotations = true;
 
-                        for (e_.args.slice()) |_, i| {
+                        for (e_.args.slice(), 0..) |_, i| {
                             const arg = e_.args.ptr[i];
                             e_.args.ptr[i] = p.visitExpr(arg);
                         }
@@ -16790,7 +16786,7 @@ fn NewParser_(
 
                         array.items.len = @min(array.items.len, @truncate(u32, bound_array.items.len));
                         var slice = array.items.slice();
-                        for (bound_array.items[0..array.items.len]) |item, item_i| {
+                        for (bound_array.items[0..array.items.len], 0..) |item, item_i| {
                             const child_expr = slice[item_i];
                             if (item.binding.data == .b_missing) {
                                 slice[item_i] = p.newExpr(E.Missing{}, expr.loc);
@@ -17079,7 +17075,7 @@ fn NewParser_(
 
                                         if (is_constructor) constructor_function = func;
 
-                                        for (func.func.args) |arg, i| {
+                                        for (func.func.args, 0..) |arg, i| {
                                             for (arg.ts_decorators.ptr[0..arg.ts_decorators.len]) |arg_decorator| {
                                                 var decorators = if (is_constructor) class.ts_decorators.listManaged(p.allocator) else prop.ts_decorators.listManaged(p.allocator);
                                                 const args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -17208,7 +17204,7 @@ fn NewParser_(
                             var constructor_stmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, constructor_function.?.func.body.stmts);
                             // statements coming from class body inserted after super call or beginning of constructor.
                             var super_index: ?usize = null;
-                            for (constructor_stmts.items) |item, index| {
+                            for (constructor_stmts.items, 0..) |item, index| {
                                 if (item.data != .s_expr or item.data.s_expr.value.data != .e_call or item.data.s_expr.value.data.e_call.target.data != .e_super) continue;
                                 super_index = index;
                                 break;
@@ -17579,7 +17575,7 @@ fn NewParser_(
                 // are not allowed to assign to this symbol (it throws a TypeError).
                 const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
                 var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
-                std.mem.copy(u8, identifier[1..identifier.len], name);
+                bun.copy(u8, identifier[1..identifier.len], name);
                 identifier[0] = '_';
                 shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
                 p.recordDeclaredSymbol(shadow_ref) catch unreachable;
@@ -17709,7 +17705,7 @@ fn NewParser_(
                         // if this is an expression, we can move statements after super() because there will be 0 decorators
                         var super_index: ?usize = null;
                         if (class.extends != null) {
-                            for (constructor.func.body.stmts) |stmt, index| {
+                            for (constructor.func.body.stmts, 0..) |stmt, index| {
                                 if (stmt.data != .s_expr or stmt.data.s_expr.value.data != .e_call or stmt.data.s_expr.value.data.e_call.target.data != .e_super) continue;
                                 super_index = index;
                                 break;
@@ -17742,7 +17738,7 @@ fn NewParser_(
                                             )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
-                                            std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);
+                                            bun.copy(G.Property, class_body.items[j + 1 ..], class_body.items[j .. class_body.items.len - 1]);
                                             class_body.items[j] = G.Property{ .key = ident };
                                             j += 1;
                                         },
@@ -18189,7 +18185,7 @@ fn NewParser_(
                 }
 
                 // First, try converting the expressions to bindings
-                for (items) |_, i| {
+                for (items, 0..) |_, i| {
                     var is_spread = false;
                     switch (items[i].data) {
                         .e_spread => |v| {
@@ -18433,7 +18429,7 @@ fn NewParser_(
                 var imports_list_i: u32 = 0;
                 var exports_list_i: u32 = 0;
 
-                for (part.stmts) |_, i| {
+                for (part.stmts, 0..) |_, i| {
                     switch (part.stmts[i].data) {
                         .s_import => {
                             imports_list[imports_list_i] = part.stmts[i];
@@ -18675,8 +18671,8 @@ fn NewParser_(
 
                     var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
                     export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
-                    std.mem.copy(u8, export_name_string, "$$hmr_");
-                    std.mem.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
+                    bun.copy(u8, export_name_string, "$$hmr_");
+                    bun.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
 
                     var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
 

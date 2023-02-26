@@ -2,6 +2,7 @@ import { describe, it as it_, expect as expect_ } from "bun:test";
 import { gcTick } from "gc";
 import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { promisify } from "node:util";
 
 const expect: typeof expect_ = (actual: unknown) => {
   gcTick();
@@ -262,6 +263,17 @@ describe("exec()", () => {
       });
     });
     expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+  });
+
+  it("should return an object w/ stdout and stderr when promisified", async () => {
+    const result = await promisify(exec)("bun -v");
+    expect(typeof result).toBe("object");
+    expect(typeof result.stdout).toBe("string");
+    expect(typeof result.stderr).toBe("string");
+
+    const { stdout, stderr } = result;
+    expect(SEMVER_REGEX.test(stdout.trim())).toBe(true);
+    expect(stderr.trim()).toBe("");
   });
 });
 

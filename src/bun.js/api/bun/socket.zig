@@ -578,7 +578,7 @@ pub const Listener = struct {
         }
 
         if (ssl) |ssl_config| {
-            if (std.mem.span(ssl_config.server_name).len > 0)
+            if (bun.asByteSlice(ssl_config.server_name).len > 0)
                 uws.us_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
         }
 

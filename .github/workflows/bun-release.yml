@@ -28,12 +28,17 @@ jobs:
           TAG="${TAG:-"${{ github.event.release.tag_name }}"}"
           echo "Setup tag: ${TAG}"
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
+      - id: setup-gpg
+        name: Setup GPG
+        uses: crazy-max/ghaction-import-gpg@v5
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
         run: bun install
@@ -63,10 +68,9 @@ jobs:
           echo "TAG=${TAG}" >> ${GITHUB_ENV}
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
         run: bun install
@@ -100,15 +104,12 @@ jobs:
           node-version: latest
       - id: setup-bun
         name: Setup Bun
-        uses: oven-sh/setup-bun@v0.1.8
+        uses: oven-sh/setup-bun@v1
         with:
           bun-version: canary
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - id: bun-install
         name: Install Dependencies
-        run: |
-          bun upgrade --canary
-          bun install
+        run: bun install
       - id: bun-run
         name: Build
         run: bun run build

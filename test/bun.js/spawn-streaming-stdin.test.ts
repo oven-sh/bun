@@ -3,6 +3,7 @@ import { spawn } from "bun";
 import { bunExe } from "./bunExe";
 import { gcTick } from "gc";
 import { closeSync, openSync } from "fs";
+import { bunEnv } from "./bunEnv";
 
 const N = 100;
 test("spawn can write to stdin multiple chunks", async () => {
@@ -11,13 +12,11 @@ test("spawn can write to stdin multiple chunks", async () => {
     var exited;
     await (async function () {
       const proc = spawn({
-        cmd: ["bun-debug", import.meta.dir + "/stdin-repro.js"],
+        cmd: [bunExe(), import.meta.dir + "/stdin-repro.js"],
         stdout: "pipe",
         stdin: "pipe",
         stderr: Bun.file("/tmp/out.log"),
-        env: {
-          BUN_DEBUG_QUIET_LOGS: 1,
-        },
+        env: bunEnv,
       });
       exited = proc.exited;
       var counter = 0;

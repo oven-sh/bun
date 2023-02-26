@@ -799,7 +799,7 @@ pub const Linker = struct {
 
         if (result.ast.needs_runtime and (result.ast.runtime_import_record_id == null or import_records.items.len == 0)) {
             var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.items.len + 1);
-            std.mem.copy(ImportRecord, new_import_records, import_records.items);
+            bun.copy(ImportRecord, new_import_records, import_records.items);
 
             new_import_records[new_import_records.len - 1] = ImportRecord{
                 .kind = .stmt,
@@ -813,6 +813,8 @@ pub const Linker = struct {
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
             };
             result.ast.runtime_import_record_id = @truncate(u32, import_records.items.len - 1);
+            import_records.items = new_import_records;
+            import_records.capacity = new_import_records.len;
         }
 
         // We _assume_ you're importing ESM.
@@ -892,11 +894,11 @@ pub const Linker = struct {
                     const basename = try linker.getHashedFilename(basepath, null);
                     var dir = basepath.name.dirWithTrailingSlash();
                     var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
-                    std.mem.copy(u8, _pretty, dir);
+                    bun.copy(u8, _pretty, dir);
                     var remaining_pretty = _pretty[dir.len..];
-                    std.mem.copy(u8, remaining_pretty, basename);
+                    bun.copy(u8, remaining_pretty, basename);
                     remaining_pretty = remaining_pretty[basename.len..];
-                    std.mem.copy(u8, remaining_pretty, basepath.name.ext);
+                    bun.copy(u8, remaining_pretty, basepath.name.ext);
                     pretty = _pretty;
                     relative_name = try linker.allocator.dupe(u8, relative_name);
                 } else {

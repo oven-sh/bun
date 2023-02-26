@@ -37,7 +37,6 @@ pub fn decodeURLSafe(destination: []u8, source: []const u8) DecodeResult {
 
 pub fn encode(destination: []u8, source: []const u8) usize {
     return zig_base64.standard.Encoder.encode(destination, source).len;
-    
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {
@@ -58,7 +57,6 @@ pub fn decodeLen(source: anytype) usize {
 pub fn encodeLen(source: anytype) usize {
     return zig_base64.standard.Encoder.calcSize(source.len);
 }
-
 
 pub const urlsafe = zig_base64.Base64DecoderWithIgnore.init(
     zig_base64.url_safe_alphabet_chars,
@@ -219,7 +217,7 @@ const zig_base64 = struct {
             };
 
             var char_in_alphabet = [_]bool{false} ** 256;
-            for (alphabet_chars) |c, i| {
+            for (alphabet_chars, 0..) |c, i| {
                 assert(!char_in_alphabet[c]);
                 assert(pad_char == null or c != pad_char.?);
 
@@ -264,7 +262,7 @@ const zig_base64 = struct {
             var acc_len: u4 = 0;
             var dest_idx: usize = 0;
             var leftover_idx: ?usize = null;
-            for (source) |c, src_idx| {
+            for (source, 0..) |c, src_idx| {
                 const d = decoder.char_to_index[c];
                 if (d == invalid_char) {
                     if (decoder.pad_char == null or c != decoder.pad_char.?) return error.InvalidCharacter;
@@ -342,7 +340,7 @@ const zig_base64 = struct {
                 wrote.* = leftover_idx orelse dest_idx;
             }
 
-            for (source) |c, src_idx| {
+            for (source, 0..) |c, src_idx| {
                 if (decoder_with_ignore.char_is_ignored[c]) continue;
                 const d = decoder.char_to_index[c];
                 if (d == Base64Decoder.invalid_char) {

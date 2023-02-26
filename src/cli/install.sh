@@ -295,7 +295,7 @@ info "To get started, run:"
 echo
 
 if [[ $refresh_command ]]; then
-    info_bold " $refresh_command"
+    info_bold "  $refresh_command"
 fi
 
 info_bold "  bun --help"

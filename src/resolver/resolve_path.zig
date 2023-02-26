@@ -202,7 +202,7 @@ pub fn relativeToCommonPath(
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
                 if (always_copy) {
-                    std.mem.copy(u8, buf, normalized_to);
+                    bun.copy(u8, buf, normalized_to);
                     return buf[0..normalized_to.len];
                 } else {
                     return normalized_to;
@@ -213,10 +213,9 @@ pub fn relativeToCommonPath(
                 const slice = normalized_to[common_path.len..];
 
                 if (always_copy) {
-
                     // We get here if `from` is the exact base path for `to`.
                     // For example: from='/foo/bar'; to='/foo/bar/baz'
-                    std.mem.copy(u8, buf, slice);
+                    bun.copy(u8, buf, slice);
                     return buf[0..slice.len];
                 } else {
                     return slice;
@@ -268,7 +267,7 @@ pub fn relativeToCommonPath(
         const start = out_slice.len;
         out_slice = buf[0 .. out_slice.len + tail.len];
 
-        std.mem.copy(u8, out_slice[start..], tail);
+        bun.copy(u8, out_slice[start..], tail);
     }
 
     return buf[0..out_slice.len];
@@ -690,11 +689,7 @@ pub fn joinStringBuf(buf: []u8, _parts: anytype, comptime _platform: Platform) [
             written += 1;
         }
 
-        std.mem.copy(
-            u8,
-            temp_buf[written..],
-            part,
-        );
+        bun.copy(u8, temp_buf[written..], part);
         written += part.len;
     }
 
@@ -752,7 +747,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
         }
     }
 
-    std.mem.copy(u8, &temp_buf, cwd);
+    bun.copy(u8, &temp_buf, cwd);
     out = cwd.len;
 
     for (parts) |_part| {
@@ -767,12 +762,11 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
             out += 1;
         }
 
-        std.mem.copy(u8, temp_buf[out..], part);
+        bun.copy(u8, temp_buf[out..], part);
         out += part.len;
     }
 
-    const leading_separator: []const u8 =
-        if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
+    const leading_separator: []const u8 = if (_platform.leadingSeparatorIndex(temp_buf[0..out])) |i|
         temp_buf[0 .. i + 1]
     else
         "/";
@@ -785,7 +779,7 @@ inline fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: typ
         true,
     );
 
-    std.mem.copy(u8, buf[0..leading_separator.len], leading_separator);
+    bun.copy(u8, buf, leading_separator);
 
     if (comptime is_sentinel) {
         buf.ptr[result.len + leading_separator.len] = 0;

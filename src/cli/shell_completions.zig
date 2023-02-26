@@ -22,9 +22,9 @@ pub const Shell = enum {
 
     pub fn completions(this: Shell) []const u8 {
         return switch (this) {
-            .bash => std.mem.span(bash_completions),
-            .zsh => std.mem.span(zsh_completions),
-            .fish => std.mem.span(fish_completions),
+            .bash => bun.asByteSlice(bash_completions),
+            .zsh => bun.asByteSlice(zsh_completions),
+            .fish => bun.asByteSlice(fish_completions),
             else => "",
         };
     }
@@ -63,7 +63,7 @@ pub fn print(this: @This()) void {
     }
 
     if (this.commands.len > 1) {
-        for (this.commands[1..]) |cmd, i| {
+        for (this.commands[1..], 0..) |cmd, i| {
             writer.writeAll(delimiter) catch return;
 
             writer.writeAll(cmd) catch return;

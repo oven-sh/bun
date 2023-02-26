@@ -14,8 +14,7 @@ it("setInterval", async () => {
           clearInterval(id);
         }
         try {
-          expect(args.length).toBe(1);
-          expect(args[0]).toBe("foo");
+          expect(args).toStrictEqual(["foo"]);
         } catch (err) {
           reject(err);
           clearInterval(id);

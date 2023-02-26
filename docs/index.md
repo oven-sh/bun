@@ -32,6 +32,12 @@ $ bunx cowsay "Hello, world!"   # execute a package
 {% arrowbutton href="/docs/cli/test" text="Write and run tests" /%}
 {% /block %}
 
+### Online Demo
+
+Try bun runtime in your browser without installing anything:
+
+<iframe src="https://codedamn.com/playground/QfdYRxSPrQscm9SKKmm2b?embed=1&ctl=1" width="1280" height="720></iframe>
+
 ## What is a runtime?
 
 JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google) and JavaScriptCore (developed by Apple). Both are open source.

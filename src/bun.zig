@@ -386,10 +386,13 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
-    if (@ptrToInt(src.ptr) == @ptrToInt(dest.ptr)) return;
+    if (@ptrToInt(src.ptr) == @ptrToInt(dest.ptr) or src.len == 0) return;
 
-    var input: []const u8 = std.mem.sliceAsBytes(src);
-    var output: []u8 = std.mem.sliceAsBytes(dest);
+    const input: []const u8 = std.mem.sliceAsBytes(src);
+    const output: []u8 = std.mem.sliceAsBytes(dest);
+
+    std.debug.assert(input.len > 0);
+    std.debug.assert(output.len > 0);
 
     // if input.len overlaps with output.len, we need to copy backwards
     const overlaps = isSliceInBuffer(input, output) or isSliceInBuffer(output, input);

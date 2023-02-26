@@ -1541,13 +1541,7 @@ pub const Crypto = struct {
         }
 
         pub fn byNameAndEngine(engine: *BoringSSL.ENGINE, name: []const u8) ?EVP {
-
-            // none of the names are longer than 255
-            var buf: [256]u8 = undefined;
-            const len = @min(name.len, buf.len - 1);
-            _ = strings.copyLowercase(name, &buf);
-
-            if (Algorithm.map.get(buf[0..len])) |algorithm| {
+            if (Algorithm.map.getWithEql(name, strings.eqlCaseInsensitiveASCIIIgnoreLength)) |algorithm| {
                 if (algorithm == .blake2b256) {
                     return EVP.init(algorithm, BoringSSL.EVP_blake2b256(), engine);
                 }

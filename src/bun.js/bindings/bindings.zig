@@ -295,14 +295,14 @@ pub const ZigString = extern struct {
     }
 
     pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
-        if (this.len != other.len)
-            return false;
-
         if (this.is16Bit()) {
             return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
         }
 
         if (comptime strings.isAllASCIISimple(other)) {
+            if (this.len != other.len)
+                return false;
+
             return strings.eqlComptimeIgnoreLen(this.slice(), other);
         }
 

@@ -785,25 +785,31 @@ pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, 
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_len: bool) bool {
+pub fn eqlCaseInsensitiveASCIIIgnoreLength(
+    a: string,
+    b: string,
+) bool {
+    return eqlCaseInsensitiveASCII(a, b, false);
+}
+
+pub fn eqlCaseInsensitiveASCIIICheckLength(
+    a: string,
+    b: string,
+) bool {
+    return eqlCaseInsensitiveASCII(a, b, true);
+}
+
+pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
     if (comptime check_len) {
-        if (comptime b.len == 0) {
-            return a.len == 0;
-        }
+        if (a.len != b.len) return false;
 
-        switch (a.len) {
-            b.len => void{},
-            else => return false,
-        }
+        if (a.len == 0) return true;
     }
 
-    // pray to the auto vectorization gods
-    inline for (b, 0..) |c, i| {
-        const char = comptime std.ascii.toLower(c);
-        if (char != std.ascii.toLower(a[i])) return false;
-    }
+    std.debug.assert(b.len > 0);
+    std.debug.assert(a.len > 0);
 
-    return true;
+    return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {

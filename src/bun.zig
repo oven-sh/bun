@@ -391,74 +391,14 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     var input: []const u8 = std.mem.sliceAsBytes(src);
     var output: []u8 = std.mem.sliceAsBytes(dest);
 
-    if (@ptrToInt(output.ptr) < @ptrToInt(input.ptr)) {
-        const output_end = output.ptr + input.len;
+    // if input.len overlaps with output.len, we need to copy backwards
+    const overlaps = isSliceInBuffer(input, output) or isSliceInBuffer(output, input);
 
-        // |--- dest ---|
-        //        |--- src ---|
-        if (@ptrToInt(input.ptr) < @ptrToInt(output_end)) brk: {
-            while (input.len >= strings.ascii_vector_size) {
-                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
-                output[0..strings.ascii_vector_size].* = vec;
-                input = input[strings.ascii_vector_size..];
-                output = output[strings.ascii_vector_size..];
-                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
-            }
-
-            while (input.len >= @sizeOf(usize)) {
-                output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
-                input = input[@sizeOf(usize)..];
-                output = output[@sizeOf(usize)..];
-                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
-            }
-
-            while (input.len > 0) {
-                output[0] = input[0];
-                input = input[1..];
-                output = output[1..];
-                if (@ptrToInt(input.ptr) >= @ptrToInt(output_end)) break :brk;
-            }
-        }
+    if (!overlaps) {
+        @memcpy(output.ptr, input.ptr, input.len);
     } else {
-        var input_end = input.ptr + input.len;
-
-        // |--- src ---|
-        //        |--- dest ---|
-        if (@ptrToInt(output.ptr) < @ptrToInt(input_end)) brk: {
-            while (input.len >= strings.ascii_vector_size) {
-                const input_start = input.len - strings.ascii_vector_size;
-                const output_start = output.len - strings.ascii_vector_size;
-                const vec = @as(@Vector(strings.ascii_vector_size, u8), input[input_start..][0..strings.ascii_vector_size].*);
-                output[output_start..][0..strings.ascii_vector_size].* = vec;
-                input = input[0..input_start];
-                output = output[0..output_start];
-                input_end -= strings.ascii_vector_size;
-                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
-            }
-
-            while (input.len >= @sizeOf(usize)) {
-                const input_start = input.len - @sizeOf(usize);
-                const output_start = output.len - @sizeOf(usize);
-                output[output_start..][0..@sizeOf(usize)].* = input[input_start..][0..@sizeOf(usize)].*;
-                input = input[0..input_start];
-                output = output[0..output_start];
-                input_end -= @sizeOf(usize);
-                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
-            }
-
-            while (input.len >= @sizeOf(usize)) {
-                const input_start = input.len - 1;
-                const output_start = output.len - 1;
-                output[output_start] = input[input_start];
-                input = input[0..input_start];
-                output = output[0..output_start];
-                input_end -= 1;
-                if (@ptrToInt(output.ptr) >= @ptrToInt(input_end)) break :brk;
-            }
-        }
+        C.memmove(output.ptr, input.ptr, input.len);
     }
-
-    @memcpy(output.ptr, input.ptr, input.len);
 }
 
 pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });
@@ -642,7 +582,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
-pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
 }
 

@@ -6004,15 +6004,12 @@ pub const CrossChunkImport = struct {
 
         var import_items_list = imports_from_other_chunks.values();
         var chunk_indices = imports_from_other_chunks.keys();
-        var i: usize = 0;
-        while (i < chunk_indices.len) : (i += 1) {
-            const chunk_index = chunk_indices[i];
+        for (chunk_indices, import_items_list) |chunk_index, import_items| {
             var chunk = &chunks[chunk_index];
 
             // Sort imports from a single chunk by alias for determinism
             const exports_to_other_chunks = &chunk.content.javascript.exports_to_other_chunks;
             // TODO: do we need to clone this array?
-            var import_items = import_items_list[i];
             for (import_items.slice()) |*item| {
                 item.export_alias = exports_to_other_chunks.get(item.ref).?;
                 std.debug.assert(item.export_alias.len > 0);

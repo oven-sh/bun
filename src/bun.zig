@@ -394,10 +394,12 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     std.debug.assert(input.len > 0);
     std.debug.assert(output.len > 0);
 
-    // if input.len overlaps with output.len, we need to copy backwards
-    const overlaps = isSliceInBuffer(input, output) or isSliceInBuffer(output, input);
+    const does_input_or_output_overlap = (@ptrToInt(input.ptr) < @ptrToInt(output.ptr) and
+        @ptrToInt(input.ptr) + input.len > @ptrToInt(output.ptr)) or
+        (@ptrToInt(output.ptr) < @ptrToInt(input.ptr) and
+        @ptrToInt(output.ptr) + output.len > @ptrToInt(input.ptr));
 
-    if (!overlaps) {
+    if (!does_input_or_output_overlap) {
         @memcpy(output.ptr, input.ptr, input.len);
     } else {
         C.memmove(output.ptr, input.ptr, input.len);

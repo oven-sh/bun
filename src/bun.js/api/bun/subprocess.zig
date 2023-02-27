@@ -60,6 +60,10 @@ pub const Subprocess = struct {
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
     is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
+    signal: ?*JSC.AbortSignal = null,
+    has_aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    // must be stored because AbortSignal stores reason weakly
+    abort_reason: JSValue = JSValue.zero,
 
     pub const SignalCode = bun.SignalCode;
 
@@ -907,16 +911,13 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn hasSignalAborted(this: *Subprocess) ?JSValue {
-        if (this.signal) |signal| {
-            if (signal.aborted()) {
-                return signal.abortReason();
-            }
-        }
-        return null;
+    pub fn hasAborted(this: *Subprocess) bool {
+        return this.has_aborted.load(.Monotonic);
     }
 
     pub fn deinitSignal(this: *Subprocess) void {
+        if (this.abort_reason != .zero) this.abort_reason.unprotect();
+
         if (this.signal != null) {
             var signal = this.signal.?;
             const ctx = bun.cast(*anyopaque, this);
@@ -950,9 +951,8 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.hasSignalAborted()) |reason| {
-            reason.ensureStillAlive();
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, reason);
+        if (this.hasAborted()) {
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, this.abort_reason);
         }
 
         if (this.exit_code) |code| {
@@ -970,9 +970,10 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
-        if (this.hasSignalAborted()) |reason| {
-            reason.ensureStillAlive();
-            return reason;
+        if (this.hasAborted()) {
+            if (this.abort_reason != .zero) {
+                return this.abort_reason;
+            }
         }
 
         if (this.exit_code) |code| {
@@ -995,10 +996,14 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
-    pub fn onAborted(this: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
+    pub fn onAborted(this: ?*anyopaque, reason: JSC.JSValue) callconv(.C) void {
         if (this) |this_| {
             const self = bun.cast(*Subprocess, this_);
+            reason.ensureStillAlive();
+            self.abort_reason = reason;
+            reason.protect();
             _ = self.tryKill(1);
+            self.has_aborted.store(true, .Monotonic);
         }
     }
 
@@ -1395,11 +1400,12 @@ pub const Subprocess = struct {
                     subprocess.onExitNotification();
                 },
             }
-            if (signal) |signal_| {
-                _ = signal_.ref();
-                const ctx = bun.cast(*anyopaque, subprocess);
-                _ = signal_.addListener(ctx, Subprocess.onAborted);
-            }
+        }
+
+        if (signal) |signal_| {
+            _ = signal_.ref();
+            const ctx = bun.cast(*anyopaque, subprocess);
+            _ = signal_.addListener(ctx, Subprocess.onAborted);
         }
 
         if (subprocess.stdin == .buffered_input) {
@@ -1461,16 +1467,7 @@ pub const Subprocess = struct {
             }
         }
 
-        var js_exitCode: JSValue = JSValue.jsUndefined();
-
         while (!subprocess.hasExited()) {
-            if (subprocess.hasSignalAborted()) |reason| {
-                _ = subprocess.tryKill(1);
-                js_exitCode = reason;
-                reason.ensureStillAlive();
-                subprocess.deinitSignal();
-            }
-
             if (subprocess.stderr == .pipe and subprocess.stderr.pipe == .buffer) {
                 subprocess.stderr.pipe.buffer.readAll();
             }
@@ -1482,13 +1479,6 @@ pub const Subprocess = struct {
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
         }
-
-        if (subprocess.hasSignalAborted()) |reason| {
-            js_exitCode = reason;
-            reason.ensureStillAlive();
-            subprocess.deinitSignal();
-        }
-
         // subprocess.wait(true);
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
@@ -1496,10 +1486,10 @@ pub const Subprocess = struct {
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-        if (js_exitCode.isEmptyOrUndefinedOrNull()) {
-            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
+        if (subprocess.abort_reason != .zero) {
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), subprocess.abort_reason);
         } else {
-            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), js_exitCode);
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
         }
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
@@ -1540,6 +1530,7 @@ pub const Subprocess = struct {
         defer if (sync) this.updateHasPendingActivityFlag();
         this.has_waitpid_task = true;
         const pid = this.pid;
+        log("PosixSpawn.waitpid {d}", .{pid});
 
         switch (PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG)) {
             .err => |err| {
@@ -1587,13 +1578,10 @@ pub const Subprocess = struct {
 
         if (this.hasExited()) {
             if (this.exit_promise.trySwap()) |promise| {
-                if (this.exit_code) |code| {
-                    if (this.hasSignalAborted()) |reason| {
-                        reason.ensureStillAlive();
-                        promise.asAnyPromise().?.resolve(globalThis, reason);
-                    } else {
-                        promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
-                    }
+                if (this.hasAborted()) {
+                    promise.asAnyPromise().?.resolve(globalThis, this.abort_reason);
+                } else if (this.exit_code) |code| {
+                    promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
                 } else if (this.signal_code != null) {
                     promise.asAnyPromise().?.resolve(globalThis, this.getSignalCode(globalThis));
                 } else if (this.waitpid_err) |err| {

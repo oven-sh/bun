@@ -561,6 +561,23 @@ pub const PrintResult = union(enum) {
         source_map: ?SourceMap.Chunk = null,
     },
     err: anyerror,
+
+    pub fn clone(
+        this: PrintResult,
+        allocator: std.mem.Allocator,
+    ) !PrintResult {
+        return switch (this) {
+            .result => PrintResult{
+                .result = .{
+                    .code = try allocator.dupe(u8, this.result.code),
+                    .source_map = this.result.source_map,
+                },
+            },
+            .err => PrintResult{
+                .err = this.err,
+            },
+        };
+    }
 };
 
 // do not make this a packed struct
@@ -5423,6 +5440,51 @@ pub fn printJSON(
 }
 
 pub fn print(
+    allocator: std.mem.Allocator,
+    platform: options.Platform,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
+    var buffer_printer = BufferPrinter.init(&buffer_writer);
+
+    return printWithWriter(
+        *BufferPrinter,
+        buffer_printer,
+        platform,
+        opts,
+        import_records,
+        parts,
+        renamer,
+    );
+}
+
+pub fn printWithWriter(
+    comptime Writer: type,
+    _writer: Writer,
+    platform: options.Platform,
+    opts: Options,
+    import_records: []const ImportRecord,
+    parts: []const js_ast.Part,
+    renamer: bun.renamer.Renamer,
+) PrintResult {
+    return switch (platform.isBun()) {
+        inline else => |is_bun_platform| printWithWriter(
+            Writer,
+            _writer,
+            is_bun_platform,
+            opts,
+            import_records,
+            parts,
+            renamer,
+        ),
+    };
+}
+
+/// The real one
+pub fn printWithWriterAndPlatform(
     comptime Writer: type,
     _writer: Writer,
     comptime is_bun_platform: bool,
@@ -5464,6 +5526,15 @@ pub fn print(
             }
         }
     }
+
+    printer.writer.done() catch |err|
+        return .{ .err = err };
+
+    return .{
+        .result = .{
+            .code = writer.ctx.getWritten(),
+        },
+    };
 }
 
 pub fn printCommonJS(

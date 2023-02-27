@@ -1028,6 +1028,7 @@ pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 
 pub const Joiner = @import("./string_joiner.zig");
 pub const renamer = @import("./renamer.zig");
+pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {

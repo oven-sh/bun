@@ -1571,6 +1571,7 @@ const LinkerContext = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
         tree_shaking: bool = true,
+        minify_whitespace: bool = false,
 
         mode: Mode = Mode.bundle,
 
@@ -3678,22 +3679,105 @@ const LinkerContext = struct {
         js_ast.Stmt.Data.Store.create(allocator);
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
-        for (part_ranges, 0..) |part_range, i| {
-            if (i > 0) arena.reset(.retain_capacity);
-            c.generateCodeForFileInChunkJS(
-                allocator,
-                r,
-                chunk,
-                part_range,
-                toCommonJSRef,
-                toESMRef,
-                runtimeRequireRef,
-                &chunk.entry_bits,
-                &stmts,
-                allocator,
-                arena.allocator(),
-            );
+        var compile_results = std.ArrayList(CompileResult).initCapacity(allocator, part_ranges.len) catch unreachable;
+        {
+            defer arena.reset(.retain_capacity);
+
+            var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
+
+            for (part_ranges, 0..) |part_range, i| {
+                if (i > 0) arena.reset(.retain_capacity);
+                const result = c.generateCodeForFileInChunkJS(
+                    &buffer_writer,
+                    r,
+                    chunk,
+                    part_range,
+                    toCommonJSRef,
+                    toESMRef,
+                    runtimeRequireRef,
+                    &chunk.entry_bits,
+                    &stmts,
+                    allocator,
+                    arena.allocator(),
+                );
+
+                if (i < part_ranges.len - 1) {
+                    compile_results.appendAssumeCapacity(
+                        // we reuse the memory buffer up until the final chunk to minimize reallocations
+                        result.clone(allocator) catch unreachable,
+                    );
+                } else {
+                    if (comptime Environment.allow_assert) {
+                        if (result == .result) {
+                            if (buffer_writer.buffer.list.capacity > result.result.code.len) {
+                                // add a 0 to make it easier to view the code in a debugger
+                                // but only if room
+                                buffer_writer.buffer.list.items.ptr[result.result.code.len] = 0;
+                            }
+                        }
+                    }
+
+                    // the final chunk owns the memory buffer
+                    compile_results.appendAssumeCapacity(result);
+                }
+            }
         }
+
+        // Also generate the cross-chunk binding code
+        var cross_chunk_prefix: []u8 = &.{};
+        var cross_chunk_suffix: []u8 = &.{};
+
+        {
+            const indent: usize = 0;
+            // TODO: IIFE indent
+
+            const print_options = js_printer.Options{
+                // TODO: IIFE
+                .indent = indent,
+
+                .allocator = allocator,
+                .require_ref = runtimeRequireRef,
+                .minify_whitespace = c.options.minify_whitespace,
+            };
+
+            var cross_chunk_import_records = ImportRecord.List.initCapacity(allocator, chunk.cross_chunk_imports.len) catch unreachable;
+            defer cross_chunk_import_records.deinit();
+            for (chunk.cross_chunk_imports.slice()) |import_record| {
+                cross_chunk_import_records.appendAssumeCapacity(
+                    .{
+                        .kind = import_record.import_kind,
+                        .path = Fs.Path.init(chunk.unique_key),
+                    },
+                );
+            }
+
+            cross_chunk_prefix = js_printer.print(
+                allocator,
+                c.resolver.opts.platform,
+                print_options,
+                cross_chunk_import_records.slice(),
+                &[_]js_ast.Part{
+                    .{ .stmts = chunk.content.javascript.cross_chunk_prefix_stmts.slice() },
+                },
+                r,
+            ).result.code;
+            cross_chunk_suffix = js_printer.print(
+                allocator,
+                c.resolver.opts.platform,
+                print_options,
+                &.{},
+                &[_]js_ast.Part{
+                    .{ .stmts = chunk.content.javascript.cross_chunk_suffix_stmts.slice() },
+                },
+                r,
+            ).result.code;
+        }
+
+        // Generate the exports for the entry point, if there are any
+        var j = bun.Joiner{
+            .use_pool = false,
+            .node_allocator = allocator,
+        };
     }
 
     const StmtList = struct {
@@ -4729,21 +4813,15 @@ const LinkerContext = struct {
         );
         defer writer.* = printer.ctx;
 
-        switch (c.resolver.opts.platform.isBun()) {
-            inline else => |is_bun| {
-                return js_printer.print(
-                    *js_printer.BufferPrinter,
-                    &printer,
-                    is_bun,
-                    print_options,
-                    ast.import_records,
-                    parts_to_print,
-                    r,
-                );
-            },
-        }
-
-        unreachable;
+        return js_printer.printWithWriter(
+            *js_printer.BufferPrinter,
+            &printer,
+            c.resolver.opts.platform,
+            print_options,
+            ast.import_records,
+            parts_to_print,
+            r,
+        );
     }
 
     fn requireOrImportMetaForSource(

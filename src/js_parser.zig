@@ -15957,7 +15957,7 @@ fn NewParser_(
 
                     // "module.exports = value"
                     stmts.append(
-                        Expr.assignStmt(
+                        Stmt.assign(
                             p.@"module.exports"(
                                 stmt.loc,
                             ),
@@ -16358,7 +16358,7 @@ fn NewParser_(
                         const enclosing_namespace_arg_ref = p.enclosing_namespace_arg_ref orelse unreachable;
                         stmts.ensureUnusedCapacity(3) catch unreachable;
                         stmts.appendAssumeCapacity(stmt.*);
-                        stmts.appendAssumeCapacity(Expr.assignStmt(p.newExpr(E.Dot{
+                        stmts.appendAssumeCapacity(Stmt.assign(p.newExpr(E.Dot{
                             .target = p.newExpr(E.Identifier{ .ref = enclosing_namespace_arg_ref }, stmt.loc),
                             .name = p.loadNameFromRef(data.func.name.?.ref.?),
                             .name_loc = data.func.name.?.loc,
@@ -16419,7 +16419,7 @@ fn NewParser_(
 
                     // Handle exporting this class from a namespace
                     if (was_export_inside_namespace) {
-                        stmts.appendAssumeCapacity(Expr.assignStmt(p.newExpr(E.Dot{
+                        stmts.appendAssumeCapacity(Stmt.assign(p.newExpr(E.Dot{
                             .target = p.newExpr(E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? }, stmt.loc),
                             .name = p.symbols.items[data.class.class_name.?.ref.?.innerIndex()].original_name,
                             .name_loc = data.class.class_name.?.loc,
@@ -17157,9 +17157,9 @@ fn NewParser_(
 
                             // remove fields with decorators from class body. Move static members outside of class.
                             if (prop.flags.contains(.is_static)) {
-                                static_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                                static_members.append(Stmt.assign(target, initializer, p.allocator)) catch unreachable;
                             } else {
-                                instance_members.append(Expr.assignStmt(target, initializer, p.allocator)) catch unreachable;
+                                instance_members.append(Stmt.assign(target, initializer, p.allocator)) catch unreachable;
                             }
                             continue;
                         }
@@ -17229,7 +17229,7 @@ fn NewParser_(
                         args[0] = p.newExpr(E.Array{ .items = class.ts_decorators }, stmt.loc);
                         args[1] = p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
 
-                        stmts.appendAssumeCapacity(Expr.assignStmt(
+                        stmts.appendAssumeCapacity(Stmt.assign(
                             p.newExpr(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
                             p.callRuntime(stmt.loc, "__decorateClass", args),
                             p.allocator,
@@ -17727,7 +17727,7 @@ fn NewParser_(
                                             const name = p.symbols.items[id.ref.innerIndex()].original_name;
                                             const ident = p.newExpr(E.Identifier{ .ref = id.ref }, arg.binding.loc);
 
-                                            stmts.insert(if (super_index) |k| j + k + 1 else j, Expr.assignStmt(
+                                            stmts.insert(if (super_index) |k| j + k + 1 else j, Stmt.assign(
                                                 p.newExpr(E.Dot{
                                                     .target = p.newExpr(E.This{}, arg.binding.loc),
                                                     .name = name,
@@ -18707,7 +18707,7 @@ fn NewParser_(
                         .value = decl_value,
                     };
 
-                    update_function_stmts[named_export_i] = Expr.assignStmt(
+                    update_function_stmts[named_export_i] = Stmt.assign(
                         p.newExpr(
                             E.Identifier{ .ref = name_ref },
                             logger.Loc.Empty,

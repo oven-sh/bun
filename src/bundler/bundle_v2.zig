@@ -3774,9 +3774,502 @@ const LinkerContext = struct {
         }
 
         // Generate the exports for the entry point, if there are any
-        var j = bun.Joiner{
-            .use_pool = false,
-            .node_allocator = allocator,
+        const entry_point_tail = brk: {
+            if (chunk.isEntryPoint()) {
+                break :brk c.generateEntryPointTailJS(
+                    c,
+                    toCommonJSRef,
+                    toESMRef,
+                    chunk.entry_point.source_index,
+                    allocator,
+                    arena.allocator(),
+                    r,
+                );
+            }
+
+            break :brk CompileResult.empty;
+        };
+
+        var j = bun.Joiner{ .use_pool = false, .node_allocator = allocator, .watcher = .{
+            .input = chunk.unique_key,
+        } };
+        var line_offset: bun.sourcemap.LineColumnOffset.Optional = .{ .null = {} };
+
+        // Concatenate the generated JavaScript chunks together
+
+        var newline_before_comment = false;
+        var is_executable = false;
+
+        // Start with the hashbang if there is one. This must be done before the
+        // banner because it only works if it's literally the first character.
+        if (chunk.isEntryPoint()) {
+            if (c.graph.ast.items(.hashbang)[chunk.entry_point.source_index]) |hashbang| {
+                std.debug.assert(hashbang.len > 0);
+                j.push(hashbang);
+                j.push("\n");
+                line_offset.advance(hashbang);
+                newline_before_comment = true;
+                is_executable = true;
+            }
+        }
+
+        // TODO: banner
+
+        // TODO: directive
+
+        // TODO: IIFE wrap
+
+        if (cross_chunk_prefix.len > 0) {
+            newline_before_comment = true;
+            line_offset.advance(cross_chunk_prefix);
+            j.push(cross_chunk_prefix);
+        }
+
+        // Concatenate the generated JavaScript chunks together
+
+        var prev_filename_comment: Index.Int = 0;
+
+        const sources: []const Logger.Source = c.graph.files.items(.source);
+        for (@as([]CompileResult, compile_results.items)) |compile_result| {
+            const source_index = compile_result.sourceIndex();
+            const is_runtime = source_index == Index.runtime.value;
+
+            // TODO: extracated legal comments
+
+            // Add a comment with the file path before the file contents
+            if (c.options.mode == .bundle and !c.options.minify_whitespace and source_index != prev_filename_comment and compile_result.code().len > 0) {
+                prev_filename_comment = source_index;
+                if (newline_before_comment) {
+                    j.push("\n");
+                    line_offset.advance("\n");
+                }
+
+                // Make sure newlines in the path can't cause a syntax error. This does
+                // not minimize allocations because it's expected that this case never
+                // comes up in practice.
+                const CommentType = enum {
+                    multiline,
+                    single,
+                };
+
+                const pretty = sources[source_index].path.pretty;
+
+                // TODO: quote this. This is really janky.
+                const comment_type = if (strings.indexOfNewlineOrNonASCII(pretty) != null)
+                    CommentType.multiline
+                else
+                    CommentType.single;
+
+                switch (comment_type) {
+                    .multiline => {
+                        j.push("/* ");
+                        line_offset.advance("/* ");
+                    },
+                    .single => {
+                        j.push("// ");
+                        line_offset.advance("// ");
+                    },
+                }
+
+                j.push(pretty);
+                line_offset.advance(pretty);
+
+                switch (comment_type) {
+                    .multiline => {
+                        j.push(" */\n");
+                        line_offset.advance(" */");
+                    },
+                    .single => {
+                        j.push("\n");
+                        line_offset.advance("\n");
+                    },
+                }
+                prev_filename_comment = source_index;
+            }
+
+            if (is_runtime) {
+                line_offset.advance(compile_result.code());
+                j.append(compile_result.code(), 0, allocator);
+            } else {
+                line_offset.advance(compile_result.code());
+                j.append(compile_result.code(), 0, allocator);
+
+                // TODO: sourcemap
+            }
+
+            // TODO: metafile
+            newline_before_comment = compile_result.code().len > 0;
+        }
+
+        if (entry_point_tail.code().len > 0) {
+            // Stick the entry point tail at the end of the file. Deliberately don't
+            // include any source mapping information for this because it's automatically
+            // generated and doesn't correspond to a location in the input file.
+            j.push(entry_point_tail.code());
+        }
+
+        // Put the cross-chunk suffix inside the IIFE
+        if (cross_chunk_suffix.len > 0) {
+            if (newline_before_comment) {
+                j.push("\n");
+                line_offset.advance("\n");
+            }
+
+            j.push(cross_chunk_suffix);
+        }
+
+        if (c.options.output_format == .iife) {
+            const without_newline = "})();";
+
+            const with_newline = if (newline_before_comment)
+                without_newline ++ "\n"
+            else
+                without_newline;
+
+            j.push(with_newline);
+        }
+
+        j.ensureNewlineAtEnd();
+        // TODO: maybeAppendLegalComments
+
+        // TODO: footer
+
+    }
+
+    pub fn generateEntryPointTailJS(
+        c: *LinkerContext,
+        toCommonJSRef: Ref,
+        toESMRef: Ref,
+        source_index: Index.Int,
+        allocator: std.mem.Allocator,
+        temp_allocator: std.mem.Allocator,
+        r: renamer.Renamer,
+    ) CompileResult {
+        const flags: JSMeta.Flags = c.graph.meta.items(.flags)[source_index];
+        var stmts = std.ArrayList(Stmt).init(temp_allocator);
+        defer stmts.deinit();
+        const ast: js_ast.Ast = c.graph.ast.get(source_index);
+
+        switch (c.options.output_format) {
+            // TODO:
+            .preserve => {},
+
+            .esm => {
+                switch (flags.wrap) {
+                    .cjs => {
+                        stmts.append(
+                            Stmt.alloc(
+                                // "export default require_foo();"
+                                S.ExportDefault,
+                                .{
+                                    .value = Stmt.alloc(
+                                        S.SExpr,
+                                        .{
+                                            .value = Expr.init(
+                                                E.Call,
+                                                E.Call{
+                                                    .target = Expr.initIdentifier(
+                                                        ast.wrapper_ref.?,
+                                                        Logger.Loc.Empty,
+                                                    ),
+                                                },
+                                                Logger.Loc.Empty,
+                                            ),
+                                        },
+                                    ),
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    },
+                    else => {
+                        if (flags.wrap == .esm) {
+                            if (flags.is_async_or_has_async_dependency) {
+                                // "await init_foo();"
+                                stmts.append(
+                                    Stmt.alloc(
+                                        S.SExpr,
+                                        .{
+                                            .value = Expr.init(
+                                                E.Await,
+                                                E.Await{
+                                                    .value = Expr.init(
+                                                        E.Call,
+                                                        E.Call{
+                                                            .target = Expr.initIdentifier(
+                                                                ast.wrapper_ref.?,
+                                                                Logger.Loc.Empty,
+                                                            ),
+                                                        },
+                                                        Logger.Loc.Empty,
+                                                    ),
+                                                },
+                                                Logger.Loc.Empty,
+                                            ),
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                ) catch unreachable;
+                            } else {
+                                // "init_foo();"
+                                stmts.append(
+                                    Stmt.alloc(
+                                        S.SExpr,
+                                        .{
+                                            .value = Expr.init(
+                                                E.Call,
+                                                E.Call{
+                                                    .target = Expr.initIdentifier(
+                                                        ast.wrapper_ref.?,
+                                                        Logger.Loc.Empty,
+                                                    ),
+                                                },
+                                                Logger.Loc.Empty,
+                                            ),
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                ) catch unreachable;
+                            }
+                        }
+
+                        const sorted_and_filtered_export_aliases = c.graph.meta.items(.sorted_and_filtered_export_aliases)[source_index];
+
+                        if (sorted_and_filtered_export_aliases.len > 0) {
+                            const resolved_exports: ResolvedExports = c.graph.meta.items(.resolved_exports)[source_index];
+                            const imports_to_bind: RefImportData = c.graph.meta.items(.imports_to_bind)[source_index];
+
+                            // If the output format is ES6 modules and we're an entry point, generate an
+                            // ES6 export statement containing all exports. Except don't do that if this
+                            // entry point is a CommonJS-style module, since that would generate an ES6
+                            // export statement that's not top-level. Instead, we will export the CommonJS
+                            // exports as a default export later on.
+                            var items = std.ArrayList(js_ast.ClauseItem).init(temp_allocator);
+                            const cjs_export_copies = c.graph.meta.items(.cjs_export_copies)[source_index];
+
+                            for (sorted_and_filtered_export_aliases, cjs_export_copies) |alias, temp_ref| {
+                                var resolved_export = resolved_exports.get(alias).?;
+
+                                // If this is an export of an import, reference the symbol that the import
+                                // was eventually resolved to. We need to do this because imports have
+                                // already been resolved by this point, so we can't generate a new import
+                                // and have that be resolved later.
+                                if (imports_to_bind.get(resolved_export.data.import_ref)) |import_data| {
+                                    resolved_export.data.import_ref = import_data.import_ref;
+                                    resolved_export.data.source_index = import_data.data.source_index;
+                                }
+
+                                // Exports of imports need EImportIdentifier in case they need to be re-
+                                // written to a property access later on
+
+                                if (c.graph.symbols.get(resolved_export.data.import_ref).?.namespace_alias != null) {
+                                    // Create both a local variable and an export clause for that variable.
+                                    // The local variable is initialized with the initial value of the
+                                    // export. This isn't fully correct because it's a "dead" binding and
+                                    // doesn't update with the "live" value as it changes. But ES6 modules
+                                    // don't have any syntax for bare named getter functions so this is the
+                                    // best we can do.
+                                    //
+                                    // These input files:
+                                    //
+                                    //   // entry_point.js
+                                    //   export {foo} from './cjs-format.js'
+                                    //
+                                    //   // cjs-format.js
+                                    //   Object.defineProperty(exports, 'foo', {
+                                    //     enumerable: true,
+                                    //     get: () => Math.random(),
+                                    //   })
+                                    //
+                                    // Become this output file:
+                                    //
+                                    //   // cjs-format.js
+                                    //   var require_cjs_format = __commonJS((exports) => {
+                                    //     Object.defineProperty(exports, "foo", {
+                                    //       enumerable: true,
+                                    //       get: () => Math.random()
+                                    //     });
+                                    //   });
+                                    //
+                                    //   // entry_point.js
+                                    //   var cjs_format = __toESM(require_cjs_format());
+                                    //   var export_foo = cjs_format.foo;
+                                    //   export {
+                                    //     export_foo as foo
+                                    //   };
+                                    //
+                                    stmts.append(
+                                        Stmt.alloc(
+                                            S.Local,
+                                            .{
+                                                .decls = bun.fromSlice(
+                                                    []js_ast.G.Decl,
+                                                    temp_allocator,
+                                                    &.{
+                                                        .{
+                                                            .binding = Binding.alloc(
+                                                                temp_allocator,
+                                                                B.Identifier{
+                                                                    .ref = temp_ref,
+                                                                },
+                                                            ),
+                                                        },
+                                                    },
+                                                ) catch unreachable,
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    ) catch unreachable;
+
+                                    items.append(
+                                        .{
+                                            .name = js_ast.LocRef{
+                                                .ref = temp_ref,
+                                            },
+                                            .alias = alias,
+                                        },
+                                    ) catch unreachable;
+                                } else {
+                                    // Local identifiers can be exported using an export clause. This is done
+                                    // this way instead of leaving the "export" keyword on the local declaration
+                                    // itself both because it lets the local identifier be minified and because
+                                    // it works transparently for re-exports across files.
+                                    //
+                                    // These input files:
+                                    //
+                                    //   // entry_point.js
+                                    //   export * from './esm-format.js'
+                                    //
+                                    //   // esm-format.js
+                                    //   export let foo = 123
+                                    //
+                                    // Become this output file:
+                                    //
+                                    //   // esm-format.js
+                                    //   let foo = 123;
+                                    //
+                                    //   // entry_point.js
+                                    //   export {
+                                    //     foo
+                                    //   };
+                                    //
+                                    items.append(.{
+                                        .name = js_ast.LocRef{
+                                            .ref = resolved_export.data.import_ref,
+                                        },
+                                        .alias = alias,
+                                    }) catch unreachable;
+                                }
+                            }
+
+                            stmts.append(
+                                Stmt.alloc(
+                                    S.ExportClause,
+                                    .{
+                                        .items = items.items,
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                            ) catch unreachable;
+                        }
+                    },
+                }
+            },
+
+            // TODO: iife
+            .iife => {},
+
+            .cjs => {
+                switch (flags.wrap) {
+                    .cjs => {
+                        // "module.exports = require_foo();"
+                        stmts.append(
+                            Stmt.assign(
+                                Expr.init(E.Dot, .{
+                                    .target = .{
+                                        .target = Expr.initIdentifier(c.unbound_module_ref, Logger.Loc.Empty),
+                                        .name = "exports",
+                                    },
+                                }, Logger.Loc.Empty),
+                                Expr.init(
+                                    E.Call,
+                                    .{
+                                        .target = Expr.initIdentifier(ast.wrapper_ref.?, Logger.Loc.Empty),
+                                    },
+                                    Logger.Loc.Empty,
+                                ),
+                                temp_allocator,
+                            ),
+                        ) catch unreachable;
+                    },
+                    .esm => {
+                        // "init_foo();"
+                        stmts.append(
+                            Stmt.alloc(
+                                S.Expr,
+                                .{
+                                    .value = Expr.init(
+                                        E.Call,
+                                        .{
+                                            .target = Expr.initIdentifier(ast.wrapper_ref.?, Logger.Loc.Empty),
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                    },
+                    else => {},
+                }
+
+                // TODO:
+                // If we are generating CommonJS for node, encode the known export names in
+                // a form that node can understand them. This relies on the specific behavior
+                // of this parser, which the node project uses to detect named exports in
+                // CommonJS files: https://github.com/guybedford/cjs-module-lexer. Think of
+                // this code as an annotation for that parser.
+            },
+        }
+
+        if (stmts.items.len == 0) {
+            return .{
+                .javascript = .{
+                    .source_index = source_index,
+                    .code = "",
+                },
+            };
+        }
+
+        _ = toCommonJSRef;
+        const print_options = js_printer.Options{
+            // TODO: IIFE
+            .indent = 0,
+
+            .allocator = allocator,
+            .to_module_ref = toESMRef,
+            // .require_ref = toCommonJSRef,
+            .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
+
+            .minify_whitespace = c.options.minify_whitespace,
+        };
+
+        return .{
+            .javascript = .{
+                .result = js_printer.print(
+                    allocator,
+                    c.resolver.opts.platform,
+                    print_options,
+                    ast.import_records.slice(),
+                    &[_]js_ast.Part{
+                        .{
+                            .stmts = stmts.items,
+                        },
+                    },
+                    r,
+                ),
+                .source_index = source_index,
+            },
         };
     }
 
@@ -4586,7 +5079,7 @@ const LinkerContext = struct {
                         E.Arrow{
                             .args = args.items,
                             .body = .{
-                                .block = Stmt.init(
+                                .block = Stmt.alloc(
                                     S.Block,
                                     .{
                                         .stmts = stmts.all_stmts.items,
@@ -4628,7 +5121,7 @@ const LinkerContext = struct {
                         };
 
                         stmts.outside_wrapper_prefix.append(
-                            Stmt.init(
+                            Stmt.alloc(
                                 S.Local,
                                 S.Local{
                                     .decls = decls,
@@ -4703,7 +5196,7 @@ const LinkerContext = struct {
                                     if (value.isEmpty()) {
                                         continue;
                                     }
-                                    stmt = Stmt.init(
+                                    stmt = Stmt.alloc(
                                         S.Expr,
                                         S.Expr{
                                             .expr = value,
@@ -4732,7 +5225,7 @@ const LinkerContext = struct {
                             .args = &.{},
                             .is_async = is_async,
                             .body = .{
-                                .block = Stmt.init(
+                                .block = Stmt.alloc(
                                     S.Block,
                                     .{
                                         .stmts = stmts.all_stmts.items,
@@ -4774,7 +5267,7 @@ const LinkerContext = struct {
                         };
 
                         stmts.outside_wrapper_prefix.append(
-                            Stmt.init(
+                            Stmt.alloc(
                                 S.Local,
                                 S.Local{
                                     .decls = decls,
@@ -5984,7 +6477,7 @@ pub const Chunk = struct {
         /// If the chunk doesn't have any references to other chunks, then
         /// "joiner" contains the contents of the chunk. This is more efficient
         /// because it avoids doing a join operation twice.
-        joiner: *bun.Joiner,
+        joiner: bun.Joiner,
     };
 
     pub const OutputPiece = struct {
@@ -6107,6 +6600,34 @@ pub const CrossChunkImport = struct {
 const CompileResult = union(enum) {
     javascript: struct {
         source_index: Index.Int,
-        reslt: js_printer.PrintResult,
+        result: js_printer.PrintResult,
     },
+
+    pub const empty = CompileResult{
+        .javascript = .{
+            .source_index = 0,
+            .result = js_printer.PrintResult{
+                .result = .{
+                    .code = "",
+                },
+            },
+        },
+    };
+
+    pub fn code(this: *const CompileResult) []const u8 {
+        return switch (this.*) {
+            .javascript => |r| switch (r.result) {
+                .code => |c| c,
+                else => "",
+            },
+            else => "",
+        };
+    }
+
+    pub fn sourceIndex(this: *const CompileResult) Index.Int {
+        return switch (this.*) {
+            .javascript => |r| r.source_index,
+            else => 0,
+        };
+    }
 };

@@ -2034,6 +2034,16 @@ pub const Stmt = struct {
 
     pub const Batcher = bun.Batcher(Stmt);
 
+    pub fn assign(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
+        return Stmt.alloc(
+            S.SExpr,
+            S.SExpr{
+                .value = Expr.assign(a, b, allocator),
+            },
+            a.loc,
+        );
+    }
+
     const Serializable = struct {
         type: Tag,
         object: string,
@@ -3609,16 +3619,6 @@ pub const Expr = struct {
         }
 
         return null;
-    }
-
-    pub fn assignStmt(a: Expr, b: Expr, allocator: std.mem.Allocator) Stmt {
-        return Stmt.alloc(
-            S.SExpr,
-            S.SExpr{
-                .value = Expr.assign(a, b, allocator),
-            },
-            a.loc,
-        );
     }
 
     pub fn isOptionalChain(self: *const @This()) bool {

@@ -234,7 +234,7 @@ export class Server extends EventEmitter {
       onListen = port;
     } else if (typeof port === "object") {
       port?.signal?.addEventListener("abort", ()=> {
-        this.#server?.stop();
+        this.close();
       });
 
       host = port?.host;

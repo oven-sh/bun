@@ -34,7 +34,7 @@ Bun provides the following simplified API for implementing HTTP servers. Refer t
 
 ```ts#server.ts
 globalThis.count = globalThis.count ?? 0;
-globalThis.reloadCount++;
+globalThis.count++;
 
 export default {
   fetch(req: Request) {

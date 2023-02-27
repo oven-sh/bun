@@ -43,8 +43,6 @@ const color_map = std.ComptimeStringMap([]const u8, .{
     &.{ "yellow", "33m" },
 });
 
-var compiler_rt_path: []const u8 = "";
-var compiler_rt_path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
 fn addInternalPackages(b: *Build, step: *CompileStep, _: std.mem.Allocator, _: []const u8, target: anytype) !void {
     var bun = b.createModule(.{
         .source_file = FileSource.relative("src/bun_redirect.zig"),
@@ -170,11 +168,7 @@ pub fn build(b: *Build) !void {
 
     if (std.mem.eql(u8, os_tagname, "macos")) {
         os_tagname = "darwin";
-        if (arch.isAARCH64()) {
-            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
-        } else if (arch.isX86()) {
-            target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 10, .minor = 14, .patch = 0 } };
-        }
+        target.os_version_min = std.zig.CrossTarget.OsVersion{ .semver = .{ .major = 11, .minor = 0, .patch = 0 } };
     } else if (target.isLinux()) {
         target.setGnuLibCVersion(2, 27, 0);
     }
@@ -319,6 +313,9 @@ pub fn build(b: *Build) !void {
         obj.strip = false;
         obj.bundle_compiler_rt = false;
         obj.omit_frame_pointer = optimize != .Debug;
+
+        // Disable stack probing on x86 so we don't need to include compiler_rt
+        if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
         if (b.option(bool, "for-editor", "Do not emit bin, just check for errors") orelse false) {
             obj.emit_bin = .no_emit;
@@ -599,6 +596,10 @@ pub fn configureObjectStep(b: *std.build.Builder, obj: *CompileStep, comptime Ta
 
     if (target.getOsTag() != .freestanding) obj.linkLibC();
     if (target.getOsTag() != .freestanding) obj.bundle_compiler_rt = false;
+
+    // Disable stack probing on x86 so we don't need to include compiler_rt
+    // Needs to be disabled here too so headers object will build without the `__zig_probe_stack` symbol
+    if (target.getCpuArch().isX86()) obj.disable_stack_probing = true;
 
     if (target.getOsTag() == .linux) {
         // obj.want_lto = tar;

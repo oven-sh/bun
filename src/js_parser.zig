@@ -289,9 +289,9 @@ const JSXTag = struct {
             }
 
             var _name = try p.allocator.alloc(u8, name.len + 1 + member.len);
-            std.mem.copy(u8, _name, name);
+            bun.copy(u8, _name, name);
             _name[name.len] = '.';
-            std.mem.copy(u8, _name[name.len + 1 .. _name.len], member);
+            bun.copy(u8, _name[name.len + 1 .. _name.len], member);
             name = _name;
             tag_range.len = member_range.loc.start + member_range.len - tag_range.loc.start;
             tag = p.newExpr(E.Dot{ .target = tag, .name = member, .name_loc = member_range.loc }, loc);
@@ -3313,19 +3313,19 @@ pub const Parser = struct {
             var remaining_parts = _parts;
             if (before_len > 0) {
                 const parts_to_copy = before.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (parts_len > 0) {
                 const parts_to_copy = parts.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
                 remaining_parts = remaining_parts[parts_to_copy.len..];
             }
 
             if (after_len > 0) {
                 const parts_to_copy = after.items;
-                std.mem.copy(js_ast.Part, remaining_parts, parts_to_copy);
+                bun.copy(js_ast.Part, remaining_parts, parts_to_copy);
             }
 
             parts_slice = _parts;
@@ -4088,7 +4088,7 @@ fn NewParser_(
 
                         for (parts_) |part| {
                             if (part.tag == .none) {
-                                std.mem.copy(Stmt, stmts_remain, part.stmts);
+                                bun.copy(Stmt, stmts_remain, part.stmts);
                                 stmts_remain = stmts_remain[part.stmts.len..];
                             }
                         }
@@ -4582,12 +4582,8 @@ fn NewParser_(
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = try allocator.alloc(js_ast.DeclaredSymbol, imports.len);
-            std.mem.copy(u8, namespace_identifier[0..suffix.len], suffix);
-            std.mem.copy(
-                u8,
-                namespace_identifier[suffix.len..namespace_identifier.len],
-                import_path_identifier[0..import_path_identifier.len],
-            );
+            bun.copy(u8, namespace_identifier, suffix);
+            bun.copy(u8, namespace_identifier[suffix.len..], import_path_identifier);
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
             try p.module_scope.generated.append(allocator, namespace_ref);
@@ -12739,7 +12735,7 @@ fn NewParser_(
                         const end_tag = try JSXTag.parse(P, p);
 
                         if (!strings.eql(end_tag.name, tag.name)) {
-                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag </{s}> to match opening tag <{s}>", .{
+                            try p.log.addRangeErrorFmt(p.source, end_tag.range, p.allocator, "Expected closing tag \\</{s}> to match opening tag \\<{s}>", .{
                                 end_tag.name,
                                 tag.name,
                             });
@@ -13333,7 +13329,7 @@ fn NewParser_(
                                     p.source,
                                     tag.loc,
                                     p.allocator,
-                                    "<{s} /> is a void element and must not have \"children\"",
+                                    "\\<{s} /> is a void element and must not have \"children\"",
                                     .{tag.data.e_string.slice(p.allocator)},
                                 ) catch {};
                             }
@@ -13352,7 +13348,7 @@ fn NewParser_(
                                     if (e_.properties.len > 0) {
                                         if (e_.key) |key| {
                                             var props = p.allocator.alloc(G.Property, e_.properties.len + 1) catch unreachable;
-                                            std.mem.copy(G.Property, props, e_.properties.slice());
+                                            bun.copy(G.Property, props, e_.properties.slice());
                                             props[props.len - 1] = G.Property{ .key = Expr{ .loc = key.loc, .data = keyExprData }, .value = key };
                                             args[1] = p.newExpr(E.Object{ .properties = G.Property.List.init(props) }, expr.loc);
                                         } else {
@@ -17565,7 +17561,7 @@ fn NewParser_(
                 // are not allowed to assign to this symbol (it throws a TypeError).
                 const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
                 var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
-                std.mem.copy(u8, identifier[1..identifier.len], name);
+                bun.copy(u8, identifier[1..identifier.len], name);
                 identifier[0] = '_';
                 shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
                 p.recordDeclaredSymbol(shadow_ref) catch unreachable;
@@ -17728,7 +17724,7 @@ fn NewParser_(
                                             )) catch unreachable;
                                             // O(N)
                                             class_body.items.len += 1;
-                                            std.mem.copyBackwards(G.Property, class_body.items[j + 1 .. class_body.items.len], class_body.items[j .. class_body.items.len - 1]);
+                                            bun.copy(G.Property, class_body.items[j + 1 ..], class_body.items[j .. class_body.items.len - 1]);
                                             class_body.items[j] = G.Property{ .key = ident };
                                             j += 1;
                                         },
@@ -18649,8 +18645,8 @@ fn NewParser_(
 
                     var export_name_string = export_name_string_remainder[0 .. named_export.key_ptr.len + "$$hmr_".len];
                     export_name_string_remainder = export_name_string_remainder[export_name_string.len..];
-                    std.mem.copy(u8, export_name_string, "$$hmr_");
-                    std.mem.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
+                    bun.copy(u8, export_name_string, "$$hmr_");
+                    bun.copy(u8, export_name_string["$$hmr_".len..], named_export.key_ptr.*);
 
                     var name_ref = try p.declareSymbol(.other, logger.Loc.Empty, export_name_string);
 
@@ -18892,7 +18888,7 @@ fn NewParser_(
                 //                 const named_import = named_import_entry.value;
                 //                 var buf = try p.allocator.alloc(u32, named_import.local_parts_with_uses.len + 1);
                 //                 if (named_import.local_parts_with_uses.len > 0) {
-                //                     std.mem.copy(u32, buf, named_import.local_parts_with_uses);
+                //                     bun.copy(u32, buf, named_import.local_parts_with_uses);
                 //                 }
                 //                 buf[buf.len - 1] = @intCast(u32, i);
                 //                 named_import_entry.value.local_parts_with_uses = buf;

@@ -1051,22 +1051,33 @@ const os = std.os;
 // lowercase hash header names so that we can be sure
 pub fn hashHeaderName(name: string) u64 {
     var hasher = std.hash.Wyhash.init(0);
-    var remain: string = name;
-    var buf: [32]u8 = undefined;
-    var buf_slice: []u8 = buf[0..32];
+    var remain = name;
+    var buf: [hasher.buf.len]u8 = undefined;
 
     while (remain.len > 0) {
         const end = @min(hasher.buf.len, remain.len);
 
-        hasher.update(strings.copyLowercase(remain[0..end], buf_slice));
+        hasher.update(strings.copyLowercaseIfNeeded(remain[0..end], &buf));
         remain = remain[end..];
     }
 
     return hasher.final();
 }
 
-const host_header_hash = hashHeaderName("Host");
-const connection_header_hash = hashHeaderName("Connection");
+pub fn hashHeaderConst(comptime name: string) u64 {
+    var hasher = std.hash.Wyhash.init(0);
+    var remain = name;
+    var buf: [hasher.buf.len]u8 = undefined;
+
+    while (remain.len > 0) {
+        const end = @min(hasher.buf.len, remain.len);
+
+        hasher.update(std.ascii.lowerString(&buf, remain[0..end]));
+        remain = remain[end..];
+    }
+
+    return hasher.final();
+}
 
 pub const Encoding = enum {
     identity,
@@ -1084,16 +1095,11 @@ pub const Encoding = enum {
     }
 };
 
-const content_encoding_hash = hashHeaderName("Content-Encoding");
-const transfer_encoding_header = hashHeaderName("Transfer-Encoding");
-
 const host_header_name = "Host";
 const content_length_header_name = "Content-Length";
-const content_length_header_hash = hashHeaderName("Content-Length");
 const connection_header = picohttp.Header{ .name = "Connection", .value = "keep-alive" };
 const connection_closing_header = picohttp.Header{ .name = "Connection", .value = "close" };
 const accept_header = picohttp.Header{ .name = "Accept", .value = "*/*" };
-const accept_header_hash = hashHeaderName("Accept");
 
 const accept_encoding_no_compression = "identity";
 const accept_encoding_compression = "gzip, deflate";
@@ -1105,11 +1111,7 @@ const accept_encoding_header = if (FeatureFlags.disable_compression_in_http_clie
 else
     accept_encoding_header_compression;
 
-const accept_encoding_header_hash = hashHeaderName("Accept-Encoding");
-
 const user_agent_header = picohttp.Header{ .name = "User-Agent", .value = Global.user_agent };
-const user_agent_header_hash = hashHeaderName("User-Agent");
-const location_header_hash = hashHeaderName("Location");
 
 pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
     return this.header_buf[ptr.offset..][0..ptr.length];
@@ -1394,31 +1396,33 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
         // Skip host and connection header
         // we manage those
         switch (hash) {
-            connection_header_hash,
-            content_length_header_hash,
+            hashHeaderConst("Connection"),
+            hashHeaderConst("Content-Length"),
             => continue,
-            hashHeaderName("if-modified-since") => {
+            hashHeaderConst("if-modified-since") => {
                 if (this.force_last_modified and this.if_modified_since.len == 0) {
                     this.if_modified_since = this.headerStr(header_values[i]);
                 }
             },
-            host_header_hash => {
+            hashHeaderConst(host_header_name) => {
                 override_host_header = true;
             },
-            accept_header_hash => {
+            hashHeaderConst("Accept") => {
                 override_accept_header = true;
+            },
+            hashHeaderConst("User-Agent") => {
+                override_user_agent = true;
+            },
+            hashHeaderConst("Accept-Encoding") => {
+                override_accept_encoding = true;
             },
             else => {},
         }
 
-        override_user_agent = override_user_agent or hash == user_agent_header_hash;
-
-        override_accept_encoding = override_accept_encoding or hash == accept_encoding_header_hash;
-
-        request_headers_buf[header_count] = (picohttp.Header{
+        request_headers_buf[header_count] = .{
             .name = name,
             .value = this.headerStr(header_values[i]),
-        });
+        };
 
         // header_name_hashes[header_count] = hash;
 
@@ -1450,7 +1454,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (!override_host_header) {
-        request_headers_buf[header_count] = picohttp.Header{
+        request_headers_buf[header_count] = .{
             .name = host_header_name,
             .value = this.url.host,
         };
@@ -1463,7 +1467,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     }
 
     if (body_len > 0) {
-        request_headers_buf[header_count] = picohttp.Header{
+        request_headers_buf[header_count] = .{
             .name = content_length_header_name,
             .value = std.fmt.bufPrint(&this.request_content_len_buf, "{d}", .{body_len}) catch "0",
         };
@@ -2496,11 +2500,11 @@ pub fn handleResponseMetadata(
     var pretend_304 = false;
     for (response.headers, 0..) |header, header_i| {
         switch (hashHeaderName(header.name)) {
-            content_length_header_hash => {
+            hashHeaderConst("Content-Length") => {
                 const content_length = std.fmt.parseInt(@TypeOf(this.state.body_size), header.value, 10) catch 0;
                 this.state.body_size = content_length;
             },
-            content_encoding_hash => {
+            hashHeaderConst("Content-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
                     this.state.encoding = Encoding.gzip;
                     this.state.content_encoding_i = @truncate(u8, header_i);
@@ -2511,7 +2515,7 @@ pub fn handleResponseMetadata(
                     return error.UnsupportedContentEncoding;
                 }
             },
-            transfer_encoding_header => {
+            hashHeaderConst("Transfer-Encoding") => {
                 if (strings.eqlComptime(header.value, "gzip")) {
                     this.state.transfer_encoding = Encoding.gzip;
                 } else if (strings.eqlComptime(header.value, "deflate")) {
@@ -2524,17 +2528,17 @@ pub fn handleResponseMetadata(
                     return error.UnsupportedTransferEncoding;
                 }
             },
-            location_header_hash => {
+            hashHeaderConst("Location") => {
                 location = header.value;
             },
-            hashHeaderName("Connection") => {
+            hashHeaderConst("Connection") => {
                 if (response.status_code >= 200 and response.status_code <= 299) {
                     if (!strings.eqlComptime(header.value, "keep-alive")) {
                         this.state.allow_keepalive = false;
                     }
                 }
             },
-            hashHeaderName("Last-Modified") => {
+            hashHeaderConst("Last-Modified") => {
                 pretend_304 = this.force_last_modified and response.status_code > 199 and response.status_code < 300 and this.if_modified_since.len > 0 and strings.eql(this.if_modified_since, header.value);
             },
 
@@ -2585,15 +2589,15 @@ pub fn handleResponseMetadata(
                     if (is_protocol_relative) {
                         if (is_http) {
                             url_buf.data[0.."http".len].* = "http".*;
-                            std.mem.copy(u8, url_buf.data["http".len..], location);
+                            bun.copy(u8, url_buf.data["http".len..], location);
                             url_buf_len += "http".len;
                         } else {
                             url_buf.data[0.."https".len].* = "https".*;
-                            std.mem.copy(u8, url_buf.data["https".len..], location);
+                            bun.copy(u8, url_buf.data["https".len..], location);
                             url_buf_len += "https".len;
                         }
                     } else {
-                        std.mem.copy(u8, &url_buf.data, location);
+                        bun.copy(u8, &url_buf.data, location);
                     }
 
                     this.url = URL.parse(url_buf.data[0..url_buf_len]);
@@ -2612,11 +2616,11 @@ pub fn handleResponseMetadata(
 
                     if (strings.eqlComptime(protocol_name, "http")) {
                         url_buf.data[0.."http:".len].* = "http:".*;
-                        std.mem.copy(u8, url_buf.data["http:".len..], location);
+                        bun.copy(u8, url_buf.data["http:".len..], location);
                         url_buf_len += "http:".len;
                     } else {
                         url_buf.data[0.."https:".len].* = "https:".*;
-                        std.mem.copy(u8, url_buf.data["https:".len..], location);
+                        bun.copy(u8, url_buf.data["https:".len..], location);
                         url_buf_len += "https:".len;
                     }
 

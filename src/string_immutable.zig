@@ -269,8 +269,8 @@ pub const SplitIterator = struct {
 
 pub fn cat(allocator: std.mem.Allocator, first: string, second: string) !string {
     var out = try allocator.alloc(u8, first.len + second.len);
-    std.mem.copy(u8, out, first);
-    std.mem.copy(u8, out[first.len..], second);
+    bun.copy(u8, out, first);
+    bun.copy(u8, out[first.len..], second);
     return out;
 }
 
@@ -367,18 +367,16 @@ pub const StringOrTinyString = struct {
 };
 
 pub fn copyLowercase(in: string, out: []u8) string {
-    var in_slice: string = in;
-    var out_slice: []u8 = out[0..in.len];
+    var in_slice = in;
+    var out_slice = out;
 
-    begin: while (out_slice.len > 0) {
+    begin: while (true) {
         for (in_slice, 0..) |c, i| {
             switch (c) {
                 'A'...'Z' => {
-                    // @memcpy(out_slice.ptr, in_slice.ptr, i);
-                    std.mem.copy(u8, out_slice, in_slice);
+                    bun.copy(u8, out_slice, in_slice[0..i]);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
-                    if (end >= out_slice.len) break :begin;
                     in_slice = in_slice[end..];
                     out_slice = out_slice[end..];
                     continue :begin;
@@ -387,8 +385,7 @@ pub fn copyLowercase(in: string, out: []u8) string {
             }
         }
 
-        // @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
-        std.mem.copy(u8, out_slice, in_slice);
+        bun.copy(u8, out_slice, in_slice);
         break :begin;
     }
 
@@ -396,18 +393,17 @@ pub fn copyLowercase(in: string, out: []u8) string {
 }
 
 pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
-    var in_slice: string = in;
-    var out_slice: []u8 = out[0..in.len];
+    var in_slice = in;
+    var out_slice = out;
     var any = false;
 
-    begin: while (out_slice.len > 0) {
+    begin: while (true) {
         for (in_slice, 0..) |c, i| {
             switch (c) {
                 'A'...'Z' => {
-                    @memcpy(out_slice.ptr, in_slice.ptr, i);
+                    bun.copy(u8, out_slice, in_slice[0..i]);
                     out_slice[i] = std.ascii.toLower(c);
                     const end = i + 1;
-                    if (end >= out_slice.len) break :begin;
                     in_slice = in_slice[end..];
                     out_slice = out_slice[end..];
                     any = true;
@@ -417,19 +413,11 @@ pub fn copyLowercaseIfNeeded(in: string, out: []u8) string {
             }
         }
 
-        if (!any) {
-            return in;
-        }
-
-        @memcpy(out_slice.ptr, in_slice.ptr, in_slice.len);
+        if (any) bun.copy(u8, out_slice, in_slice);
         break :begin;
     }
 
-    if (!any) {
-        return in;
-    }
-
-    return out[0..in.len];
+    return if (any) out[0..in.len] else in;
 }
 
 test "indexOf" {
@@ -797,25 +785,31 @@ pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, 
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
 }
 
-pub fn eqlCaseInsensitiveASCII(a: string, comptime b: anytype, comptime check_len: bool) bool {
+pub fn eqlCaseInsensitiveASCIIIgnoreLength(
+    a: string,
+    b: string,
+) bool {
+    return eqlCaseInsensitiveASCII(a, b, false);
+}
+
+pub fn eqlCaseInsensitiveASCIIICheckLength(
+    a: string,
+    b: string,
+) bool {
+    return eqlCaseInsensitiveASCII(a, b, true);
+}
+
+pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) bool {
     if (comptime check_len) {
-        if (comptime b.len == 0) {
-            return a.len == 0;
-        }
+        if (a.len != b.len) return false;
 
-        switch (a.len) {
-            b.len => void{},
-            else => return false,
-        }
+        if (a.len == 0) return true;
     }
 
-    // pray to the auto vectorization gods
-    inline for (b, 0..) |c, i| {
-        const char = comptime std.ascii.toLower(c);
-        if (char != std.ascii.toLower(a[i])) return false;
-    }
+    std.debug.assert(b.len > 0);
+    std.debug.assert(a.len > 0);
 
-    return true;
+    return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
 
 pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
@@ -904,7 +898,7 @@ pub inline fn joinBuf(out: []u8, parts: anytype, comptime parts_len: usize) []u8
     comptime var i: usize = 0;
     inline while (i < parts_len) : (i += 1) {
         const part = parts[i];
-        std.mem.copy(u8, remain, part);
+        bun.copy(u8, remain, part);
         remain = remain[part.len..];
         count += part.len;
     }
@@ -2233,8 +2227,8 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             }
 
             var buf = allocator.alloc(u16, first_16.len + second_16.len) catch unreachable;
-            std.mem.copy(u16, buf, first_16);
-            std.mem.copy(u16, buf[first_16.len..], second_16);
+            bun.copy(u16, buf, first_16);
+            bun.copy(u16, buf[first_16.len..], second_16);
             return Escaped(u16){ .allocated = buf };
         },
 
@@ -4164,7 +4158,7 @@ pub fn cloneNormalizingSeparators(
 
     while (tokenized.next()) |token| {
         if (token.len == 0) continue;
-        std.mem.copy(u8, remain, token);
+        bun.copy(u8, remain, token);
         remain[token.len..][0] = std.fs.path.sep;
         remain = remain[token.len + 1 ..];
     }

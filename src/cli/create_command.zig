@@ -1251,7 +1251,7 @@ pub const CreateCommand = struct {
                         var entry_point_file_path_base = filesystem.absBuf(&entry_point_file_parts, &bun_path_buf);
 
                         for (file_extensions_to_try) |ext| {
-                            std.mem.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
+                            bun.copy(u8, bun_path_buf[entry_point_file_path_base.len..], ext);
                             entry_point_path = bun_path_buf[0 .. entry_point_file_path_base.len + ext.len];
                             std.fs.accessAbsolute(entry_point_path, .{}) catch continue;
                             found_file = true;
@@ -1303,7 +1303,7 @@ pub const CreateCommand = struct {
                         //     const head_i: usize = std.mem.indexOf(u8, outfile, "<head>") orelse break :inject_css;
                         //     if (std.mem.indexOf(u8, outfile, "/src/index.css") != null) break :inject_css;
 
-                        //     std.mem.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
+                        //     bun.copy(u8, bun_path_buf[destination.len + "/src/index".len ..], ".css");
                         //     var index_css_file_path = bun_path_buf[0 .. destination.len + "/src/index.css".len];
                         //     std.fs.accessAbsolute(index_css_file_path, .{}) catch break :inject_css;
                         //     var list = std.ArrayList(u8).fromOwnedSlice(ctx.allocator, outfile);
@@ -1761,9 +1761,9 @@ pub const Example = struct {
                                     }
                                 }
 
-                                std.mem.copy(u8, &home_dir_buf, entry.name);
+                                bun.copy(u8, &home_dir_buf, entry.name);
                                 home_dir_buf[entry.name.len] = std.fs.path.sep;
-                                std.mem.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
+                                bun.copy(u8, home_dir_buf[entry.name.len + 1 ..], "package.json");
                                 home_dir_buf[entry.name.len + 1 + "package.json".len] = 0;
 
                                 var path: [:0]u8 = home_dir_buf[0 .. entry.name.len + 1 + "package.json".len :0];

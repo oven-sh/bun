@@ -350,7 +350,7 @@ pub const EditorContext = struct {
         var basename_buf: [512]u8 = undefined;
         var basename = std.fs.path.basename(id);
         if (strings.endsWith(basename, ".bun") and basename.len < 499) {
-            std.mem.copy(u8, &basename_buf, basename);
+            bun.copy(u8, &basename_buf, basename);
             basename_buf[basename.len..][0..3].* = ".js".*;
             basename = basename_buf[0 .. basename.len + 3];
         }

@@ -188,9 +188,7 @@ When cloning a template, `bun create` will automatically remove the `"bun-create
 
 {% /table %}
 
-### How `bun create` works
-
-{% details summary="View details" %}
+{% details summary="How `bun create` works" %}
 
 When you run `bun create ${template} ${destination}`, here’s what happens:
 

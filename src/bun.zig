@@ -385,37 +385,24 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    std.debug.assert(dest.len >= src.len);
-    var input = std.mem.sliceAsBytes(src);
-    var output = std.mem.sliceAsBytes(dest);
-    var input_end = input.ptr + input.len;
-    const output_end = output.ptr + output.len;
+    if (comptime Environment.allow_assert) std.debug.assert(dest.len >= src.len);
+    if (@ptrToInt(src.ptr) == @ptrToInt(dest.ptr) or src.len == 0) return;
 
-    if (@ptrToInt(input.ptr) <= @ptrToInt(output.ptr) and @ptrToInt(output_end) <= @ptrToInt(input_end)) {
-        // // input is overlapping with output
-        if (input.len > strings.ascii_vector_size) {
-            const input_end_vectorized = input.ptr + input.len - (input.len % strings.ascii_vector_size);
-            while (input.ptr != input_end_vectorized) {
-                const input_vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
-                output[0..strings.ascii_vector_size].* = input_vec;
-                input = input[strings.ascii_vector_size..];
-                output = output[strings.ascii_vector_size..];
-            }
-        }
+    const input: []const u8 = std.mem.sliceAsBytes(src);
+    const output: []u8 = std.mem.sliceAsBytes(dest);
 
-        while (input.len >= @sizeOf(usize)) {
-            output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
-            input = input[@sizeOf(usize)..];
-            output = output[@sizeOf(usize)..];
-        }
+    std.debug.assert(input.len > 0);
+    std.debug.assert(output.len > 0);
 
-        while (input.ptr != input_end) {
-            output[0] = input[0];
-            input = input[1..];
-            output = output[1..];
-        }
-    } else {
+    const does_input_or_output_overlap = (@ptrToInt(input.ptr) < @ptrToInt(output.ptr) and
+        @ptrToInt(input.ptr) + input.len > @ptrToInt(output.ptr)) or
+        (@ptrToInt(output.ptr) < @ptrToInt(input.ptr) and
+        @ptrToInt(output.ptr) + output.len > @ptrToInt(input.ptr));
+
+    if (!does_input_or_output_overlap) {
         @memcpy(output.ptr, input.ptr, input.len);
+    } else {
+        C.memmove(output.ptr, input.ptr, input.len);
     }
 }
 
@@ -600,7 +587,7 @@ pub fn isHeapMemory(memory: anytype) bool {
 
 pub const Mimalloc = @import("./allocators/mimalloc.zig");
 
-pub fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
+pub inline fn isSliceInBuffer(slice: []const u8, buffer: []const u8) bool {
     return slice.len > 0 and @ptrToInt(buffer.ptr) <= @ptrToInt(slice.ptr) and ((@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer.ptr) + buffer.len));
 }
 

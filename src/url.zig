@@ -161,7 +161,7 @@ pub const URL = struct {
 
         var buf_i: usize = 0;
         for (path_parts[0..path_end]) |part| {
-            std.mem.copy(u8, buf[buf_i..], part);
+            bun.copy(u8, buf[buf_i..], part);
             buf_i += part.len;
         }
         return resolve_path.normalizeStringBuf(buf[0..buf_i], out, false, .loose, false);

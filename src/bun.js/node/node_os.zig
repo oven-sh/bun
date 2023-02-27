@@ -56,63 +56,58 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
     }
 
-    const CPU = struct {
-        model: JSC.ZigString = JSC.ZigString.init("unknown"),
-        speed: u64 = 0,
-        times: struct {
-            user: u64 = 0,
-            nice: u64 = 0,
-            sys: u64 = 0,
-            idle: u64 = 0,
-            irq: u64 = 0,
-        } = .{},
+    const CPUTimes = struct {
+        user: u64 = 0,
+        nice: u64 = 0,
+        sys: u64 = 0,
+        idle: u64 = 0,
+        irq: u64 = 0,
+
+        pub fn toValue(self: CPUTimes, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            const fields = comptime std.meta.fieldNames(CPUTimes);
+            const ret = JSC.JSValue.createEmptyObject(globalThis, fields.len);
+            inline for (fields) |fieldName| {
+                ret.put(globalThis, JSC.ZigString.static(fieldName),
+                                     JSC.JSValue.jsNumberFromUint64(@field(self, fieldName)));
+            }
+            return ret;
+        }
     };
 
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        var cpu_buffer: [8192]CPU = undefined;
-        const cpus_or_error = if (comptime Environment.isLinux)
-            cpusImplLinux(&cpu_buffer)
-        else
-            @as(anyerror![]CPU, cpu_buffer[0..0]); // unsupported platform -> empty array
+        return if (comptime Environment.isLinux)
+                   cpusImplLinux(globalThis) catch {
+                        const err = JSC.SystemError{
+                            .message = JSC.ZigString.init("Failed to get cpu information"),
+                            .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                        };
 
-        if (cpus_or_error) |list| {
-            // Convert the CPU list to a JS Array
-            const values = JSC.JSValue.createEmptyArray(globalThis, list.len);
-            for (list, 0..) |cpu, cpu_index| {
-                const obj = JSC.JSValue.createEmptyObject(globalThis, 3);
-                obj.put(globalThis, JSC.ZigString.static("model"), cpu.model.withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumberFromUint64(cpu.speed));
+                        globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                        return JSC.JSValue.jsUndefined();
+                   }
+               else if (comptime Environment.isMac)
+                   cpusImplDarwin(globalThis) catch {
+                        const err = JSC.SystemError{
+                            .message = JSC.ZigString.init("Failed to get cpu information"),
+                            .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                        };
 
-                const timesFields = comptime std.meta.fieldNames(@TypeOf(cpu.times));
-                const times = JSC.JSValue.createEmptyObject(globalThis, 5);
-                inline for (timesFields) |fieldName| {
-                    times.put(globalThis, JSC.ZigString.static(fieldName), JSC.JSValue.jsNumberFromUint64(@field(cpu.times, fieldName)));
-                }
-                obj.put(globalThis, JSC.ZigString.static("times"), times);
-                values.putIndex(globalThis, @intCast(u32, cpu_index), obj);
-            }
-            return values;
-        } else |zig_err| {
-            const msg = switch (zig_err) {
-                error.too_many_cpus => "Too many CPUs or malformed /proc/cpuinfo file",
-                error.eol => "Malformed /proc/stat file",
-                else => "An error occurred while fetching cpu information",
-            };
-            //TODO more suitable error type?
-            const err = JSC.SystemError{
-                .message = JSC.ZigString.init(msg),
-            };
-            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
-        }
+                        globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                        return JSC.JSValue.jsUndefined();
+                   }
+               else
+                   JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
-    fn cpusImplLinux(cpu_buffer: []CPU) ![]CPU {
+    fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
+        // Create the return array
+        const values = JSC.JSValue.createEmptyArray(globalThis, 0);
+        var num_cpus: u32 = 0;
+
         // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
-        var line_buffer: [1024 * 8]u8 = undefined;
-        var num_cpus: usize = 0;
+        var line_buffer: [1024*8]u8 = undefined;
 
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
@@ -124,32 +119,33 @@ pub const Os = struct {
 
             // Read each CPU line
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-                if (num_cpus >= cpu_buffer.len) return error.too_many_cpus;
 
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
                 var toks = std.mem.tokenize(u8, line, " \t");
                 const cpu_name = toks.next();
                 if (cpu_name == null or !std.mem.startsWith(u8, cpu_name.?, "cpu")) break; // done with CPUs
 
-                // Default initialize the CPU to ensure that we never return uninitialized fields
-                cpu_buffer[num_cpus] = CPU{};
-
                 //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
                 const scale = 10;
-                cpu_buffer[num_cpus].times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
-                cpu_buffer[num_cpus].times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
-                cpu_buffer[num_cpus].times.sys = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
-                cpu_buffer[num_cpus].times.idle = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+
+                var times = CPUTimes{};
+                times.user = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                times.nice = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                times.sys  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                times.idle = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
                 _ = try (toks.next() orelse error.eol); // skip iowait
-                cpu_buffer[num_cpus].times.irq = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+                times.irq  = scale * try std.fmt.parseInt(u64, toks.next() orelse return error.eol, 10);
+
+                // Actually create the JS object representing the CPU
+                const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
+                cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
+                values.putIndex(globalThis, num_cpus, cpu);
 
                 num_cpus += 1;
             }
         } else |_| {
-            return error.cannot_open_proc_stat;
+            return error.no_proc_stat;
         }
-
-        const slice = cpu_buffer[0..num_cpus];
 
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
@@ -158,26 +154,37 @@ pub const Os = struct {
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
-            var cpu_index: usize = 0;
+            var cpu_index: u32 = 0;
             while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
                 if (std.mem.startsWith(u8, line, key_processor)) {
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
-                    cpu_index = try std.fmt.parseInt(usize, digits, 10);
-                    if (cpu_index >= slice.len) return error.too_may_cpus;
+                    cpu_index = try std.fmt.parseInt(u32, digits, 10);
+                    if (cpu_index >= num_cpus) return error.too_may_cpus;
+
                 } else if (std.mem.startsWith(u8, line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
-                    slice[cpu_index].model = JSC.ZigString.init(model_name);
+                    const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                    cpu.put(globalThis, JSC.ZigString.static("model"),
+                                        JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
                 }
                 //TODO: special handling for ARM64 (no model name)?
             }
         } else |_| {
-            // Do nothing: CPU default initializer has set model name to "unknown"
+            // Initialize model name to "unknown"
+            var it = values.arrayIterator(globalThis);
+            while (it.next()) |cpu| {
+                cpu.put(globalThis, JSC.ZigString.static("model"),
+                                    JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+            }
         }
 
         // Read /sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq to get current frequency (optional)
-        for (slice, 0..) |*cpu, cpu_index| {
+        var cpu_index: u32 = 0;
+        while (cpu_index < num_cpus) : (cpu_index += 1) {
+            const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+
             var path_buf: [128]u8 = undefined;
             const path = try std.fmt.bufPrint(&path_buf, "/sys/devices/system/cpu/cpu{}/cpufreq/scaling_cur_freq", .{cpu_index});
             if (std.fs.openFileAbsolute(path, .{})) |file| {
@@ -185,13 +192,92 @@ pub const Os = struct {
 
                 const bytes_read = try file.readAll(&line_buffer);
                 const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
-                cpu.speed = try std.fmt.parseInt(u64, digits, 10) / 1000;
+                const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
+
+                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
             } else |_| {
-                // Do nothing: CPU default initializer has set speed to 0
+                // Initialize CPU speed to 0
+                cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(0));
             }
         }
 
-        return slice;
+        return values;
+    }
+
+    fn cpusImplDarwin(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
+        const local_bindings = @import("../../darwin_c.zig");
+        const c = std.c;
+
+        // Fetch the CPU info structure
+        var num_cpus: c.natural_t = 0;
+        var info: [*]local_bindings.processor_cpu_load_info = undefined;
+        var info_size: std.c.mach_msg_type_number_t = 0;
+        if (local_bindings.host_processor_info(
+                std.c.mach_host_self(),
+                local_bindings.PROCESSOR_CPU_LOAD_INFO,
+                &num_cpus, @ptrCast(*local_bindings.processor_info_array_t, &info),
+                &info_size) != .SUCCESS) {
+            return error.no_processor_info;
+        }
+        defer _ = std.c.vm_deallocate(std.c.mach_task_self(), @ptrToInt(info), info_size);
+
+        // Ensure we got the amount of data we expected to guard against buffer overruns
+        if (info_size != C.PROCESSOR_CPU_LOAD_INFO_COUNT * num_cpus) {
+            return error.broken_process_info;
+        }
+
+
+        // Get CPU model name
+        var model_name_buf: [512]u8 = undefined;
+        var len: usize = model_name_buf.len;
+        // Try brand_string first and if it fails try hw.model
+        if (!(std.c.sysctlbyname("machdep.cpu.brand_string", &model_name_buf, &len, null, 0) == 0 or
+              std.c.sysctlbyname("hw.model", &model_name_buf, &len, null, 0) == 0)) {
+            return error.no_processor_info;
+        }
+        //NOTE: sysctlbyname doesn't update len if it was large enough, so we
+        // still have to find the null terminator.  All cpus can share the same
+        // model name.
+        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toValueGC(globalThis);
+
+
+        // Get CPU speed
+        var speed: u64 = 0;
+        len = @sizeOf(@TypeOf(speed));
+        _ = std.c.sysctlbyname("hw.cpufrequency", &speed, &len, null, 0);
+        if (speed == 0) {
+            // Suggested by Node implementation:
+            // If sysctl hw.cputype == CPU_TYPE_ARM64, the correct value is unavailable
+            // from Apple, but we can hard-code it here to a plausible value.
+            speed = 2_400_000_000;
+        }
+
+
+        // Get the multiplier; this is the number of ms/tick
+        const unistd = @cImport({@cInclude("unistd.h");});
+        const ticks: i64 = unistd.sysconf(unistd._SC_CLK_TCK);
+        const multiplier = 1000 / @intCast(u64, ticks);
+
+        // Set up each CPU value in the return
+        const values = JSC.JSValue.createEmptyArray(globalThis, @intCast(u32, num_cpus));
+        var cpu_index: u32 = 0;
+        while (cpu_index < num_cpus) : (cpu_index += 1) {
+            const times = CPUTimes{
+                .user = info[cpu_index].cpu_ticks[0] * multiplier,
+                .nice = info[cpu_index].cpu_ticks[3] * multiplier,
+                .sys  = info[cpu_index].cpu_ticks[1] * multiplier,
+                .idle = info[cpu_index].cpu_ticks[2] * multiplier,
+                .irq  = 0,  // not available
+            };
+
+            const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
+            cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed / 1_000_000));
+            cpu.put(globalThis, JSC.ZigString.static("model"), model_name);
+            cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
+
+            values.putIndex(globalThis, cpu_index, cpu);
+        }
+        return values;
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

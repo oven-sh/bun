@@ -65,8 +65,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
         pub fn case(comptime str: []const u8) T {
             if (str.len < max_bytes) {
                 var bytes = std.mem.zeroes([max_bytes]u8);
-                const slice_bytes = std.mem.sliceAsBytes(str);
-                std.mem.copy(u8, &bytes, slice_bytes);
+                bytes[0..str.len].* = str[0..str.len].*;
                 return std.mem.readIntNative(T, &bytes);
             } else if (str.len == max_bytes) {
                 return std.mem.readIntNative(T, str[0..str.len]);

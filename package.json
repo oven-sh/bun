@@ -23,7 +23,7 @@
     "@types/react": "^18.0.25",
     "@typescript-eslint/eslint-plugin": "^5.31.0",
     "@typescript-eslint/parser": "^5.31.0",
-    "bun-webkit": "0.0.1-61ed147fdeaa0787d77bddb332177f23ad96d6fe"
+    "bun-webkit": "0.0.1-595dd33692e02001631f6c3ab6f2bbb199278d26"
   },
   "version": "0.0.0"
 }

@@ -1,19 +1,15 @@
 /// Rope-like data structure for joining many small strings into one big string.
-const Joiner = @This();
-
-const string = @import("string_types.zig").string;
-const Allocator = @import("std").mem.Allocator;
-const assert = @import("std").debug.assert;
-const copy = @import("std").mem.copy;
-const Env = @import("./env.zig");
-const ObjectPool = @import("./pool.zig").ObjectPool;
-
+const std = @import("std");
 const default_allocator = @import("bun").default_allocator;
+const string = @import("string_types.zig").string;
+const Allocator = std.mem.Allocator;
+const ObjectPool = @import("./pool.zig").ObjectPool;
+const Joiner = @This();
 
 const Joinable = struct {
     offset: u31 = 0,
     needs_deinit: bool = false,
-    allocator: std.mem.Allocator = undefined,
+    allocator: Allocator = undefined,
     slice: []const u8 = "",
 
     pub const Pool = ObjectPool(Joinable, null, true, 4);
@@ -22,12 +18,12 @@ const Joinable = struct {
 last_byte: u8 = 0,
 len: usize = 0,
 use_pool: bool = true,
-node_allocator: std.mem.Allocator = undefined,
+node_allocator: Allocator = undefined,
 
 head: ?*Joinable.Pool.Node = null,
 tail: ?*Joinable.Pool.Node = null,
 
-pub fn done(this: *Joiner, allocator: std.mem.Allocator) ![]u8 {
+pub fn done(this: *Joiner, allocator: Allocator) ![]u8 {
     if (this.head == null) {
         var out: []u8 = &[_]u8{};
         return out;
@@ -64,7 +60,7 @@ pub fn lastByte(this: *const Joiner) u8 {
     return 0;
 }
 
-pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?std.mem.Allocator) void {
+pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?Allocator) void {
     const data = slice[offset..];
     this.len += @truncate(u32, data.len);
 
@@ -91,5 +87,3 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?std.mem.All
     tail.next = new_tail;
     this.tail = new_tail;
 }
-
-const std = @import("std");

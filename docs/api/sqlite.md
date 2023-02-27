@@ -75,7 +75,7 @@ Note: `close()` is called automatically when the database is garbage collected. 
 ```ts
 const olddb = new Database("mydb.sqlite");
 const contents = db.serialize(); // => Uint8Array
-const newdb = new Database(copy);
+const newdb = new Database(contents);
 ```
 
 Internally, `.serialize()` calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html).

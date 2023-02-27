@@ -147,8 +147,8 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
     -DCMAKE_RANLIB=$(which llvm-15-ranlib || which llvm-ranlib)
-	
-	
+
+
 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
@@ -394,6 +394,10 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden
+
+ifeq ($(OS_NAME),darwin)
+CLANG_FLAGS += -DBUN_FAST_TLS=1 -DUSE_BUN_FAST_TLS=1 -DHAVE_BUN_FAST_TLS=1
+endif
 
 PLATFORM_LINKER_FLAGS =
 
@@ -719,7 +723,7 @@ wasm: api build-obj-wasm-small
 
 .PHONY: build-obj-safe
 build-obj-safe:
-	$(ZIG) build obj -Doptimize=ReleaseSafe
+	$(ZIG) build obj -Doptimize=ReleaseSafe -Dcpu="$(CPU_TARGET)"
 
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=$(CXX_VERSION) -fno-exceptions
@@ -1076,11 +1080,11 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj --prominent-compile-errors -freference-trace
+	$(ZIG) build obj --prominent-compile-errors -freference-trace -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-obj-linux
 dev-obj-linux:
-	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
+	$(ZIG) build obj -Dtarget=x86_64-linux-gnu -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev
 dev: mkdir-dev dev-obj bun-link-lld-debug
@@ -1272,6 +1276,7 @@ jsc-build-mac-compile:
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
+			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
@@ -1293,6 +1298,7 @@ jsc-build-mac-compile-lto:
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
+			-DBUN_FAST_TLS=ON \
 			-DCMAKE_C_FLAGS="-flto=full" \
 			-DCMAKE_CXX_FLAGS="-flto=full" \
 			-DENABLE_FTL_JIT=ON \

@@ -1,21 +1,20 @@
-const Command = @import("../cli.zig").Command;
-const PackageManager = @import("../install/install.zig").PackageManager;
-const ComamndLineArguments = PackageManager.CommandLineArguments;
 const std = @import("std");
-const strings = @import("bun").strings;
+const bun = @import("bun");
+const Global = bun.Global;
+const Output = bun.Output;
+const string = bun.string;
+const strings = bun.strings;
+const Command = @import("../cli.zig").Command;
+const Fs = @import("../fs.zig");
+const Dependency = @import("../install/dependency.zig");
+const Install = @import("../install/install.zig");
+const PackageID = Install.PackageID;
+const DependencyID = Install.DependencyID;
+const PackageManager = Install.PackageManager;
 const Lockfile = @import("../install/lockfile.zig");
 const NodeModulesFolder = Lockfile.Tree.NodeModulesFolder;
-const PackageID = @import("../install/install.zig").PackageID;
-const DependencyID = @import("../install/install.zig").DependencyID;
-const PackageInstaller = @import("../install/install.zig").PackageInstaller;
-const Global = @import("bun").Global;
-const Output = @import("bun").Output;
-const Fs = @import("../fs.zig");
 const Path = @import("../resolver/resolve_path.zig");
-const bun = @import("bun");
-const StringBuilder = bun.StringBuilder;
-const string = bun.string;
-const stringZ = bun.stringZ;
+const String = @import("../install/semver.zig").String;
 
 fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *PackageManager) void {
     if (load_lockfile == .not_found) {
@@ -30,6 +29,19 @@ fn handleLoadLockfileErrors(load_lockfile: Lockfile.LoadFromDiskResult, pm: *Pac
         Global.exit(1);
     }
 }
+
+const ByName = struct {
+    dependencies: []const Dependency,
+    buf: []const u8,
+
+    pub fn isLessThan(ctx: ByName, lhs: DependencyID, rhs: DependencyID) bool {
+        return strings.cmpStringsAsc(
+            {},
+            ctx.dependencies[lhs].name.slice(ctx.buf),
+            ctx.dependencies[rhs].name.slice(ctx.buf),
+        );
+    }
+};
 
 pub const PackageManagerCommand = struct {
     pub fn printHelp(_: std.mem.Allocator) void {}
@@ -172,17 +184,18 @@ pub const PackageManagerCommand = struct {
             var directories = std.ArrayList(NodeModulesFolder).init(ctx.allocator);
             defer directories.deinit();
             while (iterator.nextNodeModulesFolder()) |node_modules| {
-                const path = try ctx.allocator.alloc(u8, node_modules.relative_path.len);
-                std.mem.copy(u8, path, node_modules.relative_path);
+                const path_len = node_modules.relative_path.len;
+                const path = try ctx.allocator.alloc(u8, path_len + 1);
+                bun.copy(u8, path, node_modules.relative_path);
+                path[path_len] = 0;
 
                 const dependencies = try ctx.allocator.alloc(DependencyID, node_modules.dependencies.len);
-                std.mem.copy(PackageID, dependencies, node_modules.dependencies);
+                bun.copy(DependencyID, dependencies, node_modules.dependencies);
 
-                const folder = NodeModulesFolder{
-                    .relative_path = @ptrCast(stringZ, path),
+                try directories.append(.{
+                    .relative_path = path[0..path_len :0],
                     .dependencies = dependencies,
-                };
-                directories.append(folder) catch unreachable;
+                });
             }
 
             const first_directory = directories.orderedRemove(0);
@@ -190,31 +203,42 @@ pub const PackageManagerCommand = struct {
             // TODO: find max depth beforehand
             var more_packages = [_]bool{false} ** 16;
             if (first_directory.dependencies.len > 1) more_packages[0] = true;
-            const recurse = strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" });
 
-            if (recurse) {
-                printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
-                Output.enableBuffering();
+            if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
+                try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
                 var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const path = std.os.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                     Global.exit(1);
                 };
-                const package_ids = lockfile.packages.items(.resolutions)[0].get(lockfile.buffers.resolutions.items);
+                const dependencies = lockfile.buffers.dependencies.items;
+                const slice = lockfile.packages.slice();
+                const resolutions = slice.items(.resolution);
+                const root_deps = slice.items(.dependencies)[0];
 
-                Output.println("{s} node_modules ({d})", .{ path, package_ids.len });
-                Output.enableBuffering();
-                const names = lockfile.packages.items(.name);
+                Output.println("{s} node_modules ({d})", .{ path, dependencies.len });
                 const string_bytes = lockfile.buffers.string_bytes.items;
+                const sorted_dependencies = try ctx.allocator.alloc(DependencyID, root_deps.len);
+                defer ctx.allocator.free(sorted_dependencies);
+                for (sorted_dependencies, 0..) |*dep, i| {
+                    dep.* = @truncate(DependencyID, root_deps.off + i);
+                }
+                std.sort.sort(DependencyID, sorted_dependencies, ByName{
+                    .dependencies = dependencies,
+                    .buf = string_bytes,
+                }, ByName.isLessThan);
 
-                for (package_ids, 0..) |package_id, i| {
+                for (sorted_dependencies, 0..) |dependency_id, index| {
+                    const package_id = lockfile.buffers.resolutions.items[dependency_id];
                     if (package_id >= lockfile.packages.len) continue;
+                    const name = dependencies[dependency_id].name.slice(string_bytes);
+                    const resolution = resolutions[package_id].fmt(string_bytes);
 
-                    if (i == package_ids.len - 1) {
-                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                    if (index < sorted_dependencies.len - 1) {
+                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
                     } else {
-                        Output.prettyln("<d>├──<r> {s}<r><d>@{any}<r>\n", .{ names[package_id].slice(string_bytes), lockfile.packages.items(.resolution)[package_id].fmt(string_bytes) });
+                        Output.prettyln("<d>└──<r> {s}<r><d>@{any}<r>\n", .{ name, resolution });
                     }
                 }
             }
@@ -255,7 +279,7 @@ fn printNodeModulesFolderStructure(
     directories: *std.ArrayList(NodeModulesFolder),
     lockfile: *Lockfile,
     more_packages_: [16]bool,
-) void {
+) !void {
     const allocator = lockfile.allocator;
     var more_packages = more_packages_;
     const resolutions = lockfile.packages.items(.resolution);
@@ -292,7 +316,7 @@ fn printNodeModulesFolderStructure(
                     }
                 }
             }
-            const directory_version = std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes)}) catch unreachable;
+            const directory_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[id].fmt(string_bytes)});
             if (std.mem.indexOf(u8, path, "node_modules")) |j| {
                 Output.prettyln("{s}<d>@{s}<r>", .{ path[0 .. j - 1], directory_version });
             } else {
@@ -308,16 +332,22 @@ fn printNodeModulesFolderStructure(
         }
     }
 
-    for (directory.dependencies, 0..) |dependency_id, index| {
-        const package_name_ = lockfile.buffers.dependencies.items[dependency_id].name.slice(string_bytes);
-        const package_name = allocator.alloc(u8, package_name_.len) catch unreachable;
-        defer allocator.free(package_name);
-        std.mem.copy(u8, package_name, package_name_);
+    const dependencies = lockfile.buffers.dependencies.items;
+    const sorted_dependencies = try allocator.alloc(DependencyID, directory.dependencies.len);
+    defer allocator.free(sorted_dependencies);
+    bun.copy(DependencyID, sorted_dependencies, directory.dependencies);
+    std.sort.sort(DependencyID, sorted_dependencies, ByName{
+        .dependencies = dependencies,
+        .buf = string_bytes,
+    }, ByName.isLessThan);
 
-        var possible_path = std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name }) catch unreachable;
+    for (sorted_dependencies, 0..) |dependency_id, index| {
+        const package_name = dependencies[dependency_id].name.slice(string_bytes);
+
+        var possible_path = try std.fmt.allocPrint(allocator, "{s}/{s}/node_modules", .{ directory.relative_path, package_name });
         defer allocator.free(possible_path);
 
-        if (index + 1 == directory.dependencies.len) {
+        if (index + 1 == sorted_dependencies.len) {
             more_packages[depth] = false;
         }
 
@@ -339,7 +369,7 @@ fn printNodeModulesFolderStructure(
                 }
 
                 more_packages[new_depth] = true;
-                printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
+                try printNodeModulesFolderStructure(&next, package_id, new_depth, directories, lockfile, more_packages);
             }
         }
 
@@ -361,7 +391,7 @@ fn printNodeModulesFolderStructure(
         }
 
         var resolution_buf: [512]u8 = undefined;
-        const package_version = std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes)}) catch unreachable;
+        const package_version = try std.fmt.bufPrint(&resolution_buf, "{}", .{resolutions[package_id].fmt(string_bytes)});
         Output.prettyln("{s}<d>@{s}<r>", .{ package_name, package_version });
     }
 }

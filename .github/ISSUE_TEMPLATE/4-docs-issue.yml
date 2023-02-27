@@ -1,6 +1,6 @@
-name: 📗 Documentation Request
+name: 📗 Documentation Issue
 description: Tell us if there is missing or incorrect documentation
-labels: [documentation]
+labels: [docs]
 body:
   - type: markdown
     attributes:

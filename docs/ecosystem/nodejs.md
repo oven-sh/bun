@@ -33,7 +33,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_child_process" %} [`node:child_process`](https://nodejs.org/api/child_process.html) {% /anchor %}
 - 🟡
-- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization
+- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization.
 
 ---
 
@@ -93,7 +93,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_http" %} [`node:http`](https://nodejs.org/api/http.html) {% /anchor %}
 - 🟡
-- Missing `http.Agent` `http.ClientRequest` `http.IncomingMessage` `http.OutgoingMessage` `http.globalAgent` `http.get` `http.maxHeaderSize` `http.request` `http.setMaxIdleHTTPParsers` `http.validateHeader{Name|Value}`.
+- Missing `http.OutgoingMessage` `http.validateHeader{Name|Value}`.  Module provides partial compatibility for `http.globalAgent` `http.Agent` `http.setMaxIdleHTTPParsers`. Note that exports marked as partially compatible likely have no effect (no-op) but will not cause errors when porting code utilizing these exports.
 
 ---
 

@@ -180,10 +180,10 @@ pub const Registry = struct {
             const hashed = HTTPClient.hashHeaderName(header.name);
 
             switch (hashed) {
-                HTTPClient.hashHeaderName("last-modified") => {
+                HTTPClient.hashHeaderConst("last-modified") => {
                     newly_last_modified = header.value;
                 },
-                HTTPClient.hashHeaderName("etag") => {
+                HTTPClient.hashHeaderConst("etag") => {
                     new_etag = header.value;
                 },
                 else => {},
@@ -193,7 +193,7 @@ pub const Registry = struct {
         var new_etag_buf: [64]u8 = undefined;
 
         if (new_etag.len < new_etag_buf.len) {
-            std.mem.copy(u8, &new_etag_buf, new_etag);
+            bun.copy(u8, &new_etag_buf, new_etag);
             new_etag = new_etag_buf[0..new_etag.len];
         }
 
@@ -1249,12 +1249,6 @@ pub const PackageManifest = struct {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
                                         package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
                                         if (package_version.integrity.tag.isSupported()) break :integrity;
-                                    }
-                                }
-
-                                if (dist.expr.asProperty("shasum")) |shasum| {
-                                    if (shasum.expr.asString(allocator)) |shasum_str| {
-                                        package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
                                     }
                                 }
 

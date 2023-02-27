@@ -628,9 +628,6 @@ pub const Fetch = struct {
         signal: ?*JSC.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
-        //needed to shutdown when aborted
-        socket: ?*uws.Socket = null,
-
         // must be stored because AbortSignal stores reason weakly
         abort_reason: JSValue = JSValue.zero,
 

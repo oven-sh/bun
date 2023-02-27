@@ -1029,7 +1029,14 @@ aborted: ?*std.atomic.Atomic(bool) = null,
 async_http_id: u32 = 0,
 
 pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool)) HTTPClient {
-    return HTTPClient{ .allocator = allocator, .method = method, .url = url, .header_entries = header_entries, .header_buf = header_buf, .aborted = signal };
+    return HTTPClient { 
+        .allocator = allocator, 
+        .method = method, 
+        .url = url, 
+        .header_entries = header_entries, 
+        .header_buf = header_buf, 
+        .aborted = signal, 
+    };
 }
 
 pub fn deinit(this: *HTTPClient) void {

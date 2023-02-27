@@ -3629,12 +3629,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return zig_str;
     }
 
-    pub fn get(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+    pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
     }
 
-    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, comptime property: []const u8) ?JSValue {
+    pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         if (get(this, global, property)) |prop| {
             if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;

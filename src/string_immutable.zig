@@ -20,7 +20,7 @@ pub inline fn containsChar(self: string, char: u8) bool {
 }
 
 pub inline fn contains(self: string, str: string) bool {
-    return std.mem.indexOf(u8, self, str) != null;
+    return indexOf(self, str) != null;
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
@@ -41,15 +41,11 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
 
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
-    for (self, 0..) |c, i| {
-        inline for (str) |a| {
-            if (c == a) {
-                return @intCast(OptionalUsize, i);
-            }
+    inline for (str) |a| {
+        if (indexOf(self, a)) |i| {
+            return @intCast(OptionalUsize, i);
         }
     }
-
-    return null;
 }
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
     for (self, 0..) |c, i| {
@@ -250,7 +246,9 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 
     const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
-    return @ptrToInt(start) - @ptrToInt(self_ptr);
+    const i = @ptrToInt(start) - @ptrToInt(self_ptr);
+    std.debug.assert(i < self_len);
+    return @intCast(usize, i);
 }
 
 pub fn split(self: string, delimiter: string) SplitIterator {
@@ -3234,34 +3232,15 @@ test "indexOfNeedsEscape" {
 }
 
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
-    var remaining = slice;
-    if (remaining.len == 0)
+    if (slice.len == 0)
         return null;
 
-    if (remaining[0] == char)
-        return 0;
+    const ptr = bun.C.memchr(slice.ptr, char, slice.len) orelse return null;
+    const i = @ptrToInt(ptr) - @ptrToInt(slice.ptr);
+    std.debug.assert(i < slice.len);
+    std.debug.assert(slice[i] == char);
 
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = vec == @splat(ascii_vector_size, char);
-
-            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
-                const bitmask = @bitCast(AsciiVectorInt, cmp);
-                const first = @ctz(bitmask);
-                return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
-            }
-            remaining = remaining[ascii_vector_size..];
-        }
-    }
-
-    for (remaining, 0..) |c, i| {
-        if (c == char) {
-            return @truncate(u32, i + (slice.len - remaining.len));
-        }
-    }
-
-    return null;
+    return @truncate(u32, i);
 }
 
 test "indexOfChar" {

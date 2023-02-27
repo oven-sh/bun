@@ -39,6 +39,7 @@ pub extern "c" fn lutimes(path: [*:0]const u8, times: *const [2]std.os.timeval) 
 pub extern "c" fn mkdtemp(template: [*c]u8) ?[*:0]u8;
 
 pub extern "c" fn memcmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
+pub extern "c" fn memchr(s: [*]const u8, c: u8, n: usize) ?[*]const u8;
 
 pub const lstat = lstat64;
 pub const fstat = fstat64;

@@ -1651,6 +1651,15 @@ pub const ModuleLoader = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:tls" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile(jsc_vm.load_builtins_from_path, "tls.exports.js")),
+                        .specifier = ZigString.init("node:tls"),
+                        .source_url = ZigString.init("node:tls"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:net" => {
                     return ResolvedSource{
                         .allocator = null,

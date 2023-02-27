@@ -859,3 +859,123 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
   expect(urls.sort()).toEqual([]);
   expect(requested).toBe(0);
 });
+
+it("should prefer optionalDependencies over dependencies of the same name", async () => {
+  const urls = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {
+        dependencies: {
+          baz: "0.0.3",
+        },
+        optionalDependencies: {
+          baz: "0.0.5",
+        },
+      },
+      "0.0.3": {},
+      "0.0.5": {},
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bar@0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed bar@0.0.2",
+    "",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/bar`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.5.tgz`,
+  ]);
+  expect(requested).toBe(4);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.5",
+    bin: {
+      "baz-exec": "index.js",
+    },
+  });
+});
+
+it("should prefer dependencies over peerDependencies of the same name", async () => {
+  const urls = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.2": {
+        dependencies: {
+          baz: "0.0.3",
+        },
+        peerDependencies: {
+          baz: "0.0.5",
+        },
+      },
+      "0.0.3": {},
+      "0.0.5": {},
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bar@0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    " installed bar@0.0.2",
+    "",
+    "",
+    " 2 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([
+    `${root_url}/bar`,
+    `${root_url}/bar-0.0.2.tgz`,
+    `${root_url}/baz`,
+    `${root_url}/baz-0.0.3.tgz`,
+  ]);
+  expect(requested).toBe(4);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+});

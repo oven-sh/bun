@@ -11,6 +11,9 @@ const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", .
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
+const kAbortController = Symbol.for("kAbortController");
+const kClearTimeout = Symbol("kClearTimeout");
+
 const kCorked = Symbol.for("kCorked");
 const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
 
@@ -540,7 +543,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return true;
 }
 
-const kClearTimeout = Symbol("kClearTimeout");
 
 export class OutgoingMessage extends Writable {
   #headers;
@@ -553,6 +555,7 @@ export class OutgoingMessage extends Writable {
 
   #fakeSocket;
   #timeoutTimer = null;
+  [kAbortController] = null;
 
   // For compat with IncomingRequest
   get headers() {
@@ -646,7 +649,6 @@ export class OutgoingMessage extends Writable {
     }
   }
 
-  // TODO: Use fetch AbortSignal when implemented
   setTimeout(msecs, callback) {
     if (this.#timeoutTimer) return this;
     if (callback) {
@@ -654,8 +656,9 @@ export class OutgoingMessage extends Writable {
     }
 
     this.#timeoutTimer = setTimeout(async () => {
-      this.emit("timeout");
       this.#timeoutTimer = null;
+      this[kAbortController]?.abort();
+      this.emit("timeout");
     }, msecs);
 
     return this;
@@ -879,8 +882,6 @@ export class ServerResponse extends Writable {
 export class ClientRequest extends OutgoingMessage {
   #timeout;
   #res = null;
-  #aborted = false;
-  #timeoutCb = null;
   #upgradeOrConnect = false;
   #parser = null;
   #maxHeadersCount = null;
@@ -897,6 +898,7 @@ export class ClientRequest extends OutgoingMessage {
 
   #body = null;
   #fetchRequest;
+  [kAbortController] = null;
 
   #options;
   #finished;
@@ -941,12 +943,17 @@ export class ClientRequest extends OutgoingMessage {
 
   _final(callback) {
     this.#finished = true;
+    this[kAbortController] = new AbortController();
+    this[kAbortController].signal.addEventListener("abort", ()=> {
+        this[kClearTimeout]();
+    });
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
       method: this.#method,
       headers: this.getHeaders(),
       body: this.#body,
       redirect: "manual",
       verbose: Boolean(process.env.BUN_JS_DEBUG),
+      signal: this[kAbortController].signal
     })
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
@@ -964,19 +971,15 @@ export class ClientRequest extends OutgoingMessage {
       });
 
     callback();
-
-    // TODO: Clear timeout here
   }
 
   get aborted() {
-    return this.#aborted;
+    return !!this[kAbortController]?.signal.aborted;
   }
 
-  // TODO: Use fetch AbortSignal when implemented
   abort() {
-    if (this.#aborted) return;
-    this.#aborted = true;
-    this[kClearTimeout]();
+    if (this.aborted) return;
+    this[kAbortController].abort();
     // TODO: Close stream if body streaming
   }
 
@@ -1032,13 +1035,15 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    // if (options.timeout !== undefined)
-    //   this.timeout = getTimerDuration(options.timeout, "timeout");
+    if (options.timeout !== undefined)
+      this.setTimeout(options.timeout, null);
 
     const signal = options.signal;
     if (signal) {
-      // TODO: Implement this when AbortSignal binding is available from Zig (required for fetch)
-      // addAbortSignal(signal, this);
+      //We still want to control abort function and timeout so signal call our AbortController
+      signal.addEventListener("abort", ()=> {
+        this[kAbortController]?.abort();
+      });
     }
     let method = options.method;
     const methodIsString = typeof method === "string";
@@ -1102,8 +1107,6 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#finished = false;
     this.#res = null;
-    this.#aborted = false;
-    this.#timeoutCb = null;
     this.#upgradeOrConnect = false;
     this.#parser = null;
     this.#maxHeadersCount = null;

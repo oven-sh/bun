@@ -158,8 +158,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_querystring" %} [`node:querystring`](https://nodejs.org/api/querystring.html) {% /anchor %}
-- 🟡
-- Missing `querystring.escape` and `querystring.unescape`.
+- 🟢
+- Fully implemented.
 
 ---
 

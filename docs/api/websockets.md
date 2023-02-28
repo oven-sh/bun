@@ -1,4 +1,4 @@
-As of Bun v0.2.1, `Bun.serve()` supports server-side WebSockets, with on-the-fly compression, TLS support, and a Bun-native pubsub API.
+`Bun.serve()` supports server-side WebSockets, with on-the-fly compression, TLS support, and a Bun-native publish-subscribe API.
 
 {% callout %}
 

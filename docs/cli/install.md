@@ -1,6 +1,4 @@
-The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`.
-
-It can be be used as a drop-in replacement for these tools, _regardless of whether you're using Bun's runtime_.
+The `bun` CLI contains an `npm`-compatible package manager designed to be a faster replacement for existing package management tools like `npm`, `yarn`, and `pnpm`. It's designed for Node.js compatibility; use it in any Bun or Node.js project.
 
 {% callout %}
 
@@ -74,7 +72,7 @@ optional = true
 # whether to install devDependencies
 dev = true
 
-# whether to install devDependencies
+# whether to install peerDependencies
 peer = false
 
 # equivalent to `--production` flag
@@ -86,7 +84,7 @@ dryRun = false
 
 {% /details %}
 
-## Adding packages
+## Add and remove packages
 
 To add or remove a particular package:
 
@@ -147,6 +145,27 @@ To view a complete list of options for a given command:
 
 ```bash
 $ bun add --help
+```
+
+## Git dependencies
+
+To add a dependency from a git repository:
+
+```bash
+$ bun install git@github.com:moment/moment.git
+```
+
+Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#github-urls), [`git`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#git-urls-as-dependencies), `git+ssh`, `git+https`, and many more.
+
+```json
+{
+  "dependencies": {
+    "dayjs": "git+https://github.com/iamkun/dayjs.git",
+    "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
+    "moment": "git@github.com:moment/moment.git",
+    "zod": "github:colinhacks/zod"
+  }
+}
 ```
 
 ## Global cache
@@ -328,7 +347,7 @@ registry = { url = "https://registry.npmjs.org", token = "123456" }
 registry = "https://username:password@registry.npmjs.org"
 ```
 
-To configure organization-scoped registries:
+To configure a private registry scoped to a particular organization:
 
 ```toml
 [install.scopes]
@@ -341,4 +360,86 @@ To configure organization-scoped registries:
 
 # registry with token
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
+```
+
+## Linking and unlinking
+
+Use `bun link` in a local directory to register the current package as a "linkable" package.
+
+```bash
+$ cd /path/to/cool-pkg
+$ cat package.json
+{
+  "name": "cool-pkg",
+  "version": "1.0.0"
+}
+$ bun link
+bun link v0.5.7 (7416672e)
+Success! Registered "cool-pkg"
+
+To use cool-pkg in a project, run:
+  bun link cool-pkg
+
+Or add it in dependencies in your package.json file:
+  "cool-pkg": "link:cool-pkg"
+```
+
+This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
+
+```bash
+$ cd /path/to/my-app
+$ bun link cool-pkg
+```
+
+This will add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`.
+
+```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
+    "dependencies": {
++     "cool-pkg": "link:cool-pkg"
+    }
+  }
+```
+
+## Utilities
+
+The `bun pm` command group provides a set of utilities for working with Bun's package manager.
+
+To print the path to the `bin` directory for the local project:
+
+```bash
+$ bun pm bin
+/path/to/current/project/node_modules/.bin
+```
+
+To get the path to the global `bin` directory:
+
+```bash
+$ bun pm bin
+<$HOME>/.bun/bin
+```
+
+To print a list of packages installed in the current project and their resolved versions, excluding their dependencies. Use the `--all` flag to print the entire tree, including all nth-order dependencies.
+
+```bash
+/path/to/project node_modules (5)
+├── eslint@8.33.0
+├── react@18.2.0
+├── react-dom@18.2.0
+├── typescript@4.8.4
+└── zod@3.20.1
+```
+
+To print the path to Bun's global module cache:
+
+```bash
+$ bun pm cache
+```
+
+To clear Bun's global module cache:
+
+```bash
+$ bun pm cache rm
 ```

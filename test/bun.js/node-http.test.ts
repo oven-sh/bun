@@ -352,6 +352,32 @@ describe("node:http", () => {
     });
   });
 
+  describe("signal", () => {
+
+    it("should abort and close the server", done => {
+      const server = createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("Hello World");
+      });
+
+      //force timeout to not hang tests
+      const interval = setTimeout(()=> {
+        expect(false).toBe(true);
+        server.close();
+        done()
+      }, 100);
+      
+      const signal = AbortSignal.timeout(30);
+      signal.addEventListener("abort", ()=> {
+        clearTimeout(interval);
+        expect(true).toBe(true);
+        done()
+      });
+      
+      server.listen({ signal, port: 8130 });
+    });
+  });
+
   describe("get", () => {
     let server;
     beforeAll(() => {
@@ -429,6 +455,47 @@ describe("node:http", () => {
 
     it("should provide globalAgent", () => {
       expect(globalAgent instanceof Agent).toBe(true);
+    });
+  });
+
+  describe("ClientRequest.signal", () => {
+    let server;
+    let server_port;
+    let server_host;
+    beforeAll(() => {
+      server = createServer((req, res) => {
+        Bun.sleep(10).then(()=> {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("Hello World");  
+        })
+      });
+      server.listen({ port: 0}, (_err,host, port)=> {
+        server_port = port;
+        server_host = host;
+      });
+    });
+    afterAll(() => {
+      server.close();
+    });
+    it("should attempt to make a standard GET request and abort", done => {
+      get(`http://127.0.0.1:${server_port}`,{ signal: AbortSignal.timeout(5)  }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(true).toBeFalsy();
+          done();
+        });
+        res.on("error", _ => {
+          expect(true).toBeFalsy();
+          done();
+        });
+      }).on("error", (err)=>{
+        expect(err?.name).toBe("AbortError");
+        done();
+      });
     });
   });
 });

@@ -361,6 +361,7 @@ pub const VirtualMachine = struct {
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
     pending_unref_counter: i32 = 0,
+    preload: []const string = &[_][]const u8{},
 
     /// hide bun:wrap from stack traces
     /// bun:wrap is very noisy
@@ -990,8 +991,7 @@ pub const VirtualMachine = struct {
                 )) {
                     .success => |r| r,
                     .failure => |e| e,
-                    .pending => unreachable,
-                    .not_found => if (!retry_on_not_found)
+                    .pending, .not_found => if (!retry_on_not_found)
                         error.ModuleNotFound
                     else {
                         retry_on_not_found = false;
@@ -1441,7 +1441,12 @@ pub const VirtualMachine = struct {
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.main = entry_path;
-        try this.entry_point.generate(this.bun_watcher != null, Fs.PathName.init(entry_path), main_file_name);
+        try this.entry_point.generate(
+            this.allocator,
+            this.bun_watcher != null,
+            Fs.PathName.init(entry_path),
+            main_file_name,
+        );
         this.eventLoop().ensureWaker();
 
         var promise: *JSInternalPromise = undefined;
@@ -1459,6 +1464,72 @@ pub const VirtualMachine = struct {
                 if (promise.status(this.global.vm()) == .Rejected)
                     return promise;
             }
+
+            for (this.preload) |preload| {
+                var result = switch (this.bundler.resolver.resolveAndAutoInstall(
+                    this.bundler.fs.top_level_dir,
+                    normalizeSource(preload),
+                    .stmt,
+                    .read_only,
+                )) {
+                    .success => |r| r,
+                    .failure => |e| {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            "{s} resolving preload {any}",
+                            .{
+                                @errorName(e),
+                                js_printer.formatJSONString(preload),
+                            },
+                        ) catch unreachable;
+                        return e;
+                    },
+                    .pending, .not_found => {
+                        this.log.addErrorFmt(
+                            null,
+                            logger.Loc.Empty,
+                            this.allocator,
+                            "preload not found {any}",
+                            .{
+                                js_printer.formatJSONString(preload),
+                            },
+                        ) catch unreachable;
+                        return error.ModuleNotFound;
+                    },
+                };
+                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(result.path().?.text));
+                this.pending_internal_promise = promise;
+
+                // pending_internal_promise can change if hot module reloading is enabled
+                if (this.bun_watcher != null) {
+                    this.eventLoop().performGC();
+                    switch (this.pending_internal_promise.status(this.global.vm())) {
+                        JSC.JSPromise.Status.Pending => {
+                            while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                this.eventLoop().tick();
+
+                                if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                                    this.eventLoop().autoTick();
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                } else {
+                    this.eventLoop().performGC();
+                    this.waitForPromise(JSC.AnyPromise{
+                        .Internal = promise,
+                    });
+                }
+
+                if (promise.status(this.global.vm()) == .Rejected)
+                    return promise;
+            }
+
+            // only load preloads once
+            this.preload.len = 0;
 
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(main_file_name));
             this.pending_internal_promise = promise;

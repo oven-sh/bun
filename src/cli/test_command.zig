@@ -388,6 +388,7 @@ pub const TestCommand = struct {
         js_ast.Stmt.Data.Store.create(default_allocator);
         var vm = try JSC.VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, env_loader);
         vm.argv = ctx.passthrough;
+        vm.preload = ctx.preloads;
 
         try vm.bundler.configureDefines();
         vm.bundler.options.rewrite_jest_for_tests = true;

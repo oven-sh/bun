@@ -1,5 +1,5 @@
 {% callout %}
-**Note** — Bun also provides an [almost complete](/docs/runtime/nodejs) implementation of the Node.js `fs` module, documented [here](https://nodejs.org/api/fs.html). This page only documents Bun-native APIs.
+**Note** — The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimized and represent the recommended way to perform file-system tasks using Bun. Existing Node.js projects may use Bun's [nearly complete](/docs/ecosystem/nodejs#node_fs) implementation of the [`node:fs`](https://nodejs.org/api/fs.html) module.
 {% /callout %}
 
 Bun provides a set of optimized APIs for reading and writing files.
@@ -8,7 +8,7 @@ Bun provides a set of optimized APIs for reading and writing files.
 
 `Bun.file(path): BunFile`
 
-Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents represents a lazily-loaded file; initializing it does not actually read the file from disk.
+Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents a lazily-loaded file; initializing it does not actually read the file from disk.
 
 ```ts
 const foo = Bun.file("foo.txt"); // relative to cwd
@@ -45,7 +45,7 @@ The default MIME type is `text/plain;charset=utf-8`, but it can be overridden by
 
 ```ts
 const notreal = Bun.file("notreal.json", { type: "application/json" });
-notreal.type; // => "text/plain;charset=utf-8"
+notreal.type; // => "application/json;charset=utf-8"
 ```
 
 For convenience, Bun exposes `stdin`, `stdout` and `stderr` as instances of `BunFile`.
@@ -234,13 +234,7 @@ interface Bun {
 
   write(
     destination: string | number | FileBlob | URL,
-    input:
-      | string
-      | Blob
-      | ArrayBuffer
-      | SharedArrayBuffer
-      | TypedArray
-      | Response,
+    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
   ): Promise<number>;
 }
 

@@ -395,6 +395,10 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-fvisibility=hidden \
 		-fvisibility-inlines-hidden
 
+ifeq ($(OS_NAME),darwin)
+CLANG_FLAGS += -DBUN_FAST_TLS=1 -DUSE_BUN_FAST_TLS=1 -DHAVE_BUN_FAST_TLS=1
+endif
+
 PLATFORM_LINKER_FLAGS =
 
 SYMBOLS=
@@ -828,7 +832,7 @@ fetch: $(IO_FILES)
 .PHONY: sha
 sha:
 	$(ZIG) build -Doptimize=ReleaseFast sha-bench-obj
-	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/sha.o -I$(BUN_DEPS_DIR) -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
 .PHONY: fetch-debug
@@ -1272,6 +1276,7 @@ jsc-build-mac-compile:
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
+			-DBUN_FAST_TLS=ON \
 			-DENABLE_FTL_JIT=ON \
 			-G Ninja \
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
@@ -1293,6 +1298,7 @@ jsc-build-mac-compile-lto:
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
+			-DBUN_FAST_TLS=ON \
 			-DCMAKE_C_FLAGS="-flto=full" \
 			-DCMAKE_CXX_FLAGS="-flto=full" \
 			-DENABLE_FTL_JIT=ON \

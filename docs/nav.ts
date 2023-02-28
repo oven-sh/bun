@@ -7,18 +7,22 @@ export type NavPage = {
   type: "page";
   slug: string;
   title: string;
+  disabled?: boolean;
+  href?: string;
 };
 type NavDivider = {
   type: "divider";
   title: string;
 };
 
-function page(slug: string, title: string): NavPage {
-  return { type: "page", slug, title };
+
+function page(slug: string, title: string, props?: {disabled?: boolean; href?: string}): NavPage {
+  return { type: "page", slug, title, ...props };
 }
 function divider(title: string): NavDivider {
   return { type: "divider", title };
 }
+
 
 export default {
   items: [
@@ -26,13 +30,16 @@ export default {
     page("index", "What is Bun?"),
     page("installation", "Installation"),
     page("quickstart", "Quickstart"),
-    page("typescript", "TypeScript"),
+    // page("typescript", "TypeScript"),
 
     divider("CLI"),
     page("cli/run", "`bun run`"),
     page("cli/install", "`bun install`"),
     page("cli/test", "`bun test`"),
     page("cli/create", "`bun create`"),
+    page("cli/bunx", "`bunx`"),
+    page("cli/deploy", "`bun deploy`", {disabled: true}),
+
     // page("bundler", "Bundler"),
     // page("cli/bun-install", "`bun install`"),
     // page("cli/bun-create", "`bun create`"),
@@ -50,7 +57,19 @@ export default {
     page("runtime/hot", "Hot reloading"),
     // page("runtime/loaders", "Loaders"),
     page("runtime/plugins", "Plugins"),
-    page("runtime/nodejs", "Node.js APIs"),
+    page("runtime/framework", "Framework API", {disabled: true}),
+    // page("runtime/nodejs", "Node.js APIs"),
+
+    divider("Ecosystem"),
+    page("ecosystem/nodejs", "Node.js"),
+    page("ecosystem/typescript", "TypeScript"),
+    page("ecosystem/react", "React"),
+    page("ecosystem/elysia", "Elysia"),
+    page("ecosystem/hono", "Hono"),
+    page("ecosystem/express", "Express"),
+    page("ecosystem/awesome", "Awesome", {
+      href:"https://github.com/apvarun/awesome-bun"
+    }),
 
     divider("API"),
     page("api/http", "HTTP"), // "`Bun.serve`"),

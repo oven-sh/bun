@@ -183,9 +183,10 @@ pub const Arguments = struct {
         \\--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"
         \\--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime
         \\--jsx-runtime <STR>               "automatic" (default) or "classic"
+        \\-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         \\--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent
-        \\--no-summary                     Don't print a summary (when generating .bun
-        \\-v, --version                    Print version and exit
+        \\--no-summary                      Don't print a summary (when generating .bun
+        \\-v, --version                     Print version and exit
         \\--platform <STR>                  "bun" or "browser" or "node", used when building or bundling
         \\--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to "<cwd>/public", to match create-react-app and Next.js
         \\--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json
@@ -233,14 +234,16 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
-    fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .mode = .read_only }) catch |err| {
-            if (auto_loaded) return;
-            Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                @errorName(err),
-                config_path,
-            });
-            Global.exit(1);
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        var config_file = std.fs.File{
+            .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
+                if (auto_loaded) return;
+                Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
+                    @errorName(err),
+                    config_path,
+                });
+                Global.exit(1);
+            },
         };
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -274,12 +277,15 @@ pub const Arguments = struct {
 
         return null;
     }
-
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
-            if (getHomeConfigPath(&config_buf)) |path| {
-                try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+            if (!ctx.has_loaded_global_config) {
+                ctx.has_loaded_global_config = true;
+
+                if (getHomeConfigPath(&config_buf)) |path| {
+                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+                }
             }
         }
 
@@ -301,7 +307,7 @@ pub const Arguments = struct {
         if (config_path_.len == 0) {
             return;
         }
-
+        defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
             @memcpy(&config_buf, config_path_.ptr, config_path_.len);
@@ -470,6 +476,18 @@ pub const Arguments = struct {
 
         opts.no_summary = res.args.@"no-summary";
         opts.disable_hmr = res.args.@"disable-hmr";
+
+        if (cmd != .DevCommand) {
+            const preloads = res.args.preload;
+            if (ctx.preloads.len > 0 and preloads.len > 0) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+                all.appendSliceAssumeCapacity(ctx.preloads);
+                all.appendSliceAssumeCapacity(preloads);
+                ctx.preloads = all.items;
+            } else if (preloads.len > 0) {
+                ctx.preloads = preloads;
+            }
+        }
 
         ctx.debug.silent = res.args.@"silent";
         if (opts.port != null and opts.origin == null) {
@@ -880,6 +898,7 @@ pub const Command = struct {
         global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
+        loaded_bunfig: bool = false,
 
         // technical debt
         macros: ?MacroMap = null,
@@ -899,6 +918,9 @@ pub const Command = struct {
         install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},
+
+        preloads: []const string = &[_]string{},
+        has_loaded_global_config: bool = false,
 
         const _ctx = Command.Context{
             .args = std.mem.zeroes(Api.TransformOptions),
@@ -1286,6 +1308,15 @@ pub const Command = struct {
                         break :brk options.Loader.js;
                     }
 
+                    if (extension.len > 0) {
+                        if (!ctx.debug.loaded_bunfig) {
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                        }
+
+                        if (ctx.preloads.len > 0)
+                            break :brk options.Loader.js;
+                    }
+
                     break :brk null;
                 };
 
@@ -1337,7 +1368,7 @@ pub const Command = struct {
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
 
@@ -1386,6 +1417,11 @@ pub const Command = struct {
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
         var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
         BunJS.Run.boot(
             ctx.*,
             file,

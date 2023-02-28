@@ -340,7 +340,7 @@ pub const InstallCompletionsCommand = struct {
                 );
             }
 
-            Output.errorLn(
+            Output.printErrorln(
                 "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 .{},
             );

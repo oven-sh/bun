@@ -42,19 +42,24 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
 
 JSEventEmitter* jsEventEmitterCastFast(VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSValue thisValue)
 {
-    if (thisValue.inherits<JSEventEmitter>())
-        return jsCast<JSEventEmitter*>(asObject(thisValue));
-
-    if (UNLIKELY(thisValue.isUndefinedOrNull() || !thisValue.isObject())) {
+    if (UNLIKELY(!thisValue.isCell())) {
         return nullptr;
     }
 
-    auto* thisObject = asObject(thisValue);
+    JSCell* thisCell = thisValue.asCell();
+    if (UNLIKELY(!thisCell->isObject())) {
+        return nullptr;
+    }
+
+    auto* thisObject = asObject(thisCell);
+
+    if (thisObject->inherits<JSEventEmitter>())
+        return jsCast<JSEventEmitter*>(thisObject);
 
     auto clientData = WebCore::clientData(vm);
     auto name = clientData->builtinNames()._eventsPublicName();
     if (JSValue _events = thisObject->getIfPropertyExists(lexicalGlobalObject, name)) {
-        if (!_events.isUndefinedOrNull() && _events.inherits<JSEventEmitter>()) {
+        if (_events.isCell() && _events.inherits<JSEventEmitter>()) {
             return jsCast<JSEventEmitter*>(asObject(_events));
         }
     }

@@ -33,7 +33,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 - {% anchor id="node_child_process" %} [`node:child_process`](https://nodejs.org/api/child_process.html) {% /anchor %}
 - 🟡
-- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization
+- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization.
 
 ---
 
@@ -92,8 +92,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_http" %} [`node:http`](https://nodejs.org/api/http.html) {% /anchor %}
-- 🟡
-- Missing `http.Agent` `http.ClientRequest` `http.IncomingMessage` `http.OutgoingMessage` `http.globalAgent` `http.get` `http.maxHeaderSize` `http.request` `http.setMaxIdleHTTPParsers` `http.validateHeader{Name|Value}`.
+- 🟢
+- Fully implemented.
 
 ---
 
@@ -158,8 +158,8 @@ This page is updated regularly to reflect compatibility status of the latest ver
 ---
 
 - {% anchor id="node_querystring" %} [`node:querystring`](https://nodejs.org/api/querystring.html) {% /anchor %}
-- 🟡
-- Missing `querystring.escape` and `querystring.unescape`.
+- 🟢
+- Fully implemented.
 
 ---
 

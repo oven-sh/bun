@@ -8,7 +8,7 @@ Provide a command as an array of strings. The result of `Bun.spawn()` is a `Bun.
 Bun.spawn(["echo", "hello"]);
 ```
 
-The second argument to `Bun.spawn` is a parameters object that can be used ton configure the subprocess.
+The second argument to `Bun.spawn` is a parameters object that can be used to configure the subprocess.
 
 ```ts
 const proc = Bun.spawn(["echo", "hello"], {

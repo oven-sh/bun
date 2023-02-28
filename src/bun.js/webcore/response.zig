@@ -331,7 +331,7 @@ pub const Response = struct {
 
                 return response.body.value.InternalBlob.contentType();
             },
-            .Used, .Locked, .Empty, .Error => return default.value,
+            .Null, .Used, .Locked, .Empty, .Error => return default.value,
         }
     }
 
@@ -608,6 +608,8 @@ pub const Fetch = struct {
     );
 
     pub const FetchTasklet = struct {
+        const log = Output.scoped(.FetchTasklet, false);
+
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
         javascript_vm: *VirtualMachine = undefined,
@@ -817,24 +819,12 @@ pub const Fetch = struct {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
             }
 
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
-                allocator,
-                fetch_options.method,
-                fetch_options.url,
-                fetch_options.headers.entries,
-                fetch_options.headers.buf.items,
-                &fetch_tasklet.response_buffer,
-                fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
-                HTTPClient.HTTPClientResult.Callback.New(
-                    *FetchTasklet,
-                    FetchTasklet.callback,
-                ).init(
-                    fetch_tasklet,
-                ),
-                proxy,
-                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
-            );
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(allocator, fetch_options.method, fetch_options.url, fetch_options.headers.entries, fetch_options.headers.buf.items, &fetch_tasklet.response_buffer, fetch_tasklet.request_body.slice(), fetch_options.timeout, HTTPClient.HTTPClientResult.Callback.New(
+                *FetchTasklet,
+                FetchTasklet.callback,
+            ).init(
+                fetch_tasklet,
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -851,10 +841,15 @@ pub const Fetch = struct {
         }
 
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
+            log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
             this.aborted.store(true, .Monotonic);
+
+            if (this.http != null) {
+                HTTPClient.http_thread.scheduleShutdown(this.http.?);
+            }
         }
 
         const FetchOptions = struct {

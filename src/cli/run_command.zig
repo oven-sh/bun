@@ -836,7 +836,8 @@ pub const RunCommand = struct {
         return shell_out;
     }
 
-    pub fn exec(ctx: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+    pub fn exec(ctx_: Command.Context, comptime bin_dirs_only: bool, comptime log_errors: bool) !bool {
+        var ctx = ctx_;
         // Step 1. Figure out what we're trying to run
         var positionals = ctx.positionals;
         if (positionals.len > 0 and strings.eqlComptime(positionals[0], "run") or strings.eqlComptime(positionals[0], "r")) {
@@ -855,12 +856,20 @@ pub const RunCommand = struct {
         if (log_errors or force_using_bun) {
             if (script_name_to_search.len > 0) {
                 possibly_open_with_bun_js: {
+                    const ext = std.fs.path.extension(script_name_to_search);
+                    var has_loader = false;
                     if (!force_using_bun) {
-                        if (options.defaultLoaders.get(std.fs.path.extension(script_name_to_search))) |load| {
+                        if (options.defaultLoaders.get(ext)) |load| {
+                            has_loader = true;
                             if (!load.canBeRunByBun())
                                 break :possibly_open_with_bun_js;
+                            // if there are preloads, allow weirdo file extensions
                         } else {
-                            break :possibly_open_with_bun_js;
+                            // you can have package.json scripts with file extensions in the name
+                            // eg "foo.zip"
+                            // in those cases, we don't know
+                            if (ext.len == 0 or strings.containsChar(script_name_to_search, ':'))
+                                break :possibly_open_with_bun_js;
                         }
                     }
 
@@ -888,8 +897,20 @@ pub const RunCommand = struct {
 
                     const file = file_ catch break :possibly_open_with_bun_js;
 
-                    // ignore the shebang if they explicitly passed `--bun`
                     if (!force_using_bun) {
+                        // Due to preload, we don't know if they intend to run
+                        // this as a script or as a regular file
+                        // once we know it's a file, check if they have any preloads
+                        if (ext.len > 0 and !has_loader) {
+                            if (!ctx.debug.loaded_bunfig) {
+                                try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            }
+
+                            if (ctx.preloads.len == 0)
+                                break :possibly_open_with_bun_js;
+                        }
+
+                        // ignore the shebang if they explicitly passed `--bun`
                         // "White space after #! is optional."
                         var shebang_buf: [64]u8 = undefined;
                         const shebang_size = file.pread(&shebang_buf, 0) catch |err| {

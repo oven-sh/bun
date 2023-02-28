@@ -1257,12 +1257,6 @@ pub const PackageManifest = struct {
                                         package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
                                     }
                                 }
-
-                                if (dist.expr.asProperty("shasum")) |shasum| {
-                                    if (shasum.expr.asString(allocator)) |shasum_str| {
-                                        package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
-                                    }
-                                }
                             }
                         }
                     }

@@ -8,7 +8,7 @@ Bun provides a set of optimized APIs for reading and writing files.
 
 `Bun.file(path): BunFile`
 
-Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents represents a lazily-loaded file; initializing it does not actually read the file from disk.
+Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents a lazily-loaded file; initializing it does not actually read the file from disk.
 
 ```ts
 const foo = Bun.file("foo.txt"); // relative to cwd

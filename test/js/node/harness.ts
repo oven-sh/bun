@@ -1,3 +1,4 @@
+// @ts-ignore
 import { gcTick, hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
@@ -9,45 +10,51 @@ export function createTest(path: string) {
   hideFromStackTrace(expect);
 
   // Assert
-  const strictEqual = (...args: Parameters<typeof assertNode.strictEqual>) => {
-    assertNode.strictEqual(...args);
-    expect(true).toBe(true);
-  };
-
-  const notStrictEqual = (...args: Parameters<typeof assertNode.notStrictEqual>) => {
-    assertNode.notStrictEqual(...args);
-    expect(true).toBe(true);
-  };
-
-  const deepStrictEqual = (...args: Parameters<typeof assertNode.deepStrictEqual>) => {
-    assertNode.deepStrictEqual(...args);
-    expect(true).toBe(true);
-  };
-
-  const throws = (...args: Parameters<typeof assertNode.throws>) => {
-    assertNode.throws(...args);
-    expect(true).toBe(true);
-  };
-
-  const ok = (...args: Parameters<typeof assertNode.ok>) => {
-    assertNode.ok(...args);
-    expect(true).toBe(true);
-  };
-
-  const ifError = (...args: Parameters<typeof assertNode.ifError>) => {
-    assertNode.ifError(...args);
-    expect(true).toBe(true);
-  };
-
-  const match = (...args: Parameters<typeof assertNode.match>) => {
-    assertNode.match(...args);
-    expect(true).toBe(true);
-  };
-
-  const assert = function (...args: any[]) {
+  const strictEqual = (...args: any) => {
     // @ts-ignore
-    assertNode(...args);
+    assertNode.strictEqual.apply(this, args);
+    expect(true).toBe(true);
   };
+
+  const notStrictEqual = (...args: any) => {
+    // @ts-ignore
+    assertNode.notStrictEqual.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const deepStrictEqual = (...args: any) => {
+    // @ts-ignore
+    assertNode.deepStrictEqual.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const throws = (...args: any) => {
+    // @ts-ignore
+    assertNode.throws.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const ok = (...args: any) => {
+    // @ts-ignore
+    assertNode.ok.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const ifError = (...args: any) => {
+    // @ts-ignore
+    assertNode.ifError.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const match = (...args: any) => {
+    // @ts-ignore
+    assertNode.match.apply(this, args);
+    expect(true).toBe(true);
+  };
+
+  const assert: typeof assertNode = function (...args: [any, ...any[]]) {
+    assertNode(...args);
+  } as any;
 
   hideFromStackTrace(strictEqual);
   hideFromStackTrace(notStrictEqual);
@@ -111,6 +118,7 @@ export function createTest(path: string) {
     }
 
     function _mustCallInner(fn, criteria = 1, field) {
+      // @ts-ignore
       if (process._exiting) throw new Error("Cannot use common.mustCall*() in process exit handler");
       if (typeof fn === "number") {
         criteria = fn;

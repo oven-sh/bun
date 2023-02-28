@@ -294,6 +294,7 @@ pub const Body = struct {
         Used: void,
         Empty: void,
         Error: JSValue,
+        Null: void,
 
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* != .Locked)
@@ -355,6 +356,7 @@ pub const Body = struct {
             Used,
             Empty,
             Error,
+            Null,
         };
 
         // pub const empty = Value{ .Empty = void{} };
@@ -363,11 +365,11 @@ pub const Body = struct {
             JSC.markBinding(@src());
 
             switch (this.*) {
-                .Empty => {
-                    return JSValue.jsNull();
-                },
-                .Used => {
+                .Used, .Empty => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
+                },
+                .Null => {
+                    return JSValue.null;
                 },
                 .InternalBlob,
                 .Blob,
@@ -436,12 +438,15 @@ pub const Body = struct {
             }
         }
 
-        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
+        pub fn fromJS(
+            globalThis: *JSGlobalObject,
+            value: JSValue,
+        ) ?Value {
             value.ensureStillAlive();
 
             if (value.isEmptyOrUndefinedOrNull()) {
                 return Body.Value{
-                    .Empty = void{},
+                    .Null = void{},
                 };
             }
 
@@ -976,10 +981,6 @@ pub fn BodyMixin(comptime Type: type) type {
         ) callconv(.C) JSValue {
             var body: *Body.Value = this.getBodyValue();
 
-            if (body.* == .Empty) {
-                return JSValue.jsNull();
-            }
-
             if (body.* == .Used) {
                 // TODO: make this closed
                 return JSC.WebCore.ReadableStream.empty(globalThis);
@@ -1001,7 +1002,6 @@ pub fn BodyMixin(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
-
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
             }

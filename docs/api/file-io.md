@@ -45,7 +45,7 @@ The default MIME type is `text/plain;charset=utf-8`, but it can be overridden by
 
 ```ts
 const notreal = Bun.file("notreal.json", { type: "application/json" });
-notreal.type; // => "text/plain;charset=utf-8"
+notreal.type; // => "application/json;charset=utf-8"
 ```
 
 For convenience, Bun exposes `stdin`, `stdout` and `stderr` as instances of `BunFile`.

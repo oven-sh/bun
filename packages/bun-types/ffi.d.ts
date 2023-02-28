@@ -475,7 +475,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    args?: FFIType[];
+    args?: FFITypeOrString[];
     /**
      * Return type to a FFI function (C ABI)
      *
@@ -503,7 +503,7 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    returns?: FFIType;
+    returns?: FFITypeOrString;
 
     /**
      * Function pointer to the native function

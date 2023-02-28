@@ -1,20 +1,3 @@
-/**
- * `bun:ffi` lets you efficiently call C functions & FFI functions from JavaScript
- *  without writing bindings yourself.
- *
- * ```js
- * import {dlopen, CString, ptr} from 'bun:ffi';
- *
- * const lib = dlopen('libsqlite3', {
- * });
- * ```
- *
- * This is powered by just-in-time compiling C wrappers
- * that convert JavaScript types to C types and back. Internally,
- * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
- * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
- *
- */
 declare module "bun:ffi" {
 	export enum FFIType {
 		char = 0,
@@ -456,12 +439,16 @@ declare module "bun:ffi" {
 		 *
 		 * @example
 		 * From JavaScript:
-		 * ```js
-		 * const lib = dlopen('add', {
-		 *    // FFIType can be used or you can pass string labels.
-		 *    args: [FFIType.i32, "i32"],
-		 *    returns: "i32",
-		 * });
+		 * ```ts
+		 * import { dlopen, FFIType, suffix } from "bun:ffi"
+		 * 
+		 * const lib = dlopen(`adder.${suffix}`, {
+		 * 	add: {
+		 * 		// FFIType can be used or you can pass string labels.
+		 * 		args: [FFIType.i32, "i32"],
+		 * 		returns: "i32",
+		 * 	},
+     * })
 		 * lib.symbols.add(1, 2)
 		 * ```
 		 * In C:
@@ -481,7 +468,9 @@ declare module "bun:ffi" {
 		 *
 		 * @example
 		 * From JavaScript:
-		 * ```js
+		 * ```ts
+		 * import { dlopen, CString } from "bun:ffi"
+		 * 
 		 * const lib = dlopen('z', {
 		 *    version: {
 		 *      returns: "ptr",
@@ -635,7 +624,7 @@ declare module "bun:ffi" {
 	 *
 	 */
 	export function CFunction(
-		fn: FFIFunction & { ptr: number | bigint }
+		fn: FFIFunction & { ptr: Pointer }
 	): CallableFunction & {
 		/**
 		 * Free the memory allocated by the wrapping function
@@ -715,7 +704,7 @@ declare module "bun:ffi" {
 	 *
 	 */
 	export function toBuffer(
-		ptr: number,
+		ptr: Pointer,
 		byteOffset?: number,
 		byteLength?: number
 	): Buffer
@@ -735,7 +724,7 @@ declare module "bun:ffi" {
 	 * undefined behavior. Use with care!
 	 */
 	export function toArrayBuffer(
-		ptr: number,
+		ptr: Pointer,
 		byteOffset?: number,
 		byteLength?: number
 	): ArrayBuffer
@@ -770,7 +759,7 @@ declare module "bun:ffi" {
 	export function ptr(
 		view: TypedArray | ArrayBufferLike | DataView,
 		byteOffset?: number
-	): number
+	): Pointer
 
 	/**
 	 * Get a string from a UTF-8 encoded C string
@@ -823,7 +812,7 @@ declare module "bun:ffi" {
 		 * reading beyond the bounds of the pointer will crash the program or cause
 		 * undefined behavior. Use with care!
 		 */
-		constructor(ptr: number, byteOffset?: number, byteLength?: number)
+		constructor(ptr: Pointer, byteOffset?: number, byteLength?: number)
 
 		/**
 		 * The ptr to the C string
@@ -832,7 +821,7 @@ declare module "bun:ffi" {
 		 * is safe to continue using this instance after the `ptr` has been
 		 * freed.
 		 */
-		ptr: number
+		ptr: Pointer
 		byteOffset?: number
 		byteLength?: number
 
@@ -861,7 +850,7 @@ declare module "bun:ffi" {
 		 *
 		 * Becomes `null` once {@link JSCallback.prototype.close} is called
 		 */
-		readonly ptr: number | null
+		readonly ptr: Pointer | null
 
 		/**
 		 * Can the callback be called from a different thread?

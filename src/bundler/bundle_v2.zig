@@ -3790,9 +3790,13 @@ const LinkerContext = struct {
             break :brk CompileResult.empty;
         };
 
-        var j = bun.Joiner{ .use_pool = false, .node_allocator = allocator, .watcher = .{
-            .input = chunk.unique_key,
-        } };
+        var j = bun.Joiner{
+            .use_pool = false,
+            .node_allocator = allocator,
+            .watcher = .{
+                .input = chunk.unique_key,
+            },
+        };
         var line_offset: bun.sourcemap.LineColumnOffset.Optional = .{ .null = {} };
 
         // Concatenate the generated JavaScript chunks together
@@ -3877,7 +3881,7 @@ const LinkerContext = struct {
                 switch (comment_type) {
                     .multiline => {
                         j.push(" */\n");
-                        line_offset.advance(" */");
+                        line_offset.advance(" */\n");
                     },
                     .single => {
                         j.push("\n");
@@ -3934,6 +3938,7 @@ const LinkerContext = struct {
 
         // TODO: footer
 
+        chunk.content.javascript.intermediate_output;
     }
 
     pub fn generateEntryPointTailJS(

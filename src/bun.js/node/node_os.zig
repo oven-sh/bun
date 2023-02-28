@@ -373,9 +373,192 @@ pub const Os = struct {
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
 
-        // TODO:
-        return JSC.JSValue.createEmptyObject(globalThis, 0);
+        // getifaddrs sets a pointer to a linked list
+        var interface_start: ?*C.ifaddrs = null;
+        const rc = C.getifaddrs(&interface_start);
+        if (rc != 0) {
+            const err = JSC.SystemError{
+                .message = JSC.ZigString.init("A system error occurred: getifaddrs returned an error"),
+                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .errno = @enumToInt(std.os.errno(rc)),
+                .syscall = JSC.ZigString.init("getifaddrs"),
+            };
+
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        }
+        defer C.freeifaddrs(interface_start);
+
+
+        const helpers = struct {
+            // We'll skip interfaces that aren't actually available
+            pub fn skip(iface: *C.ifaddrs) bool {
+                // Skip interfaces that aren't actually available
+                if (iface.ifa_flags & C.IFF_RUNNING == 0) return true;
+                if (iface.ifa_flags & C.IFF_UP == 0) return true;
+                if (iface.ifa_addr == null) return true;
+
+                return false;
+            }
+
+            // We won't actually return link-layer interfaces but we need them for
+            //  extracting the MAC address
+            pub fn isLinkLayer(iface: *C.ifaddrs) bool {
+                if (iface.ifa_addr == null) return false;
+                return if (comptime Environment.isLinux)
+                        return iface.ifa_addr.*.sa_family == std.os.AF.PACKET
+                    else if (comptime Environment.isMac)
+                        return iface.ifa_addr.?.*.family == std.os.AF.LINK
+                    else unreachable;
+            }
+
+            pub fn isLoopback(iface: *C.ifaddrs) bool {
+                return iface.ifa_flags & C.IFF_LOOPBACK == C.IFF_LOOPBACK;
+            }
+        };
+
+
+        // The list currently contains entries for link-layer interfaces
+        //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
+        //  but need the link-layer entries to determine MAC address.
+        // So, on our first pass through the linked list we'll count the number of
+        //  INET interfaces only.
+        var num_inet_interfaces: usize = 0;
+        var it = interface_start;
+        while (it) |iface| : (it = iface.ifa_next) {
+            if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
+            num_inet_interfaces += 1;
+        }
+
+        var ret = JSC.JSValue.createEmptyObject(globalThis, 8);
+
+        // Second pass through, populate each interface object
+        it = interface_start;
+        while (it) |iface| : (it = iface.ifa_next) {
+            if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
+
+            const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
+            const addr = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_addr)));
+            const netmask = std.net.Address.initPosix(@alignCast(4, @ptrCast(*std.os.sockaddr, iface.ifa_netmask)));
+
+            var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
+
+            // address <string> The assigned IPv4 or IPv6 address
+            // cidr <string> The assigned IPv4 or IPv6 address with the routing prefix in CIDR notation. If the netmask is invalid, this property is set to null.
+            {
+                // Compute the CIDR suffix; returns null if the netmask cannot
+                //  be converted to a CIDR suffix
+                const maybe_suffix: ?u8 = switch (addr.any.family) {
+                    std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
+                    std.os.AF.INET6 => netmaskToCIDRSuffix(@bitCast(u128, netmask.in6.sa.addr)),
+                    else => null
+                };
+
+                // Format the address and then, if valid, the CIDR suffix; both
+                //  the address and cidr values can be slices into this same buffer
+                // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
+                var buf: [64]u8 = undefined;
+                const addr_str = formatAddress(addr, &buf) catch unreachable;
+                var cidr = JSC.JSValue.null;
+                if (maybe_suffix) |suffix| {
+                    //NOTE addr_str might not start at buf[0] due to slicing in formatAddress
+                    const start = @ptrToInt(addr_str.ptr) - @ptrToInt(&buf[0]);
+                    // Start writing the suffix immediately after the address
+                    const suffix_str = std.fmt.bufPrint(buf[start + addr_str.len..], "/{}", .{ suffix }) catch unreachable;
+                    // The full cidr value is the address + the suffix
+                    const cidr_str = buf[start..start + addr_str.len + suffix_str.len];
+                    cidr = JSC.ZigString.init(cidr_str).withEncoding().toValueGC(globalThis);
+                }
+
+                interface.put(globalThis, JSC.ZigString.static("address"),
+                                          JSC.ZigString.init(addr_str).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("cidr"), cidr);
+            }
+
+            // netmask <string> The IPv4 or IPv6 network mask
+            {
+                var buf: [64]u8 = undefined;
+                const str = formatAddress(netmask, &buf) catch unreachable;
+                interface.put(globalThis, JSC.ZigString.static("netmask"),
+                                          JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
+            }
+
+            // family <string> Either IPv4 or IPv6
+            interface.put(globalThis, JSC.ZigString.static("family"),
+                (switch (addr.any.family) {
+                    std.os.AF.INET => JSC.ZigString.static("IPv4"),
+                    std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                    else => JSC.ZigString.static("unknown"),
+                }).toValue(globalThis)
+            );
+
+            // mac <string> The MAC address of the network interface
+            {
+                // We need to search for the link-layer interface whose name matches this one
+                var ll_it = interface_start;
+                const maybe_ll_addr = while (ll_it) |ll_iface| : (ll_it = ll_iface.ifa_next) {
+                    if (helpers.skip(ll_iface) or !helpers.isLinkLayer(ll_iface)) continue;
+
+                    const ll_name = bun.sliceTo(ll_iface.ifa_name, 0);
+                    if (!strings.hasPrefix(ll_name, interface_name)) continue;
+                    if (ll_name.len > interface_name.len and ll_name[interface_name.len] != ':') continue;
+
+                    // This is the correct link-layer interface entry for the current interface,
+                    //  cast to a link-layer socket address
+                    if (comptime Environment.isLinux) {
+                        break @ptrCast(?*std.os.sockaddr.ll, @alignCast(4, ll_iface.ifa_addr));
+                    } else if (comptime Environment.isMac) {
+                        break @ptrCast(?*C.sockaddr_dl, @alignCast(2, ll_iface.ifa_addr));
+                    } else unreachable;
+                } else null;
+
+                if (maybe_ll_addr) |ll_addr| {
+                    // Encode its link-layer address.  We need 2*6 bytes for the
+                    //  hex characters and 5 for the colon separators
+                    var mac_buf: [17]u8 = undefined;
+                    var addr_data = if (comptime Environment.isLinux) ll_addr.addr
+                                    else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..]
+                                    else unreachable;
+                    const mac = std.fmt.bufPrint(&mac_buf,
+                        "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}",
+                        .{
+                            addr_data[0], addr_data[1], addr_data[2],
+                            addr_data[3], addr_data[4], addr_data[5],
+                        }
+                    ) catch unreachable;
+                    interface.put(globalThis, JSC.ZigString.static("mac"),
+                                              JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                }
+            }
+
+            // internal <boolean> true if the network interface is a loopback or similar interface that is not remotely accessible; otherwise false
+            interface.put(globalThis, JSC.ZigString.static("internal"),
+                                      JSC.JSValue.jsBoolean(helpers.isLoopback(iface)));
+
+            // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
+            if (addr.any.family == std.os.AF.INET6) {
+                interface.put(globalThis, JSC.ZigString.static("scope_id"),
+                                          JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
+            }
+
+
+            // Does this entry already exist?
+            if (ret.get(globalThis, interface_name)) |array| {
+                // Add this interface entry to the existing array
+                const next_index = @intCast(u32, array.getLengthOfArray(globalThis));
+                array.putIndex(globalThis, next_index, interface);
+            } else {
+                // Add it as an array with this interface as an element
+                const member_name = JSC.ZigString.init(interface_name);
+                var array = JSC.JSValue.createEmptyArray(globalThis, 1);
+                array.putIndex(globalThis, 0, interface);
+                ret.put(globalThis, &member_name, array);
+            }
+        }
+
+        return ret;
     }
+
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         JSC.markBinding(@src());
@@ -553,3 +736,76 @@ pub const Os = struct {
         return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
     }
 };
+
+fn formatAddress(address: std.net.Address, into: []u8) ![]u8 {
+    // std.net.Address.format includes `:<port>` and square brackets (IPv6)
+    //  while Node does neither.  This uses format then strips these to bring
+    //  the result into conformance with Node.
+    var result = try std.fmt.bufPrint(into, "{}", .{address});
+
+    // Strip `:<port>`
+    if (std.mem.lastIndexOfScalar(u8, result, ':')) |colon| {
+        result = result[0..colon];
+    }
+    // Strip brackets
+    if (result[0] == '[' and result[result.len-1] == ']') {
+        result = result[1..result.len-1];
+    }
+    return result;
+}
+
+/// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
+/// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)
+fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
+    const T = @TypeOf(mask);
+    comptime std.debug.assert(T == u32 or T == u128);
+
+    const mask_bits = @byteSwap(mask);
+
+    // Validity check: set bits should be left-contiguous
+    const first_zero = @clz(~mask_bits);
+    const last_one = @bitSizeOf(T) - @ctz(mask_bits);
+    if (first_zero < @bitSizeOf(T) and first_zero < last_one) return null;
+    return first_zero;
+}
+test "netmaskToCIDRSuffix" {
+    const ipv4_tests = .{
+        .{ "255.255.255.255", 32 },
+        .{ "255.255.255.254", 31 },
+        .{ "255.255.255.252", 30 },
+        .{ "255.255.255.128", 25 },
+        .{ "255.255.255.0",   24 },
+        .{ "255.255.128.0",   17 },
+        .{ "255.255.0.0",     16 },
+        .{ "255.128.0.0",      9 },
+        .{ "255.0.0.0",        8 },
+        .{ "224.0.0.0",        3 },
+        .{ "192.0.0.0",        2 },
+        .{ "128.0.0.0",        1 },
+        .{ "0.0.0.0",          0 },
+
+        // invalid masks
+        .{ "255.0.0.255", null },
+        .{ "128.0.0.255", null },
+        .{ "128.0.0.1",   null },
+    };
+    inline for (ipv4_tests) |t| {
+        const addr = try std.net.Address.parseIp4(t[0], 0);
+        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(addr.in.sa.addr));
+    }
+
+    const ipv6_tests = .{
+        .{ "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128 },
+        .{ "ffff:ffff:ffff:ffff::",                    64 },
+        .{ "::",                                        0 },
+
+        // invalid masks
+        .{ "ff00:1::",   null },
+        .{ "0:1::",   null },
+    };
+    inline for (ipv6_tests) |t| {
+        const addr = try std.net.Address.parseIp6(t[0], 0);
+        const bits = @bitCast(u128, addr.in6.sa.addr);
+        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
+    }
+}

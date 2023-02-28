@@ -131,8 +131,8 @@ pub const Source = struct {
                 var is_color_terminal: ?bool = null;
                 if (_source.stream.isTty()) {
                     stdout_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stdout = is_color_terminal.?;
+                    enable_ansi_colors_stdout = isColorTerminal();
+                    is_color_terminal = enable_ansi_colors_stdout;
                 } else if (isForceColor()) |val| {
                     enable_ansi_colors_stdout = val;
                 } else {
@@ -141,8 +141,7 @@ pub const Source = struct {
 
                 if (_source.error_stream.isTty()) {
                     stderr_descriptor_type = OutputStreamDescriptor.terminal;
-                    is_color_terminal = is_color_terminal orelse isColorTerminal();
-                    enable_ansi_colors_stderr = is_color_terminal.?;
+                    enable_ansi_colors_stderr = is_color_terminal orelse isColorTerminal();
                 } else if (isForceColor()) |val| {
                     enable_ansi_colors_stderr = val;
                 } else {
@@ -328,11 +327,7 @@ pub inline fn debug(comptime fmt: string, args: anytype) void {
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
     std.debug.assert(source_set);
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return print(fmt ++ "\n", args);
-    }
-
-    return print(fmt, args);
+    println(fmt, args);
 }
 
 pub noinline fn print(comptime fmt: string, args: anytype) void {
@@ -383,6 +378,10 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
         /// To enable all logs, set the environment variable
         ///   BUN_DEBUG_ALL=1
         pub fn log(comptime fmt: string, args: anytype) void {
+            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
+                return log(fmt ++ "\n", args);
+            }
+
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_ALL") != null or
@@ -403,10 +402,6 @@ pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_f
                 };
                 out = buffered_writer.writer();
                 out_set = true;
-            }
-
-            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-                return log(fmt ++ "\n", args);
             }
 
             if (Output.enable_ansi_colors_stderr) {
@@ -534,10 +529,7 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
         if (level == .Error) return;
     }
 
-    if (comptime @import("bun").fast_debug_build_mode)
-        return printer(comptime prettyFmt(fmt, false), args);
-
-    if (if (comptime l == Level.stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
+    if (if (comptime l == .stdout) enable_ansi_colors_stdout else enable_ansi_colors_stderr) {
         printer(comptime prettyFmt(fmt, true), args);
     } else {
         printer(comptime prettyFmt(fmt, false), args);
@@ -561,12 +553,8 @@ pub noinline fn pretty(comptime fmt: string, args: anytype) void {
 
 /// Like Output.println, except it will automatically strip ansi color codes if
 /// the terminal doesn't support them.
-pub noinline fn prettyln(comptime fmt: string, args: anytype) void {
-    if (enable_ansi_colors) {
-        println(comptime prettyFmt(fmt, true), args);
-    } else {
-        println(comptime prettyFmt(fmt, false), args);
-    }
+pub fn prettyln(comptime fmt: string, args: anytype) void {
+    prettyWithPrinter(fmt, args, println, .stdout);
 }
 
 pub noinline fn printErrorln(comptime fmt: string, args: anytype) void {
@@ -583,22 +571,8 @@ pub noinline fn prettyError(comptime fmt: string, args: anytype) void {
 
 /// Print to stderr with ansi color codes automatically stripped out if the
 /// terminal doesn't support them. Text is buffered
-pub noinline fn prettyErrorln(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return prettyWithPrinter(
-            fmt ++ "\n",
-            args,
-            printError,
-            .Error,
-        );
-    }
-
-    return prettyWithPrinter(
-        fmt,
-        args,
-        printError,
-        .Error,
-    );
+pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
+    prettyWithPrinter(fmt, args, printErrorln, .Error);
 }
 
 pub const Level = enum(u8) {
@@ -613,16 +587,8 @@ pub noinline fn prettyWarn(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printError, .Warn);
 }
 
-pub noinline fn prettyWarnln(comptime fmt: string, args: anytype) void {
-    if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-        return prettyWithPrinter(fmt ++ "\n", args, printError, .Warn);
-    }
-
-    return prettyWithPrinter(fmt, args, printError, .Warn);
-}
-
-pub inline fn errorLn(comptime fmt: string, args: anytype) void {
-    return printErrorln(fmt, args);
+pub fn prettyWarnln(comptime fmt: string, args: anytype) void {
+    prettyWithPrinter(fmt, args, printErrorln, .Warn);
 }
 
 pub noinline fn printError(comptime fmt: string, args: anytype) void {

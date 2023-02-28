@@ -435,6 +435,7 @@ pub const Blob = struct {
                 },
                 // .InlineBlob,
                 .InternalBlob,
+                .Null,
                 .Empty,
                 .Blob,
                 => {
@@ -665,6 +666,7 @@ pub const Blob = struct {
                     .Used,
                     .Empty,
                     .Blob,
+                    .Null,
                     => {
                         break :brk response.body.use();
                     },
@@ -699,6 +701,7 @@ pub const Blob = struct {
                     .Used,
                     .Empty,
                     .Blob,
+                    .Null,
                     => {
                         break :brk request.body.use();
                     },

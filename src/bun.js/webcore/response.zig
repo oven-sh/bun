@@ -331,7 +331,7 @@ pub const Response = struct {
 
                 return response.body.value.InternalBlob.contentType();
             },
-            .Used, .Locked, .Empty, .Error => return default.value,
+            .Null, .Used, .Locked, .Empty, .Error => return default.value,
         }
     }
 

@@ -5301,14 +5301,11 @@ pub const PackageManager = struct {
 
 
     pub const install_params = install_params_ ++ clap.parseParamsComptime(
-        \\<STR> ...
-    );
-
-    pub const add_params = install_params_ ++ clap.parseParamsComptime(
         \\-d, --development                 Add dependency to "devDependencies"
         \\--optional                        Add dependency to "optionalDependencies"
         \\<STR> ...                         "name" or "name@version" of packages to install
     );
+    pub const add_params = install_params;
 
     pub const remove_params = install_params_ ++ clap.parseParamsComptime(
         \\<STR> ...                         "name" of packages to remove from package.json
@@ -5430,10 +5427,10 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = res.args.@"link-native-bins";
 
-            if (comptime params.len == add_params.len) {
+            if (@hasDecl(@TypeOf(res.args), "development"))
                 cli.development = res.args.development;
+            if (@hasDecl(@TypeOf(res.args), "optional"))
                 cli.optional = res.args.optional;
-            }
 
             // for (res.args.omit) |omit| {
             //     if (strings.eqlComptime(omit, "dev")) {

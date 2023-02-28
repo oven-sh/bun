@@ -222,14 +222,16 @@ pub const Arguments = struct {
         Global.exit(0);
     }
 
-    fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.openFileAbsoluteZ(config_path, .{ .mode = .read_only }) catch |err| {
-            if (auto_loaded) return;
-            Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                @errorName(err),
-                config_path,
-            });
-            Global.exit(1);
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
+        var config_file = std.fs.File{
+            .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
+                if (auto_loaded) return;
+                Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
+                    @errorName(err),
+                    config_path,
+                });
+                Global.exit(1);
+            },
         };
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -290,7 +292,7 @@ pub const Arguments = struct {
         if (config_path_.len == 0) {
             return;
         }
-
+        defer ctx.debug.loaded_bunfig = true;
         var config_path: [:0]u8 = undefined;
         if (config_path_[0] == '/') {
             @memcpy(&config_buf, config_path_.ptr, config_path_.len);
@@ -831,6 +833,7 @@ pub const Command = struct {
         global_cache: options.GlobalCache = .auto,
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
+        loaded_bunfig: bool = false,
 
         // technical debt
         macros: ?MacroMap = null,
@@ -850,6 +853,8 @@ pub const Command = struct {
         install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},
+
+        preloads: []const string = &[_]string{},
 
         const _ctx = Command.Context{
             .args = std.mem.zeroes(Api.TransformOptions),

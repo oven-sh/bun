@@ -381,36 +381,36 @@ declare module "bun:ffi" {
 		[FFIType.u64_fast]: number | bigint
 	}
 	interface FFITypeStringToType {
-		["char"]: number
-		["int8_t"]: number
-		["i8"]: number
-		["uint8_t"]: number
-		["u8"]: number
-		["int16_t"]: number
-		["i16"]: number
-		["uint16_t"]: number
-		["u16"]: number
-		["int32_t"]: number
-		["i32"]: number
-		["int"]: number
-		["uint32_t"]: number
-		["u32"]: number
-		["int64_t"]: UNTYPED
-		["i64"]: UNTYPED
-		["uint64_t"]: UNTYPED
-		["u64"]: UNTYPED
-		["double"]: UNTYPED
-		["f64"]: UNTYPED
-		["float"]: UNTYPED
-		["f32"]: UNTYPED
-		["bool"]: boolean
-		["ptr"]: Pointer
-		["pointer"]: Pointer
-		["void"]: UNTYPED
-		["cstring"]: CString
-		["function"]: UNTYPED
-		["usize"]: UNTYPED
-		["callback"]: UNTYPED
+		["char"]: FFIType.char
+		["int8_t"]: FFIType.int8_t
+		["i8"]: FFIType.i8
+		["uint8_t"]: FFIType.uint8_t
+		["u8"]: FFIType.u8
+		["int16_t"]: FFIType.int16_t
+		["i16"]: FFIType.i16
+		["uint16_t"]: FFIType.uint16_t
+		["u16"]: FFIType.u16
+		["int32_t"]: FFIType.int32_t
+		["i32"]: FFIType.i32
+		["int"]: FFIType.int
+		["uint32_t"]: FFIType.uint32_t
+		["u32"]: FFIType.u32
+		["int64_t"]: FFIType.int64_t
+		["i64"]: FFIType.i64
+		["uint64_t"]: FFIType.uint64_t
+		["u64"]: FFIType.u64
+		["double"]: FFIType.double
+		["f64"]: FFIType.f64
+		["float"]: FFIType.float
+		["f32"]: FFIType.f32
+		["bool"]: FFIType.bool
+		["ptr"]: FFIType.ptr
+		["pointer"]: FFIType.pointer
+		["void"]: FFIType.void
+		["cstring"]: FFIType.cstring
+		["function"]: FFIType.pointer // for now
+		["usize"]: FFIType.uint64_t   // for now
+		["callback"]: FFIType.pointer // for now
 	}
 
 	export type FFITypeOrString =

@@ -558,9 +558,11 @@ declare module "bun:ffi" {
 		close(): void
 	}
 
-	type ToFFIType<T extends FFITypeOrString> = T extends FFIType
-		? T
-		: FFITypeStringToType[T]
+  type ToFFIType<T extends FFITypeOrString> = T extends FFIType
+    ? T
+    : T extends string
+    ? FFITypeStringToType[T]
+    : never;
 
 	type _Narrow<T, U> = [U] extends [T] ? U : Extract<T, U>
 	type Narrow<T = unknown> =
@@ -579,7 +581,7 @@ declare module "bun:ffi" {
 			...args: Fns[K]["args"] extends infer A extends FFITypeOrString[]
 				? { [L in keyof A]: FFITypeToType[ToFFIType<A[L]>] }
 				: never
-		) => FFITypeToType[ToFFIType<Fns[K]["returns"]>]
+		) => FFITypeToType[ToFFIType<NonNullable<Fns[K]["returns"]>>]
 	}
 
 	/**

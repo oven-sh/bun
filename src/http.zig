@@ -3505,9 +3505,8 @@ pub const Server = struct {
         }
 
         const addr = listener.listen_address;
-
-        if (port != addr.getPort()) {
-            server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.getPort()});
+        if (server.bundler.options.origin.getPort() != addr.getPort()) {
+            server.bundler.options.origin = ZigURL.parse(try std.fmt.allocPrint(server.allocator, "{s}://{s}:{d}", .{server.bundler.options.origin.displayProtocol(), server.bundler.options.origin.displayHostname(), addr.getPort()}));
         }
 
         const start_time = Global.getStartTime();

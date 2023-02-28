@@ -207,6 +207,7 @@ export class Server extends EventEmitter {
     }
 
     this.#options = options;
+
     if (callback) this.on("request", callback);
   }
 
@@ -232,8 +233,13 @@ export class Server extends EventEmitter {
     if (typeof port === "function") {
       onListen = port;
     } else if (typeof port === "object") {
+      port?.signal?.addEventListener("abort", ()=> {
+        this.close();
+      });
+
       host = port?.host;
       port = port?.port;
+      
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
     const ResponseClass = this.#options.ServerResponse || ServerResponse;

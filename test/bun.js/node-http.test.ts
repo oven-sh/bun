@@ -352,6 +352,32 @@ describe("node:http", () => {
     });
   });
 
+  describe("signal", () => {
+
+    it("should abort and close the server", done => {
+      const server = createServer((req, res) => {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("Hello World");
+      });
+
+      //force timeout to not hang tests
+      const interval = setTimeout(()=> {
+        expect(false).toBe(true);
+        server.close();
+        done()
+      }, 100);
+      
+      const signal = AbortSignal.timeout(30);
+      signal.addEventListener("abort", ()=> {
+        clearTimeout(interval);
+        expect(true).toBe(true);
+        done()
+      });
+      
+      server.listen({ signal, port: 8130 });
+    });
+  });
+
   describe("get", () => {
     let server;
     beforeAll(() => {

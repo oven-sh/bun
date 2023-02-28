@@ -504,3 +504,26 @@ it("latin1 supplement chars", () => {
     },
   ]);
 });
+
+describe("Database.run", () => {
+  it("should not throw error `not an error` when provided query containing only whitespace", () => {
+    const db = Database.open(":memory:");
+    db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+
+    expect(db[Symbol.for("Bun.Database.cache.count")]).toBe(0);
+
+    var q = db.query("SELECT * FROM test WHERE name = ?");
+    expect(q.get("Hello") === null).toBe(true);
+
+    db.exec('INSERT INTO test (name) VALUES ("Hello")');
+    db.exec('INSERT INTO test (name) VALUES ("World")');
+
+    try {
+      db.run(" ");
+      expect(true).toBeFalsy();
+    } catch (e) {
+      expect(e.message).not.toBe("not an error");
+      expect(e.message).toBe("Query contained no valid SQL statement; likely empty query.");
+    }
+  });
+});

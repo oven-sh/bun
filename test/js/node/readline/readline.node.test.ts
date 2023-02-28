@@ -4,10 +4,21 @@ import { EventEmitter } from "node:events";
 import { createTest } from "node-harness";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
+type CSI = ((str: TemplateStringsArray, ...args: any[]) => string) & {
+  kClearToLineBeginning: string;
+  kClearToLineEnd: string;
+  kClearLine: string;
+  kClearScreenDown: string;
+};
+
+var CSI: CSI;
+
 var {
-  CSI,
+  CSI: _CSI,
   utils: { getStringWidth, stripVTControlCharacters },
 } = readline[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")];
+
+CSI = _CSI;
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -42,6 +53,7 @@ function isWarned(emitter) {
 
 function getInterface(options) {
   const fi = new FakeInput();
+  // @ts-ignore
   const rli = new readline.Interface({
     input: fi,
     output: fi,
@@ -50,7 +62,7 @@ function getInterface(options) {
   return [rli, fi];
 }
 
-function assertCursorRowsAndCols(rli, rows, cols) {
+function assertCursorRowsAndCols(rli: readline.Interface, rows: number, cols: number) {
   const cursorPos = rli.getCursorPos();
   assert.strictEqual(cursorPos.rows, rows);
   assert.strictEqual(cursorPos.cols, cols);
@@ -65,7 +77,7 @@ const input = new FakeInput();
 
 describe("CSI", () => {
   it("should be defined", () => {
-    assert.ok(CSI);
+    assert(CSI);
   });
 
   it("should have all the correct clear sequences", () => {
@@ -346,8 +358,8 @@ describe("readline.emitKeyPressEvents()", () => {
 
   it("should allow keypress listeners to be removed and added again", () => {
     const stream = new PassThrough();
-    const sequence: any[] = [];
-    const keys: any[] = [];
+    const sequence = [] as string[];
+    const keys = [] as string[];
     const keypressListener = (s, k) => {
       sequence.push(s);
       keys.push(k);
@@ -358,8 +370,8 @@ describe("readline.emitKeyPressEvents()", () => {
     stream.removeListener("keypress", keypressListener);
     stream.write("foo");
 
-    assert.deepStrictEqual(sequence, []);
-    assert.deepStrictEqual(keys, []);
+    assert.deepStrictEqual(sequence, [] as string[]);
+    assert.deepStrictEqual(keys, [] as string[]);
 
     stream.on("keypress", keypressListener);
     stream.write("foo");
@@ -372,6 +384,7 @@ describe("readline.emitKeyPressEvents()", () => {
 describe("readline.Interface", () => {
   it("should allow valid escapeCodeTimeout to be set", () => {
     const fi = new FakeInput();
+    // @ts-ignore
     const rli = new readline.Interface({
       input: fi,
       output: fi,
@@ -386,6 +399,7 @@ describe("readline.Interface", () => {
       assert.throws(
         () => {
           const fi = new FakeInput();
+          // @ts-ignore
           const rli = new readline.Interface({
             input: fi,
             output: fi,
@@ -403,13 +417,15 @@ describe("readline.Interface", () => {
 
   it("should create valid instances of readline.Interface", () => {
     const input = new FakeInput();
+    // @ts-ignore
     const rl = readline.Interface({ input });
-    assert.ok(rl instanceof readline.Interface);
+    assert(rl instanceof readline.Interface);
   });
 
   it("should call completer when input emits data", done => {
     const { mustCall } = createCallCheckCtx(done);
     const fi = new FakeInput();
+    // @ts-ignore
     const rli = new readline.Interface(
       fi,
       fi,
@@ -417,7 +433,7 @@ describe("readline.Interface", () => {
       true,
     );
 
-    assert.ok(rli instanceof readline.Interface);
+    assert(rli instanceof readline.Interface);
     fi.emit("data", "a\t");
     rli.close();
   });
@@ -487,6 +503,7 @@ describe("readline.Interface", () => {
     // Check for invalid tab sizes.
     assert.throws(
       () =>
+        // @ts-ignore
         new readline.Interface({
           input,
           tabSize: 0,
@@ -496,6 +513,7 @@ describe("readline.Interface", () => {
 
     assert.throws(
       () =>
+        // @ts-ignore
         new readline.Interface({
           input,
           tabSize: "4",
@@ -505,6 +523,7 @@ describe("readline.Interface", () => {
 
     assert.throws(
       () =>
+        // @ts-ignore
         new readline.Interface({
           input,
           tabSize: 4.5,
@@ -522,6 +541,7 @@ describe("readline.Interface", () => {
   it("should not emit line when only a single character sent with no newline", done => {
     const { mustNotCall } = createCallCheckCtx(done);
     const fi = new FakeInput();
+    // @ts-ignore
     const rli = new readline.Interface(fi, {});
     rli.on("line", mustNotCall());
     fi.emit("data", "a");
@@ -745,19 +765,28 @@ describe("readline.Interface", () => {
 
   // Regression test for repl freeze, #1968:
   // check that nothing fails if 'keypress' event throws.
-  it("should not fail if keypress throws", () => {
+  it("should not fail if keypress throws", done => {
+    const createDone = createDoneCtx(done);
+    const finalDone = createDone();
+    const { mustCall } = createCallCheckCtx();
     const [rli, fi] = getInterface({ terminal: true });
     const keys = [] as string[];
     const err = new Error("bad thing happened");
-    fi.on("keypress", (key: string) => {
-      keys.push(key);
-      if (key === "X") {
-        throw err;
-      }
-    });
+    try {
+      fi.on("keypress", (key: string) => {
+        keys.push(key);
+        if (key === "X") {
+          throw err;
+        }
+      });
+    } catch (e) {
+      console.log("ERRRROR!");
+      expect(true).toBe(true);
+    }
+
     assert.throws(
       () => fi.emit("data", "fooX"),
-      e => {
+      (e: Error) => {
         console.log("ERRROR!", e);
         assert.strictEqual(e, err);
         return true;
@@ -1973,8 +2002,11 @@ describe("readline.createInterface()", () => {
     };
 
     rl.write("foo bar.hop/zoo");
+    // TODO: see if these types are actually incorrect
+    // @ts-ignore
     rl.write.apply(rl, key.xterm.home);
     ["bar.hop/zoo", ".hop/zoo", "hop/zoo", "/zoo", "zoo", ""].forEach(function (expectedLine) {
+      // @ts-ignore
       rl.write.apply(rl, key.xterm.metad);
       assert.strictEqual(rl.cursor, 0);
       assert.strictEqual(rl.line, expectedLine);

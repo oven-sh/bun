@@ -431,4 +431,45 @@ describe("node:http", () => {
       expect(globalAgent instanceof Agent).toBe(true);
     });
   });
+
+  describe("ClientRequest.signal", () => {
+    let server;
+    let server_port;
+    let server_host;
+    beforeAll(() => {
+      server = createServer((req, res) => {
+        Bun.sleep(10).then(()=> {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("Hello World");  
+        })
+      });
+      server.listen({ port: 0}, (_err,host, port)=> {
+        server_port = port;
+        server_host = host;
+      });
+    });
+    afterAll(() => {
+      server.close();
+    });
+    it("should attempt to make a standard GET request and abort", done => {
+      get(`http://127.0.0.1:${server_port}`,{ signal: AbortSignal.timeout(5)  }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(true).toBeFalsy();
+          done();
+        });
+        res.on("error", _ => {
+          expect(true).toBeFalsy();
+          done();
+        });
+      }).on("error", (err)=>{
+        expect(err?.name).toBe("AbortError");
+        done();
+      });
+    });
+  });
 });

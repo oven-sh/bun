@@ -898,6 +898,7 @@ export class ClientRequest extends OutgoingMessage {
 
   #body = null;
   #fetchRequest;
+  #signal = null;
   [kAbortController] = null;
 
   #options;
@@ -947,6 +948,9 @@ export class ClientRequest extends OutgoingMessage {
     this[kAbortController].signal.addEventListener("abort", ()=> {
         this[kClearTimeout]();
     });
+    if(this.#signal?.aborted){
+      this[kAbortController].abort();
+    }
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
       method: this.#method,
       headers: this.getHeaders(),
@@ -974,7 +978,7 @@ export class ClientRequest extends OutgoingMessage {
   }
 
   get aborted() {
-    return !!this[kAbortController]?.signal.aborted;
+    return this.#signal?.aborted || !!this[kAbortController]?.signal.aborted;
   }
 
   abort() {
@@ -1044,6 +1048,7 @@ export class ClientRequest extends OutgoingMessage {
       signal.addEventListener("abort", ()=> {
         this[kAbortController]?.abort();
       });
+      this.#signal = signal;
     }
     let method = options.method;
     const methodIsString = typeof method === "string";

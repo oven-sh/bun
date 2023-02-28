@@ -876,6 +876,7 @@ pub const PrintBundleCommand = struct {
             try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
             return;
         };
+        defer jsBundleArgs.deinit();
 
         if (jsBundleArgs.args.summary) {
             NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, ctx.allocator) catch {};

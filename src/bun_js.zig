@@ -44,13 +44,18 @@ pub const Run = struct {
     arena: Arena = undefined,
     any_unhandled: bool = false,
 
-    pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
+    pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
+        var ctx = ctx_;
         JSC.markBinding(@src());
         @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
         var arena = try Arena.init();
+
+        if (!ctx.debug.loaded_bunfig) {
+            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+        }
 
         run = .{
             .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
@@ -59,9 +64,10 @@ pub const Run = struct {
             .ctx = ctx,
             .entry_path = entry_path,
         };
+
         var vm = run.vm;
         var b = &vm.bundler;
-
+        vm.preload = ctx.preloads;
         vm.argv = ctx.passthrough;
         vm.arena = &run.arena;
         vm.allocator = arena.allocator();
@@ -144,23 +150,35 @@ pub const Run = struct {
         if (this.ctx.debug.hot_reload) {
             JSC.HotReloader.enableHotModuleReloading(vm);
         }
-        var promise = vm.loadEntryPoint(this.entry_path) catch return;
-
-        if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.runErrorHandler(promise.result(vm.global.vm()), null);
-            Global.exit(1);
-        }
-
-        _ = promise.result(vm.global.vm());
-
-        if (vm.log.msgs.items.len > 0) {
-            if (Output.enable_ansi_colors) {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+        if (vm.loadEntryPoint(this.entry_path)) |promise| {
+            if (promise.status(vm.global.vm()) == .Rejected) {
+                vm.runErrorHandler(promise.result(vm.global.vm()), null);
+                Global.exit(1);
             }
-            Output.prettyErrorln("\n", .{});
-            Output.flush();
+
+            _ = promise.result(vm.global.vm());
+
+            if (vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
+            }
+        } else |err| {
+            if (vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+                }
+                Output.flush();
+            } else {
+                Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
+            }
+            Global.exit(1);
         }
 
         // don't run the GC if we don't actually need to

@@ -1034,3 +1034,26 @@ describe("Headers", () => {
     gc();
   });
 });
+
+it("body nullable", async () => {
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: null });
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: undefined });
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com");
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: "" });
+    expect(req.body).not.toBeNull();
+  }
+});

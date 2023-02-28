@@ -242,7 +242,7 @@ pub fn main() anyerror!void {
             comptime labels[i] ++ ":\n\n",
             .{},
         );
-        const DigestType = if (BoringHasher != void) BoringHasher.Digest else [512]u8;
+        const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
         var digest1: DigestType = undefined;
         var digest2: DigestType = undefined;
         var digest3: DigestType = undefined;

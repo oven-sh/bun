@@ -1,3 +1,21 @@
+
+/**
+ * `bun:ffi` lets you efficiently call C functions & FFI functions from JavaScript
+ *  without writing bindings yourself.
+ *
+ * ```js
+ * import {dlopen, CString, ptr} from 'bun:ffi';
+ *
+ * const lib = dlopen('libsqlite3', {
+ * });
+ * ```
+ *
+ * This is powered by just-in-time compiling C wrappers
+ * that convert JavaScript types to C types and back. Internally,
+ * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
+ * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
+ *
+ */
 declare module "bun:ffi" {
 	export enum FFIType {
 		char = 0,

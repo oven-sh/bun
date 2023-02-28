@@ -832,7 +832,7 @@ fetch: $(IO_FILES)
 .PHONY: sha
 sha:
 	$(ZIG) build -Doptimize=ReleaseFast sha-bench-obj
-	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/sha.o -I$(BUN_DEPS_DIR) -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
 .PHONY: fetch-debug

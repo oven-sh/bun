@@ -952,7 +952,10 @@ pub const Subprocess = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.hasAborted()) {
-            return JSC.JSPromise.resolvedPromiseValue(globalThis, this.abort_reason);
+            if (this.abort_reason != .zero) {
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, this.abort_reason);
+            }
+            return JSC.JSPromise.rejectedPromiseValue(globalThis, JSC.JSValue.jsNull());
         }
 
         if (this.exit_code) |code| {
@@ -971,9 +974,7 @@ pub const Subprocess = struct {
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.hasAborted()) {
-            if (this.abort_reason != .zero) {
-                return this.abort_reason;
-            }
+            return JSC.JSValue.jsNull();
         }
 
         if (this.exit_code) |code| {
@@ -1486,8 +1487,8 @@ pub const Subprocess = struct {
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-        if (subprocess.abort_reason != .zero) {
-            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), subprocess.abort_reason);
+        if (subprocess.hasAborted()) {
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNull());
         } else {
             sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
         }
@@ -1579,7 +1580,11 @@ pub const Subprocess = struct {
         if (this.hasExited()) {
             if (this.exit_promise.trySwap()) |promise| {
                 if (this.hasAborted()) {
-                    promise.asAnyPromise().?.resolve(globalThis, this.abort_reason);
+                    if (this.abort_reason != .zero) {
+                        promise.asAnyPromise().?.reject(globalThis, this.abort_reason);
+                    } else {
+                        promise.asAnyPromise().?.reject(globalThis, JSValue.jsNull());
+                    }
                 } else if (this.exit_code) |code| {
                     promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
                 } else if (this.signal_code != null) {

@@ -3027,7 +3027,7 @@ declare module "bun" {
        */
       onExit?(
         subprocess: Subprocess,
-        exitCode: number | DOMException | null,
+        exitCode: number | null,
         signalCode: number | null,
         /**
          * If an error occurred in the call to waitpid2, this will be the error.
@@ -3075,7 +3075,7 @@ declare module "bun" {
      *
      * If the process hasn't exited yet, this will return `null`
      */
-    readonly exitCode: number | DOMException | null;
+    readonly exitCode: number | null;
 
     /**
      * Synchronously get the signal code of the process

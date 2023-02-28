@@ -88,6 +88,13 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
         tty__termios_tmp.c_cc[VMIN] = 1;
         tty__termios_tmp.c_cc[VTIME] = 0;
 
+        // What cfmakeraw does:
+        // tty__termios_tmp.c_iflag &= ~(BRKINT | ICRNL |  ISTRIP | IXON | INLCR | IGNCR | IGNBRK | PARMRK );
+        // tty__termios_tmp.c_oflag &= ~OPOST;
+        // tty__termios_tmp.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG | ECHONL);
+        // tty__termios_tmp.c_cflag &= ~(CSIZE | PARENB);
+        // tty__termios_tmp.c_cflag |= CS8;
+
         if (tcsetattr(fd, TCSADRAIN, &tty__termios_tmp))
             return -1;
 

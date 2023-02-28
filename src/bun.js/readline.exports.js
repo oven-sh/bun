@@ -1606,14 +1606,13 @@ var _Interface = class Interface extends InterfaceConstructor {
   }
 
   [kSetRawMode](mode) {
-    var input = this.input;
-    var { setRawMode, wasInRawMode } = input;
+    var { setRawMode, isRaw: wasInRawMode } = this.input;
 
     // TODO: Make this work, for now just stub this and print debug
     debug("setRawMode", mode, "set!");
-    // if (typeof setRawMode === "function") {
-    //   setRawMode(mode);
-    // }
+    if (typeof setRawMode === "function") {
+      setRawMode(mode);
+    }
 
     return wasInRawMode;
   }

@@ -60,6 +60,10 @@ pub const Subprocess = struct {
     has_pending_activity: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(true),
     is_sync: bool = false,
     this_jsvalue: JSC.JSValue = .zero,
+    signal: ?*JSC.AbortSignal = null,
+    has_aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
+    // must be stored because AbortSignal stores reason weakly
+    abort_reason: JSValue = JSValue.zero,
 
     pub const SignalCode = bun.SignalCode;
 
@@ -907,8 +911,25 @@ pub const Subprocess = struct {
         }
     }
 
+    pub fn hasAborted(this: *Subprocess) bool {
+        return this.has_aborted.load(.Monotonic);
+    }
+
+    pub fn deinitSignal(this: *Subprocess) void {
+        if (this.abort_reason != .zero) this.abort_reason.unprotect();
+
+        if (this.signal != null) {
+            var signal = this.signal.?;
+            const ctx = bun.cast(*anyopaque, this);
+            signal.cleanNativeBindings(ctx);
+            _ = signal.unref();
+            this.signal = null;
+        }
+    }
+
     // This must only be run once per Subprocess
     pub fn finalizeSync(this: *Subprocess) void {
+        this.deinitSignal();
         this.closeProcess();
 
         this.closeIO(.stdin);
@@ -930,6 +951,10 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
+        if (this.hasAborted()) {
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, this.abort_reason);
+        }
+
         if (this.exit_code) |code| {
             return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
         }
@@ -945,6 +970,12 @@ pub const Subprocess = struct {
         this: *Subprocess,
         _: *JSGlobalObject,
     ) callconv(.C) JSValue {
+        if (this.hasAborted()) {
+            if (this.abort_reason != .zero) {
+                return this.abort_reason;
+            }
+        }
+
         if (this.exit_code) |code| {
             return JSC.JSValue.jsNumber(code);
         }
@@ -965,6 +996,17 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
+    pub fn onAborted(this: ?*anyopaque, reason: JSC.JSValue) callconv(.C) void {
+        if (this) |this_| {
+            const self = bun.cast(*Subprocess, this_);
+            reason.ensureStillAlive();
+            self.abort_reason = reason;
+            reason.protect();
+            _ = self.tryKill(1);
+            self.has_aborted.store(true, .Monotonic);
+        }
+    }
+
     pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
     }
@@ -979,6 +1021,7 @@ pub const Subprocess = struct {
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
     ) JSValue {
+        var signal: ?*JSC.AbortSignal = null;
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1127,6 +1170,11 @@ pub const Subprocess = struct {
                                 return .zero;
                             };
                         }
+                    }
+                }
+                if (args.get(globalThis, "signal")) |signal_arg| {
+                    if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                        signal = signal_;
                     }
                 }
 
@@ -1312,6 +1360,7 @@ pub const Subprocess = struct {
             .stderr = Readable.init(stdio[std.os.STDERR_FILENO], stderr_pipe[0], globalThis),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
             .is_sync = is_sync,
+            .signal = signal,
         };
 
         if (subprocess.stdin == .pipe) {
@@ -1353,6 +1402,12 @@ pub const Subprocess = struct {
             }
         }
 
+        if (signal) |signal_| {
+            _ = signal_.ref();
+            const ctx = bun.cast(*anyopaque, subprocess);
+            _ = signal_.addListener(ctx, Subprocess.onAborted);
+        }
+
         if (subprocess.stdin == .buffered_input) {
             subprocess.stdin.buffered_input.remain = switch (subprocess.stdin.buffered_input.source) {
                 .blob => subprocess.stdin.buffered_input.source.blob.slice(),
@@ -1379,6 +1434,9 @@ pub const Subprocess = struct {
 
         if (comptime !is_sync) {
             return out;
+        }
+        if (signal) |signal_| {
+            _ = signal_.ref();
         }
 
         if (subprocess.stdin == .buffered_input) {
@@ -1421,7 +1479,6 @@ pub const Subprocess = struct {
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
         }
-
         // subprocess.wait(true);
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
@@ -1429,7 +1486,11 @@ pub const Subprocess = struct {
         subprocess.finalizeSync();
 
         const sync_value = JSC.JSValue.createEmptyObject(globalThis, 4);
-        sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
+        if (subprocess.abort_reason != .zero) {
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), subprocess.abort_reason);
+        } else {
+            sync_value.put(globalThis, JSC.ZigString.static("exitCode"), JSValue.jsNumber(@intCast(i32, exitCode)));
+        }
         sync_value.put(globalThis, JSC.ZigString.static("stdout"), stdout);
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode == 0));
@@ -1469,6 +1530,7 @@ pub const Subprocess = struct {
         defer if (sync) this.updateHasPendingActivityFlag();
         this.has_waitpid_task = true;
         const pid = this.pid;
+        log("PosixSpawn.waitpid {d}", .{pid});
 
         switch (PosixSpawn.waitpid(pid, if (sync) 0 else std.os.W.NOHANG)) {
             .err => |err| {
@@ -1516,7 +1578,9 @@ pub const Subprocess = struct {
 
         if (this.hasExited()) {
             if (this.exit_promise.trySwap()) |promise| {
-                if (this.exit_code) |code| {
+                if (this.hasAborted()) {
+                    promise.asAnyPromise().?.resolve(globalThis, this.abort_reason);
+                } else if (this.exit_code) |code| {
                     promise.asAnyPromise().?.resolve(globalThis, JSValue.jsNumber(code));
                 } else if (this.signal_code != null) {
                     promise.asAnyPromise().?.resolve(globalThis, this.getSignalCode(globalThis));

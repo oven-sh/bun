@@ -76,6 +76,91 @@ describe("preload", () => {
     }
   });
 
+  test("works from CLI", async () => {
+    const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test4");
+    mkdirSync(preloadDir, { recursive: true });
+    const preloadPath = join(preloadDir, "preload.js");
+    const mainPath = join(preloadDir, "main.js");
+    await Bun.write(preloadPath, preloadModule);
+    await Bun.write(mainPath, mainModule);
+
+    const cmds = [
+      [bunExe(), "-r=" + preloadPath, "run", mainPath],
+      [bunExe(), "-r=" + preloadPath, mainPath],
+    ];
+
+    for (let cmd of cmds) {
+      const { stderr, exitCode, stdout } = spawnSync({
+        cmd,
+        cwd: preloadDir,
+        stderr: "pipe",
+        stdout: "pipe",
+        env: bunEnv,
+      });
+
+      expect(exitCode).toBe(0);
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toContain("Test passed");
+    }
+  });
+
+  describe("as entry point", () => {
+    const preloadModule = `
+import {plugin} from 'bun';
+
+plugin({
+    setup(build) {
+        build.onResolve({ filter: /.*\.txt$/, }, async (args) => {
+            return {
+                path: args.path,
+                namespace: 'boop'
+            }
+        });
+    build.onResolve({ namespace: "boop", filter: /.*/ }, async (args) => {
+            return {
+                path: args.path,
+                namespace: 'boop'
+            }
+        });
+    build.onLoad({ namespace: "boop", filter: /.*/ }, async (args) => {
+            return {
+                contents: 'console.log("Test passed")',
+                loader: 'js'
+            }
+        });
+    }
+});
+    `;
+
+    test("works from CLI", async () => {
+      const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test6");
+      mkdirSync(preloadDir, { recursive: true });
+      const preloadPath = join(preloadDir, "preload.js");
+      const mainPath = join(preloadDir, "boop.txt");
+      await Bun.write(preloadPath, preloadModule);
+      await Bun.write(mainPath, "beep");
+
+      const cmds = [
+        [bunExe(), "-r=" + preloadPath, "run", mainPath],
+        [bunExe(), "-r=" + preloadPath, mainPath],
+      ];
+
+      for (let cmd of cmds) {
+        const { stderr, exitCode, stdout } = spawnSync({
+          cmd,
+          cwd: preloadDir,
+          stderr: "pipe",
+          stdout: "pipe",
+          env: bunEnv,
+        });
+
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toContain("Test passed");
+        expect(exitCode).toBe(0);
+      }
+    });
+  });
+
   test("throws an error when preloaded module fails to execute", async () => {
     const preloadModule = "throw new Error('preload test failed');";
 

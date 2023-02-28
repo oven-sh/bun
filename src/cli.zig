@@ -177,6 +177,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
         clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
         clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
@@ -265,12 +266,15 @@ pub const Arguments = struct {
 
         return null;
     }
-
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
         var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         if (comptime cmd.readGlobalConfig()) {
-            if (getHomeConfigPath(&config_buf)) |path| {
-                try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+            if (!ctx.has_loaded_global_config) {
+                ctx.has_loaded_global_config = true;
+
+                if (getHomeConfigPath(&config_buf)) |path| {
+                    try loadConfigPath(allocator, true, path, ctx, comptime cmd);
+                }
             }
         }
 
@@ -422,6 +426,18 @@ pub const Arguments = struct {
 
         opts.no_summary = args.flag("--no-summary");
         opts.disable_hmr = args.flag("--disable-hmr");
+
+        if (cmd != .DevCommand) {
+            const preloads = args.options("--preload");
+            if (ctx.preloads.len > 0 and preloads.len > 0) {
+                var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
+                all.appendSliceAssumeCapacity(ctx.preloads);
+                all.appendSliceAssumeCapacity(preloads);
+                ctx.preloads = all.items;
+            } else if (preloads.len > 0) {
+                ctx.preloads = preloads;
+            }
+        }
 
         ctx.debug.silent = args.flag("--silent");
         if (opts.port != null and opts.origin == null) {
@@ -855,6 +871,7 @@ pub const Command = struct {
         debug: DebugOptions = DebugOptions{},
 
         preloads: []const string = &[_]string{},
+        has_loaded_global_config: bool = false,
 
         const _ctx = Command.Context{
             .args = std.mem.zeroes(Api.TransformOptions),
@@ -1242,6 +1259,15 @@ pub const Command = struct {
                         break :brk options.Loader.js;
                     }
 
+                    if (extension.len > 0) {
+                        if (!ctx.debug.loaded_bunfig) {
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                        }
+
+                        if (ctx.preloads.len > 0)
+                            break :brk options.Loader.js;
+                    }
+
                     break :brk null;
                 };
 
@@ -1293,7 +1319,7 @@ pub const Command = struct {
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
 
@@ -1342,6 +1368,11 @@ pub const Command = struct {
 
         // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
         var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+
+        if (!ctx.debug.loaded_bunfig) {
+            bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
+        }
+
         BunJS.Run.boot(
             ctx.*,
             file,

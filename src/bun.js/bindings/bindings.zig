@@ -4740,7 +4740,9 @@ pub fn initialize() void {
                     \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here. 
                     \\
                     \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
-                , .{name[0..len]});
+                ,
+                    .{name[0..len]},
+                );
                 bun.Global.exit(1);
             }
         }.callback,

@@ -1088,7 +1088,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 std.debug.assert(!this.finalized);
                 this.finalized = true;
             }
-            
+
             if (!this.response_jsvalue.isEmpty()) {
                 ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.response_protected) {
@@ -1817,8 +1817,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn handleResolveStream(req: *RequestContext) void {
             streamLog("handleResolveStream", .{});
             //aborted already called finalizeForAbort at this stage
-            if(req.aborted) return;
-            
+            if (req.aborted) return;
+
             var wrote_anything = false;
             if (req.sink) |wrapper| {
                 wrapper.sink.pending_flush = null;
@@ -1837,7 +1837,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value = .{ .Used = {} };
                 }
             }
-            
+
             const responded = req.resp.hasResponded();
 
             if (!responded and !wrote_anything) {
@@ -1848,7 +1848,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.resp.clearAborted();
                 req.resp.endStream(req.shouldCloseConnection());
             }
-            
+
             req.finalize();
         }
 
@@ -1870,11 +1870,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
             //aborted already called finalizeForAbort at this stage
-            if(req.aborted) {
-                globalThis.vm().throwError(globalThis, err);
-                return;
-            }
-            
+            if (req.aborted) return;
+
             streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 

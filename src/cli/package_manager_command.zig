@@ -87,7 +87,7 @@ pub const PackageManagerCommand = struct {
         var args = try std.process.argsAlloc(ctx.allocator);
         args = args[1..];
 
-        var pm = PackageManager.init(ctx, null, &PackageManager.install_params) catch |err| {
+        var pm = PackageManager.init(ctx, null, &PackageManager.pm_params) catch |err| {
             // TODO: error messages here
             // if (err == error.MissingPackageJSON) {
             //     // TODO: error messages

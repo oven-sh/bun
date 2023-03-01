@@ -1816,6 +1816,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn handleResolveStream(req: *RequestContext) void {
             streamLog("handleResolveStream", .{});
+
             var wrote_anything = false;
             if (req.sink) |wrapper| {
                 wrapper.sink.pending_flush = null;
@@ -1845,7 +1846,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.resp.clearAborted();
                 req.resp.endStream(req.shouldCloseConnection());
             }
-
+            //aborted already called finalizeForAbort at this stage
+            if(req.aborted) return;
             req.finalize();
         }
 
@@ -1903,6 +1905,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         req.server.vm.runErrorHandler(err, &exception_list);
                     }
                 }
+                //aborted already called finalizeForAbort at this stage
+                if(req.aborted) return;
                 req.finalize();
                 return;
             }

@@ -1869,6 +1869,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+            //aborted already called finalizeForAbort at this stage
+            if(req.aborted) {
+                globalThis.vm().throwError(globalThis, err);
+                return;
+            }
+            
             streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 
@@ -1906,8 +1912,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         req.server.vm.runErrorHandler(err, &exception_list);
                     }
                 }
-                //aborted already called finalizeForAbort at this stage
-                if(req.aborted) return;
                 req.finalize();
                 return;
             }

@@ -64,221 +64,284 @@ fn notImplementedProp(
 }
 
 pub const DiffFormatter = struct {
-    received: JSValue,
-    expected: JSValue,
+    received_string: ?string = null,
+    expected_string: ?string = null,
+    received: ?JSValue = null,
+    expected: ?JSValue = null,
     globalObject: *JSC.JSGlobalObject,
     not: bool = false,
 
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
-        var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
-        defer {
-            received_buf.deinit();
-            expected_buf.deinit();
-        }
+        if (this.expected_string != null and this.received_string != null) {
+            const received = this.received_string.?;
+            const expected = this.expected_string.?;
 
-        {
-            var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
-            var buffered_writer = &buffered_writer_;
+            var dmp = DiffMatchPatch.default;
+            dmp.diff_timeout = 200;
+            var diffs = try dmp.diff(default_allocator, received, expected, false);
+            defer diffs.deinit(default_allocator);
 
-            var buf_writer = buffered_writer.writer();
-            const Writer = @TypeOf(buf_writer);
+            const equal_fmt = "<d>{s}<r>";
+            const delete_fmt = "<red>{s}<r>";
+            const insert_fmt = "<green>{s}<r>";
 
-            const fmt_options = JSC.ZigConsoleClient.FormatOptions{
-                .enable_colors = false,
-                .add_newline = false,
-                .flush = false,
-                .ordered_properties = true,
-                .quote_strings = true,
-            };
-            JSC.ZigConsoleClient.format(
-                .Debug,
-                this.globalObject,
-                @ptrCast([*]const JSValue, &this.received),
-                1,
-                Writer,
-                Writer,
-                buf_writer,
-                fmt_options,
-            );
-            buffered_writer.flush() catch unreachable;
+            try writer.writeAll("Expected: ");
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .delete => continue,
+                    .insert => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                        }
+                    },
+                    .equal => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                        }
+                    },
+                }
+            }
 
-            buffered_writer_.context = &expected_buf;
-
-            JSC.ZigConsoleClient.format(
-                .Debug,
-                this.globalObject,
-                @ptrCast([*]const JSValue, &this.expected),
-                1,
-                Writer,
-                Writer,
-                buf_writer,
-                fmt_options,
-            );
-            buffered_writer.flush() catch unreachable;
-        }
-
-        const received_slice = received_buf.toOwnedSliceLeaky();
-        const expected_slice = expected_buf.toOwnedSliceLeaky();
-
-        if (this.not) {
-            const not_fmt = "Expected: not <green>{s}<r>";
-            if (Output.enable_ansi_colors) {
-                try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
-            } else {
-                try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
+            try writer.writeAll("\nReceived: ");
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .insert => continue,
+                    .delete => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                        }
+                    },
+                    .equal => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                        }
+                    },
+                }
             }
             return;
         }
 
-        switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
-            .none => {
-                const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+        if (this.received != null and this.expected != null) {
+            const received = this.received.?;
+            const expected = this.expected.?;
+            var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
+            var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
+            defer {
+                received_buf.deinit();
+                expected_buf.deinit();
+            }
+
+            {
+                var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
+                var buffered_writer = &buffered_writer_;
+
+                var buf_writer = buffered_writer.writer();
+                const Writer = @TypeOf(buf_writer);
+
+                const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+                    .enable_colors = false,
+                    .add_newline = false,
+                    .flush = false,
+                    .ordered_properties = true,
+                    .quote_strings = true,
+                };
+                JSC.ZigConsoleClient.format(
+                    .Debug,
+                    this.globalObject,
+                    @ptrCast([*]const JSValue, &received),
+                    1,
+                    Writer,
+                    Writer,
+                    buf_writer,
+                    fmt_options,
+                );
+                buffered_writer.flush() catch unreachable;
+
+                buffered_writer_.context = &expected_buf;
+
+                JSC.ZigConsoleClient.format(
+                    .Debug,
+                    this.globalObject,
+                    @ptrCast([*]const JSValue, &this.expected),
+                    1,
+                    Writer,
+                    Writer,
+                    buf_writer,
+                    fmt_options,
+                );
+                buffered_writer.flush() catch unreachable;
+            }
+
+            const received_slice = received_buf.toOwnedSliceLeaky();
+            const expected_slice = expected_buf.toOwnedSliceLeaky();
+
+            if (this.not) {
+                const not_fmt = "Expected: not <green>{s}<r>";
                 if (Output.enable_ansi_colors) {
+                    try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
+                } else {
+                    try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
+                }
+                return;
+            }
+
+            switch (received.determineDiffMethod(expected, this.globalObject)) {
+                .none => {
+                    const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
+                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
+                    if (Output.enable_ansi_colors) {
+                        try writer.print(Output.prettyFmt(fmt, true), .{
+                            expected.toFmt(this.globalObject, &formatter),
+                            received.toFmt(this.globalObject, &formatter),
+                        });
+                        return;
+                    }
+
                     try writer.print(Output.prettyFmt(fmt, true), .{
-                        this.expected.toFmt(this.globalObject, &formatter),
-                        this.received.toFmt(this.globalObject, &formatter),
+                        expected.toFmt(this.globalObject, &formatter),
+                        received.toFmt(this.globalObject, &formatter),
                     });
                     return;
-                }
+                },
+                .character => {
+                    var dmp = DiffMatchPatch.default;
+                    dmp.diff_timeout = 200;
+                    var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
+                    defer diffs.deinit(default_allocator);
 
-                try writer.print(Output.prettyFmt(fmt, true), .{
-                    this.expected.toFmt(this.globalObject, &formatter),
-                    this.received.toFmt(this.globalObject, &formatter),
-                });
-                return;
-            },
-            .character => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
-                defer diffs.deinit(default_allocator);
+                    const equal_fmt = "<d>{s}<r>";
+                    const delete_fmt = "<red>{s}<r>";
+                    const insert_fmt = "<green>{s}<r>";
 
-                const equal_fmt = "<d>{s}<r>";
-                const delete_fmt = "<red>{s}<r>";
-                const insert_fmt = "<green>{s}<r>";
-
-                try writer.writeAll("Expected: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .delete => continue,
-                        .insert => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                            }
-                        },
-                        .equal => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                            }
-                        },
-                    }
-                }
-
-                try writer.writeAll("\nReceived: ");
-                for (diffs.items) |df| {
-                    switch (df.operation) {
-                        .insert => continue,
-                        .delete => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
-                            }
-                        },
-                        .equal => {
-                            if (Output.enable_ansi_colors) {
-                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                            } else {
-                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                            }
-                        },
-                    }
-                }
-                return;
-            },
-            .line => {
-                var dmp = DiffMatchPatch.default;
-                dmp.diff_timeout = 200;
-                var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-                defer diffs.deinit(default_allocator);
-
-                const equal_fmt = "<d>  {s}<r>";
-                const delete_fmt = "<red>+ {s}<r>";
-                const insert_fmt = "<green>- {s}<r>";
-
-                var insert_count: usize = 0;
-                var delete_count: usize = 0;
-
-                for (diffs.items) |df| {
-                    var prev: usize = 0;
-                    var curr: usize = 0;
-                    switch (df.operation) {
-                        .equal => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
+                    try writer.writeAll("Expected: ");
+                    for (diffs.items) |df| {
+                        switch (df.operation) {
+                            .delete => continue,
+                            .insert => {
+                                if (Output.enable_ansi_colors) {
+                                    try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                                } else {
+                                    try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
                                 }
-                                curr += 1;
-                            }
-                        },
-                        .insert => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    insert_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
+                            },
+                            .equal => {
+                                if (Output.enable_ansi_colors) {
+                                    try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                                } else {
+                                    try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
                                 }
-                                curr += 1;
-                            }
-                        },
-                        .delete => {
-                            while (curr < df.text.len) {
-                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                    delete_count += 1;
-                                    if (Output.enable_ansi_colors) {
-                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                                    } else {
-                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                                    }
-                                    prev = curr + 1;
-                                }
-                                curr += 1;
-                            }
-                        },
+                            },
+                        }
                     }
-                    if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
-                }
 
-                if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                    try writer.writeAll("\nReceived: ");
+                    for (diffs.items) |df| {
+                        switch (df.operation) {
+                            .insert => continue,
+                            .delete => {
+                                if (Output.enable_ansi_colors) {
+                                    try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                                } else {
+                                    try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                                }
+                            },
+                            .equal => {
+                                if (Output.enable_ansi_colors) {
+                                    try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                                } else {
+                                    try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                                }
+                            },
+                        }
+                    }
                     return;
-                }
-                try writer.print("\n- Expected  - {d}\n", .{insert_count});
-                try writer.print("+ Received  + {d}", .{delete_count});
-                return;
-            },
-            .word => {
-                // not implemented
-                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
-            },
+                },
+                .line => {
+                    var dmp = DiffMatchPatch.default;
+                    dmp.diff_timeout = 200;
+                    var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+                    defer diffs.deinit(default_allocator);
+
+                    const equal_fmt = "<d>  {s}<r>";
+                    const delete_fmt = "<red>+ {s}<r>";
+                    const insert_fmt = "<green>- {s}<r>";
+
+                    var insert_count: usize = 0;
+                    var delete_count: usize = 0;
+
+                    for (diffs.items) |df| {
+                        var prev: usize = 0;
+                        var curr: usize = 0;
+                        switch (df.operation) {
+                            .equal => {
+                                while (curr < df.text.len) {
+                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                        if (Output.enable_ansi_colors) {
+                                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
+                                        } else {
+                                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
+                                        }
+                                        prev = curr + 1;
+                                    }
+                                    curr += 1;
+                                }
+                            },
+                            .insert => {
+                                while (curr < df.text.len) {
+                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                        insert_count += 1;
+                                        if (Output.enable_ansi_colors) {
+                                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
+                                        } else {
+                                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
+                                        }
+                                        prev = curr + 1;
+                                    }
+                                    curr += 1;
+                                }
+                            },
+                            .delete => {
+                                while (curr < df.text.len) {
+                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                        delete_count += 1;
+                                        if (Output.enable_ansi_colors) {
+                                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
+                                        } else {
+                                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
+                                        }
+                                        prev = curr + 1;
+                                    }
+                                    curr += 1;
+                                }
+                            },
+                        }
+                        if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
+                    }
+
+                    if (Output.enable_ansi_colors) {
+                        try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                        try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
+                        return;
+                    }
+                    try writer.print("\n- Expected  - {d}\n", .{insert_count});
+                    try writer.print("+ Received  + {d}", .{delete_count});
+                    return;
+                },
+                .word => {
+                    // not implemented
+                    // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
+                },
+            }
+            return;
         }
-        return;
     }
 };
 
@@ -699,54 +762,6 @@ pub const Expect = struct {
         }
 
         return buf;
-    }
-
-    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
-        defer this.postMatch(globalObject);
-        const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
-        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
-
-        if (this.scope.tests.items.len <= this.test_id) {
-            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
-            return .zero;
-        }
-
-        active_test_expectation_counter.actual += 1;
-
-        // first argument is hint if it is string
-        var hint_string: ZigString = ZigString.Empty;
-        if (arguments.len != 0 and arguments[0].isString()) {
-            arguments[0].toZigString(&hint_string, globalObject);
-        }
-        var hint = hint_string.toSlice(default_allocator);
-        defer hint.deinit();
-
-        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
-            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
-            return .zero;
-        };
-
-        const pretty_value = value.jestPrettyFormat(default_allocator, globalObject) catch {
-            globalObject.throw("Failed to pretty format value", .{});
-            return .zero;
-        };
-        defer default_allocator.free(pretty_value);
-
-        // std.debug.print("snapshot for value: {s}\n", .{pretty_value});
-        const result = Jest.Snapshots.getOrPut(this, pretty_value) catch {
-            // handle parsing and other errors
-            return .zero;
-        };
-        if (result) |saved_value| {
-            if (strings.eql(pretty_value, saved_value)) {
-                return thisValue;
-            }
-
-            return .zero;
-        }
-
-        return .zero;
     }
 
     pub fn finalize(
@@ -2274,6 +2289,67 @@ pub const Expect = struct {
             return .zero;
         }
         globalObject.throw(Output.prettyFmt(fmt, true), .{expected_class});
+        return .zero;
+    }
+
+    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        // first argument is hint if it is string
+        var hint_string: ZigString = ZigString.Empty;
+        if (arguments.len != 0 and arguments[0].isString()) {
+            arguments[0].toZigString(&hint_string, globalObject);
+        }
+        var hint = hint_string.toSlice(default_allocator);
+        defer hint.deinit();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        const pretty_value = value.jestPrettyFormat(default_allocator, globalObject) catch {
+            globalObject.throw("Failed to pretty format value", .{});
+            return .zero;
+        };
+        defer default_allocator.free(pretty_value);
+
+        const result = Jest.Snapshots.getOrPut(this, pretty_value) catch {
+            // handle parsing and other errors
+            return .zero;
+        };
+
+        if (result) |saved_value| {
+            if (strings.eql(pretty_value, saved_value)) {
+                return thisValue;
+            }
+
+            const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
+            const fmt = signature ++ "\n\n{any}\n";
+            const diff_format = DiffFormatter{
+                .received_string = pretty_value,
+                .expected_string = saved_value,
+                .globalObject = globalObject,
+            };
+
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            return .zero;
+        }
+
         return .zero;
     }
 

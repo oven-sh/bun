@@ -5300,9 +5300,12 @@ pub const PackageManager = struct {
         // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
 
 
+    // Note that zig-clap currently doesn't support multiple short or long names,
+    //  so for npm/yarn compatibility we'll specify both --development and --dev
     pub const install_params = install_params_ ++ clap.parseParamsComptime(
         \\-d, --development                 Add dependency to "devDependencies"
-        \\--optional                        Add dependency to "optionalDependencies"
+        \\-D, --dev                         Add dependency to "devDependencies" (npm/yarn compat)
+        \\-O, --optional                    Add dependency to "optionalDependencies"
         \\<STR> ...                         "name" or "name@version" of packages to install
     );
     pub const add_params = install_params;
@@ -5411,7 +5414,7 @@ pub const PackageManager = struct {
             cli.ignore_scripts = res.args.@"ignore-scripts";
             cli.no_summary = res.args.@"no-summary";
 
-            if (comptime @hasDecl(@TypeOf(res.args), "save")) {
+            if (comptime @hasField(@TypeOf(res.args), "save")) {
                 cli.no_save = true;
 
                 if (res.args.save) {
@@ -5427,9 +5430,9 @@ pub const PackageManager = struct {
 
             cli.link_native_bins = res.args.@"link-native-bins";
 
-            if (@hasDecl(@TypeOf(res.args), "development"))
-                cli.development = res.args.development;
-            if (@hasDecl(@TypeOf(res.args), "optional"))
+            if (@hasField(@TypeOf(res.args), "development"))
+                cli.development = res.args.development or res.args.dev;
+            if (@hasField(@TypeOf(res.args), "optional"))
                 cli.optional = res.args.optional;
 
             // for (res.args.omit) |omit| {

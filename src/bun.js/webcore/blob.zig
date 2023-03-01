@@ -73,6 +73,8 @@ const PathOrBlob = union(enum) {
 };
 
 pub const Blob = struct {
+    const bloblog = Output.scoped(.Blob, false);
+
     pub usingnamespace JSC.Codegen.JSBlob;
 
     size: SizeType = 0,
@@ -1431,9 +1433,10 @@ pub const Blob = struct {
                     this.doClose();
                 }
 
-                var io_task = this.io_task.?;
-                this.io_task = null;
-                io_task.onFinish();
+                if (this.io_task) |io_task| {
+                    io_task.onFinish();
+                    this.io_task = null;
+                }
             }
 
             fn resolveSize(this: *ReadFile, fd: bun.FileDescriptor) void {
@@ -1655,9 +1658,10 @@ pub const Blob = struct {
                     this.doClose();
                 }
 
-                var io_task = this.io_task.?;
-                this.io_task = null;
-                io_task.onFinish();
+                if (this.io_task) |io_task| {
+                    io_task.onFinish();
+                    this.io_task = null;
+                }
             }
 
             fn runWithFD(this: *WriteFile, fd: bun.FileDescriptor) void {
@@ -2825,6 +2829,8 @@ pub const Blob = struct {
     }
 
     pub fn doReadFile(this: *Blob, comptime Function: anytype, global: *JSGlobalObject) JSValue {
+        bloblog("doReadFile", .{});
+
         const Handler = NewReadFileHandler(Function);
         var promise = JSPromise.create(global);
 
@@ -2849,6 +2855,7 @@ pub const Blob = struct {
         ) catch unreachable;
         var read_file_task = Store.ReadFile.ReadFileTask.createOnJSThread(bun.default_allocator, global, file_read) catch unreachable;
         read_file_task.schedule();
+        bloblog("doReadFile: read_file_task scheduled", .{});
         return promise_value;
     }
 
@@ -3009,12 +3016,13 @@ pub const Blob = struct {
     }
 
     pub fn toArrayBuffer(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+        bloblog("toArrayBuffer", .{});
         if (this.needsToReadFile()) {
             return this.doReadFile(toArrayBufferWithBytes, global);
         }
 
         var view_ = this.sharedView();
-
+        bloblog("sharedView {d}", .{view_.len});
         if (view_.len == 0)
             return JSC.ArrayBuffer.create(global, "", .ArrayBuffer);
 

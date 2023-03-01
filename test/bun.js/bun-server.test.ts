@@ -70,7 +70,7 @@ describe("Server", () => {
                 controller.write(buffer);
       
                 //wait to detect the connection abortion
-                await Bun.sleep(5);
+                await Bun.sleep(15);
                 
                 controller.close();
               },
@@ -91,6 +91,7 @@ describe("Server", () => {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
       expect(signalOnServer).toBe(true);
+      await Bun.sleep(5);
       server.stop(true);
     }
   });
@@ -114,7 +115,7 @@ describe("Server", () => {
                 controller.enqueue(buffer);
     
                 //wait to detect the connection abortion
-                await Bun.sleep(5);
+                await Bun.sleep(15);
 
                 controller.close();
               },
@@ -135,6 +136,7 @@ describe("Server", () => {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
       expect(signalOnServer).toBe(true);
+      await Bun.sleep(5);
       server.stop(true);
     }
   });

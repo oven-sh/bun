@@ -990,10 +990,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.aborted);
+            //mark request as aborted
             this.aborted = true;
-            //if have sink call onAborted on sink
-            if (this.sink) |sink| {
-                sink.sink.onAborted(resp);
+            //if have sink, call onAborted on sink
+            if (this.sink) |wrapper| {
+                wrapper.detach();
+                wrapper.sink.onAborted(resp);
+                this.sink = null;
+                wrapper.sink.destroy();
+                this.finalizeForAbort();
+                return;
             }
 
             // if we can, free the request now.
@@ -1082,8 +1088,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 std.debug.assert(!this.finalized);
                 this.finalized = true;
             }
-
+            
             if (!this.response_jsvalue.isEmpty()) {
+                ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.response_protected) {
                     this.response_jsvalue.unprotect();
                     this.response_protected = false;
@@ -1092,6 +1099,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_js_object != null) {
+                ctxLog("finalizeWithoutDeinit: request_js_object != null", .{});
+
                 var request_js = this.request_js_object.?.value();
                 request_js.ensureStillAlive();
 
@@ -1111,6 +1120,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.promise) |promise| {
+                ctxLog("finalizeWithoutDeinit: this.promise != null", .{});
                 this.promise = null;
 
                 if (promise.asAnyPromise()) |prom| {
@@ -1120,22 +1130,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.byte_stream) |stream| {
+                ctxLog("finalizeWithoutDeinit: stream != null", .{});
+
                 this.byte_stream = null;
                 stream.unpipe();
             }
 
             if (this.pathname.len > 0) {
+                ctxLog("finalizeWithoutDeinit: this.pathname.len > 0 null", .{});
                 this.allocator.free(bun.constStrToU8(this.pathname));
                 this.pathname = "";
             }
         }
         pub fn finalize(this: *RequestContext) void {
+            ctxLog("finalize", .{});
             this.finalizeWithoutDeinit();
             this.markComplete();
             this.deinit();
         }
 
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit", .{});
             if (comptime Environment.allow_assert)
                 std.debug.assert(this.finalized);
 
@@ -1800,7 +1815,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleResolveStream(req: *RequestContext) void {
-            streamLog("onResolve", .{});
+            streamLog("handleResolveStream", .{});
             var wrote_anything = false;
             if (req.sink) |wrapper| {
                 wrapper.sink.pending_flush = null;
@@ -1818,11 +1833,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value.Locked.readable.?.done();
                     resp.body.value = .{ .Used = {} };
                 }
-            }
-
-            if (req.aborted) {
-                req.finalizeForAbort();
-                return;
             }
 
             const responded = req.resp.hasResponded();
@@ -1878,11 +1888,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onReject({any})", .{wrote_anything});
-
-            if (req.aborted) {
-                req.finalizeForAbort();
-                return;
-            }
 
             if (!err.isEmptyOrUndefinedOrNull() and !wrote_anything) {
                 req.response_jsvalue.unprotect();
@@ -2069,6 +2074,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRender(this: *RequestContext) void {
+            ctxLog("render", .{});
+
             if (this.aborted) {
                 this.finalizeForAbort();
                 return;
@@ -2308,6 +2315,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+            ctxLog("render", .{});
             this.response_ptr = response;
 
             this.doRender();

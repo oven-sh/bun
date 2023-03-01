@@ -510,6 +510,22 @@ pub const Jest = struct {
         pub fn getOrPut(expect: *Expect, pretty_value: string) !?string {
             const snapshot_name = expect.getSnapshotName(default_allocator) catch unreachable;
 
+            if (current_file_id == null) {
+                // first time setup
+                current_file_id = expect.scope.file_id;
+                snapshot_dir_path = runner.?.files.get(current_file_id.?).source.path.name.dirWithTrailingSlash();
+                snapshot_file = getSnapshotFile(current_file_id.?) catch unreachable;
+
+                counts = bun.StringHashMap(usize).init(default_allocator);
+
+                const file_length = snapshot_file.?.getEndPos() catch unreachable;
+                var bytes = snapshot_file.?.readToEndAlloc(default_allocator, file_length) catch unreachable;
+                snapshot_file.?.seekTo(0) catch unreachable;
+                current_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
+                values = bun.StringHashMap(string).init(default_allocator);
+                try parseFile();
+            }
+
             if (current_file_id) |file_id| {
                 if (file_id == expect.scope.file_id) {
                     // return cached string if found
@@ -574,7 +590,12 @@ pub const Jest = struct {
             snapshot_file.?.seekTo(0) catch unreachable;
             current_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
             values = bun.StringHashMap(string).init(default_allocator);
+            try parseFile();
 
+            return null;
+        }
+
+        pub fn parseFile() !void {
             // parse file. use the allocated bytes for keys and values
             var i: usize = 0;
             outer: while (i < current_buf.items.len) {
@@ -616,8 +637,7 @@ pub const Jest = struct {
                 values.put(key, value) catch unreachable;
             }
 
-
-            return null;
+            return;
         }
 
         pub fn saveToDisk() void {
@@ -2350,6 +2370,7 @@ pub const Expect = struct {
             return .zero;
         }
 
+        std.debug.print("new value inserted into snapshot file: {s}\n", .{pretty_value});
         return .zero;
     }
 

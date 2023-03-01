@@ -49,6 +49,28 @@ describe("Server", () => {
     }
   });
 
+  test("abort signal on server should only fire if aborted", async () => {
+    {
+      const abortController = new AbortController();
+
+      let signalOnServer = false;
+      const server = Bun.serve({
+        async fetch(req) {
+          req.signal.addEventListener("abort", () => {
+            signalOnServer = true;
+          });
+          return new Response("Hello");
+        },
+        port: 0,
+      });
+
+      try {
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+      } catch {}
+      expect(signalOnServer).toBe(false);
+      server.stop(true);
+    }
+  });
 
   test("abort signal on server with direct stream", async () => {
     {
@@ -65,13 +87,13 @@ describe("Server", () => {
               type: "direct",
               async pull(controller) {
                 abortController.abort();
-      
+
                 const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
                 controller.write(buffer);
-      
+
                 //wait to detect the connection abortion
                 await Bun.sleep(15);
-                
+
                 controller.close();
               },
             }),
@@ -110,10 +132,10 @@ describe("Server", () => {
             new ReadableStream({
               async pull(controller) {
                 abortController.abort();
-      
+
                 const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
                 controller.enqueue(buffer);
-    
+
                 //wait to detect the connection abortion
                 await Bun.sleep(15);
 
@@ -140,6 +162,4 @@ describe("Server", () => {
       server.stop(true);
     }
   });
-
-  
 });

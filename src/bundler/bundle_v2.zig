@@ -4337,10 +4337,10 @@ const LinkerContext = struct {
         if (stmts.items.len == 0) {
             return .{
                 .javascript = .{
-                    .result = .{
-                        .source_index = source_index,
+                    .source_index = source_index,
+                    .result = .{ .result = .{
                         .code = "",
-                    },
+                    } },
                 },
             };
         }
@@ -5129,7 +5129,7 @@ const LinkerContext = struct {
                 chunk,
                 temp_allocator,
                 flags.wrap,
-                ast,
+                &ast,
             ) catch |err| return .{
                 .err = err,
             };
@@ -5175,7 +5175,7 @@ const LinkerContext = struct {
                                 .binding = js_ast.Binding.alloc(
                                     temp_allocator,
                                     js_ast.B.Identifier{
-                                        .ref = ast.module_ref,
+                                        .ref = ast.module_ref.?,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -5190,13 +5190,8 @@ const LinkerContext = struct {
                         E.Arrow{
                             .args = args.items,
                             .body = .{
-                                .block = Stmt.alloc(
-                                    S.Block,
-                                    .{
-                                        .stmts = stmts.all_stmts.items,
-                                    },
-                                    Logger.Loc.Empty,
-                                ),
+                                .stmts = stmts.all_stmts.items,
+                                .loc = Logger.Loc.Empty,
                             },
                         },
                         Logger.Loc.Empty,
@@ -5212,7 +5207,7 @@ const LinkerContext = struct {
                                 },
                                 Logger.Loc.Empty,
                             ),
-                            .args = cjs_args,
+                            .args = bun.BabyList(Expr).init(cjs_args),
                         },
                         Logger.Loc.Empty,
                     );
@@ -5253,12 +5248,13 @@ const LinkerContext = struct {
                     {
                         const Hoisty = struct {
                             decls: std.ArrayList(G.Decl),
+                            allocator: std.mem.Allocator,
 
                             pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
                                 w.decls.append(
                                     G.Decl{
                                         .binding = Binding.alloc(
-                                            w.decls.allocator,
+                                            w.allocator,
                                             B.Identifier{
                                                 .ref = ref,
                                             },
@@ -5284,6 +5280,7 @@ const LinkerContext = struct {
                         };
                         var hoisty = Hoisty{
                             .decls = std.ArrayList(G.Decl).init(temp_allocator),
+                            .allocator = temp_allocator,
                         };
                         var end: usize = 0;
                         for (stmts.all_stmts.items) |stmt_| {
@@ -5292,7 +5289,7 @@ const LinkerContext = struct {
                                 .s_local => |local| {
                                     var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
                                     for (local.decls) |*decl| {
-                                        const binding = decl.binding.toExpr(hoisty);
+                                        const binding = decl.binding.toExpr(&hoisty);
                                         if (decl.value) |other| {
                                             value = value.joinWithComma(
                                                 binding.assign(
@@ -5308,9 +5305,9 @@ const LinkerContext = struct {
                                         continue;
                                     }
                                     stmt = Stmt.alloc(
-                                        S.Expr,
-                                        S.Expr{
-                                            .expr = value,
+                                        S.SExpr,
+                                        S.SExpr{
+                                            .value = value,
                                         },
                                         stmt.loc,
                                     );
@@ -5319,6 +5316,7 @@ const LinkerContext = struct {
                                     stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
                                     continue;
                                 },
+                                else => {},
                             }
                             stmts.all_stmts.items[end] = stmt;
                             end += 1;
@@ -5336,13 +5334,8 @@ const LinkerContext = struct {
                             .args = &.{},
                             .is_async = is_async,
                             .body = .{
-                                .block = Stmt.alloc(
-                                    S.Block,
-                                    .{
-                                        .stmts = stmts.all_stmts.items,
-                                    },
-                                    Logger.Loc.Empty,
-                                ),
+                                .stmts = stmts.all_stmts.items,
+                                .loc = Logger.Loc.Empty,
                             },
                         },
                         Logger.Loc.Empty,
@@ -5360,7 +5353,7 @@ const LinkerContext = struct {
                                     },
                                     Logger.Loc.Empty,
                                 ),
-                                .args = esm_args,
+                                .args = bun.BabyList(Expr).init(esm_args),
                             },
                             Logger.Loc.Empty,
                         );
@@ -5396,7 +5389,7 @@ const LinkerContext = struct {
 
         const parts_to_print = &[_]js_ast.Part{
             js_ast.Part{
-                .kind = .stmts,
+                // .tag = .stmts,
                 .stmts = out_stmts,
             },
         };
@@ -5426,7 +5419,7 @@ const LinkerContext = struct {
             &printer,
             c.resolver.opts.platform,
             print_options,
-            ast.import_records,
+            ast.import_records.slice(),
             parts_to_print,
             r,
         );

@@ -549,7 +549,7 @@ pub const RequireOrImportMeta = struct {
         ) Callback {
             return Callback{
                 .ctx = bun.cast(*anyopaque, ctx),
-                .callback = @ptrCast(*const Fn, callback),
+                .callback = @ptrCast(*const Fn, &callback),
             };
         }
     };

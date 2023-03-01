@@ -110,12 +110,12 @@ it("Bun.sleep", async () => {
   await Bun.sleep(0);
   const start = performance.now();
   sleeps++;
-  await Bun.sleep(10);
+  await Bun.sleep(1);
   sleeps++;
-  await Bun.sleep(20);
+  await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect(end - start).toBeGreaterThanOrEqual(30);
+  expect(end - start).toBeGreaterThanOrEqual(3);
 
   expect(sleeps).toBe(3);
 });

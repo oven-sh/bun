@@ -95,7 +95,7 @@ it("request.signal works in trivial case", async () => {
         });
         expect(didAbort).toBe(false);
         aborty.abort();
-        await Bun.sleep(2000);
+        await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
@@ -106,7 +106,7 @@ it("request.signal works in trivial case", async () => {
       } catch (e: any) {
         expect(e.name).toBe("AbortError");
       }
-      await Bun.sleep(1000);
+      await Bun.sleep(1);
 
       expect(didAbort).toBe(true);
     },
@@ -123,7 +123,7 @@ it("request.signal works in leaky case", async () => {
         leaky = req;
         expect(didAbort).toBe(false);
         aborty.abort();
-        await Bun.sleep(2000);
+        await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
@@ -131,7 +131,7 @@ it("request.signal works in leaky case", async () => {
       try {
         const resp = fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal });
 
-        await Bun.sleep(1000);
+        await Bun.sleep(1);
 
         leaky.signal.addEventListener("abort", () => {
           didAbort = true;
@@ -144,7 +144,7 @@ it("request.signal works in leaky case", async () => {
         expect(e.name).toBe("AbortError");
       }
 
-      await Bun.sleep(1000);
+      await Bun.sleep(1);
 
       expect(didAbort).toBe(true);
     },

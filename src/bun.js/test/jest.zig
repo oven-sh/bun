@@ -507,8 +507,8 @@ pub const Jest = struct {
 
         pub var current_file_id: ?TestRunner.File.ID = null;
 
-        pub fn getOrPut(expect: *Expect, pretty_value: string) !?string {
-            const snapshot_name = expect.getSnapshotName(default_allocator) catch unreachable;
+        pub fn getOrPut(expect: *Expect, pretty_value: string, hint: string) !?string {
+            const snapshot_name = expect.getSnapshotName(default_allocator, hint) catch unreachable;
 
             if (current_file_id == null) {
                 // first time setup
@@ -753,7 +753,7 @@ pub const Expect = struct {
         pub const Set = std.EnumSet(Op);
     };
 
-    pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator) ![]const u8 {
+    pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
         const test_name = this.scope.tests.items[this.test_id].label;
 
         var length: usize = 0;
@@ -765,17 +765,29 @@ pub const Expect = struct {
             curr_scope = scope.parent;
         }
         length += test_name.len;
+        if (hint.len > 0) {
+            length += hint.len + 2;
+        }
 
         var buf = try allocator.alloc(u8, length);
 
+        var index = buf.len;
+        if (hint.len > 0) {
+            index -= hint.len;
+            bun.copy(u8, buf[index..], hint);
+            index -= test_name.len + 2;
+            bun.copy(u8, buf[index..], test_name);
+            bun.copy(u8, buf[index + test_name.len ..], ": ");
+        } else {
+            index -= test_name.len;
+            bun.copy(u8, buf[index..], test_name);
+        }
         // copy describe scopes in reverse order
-        var index = buf.len - test_name.len;
-        bun.copy(u8, buf[index..], test_name);
         curr_scope = this.scope;
         while (curr_scope) |scope| {
             if (scope.label.len > 0) {
                 index -= scope.label.len + 1;
-                bun.copy(u8, buf[index .. index + scope.label.len], scope.label);
+                bun.copy(u8, buf[index..], scope.label);
                 buf[index + scope.label.len] = ' ';
             }
             curr_scope = scope.parent;
@@ -2344,7 +2356,7 @@ pub const Expect = struct {
         };
         defer default_allocator.free(pretty_value);
 
-        const result = Jest.Snapshots.getOrPut(this, pretty_value) catch {
+        const result = Jest.Snapshots.getOrPut(this, pretty_value, hint.slice()) catch {
             // handle parsing and other errors
             return .zero;
         };

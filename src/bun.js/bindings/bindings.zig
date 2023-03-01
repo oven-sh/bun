@@ -17,6 +17,7 @@ const JSC = @import("bun").JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const MutableString = bun.MutableString;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -3134,6 +3135,36 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn createBufferFromLength(globalObject: *JSGlobalObject, len: usize) JSValue {
         JSC.markBinding(@src());
         return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
+    }
+
+    pub fn jestPrettyFormat(this: JSValue, allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !string {
+        var buf = MutableString.init(allocator, 0) catch unreachable;
+        var buffered_writer = MutableString.BufferedWriter{ .context = &buf };
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+            .ordered_properties = true,
+            .quote_strings = true,
+        };
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &this),
+            1,
+            Writer,
+            Writer,
+            writer,
+            fmt_options,
+        );
+
+        try buffered_writer.flush();
+
+        return buf.toOwnedSlice();
     }
 
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;

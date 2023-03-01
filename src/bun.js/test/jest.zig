@@ -430,6 +430,195 @@ pub const TestRunner = struct {
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
+    pub const Snapshots = struct {
+        pub var snapshot_dir: ?std.fs.Dir = null;
+        pub var snapshot_dir_path: ?[]const u8 = null;
+        pub var snapshot_file: ?std.fs.File = null;
+
+        pub var counts = bun.StringHashMap(usize).init(default_allocator);
+        pub var current_buf = std.ArrayList(u8).init(default_allocator);
+        pub var values = bun.StringHashMap(string).init(default_allocator);
+
+        pub var current_test_id: ?TestRunner.Test.ID = null;
+        pub var current_describe_scope: ?*DescribeScope = null;
+
+        pub var current_file_id: ?TestRunner.File.ID = null;
+
+        pub fn getOrPut(expect: *Expect, pretty_value: string) !?string {
+            const snapshot_name = expect.getSnapshotName(default_allocator) catch unreachable;
+
+            if (current_file_id) |file_id| {
+                if (file_id == expect.scope.file_id) {
+                    // return cached string if found
+                    var count_entry = counts.getOrPut(snapshot_name) catch unreachable;
+                    if (!count_entry.found_existing) {}
+                    const counter = brk: {
+                        if (count_entry.found_existing) {
+                            default_allocator.free(snapshot_name);
+                            count_entry.value_ptr.* += 1;
+                            break :brk count_entry.value_ptr.*;
+                        }
+
+                        count_entry.value_ptr.* = 1;
+                        break :brk count_entry.value_ptr.*;
+                    };
+
+                    const name = count_entry.key_ptr.*;
+
+                    var counter_string_buf = [_]u8{0} ** 32;
+                    var counter_string = std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter}) catch unreachable;
+
+                    var name_with_counter = default_allocator.alloc(u8, name.len + 1 + counter_string.len) catch unreachable;
+                    defer default_allocator.free(name_with_counter);
+                    bun.copy(u8, name_with_counter[0..name.len], name);
+                    name_with_counter[name.len] = ' ';
+                    bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
+
+                    if (values.get(name_with_counter)) |value| {
+                        return value;
+                    }
+
+                    // doesn't exist. append to file bytes and add to hashmap.
+                    current_buf.appendSlice("exports[`") catch unreachable;
+                    const key_start = current_buf.items.len;
+                    const key_end = key_start + name_with_counter.len;
+                    current_buf.appendSlice(name_with_counter) catch unreachable;
+                    current_buf.appendSlice("`] = `") catch unreachable;
+                    const value_start = current_buf.items.len;
+                    const value_end = value_start + pretty_value.len;
+                    current_buf.appendSlice(pretty_value) catch unreachable;
+                    current_buf.appendSlice("`;\n\n") catch unreachable;
+
+                    values.put(current_buf.items[key_start..key_end], current_buf.items[value_start..value_end]) catch unreachable;
+                    return null;
+                }
+            }
+
+            // reset
+            current_file_id = expect.scope.file_id;
+            saveToDisk();
+            snapshot_file = getSnapshotFile(current_file_id.?) catch unreachable;
+
+            var itr = counts.iterator();
+            while (itr.next()) |entry| {
+                default_allocator.free(entry.key_ptr.*);
+            }
+            counts.clearAndFree();
+            counts = bun.StringHashMap(usize).init(default_allocator);
+
+            const file_length = snapshot_file.?.getEndPos() catch unreachable;
+            var bytes = snapshot_file.?.readToEndAlloc(default_allocator, file_length) catch unreachable;
+            snapshot_file.?.seekTo(0) catch unreachable;
+            current_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
+            values = bun.StringHashMap(string).init(default_allocator);
+
+            // parse file. use the allocated bytes for keys and values
+            var i: usize = 0;
+            outer: while (i < current_buf.items.len) {
+                const key_start: usize = brk: {
+                    while (strings.indexOf(current_buf.items[i..], "exports[`")) |j| {
+                        i += j + "exports[`".len;
+                        break :brk i;
+                    }
+
+                    break :outer;
+                };
+                const key_end: usize = brk: {
+                    while (strings.indexOf(current_buf.items[i..], "`]")) |j| {
+                        i += j + "`]".len;
+                        if (current_buf.items[i - 3] != '\\') {
+                            break :brk i - 2;
+                        }
+                    }
+
+                    break :outer;
+                };
+
+                i += " = `".len;
+
+                const value_start = i;
+                const value_end: usize = brk: {
+                    while (strings.indexOf(current_buf.items[i..], "`;")) |j| {
+                        i += j + "`;".len;
+                        if (current_buf.items[i - 3] != '\\') {
+                            break :brk i - 2;
+                        }
+                    }
+
+                    break :outer;
+                };
+
+                const key = current_buf.items[key_start..key_end];
+                const value = current_buf.items[value_start..value_end];
+                values.put(key, value) catch unreachable;
+            }
+
+
+            return null;
+        }
+
+        pub fn saveToDisk() void {
+            const dir_path = runner.?.files.get(current_file_id.?).source.path.name.dirWithTrailingSlash();
+            if (snapshot_dir) |_dir| {
+                var dir = _dir;
+                if (!strings.eql(dir_path, snapshot_dir_path.?)) {
+                    dir.close();
+                    snapshot_dir_path = dir_path;
+                    _ = getSnapshotDir(snapshot_dir_path.?);
+                }
+            } else {
+                snapshot_dir_path = dir_path;
+                _ = getSnapshotDir(dir_path);
+            }
+
+            if (snapshot_file) |_file| {
+                var file = _file;
+                file.seekTo(0) catch unreachable;
+                file.writeAll(current_buf.items) catch unreachable;
+                current_buf.clearAndFree();
+                values.deinit();
+                file.close();
+            }
+        }
+
+        pub fn getSnapshotFile(file_id: TestRunner.File.ID) !std.fs.File {
+            const test_file = Jest.runner.?.files.get(file_id);
+            const test_filename = test_file.source.path.name.filename;
+            const dir_path = test_file.source.path.name.dirWithTrailingSlash();
+
+            var snapshot_filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            std.mem.copy(u8, &snapshot_filename_buf, test_filename);
+            std.mem.copy(u8, snapshot_filename_buf[test_filename.len..], ".snap");
+            const snapshot_filename = snapshot_filename_buf[0 .. test_filename.len + ".snap".len];
+
+            const dir = getSnapshotDir(dir_path);
+            const file = dir.openFile(snapshot_filename, .{ .mode = .read_write }) catch |err| {
+                if (err == error.FileNotFound) {
+                    const file = dir.createFile(snapshot_filename, .{ .read = true }) catch unreachable;
+                    file.writeAll("// Bun Snapshot v1, https://goo.gl/fbAQLP\n\n") catch unreachable;
+                    file.seekTo(0) catch unreachable;
+                    return file;
+                }
+
+                return err;
+            };
+
+            return file;
+        }
+
+        pub fn getSnapshotDir(dir_path: []const u8) std.fs.Dir {
+            return snapshot_dir orelse brk: {
+                snapshot_dir = ensureSnapshotDir(dir_path);
+                break :brk snapshot_dir.?;
+            };
+        }
+
+        pub fn ensureSnapshotDir(dir_path: []const u8) std.fs.Dir {
+            const dir = std.fs.openDirAbsolute(dir_path, .{}) catch unreachable;
+            return dir.makeOpenPath("__snapshots__", .{}) catch unreachable;
+        }
+    };
+
     pub fn call(
         _: void,
         ctx: js.JSContextRef,
@@ -480,6 +669,85 @@ pub const Expect = struct {
         not,
         pub const Set = std.EnumSet(Op);
     };
+
+    pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator) ![]const u8 {
+        const test_name = this.scope.tests.items[this.test_id].label;
+
+        var length: usize = 0;
+        var curr_scope: ?*DescribeScope = this.scope;
+        while (curr_scope) |scope| {
+            if (scope.label.len > 0) {
+                length += scope.label.len + 1;
+            }
+            curr_scope = scope.parent;
+        }
+        length += test_name.len;
+
+        var buf = try allocator.alloc(u8, length);
+
+        // copy describe scopes in reverse order
+        var index = buf.len - test_name.len;
+        bun.copy(u8, buf[index..], test_name);
+        curr_scope = this.scope;
+        while (curr_scope) |scope| {
+            if (scope.label.len > 0) {
+                index -= scope.label.len + 1;
+                bun.copy(u8, buf[index .. index + scope.label.len], scope.label);
+                buf[index + scope.label.len] = ' ';
+            }
+            curr_scope = scope.parent;
+        }
+
+        return buf;
+    }
+
+    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        // first argument is hint if it is string
+        var hint_string: ZigString = ZigString.Empty;
+        if (arguments.len != 0 and arguments[0].isString()) {
+            arguments[0].toZigString(&hint_string, globalObject);
+        }
+        var hint = hint_string.toSlice(default_allocator);
+        defer hint.deinit();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        const pretty_value = value.jestPrettyFormat(default_allocator, globalObject) catch {
+            globalObject.throw("Failed to pretty format value", .{});
+            return .zero;
+        };
+        defer default_allocator.free(pretty_value);
+
+        // std.debug.print("snapshot for value: {s}\n", .{pretty_value});
+        const result = Jest.Snapshots.getOrPut(this, pretty_value) catch {
+            // handle parsing and other errors
+            return .zero;
+        };
+        if (result) |saved_value| {
+            if (strings.eql(pretty_value, saved_value)) {
+                return thisValue;
+            }
+
+            return .zero;
+        }
+
+        return .zero;
+    }
 
     pub fn finalize(
         this: *Expect,
@@ -2022,7 +2290,6 @@ pub const Expect = struct {
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
-    pub const toMatchSnapshot = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
@@ -2091,6 +2358,7 @@ pub const TestScope = struct {
     ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
+    snapshot_count: usize = 0,
 
     pub const Class = NewClass(
         void,

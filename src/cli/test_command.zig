@@ -421,6 +421,8 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
+        jest.Jest.Snapshots.saveToDisk();
+
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});

@@ -48,4 +48,96 @@ describe("Server", () => {
       server.stop(true);
     }
   });
+
+
+  test("abort signal on server with direct stream", async () => {
+    {
+      let signalOnServer = false;
+      const abortController = new AbortController();
+
+      const server = Bun.serve({
+        async fetch(req) {
+          req.signal.addEventListener("abort", () => {
+            signalOnServer = true;
+          });
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                abortController.abort();
+      
+                const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
+                controller.write(buffer);
+      
+                //wait to detect the connection abortion
+                await Bun.sleep(5);
+                
+                controller.close();
+              },
+            }),
+            {
+              headers: {
+                "Content-Encoding": "gzip",
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Length": "1",
+              },
+            },
+          );
+        },
+        port: 0,
+      });
+
+      try {
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+      } catch {}
+      expect(signalOnServer).toBe(true);
+      server.stop(true);
+    }
+  });
+
+  test("abort signal on server with stream", async () => {
+    {
+      let signalOnServer = false;
+      const abortController = new AbortController();
+
+      const server = Bun.serve({
+        async fetch(req) {
+          req.signal.addEventListener("abort", () => {
+            signalOnServer = true;
+          });
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                abortController.abort();
+      
+                const buffer = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
+                controller.enqueue(buffer);
+    
+                //wait to detect the connection abortion
+                await Bun.sleep(5);
+
+                controller.close();
+              },
+            }),
+            {
+              headers: {
+                "Content-Encoding": "gzip",
+                "Content-Type": "text/html; charset=utf-8",
+                "Content-Length": "1",
+              },
+            },
+          );
+        },
+        port: 0,
+      });
+
+      try {
+        await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
+      } catch {}
+      expect(signalOnServer).toBe(true);
+      server.stop(true);
+    }
+  });
+
+  
 });

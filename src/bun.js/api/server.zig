@@ -635,6 +635,7 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
         const RequestContext = @This();
+        const ctxLog = Output.scoped(.RequestContext, false);
         const App = uws.NewApp(ssl_enabled);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
         pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
@@ -738,6 +739,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn finalizeForAbort(this: *RequestContext) void {
+            streamLog("finalizeForAbort", .{});
             this.pending_promises_for_abort -|= 1;
             if (this.pending_promises_for_abort == 0) this.finalize();
         }
@@ -989,6 +991,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.aborted);
             this.aborted = true;
+            //if have sink call onAborted on sink
+            if (this.sink) |sink| {
+                sink.sink.onAborted(resp);
+            }
 
             // if we can, free the request now.
             if (this.isDeadRequest()) {
@@ -1010,14 +1016,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
-                        if (req.signal) |signal| {
-                            // if signal is not aborted, abort the signal
-                            if (!signal.aborted()) {
-                                const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                                reason.ensureStillAlive();
-                                _ = signal.signal(reason);
-                            }
-                        }
+                        this._signalAbort(req);
 
                         // the promise is pending
                         if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
@@ -1054,6 +1053,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
+        pub fn _signalAbort(this: *RequestContext, req: *Request) void {
+            //only call when actually aborted
+            if (!this.aborted) return;
+            //check if have a valid signal
+            if (req.signal) |signal| {
+                // if signal is not aborted, abort the signal
+                if (!signal.aborted()) {
+                    const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                    reason.ensureStillAlive();
+                    _ = signal.signal(reason);
+                }
+            }
+        }
+
         pub fn markComplete(this: *RequestContext) void {
             if (!this.has_marked_complete) this.server.onRequestComplete();
             this.has_marked_complete = true;
@@ -1062,6 +1075,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // This function may be called multiple times
         // so it's important that we can safely do that
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
+            ctxLog("finalizeWithoutDeinit", .{});
             this.blob.detach();
 
             if (comptime Environment.allow_assert) {
@@ -1087,14 +1101,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
-                    if (req.signal) |signal| {
-                        // if signal is not aborted, abort the signal
-                        if (!signal.aborted()) {
-                            const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                            reason.ensureStillAlive();
-                            _ = signal.signal(reason);
-                        }
-                    }
+                    this._signalAbort(req);
                     // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
                         req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
@@ -1577,8 +1584,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
+                            streamLog("promise still Pending", .{});
                             // TODO: should this timeout?
-                            this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
+                            this.setAbortHandler();
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
                                     .readable = stream,
@@ -1595,9 +1603,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                         },
                         .Fulfilled => {
+                            streamLog("promise Fulfilled", .{});
                             this.handleResolveStream();
                         },
                         .Rejected => {
+                            streamLog("promise Rejected", .{});
                             this.handleRejectStream(this.server.globalThis, promise.result(this.server.globalThis.vm()));
                         },
                     }
@@ -1631,7 +1641,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
+            this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             this.finalize();
             stream.value.unprotect();
@@ -1830,12 +1840,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            streamLog("onResolveStream", .{});
             var args = callframe.arguments(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             req.handleResolveStream();
             return JSValue.jsUndefined();
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
             var err = args.ptr[0];
@@ -1844,6 +1856,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+            streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 
             if (req.sink) |wrapper| {

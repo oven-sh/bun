@@ -169,6 +169,22 @@ pub const Bunfig = struct {
                         }
                     }
                 }
+
+                if (json.get("preload")) |expr| {
+                    if (expr.asArray()) |array_| {
+                        var array = array_;
+                        var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                        errdefer preloads.deinit();
+                        while (array.next()) |item| {
+                            try this.expect(item, .e_string);
+                            if (item.data.e_string.len() > 0)
+                                preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                        }
+                        this.ctx.preloads = preloads.items;
+                    } else if (expr.data != .e_null) {
+                        try this.addError(expr.loc, "Expected preload to be an array");
+                    }
+                }
             }
 
             if (comptime cmd == .DevCommand or cmd == .AutoCommand) {
@@ -195,6 +211,22 @@ pub const Bunfig = struct {
                 if (json.get("test")) |test_| {
                     if (test_.get("root")) |root| {
                         this.ctx.debug.test_directory = root.asString(this.allocator) orelse "";
+                    }
+
+                    if (test_.get("preload")) |expr| {
+                        if (expr.asArray()) |array_| {
+                            var array = array_;
+                            var preloads = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                            errdefer preloads.deinit();
+                            while (array.next()) |item| {
+                                try this.expect(item, .e_string);
+                                if (item.data.e_string.len() > 0)
+                                    preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                            }
+                            this.ctx.preloads = preloads.items;
+                        } else if (expr.data != .e_null) {
+                            try this.addError(expr.loc, "Expected preload to be an array");
+                        }
                     }
                 }
             }

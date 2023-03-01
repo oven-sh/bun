@@ -25,6 +25,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
+const BunArguments = @import("../cli.zig").Arguments;
 const bundler = bun.bundler;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
 const fs = @import("../fs.zig");
@@ -187,35 +188,34 @@ const CreateOptions = struct {
     verbose: bool = false,
     open: bool = false,
 
-    const params = [_]clap.Param(clap.Help){
-        clap.parseParam("--help                     Print this menu") catch unreachable,
-        clap.parseParam("--force                    Overwrite existing files") catch unreachable,
-        clap.parseParam("--no-install               Don't install node_modules") catch unreachable,
-        clap.parseParam("--no-git                   Don't create a git repository") catch unreachable,
-        clap.parseParam("--verbose                  Too many logs") catch unreachable,
-        clap.parseParam("--no-package-json          Disable package.json transforms") catch unreachable,
-        clap.parseParam("--open                     On finish, start bun & open in-browser") catch unreachable,
-        clap.parseParam("<POS>...                   ") catch unreachable,
-    };
+    const params = clap.parseParamsComptime(
+        \\--help                     Print this menu
+        \\--force                    Overwrite existing files
+        \\--no-install               Don't install node_modules
+        \\--no-git                   Don't create a git repository
+        \\--verbose                  Too many logs
+        \\--no-package-json          Disable package.json transforms
+        \\--open                     On finish, start bun & open in-browser
+        \\<POS>...
+    );
 
     pub fn parse(ctx: Command.Context, comptime print_flags_only: bool) !CreateOptions {
         var diag = clap.Diagnostic{};
-
-        var args = clap.parse(clap.Help, &params, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
+        var res = clap.parse(clap.Help, &params, BunArguments.parser, .{ .diagnostic = &diag, .allocator = ctx.allocator }) catch |err| {
             // Report useful error and exit
             diag.report(Output.errorWriter(), err) catch {};
             return err;
         };
 
-        if (args.flag("--help") or comptime print_flags_only) {
+        if (res.args.help or comptime print_flags_only) {
             if (comptime print_flags_only) {
-                clap.help(Output.writer(), params[1..]) catch {};
+                clap.help(Output.writer(), clap.Help, params[1..], .{}) catch {};
                 return undefined;
             }
 
             Output.prettyln("<r><b>bun create<r>\n\n  flags:\n", .{});
             Output.flush();
-            clap.help(Output.writer(), params[1..]) catch {};
+            clap.help(Output.writer(), clap.Help, params[1..], .{}) catch {};
             Output.pretty("\n", .{});
             Output.prettyln("<r>  environment variables:\n\n", .{});
             Output.prettyln("        GITHUB_ACCESS_TOKEN<r>      Downloading code from GitHub with a higher rate limit", .{});
@@ -226,19 +226,19 @@ const CreateOptions = struct {
             Global.exit(0);
         }
 
-        var opts = CreateOptions{ .positionals = args.positionals() };
+        var opts = CreateOptions{ .positionals = res.positionals };
 
         if (opts.positionals.len >= 1 and (strings.eqlComptime(opts.positionals[0], "c") or strings.eqlComptime(opts.positionals[0], "create"))) {
             opts.positionals = opts.positionals[1..];
         }
 
-        opts.skip_package_json = args.flag("--no-package-json");
+        opts.skip_package_json = res.args.@"no-package-json";
 
-        opts.verbose = args.flag("--verbose");
-        opts.open = args.flag("--open");
-        opts.skip_install = args.flag("--no-install");
-        opts.skip_git = args.flag("--no-git");
-        opts.overwrite = args.flag("--force");
+        opts.verbose = res.args.verbose;
+        opts.open = res.args.open;
+        opts.skip_install = res.args.@"no-install";
+        opts.skip_git = res.args.@"no-git";
+        opts.overwrite = res.args.force;
 
         return opts;
     }

@@ -862,8 +862,9 @@ pub fn sleepSync(
     _: js.ExceptionRef,
 ) js.JSValueRef {
     if (js.JSValueIsNumber(ctx, arguments[0])) {
-        const seconds = JSValue.fromRef(arguments[0]).asNumber();
-        if (seconds > 0 and std.math.isFinite(seconds)) std.time.sleep(@floatToInt(u64, seconds * 1000) * std.time.ns_per_ms);
+        const milliseconds = JSValue.fromRef(arguments[0]).asNumber();
+        if (milliseconds > 0 and std.math.isFinite(milliseconds))
+            std.time.sleep(@floatToInt(u64, milliseconds) * std.time.ns_per_ms);
     }
 
     return js.JSValueMakeUndefined(ctx);

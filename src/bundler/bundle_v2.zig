@@ -1575,6 +1575,8 @@ const LinkerContext = struct {
 
         mode: Mode = Mode.bundle,
 
+        public_path: []const u8 = "",
+
         pub const Mode = enum {
             passthrough,
             bundle,
@@ -3938,7 +3940,83 @@ const LinkerContext = struct {
 
         // TODO: footer
 
-        chunk.content.javascript.intermediate_output;
+        chunk.intermediate_output = c.breakOutputIntoPieces(
+            allocator,
+            &j,
+            ctx.chunks.len,
+        ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
+
+        // TODO: meta contents
+
+        chunk.isolated_hash = c.generateIsolatedHash(chunk);
+        chunk.is_executable = is_executable;
+    }
+
+    pub fn generateIsolatedHash(c: *LinkerContext, chunk: *const Chunk) u64 {
+        var hasher = ContentHasher{};
+
+        // Mix the file names and part ranges of all of the files in this chunk into
+        // the hash. Objects that appear identical but that live in separate files or
+        // that live in separate parts in the same file must not be merged. This only
+        // needs to be done for JavaScript files, not CSS files.
+        if (chunk.content == .javascript) {
+            const sources = c.graph.files.items(.source);
+            for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
+                const source: Logger.Source = sources[part_range.source_index.get()];
+
+                const file_path = brk: {
+                    if (strings.eqlComptime(source.path.namespace, "file")) {
+                        // Use the pretty path as the file name since it should be platform-
+                        // independent (relative paths and the "/" path separator)
+                        break :brk source.path.pretty;
+                    } else {
+                        // If this isn't in the "file" namespace, just use the full path text
+                        // verbatim. This could be a source of cross-platform differences if
+                        // plugins are storing platform-specific information in here, but then
+                        // that problem isn't caused by esbuild itself.
+                        break :brk source.path.text;
+                    }
+                };
+
+                // Include the path namespace in the hash so that files with the same
+                hasher.write(source.key_path.namespace);
+
+                // Then include the file path
+                hasher.write(file_path);
+
+                // Then include the part range
+                hasher.writeInts(&[_]u32{
+                    part_range.part_index_begin,
+                    part_range.part_index_end,
+                });
+            }
+        }
+
+        // Hash the output path template as part of the content hash because we want
+        // any import to be considered different if the import's output path has changed.
+        hasher.write(chunk.template.data);
+
+        // Also hash the public path. If provided, this is used whenever files
+        // reference each other such as cross-chunk imports, asset file references,
+        // and source map comments. We always include the hash in all chunks instead
+        // of trying to figure out which chunks will include the public path for
+        // simplicity and for robustness to code changes in the future.
+        if (c.options.public_path.len > 0) {
+            hasher.write(c.options.public_path);
+        }
+
+        // Include the generated output content in the hash. This excludes the
+        // randomly-generated import paths (the unique keys) and only includes the
+        // data in the spans between them.
+        if (chunk.intermediate_output == .pieces) {
+            for (chunk.intermediate_output.pieces.slice()) |piece| {
+                hasher.write(piece.data);
+            }
+        } else {
+            hasher.write(chunk.intermediate_output.single_piece.data);
+        }
+
+        return hasher.digest();
     }
 
     pub fn generateEntryPointTailJS(
@@ -4430,9 +4508,12 @@ const LinkerContext = struct {
                         // This currently evaluates sibling dependencies in serial instead of in
                         // parallel, which is incorrect. This should be changed to store a promise
                         // and await all stored promises after all imports but before any code.
-                        break :brk Expr.init(E.Await, E.Await{
-                            .value = default,
-                        });
+                        break :brk Expr.init(
+                            E.Await,
+                            E.Await{
+                                .value = default,
+                            },
+                        );
                     }
 
                     break :brk default;
@@ -5302,7 +5383,11 @@ const LinkerContext = struct {
             .allocator = allocator,
             .to_module_ref = toESMRef,
             .require_ref = runtimeRequireRef,
-            .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
+            .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
+                LinkerContext,
+                requireOrImportMetaForSource,
+                c,
+            ),
         };
 
         writer.buffer.reset();
@@ -6267,6 +6352,107 @@ const LinkerContext = struct {
         }
     };
 
+    pub fn breakOutputIntoPieces(
+        c: *LinkerContext,
+        allocator: std.mem.Allocator,
+        j: *bun.Joiner,
+        count: u32,
+    ) !Chunk.IntermediateOutput {
+        // Optimization: If there can be no substitutions, just reuse the initial
+        // joiner that was used when generating the intermediate chunk output
+        // instead of creating another one and copying the whole file into it.
+        if (j.watcher.estimated_count == 0) {
+            return Chunk.IntermediateOutput{
+                .joiner = j.*,
+            };
+        }
+
+        var pieces = try std.ArrayList(Chunk.OutputPiece).initCapacity(allocator, count);
+        const complete_output = try j.done(allocator);
+        var output = complete_output;
+
+        const prefix = c.unique_key_buf;
+
+        while (true) {
+            const invalid_boundary = std.math.maxInt(usize);
+            // Scan for the next piece boundary
+            const boundary = strings.indexOf(output, prefix) orelse invalid_boundary;
+
+            var output_piece_index = Chunk.OutputPieceIndex{};
+
+            // Try to parse the piece boundary
+            if (boundary != invalid_boundary) {
+                const start = boundary + prefix.len;
+                if (start + 9 > output.len) {
+                    // Not enough bytes to parse the piece index
+                    boundary = invalid_boundary;
+                } else {
+                    switch (output[start]) {
+                        'A' => {
+                            output_piece_index.kind = .asset;
+                        },
+                        'C' => {
+                            output_piece_index.kind = .chunk;
+                        },
+                        else => {
+                            for (output[start..][1..9].*) |char| {
+                                if (char <= '0' or char > '9') {
+                                    boundary = invalid_boundary;
+                                    break;
+                                }
+
+                                output_piece_index.index = @truncate(
+                                    u30,
+                                    @as(u32, output_piece_index.index) * 10 + (@as(u32, output[start]) - '0'),
+                                );
+                            }
+                        },
+                    }
+                }
+            }
+
+            // Validate the boundary
+            switch (output_piece_index.kind) {
+                .asset => {
+                    if (@as(u32, output_piece_index.index) >= @truncate(u32, c.graph.files.len)) {
+                        boundary = invalid_boundary;
+                    }
+                },
+                .chunk => {
+                    if (@as(usize, output_piece_index.index) >= count) {
+                        boundary = invalid_boundary;
+                    }
+                },
+                else => {
+                    boundary = invalid_boundary;
+                },
+            }
+
+            // If we're at the end, generate one final piece
+            if (boundary == invalid_boundary) {
+                try pieces.append(Chunk.OutputPiece{
+                    .index = output_piece_index,
+                    .data = output,
+                });
+                break;
+            }
+
+            // Otherwise, generate an interior piece and continue
+            try pieces.append(Chunk.OutputPiece{
+                .index = output_piece_index,
+                .data_ptr = output.ptr,
+
+                // sliced this way to panic if out of bounds
+                .data_len = @truncate(u32, output[0..boundary].len),
+            });
+            output = output[boundary + prefix.len + 9 ..];
+        }
+
+        return Chunk.IntermediateOutput{
+            .pieces = bun.BabyList(Chunk.OutputPiece).init(pieces.items),
+        };
+    }
+
     const DependencyWrapper = struct {
         linker: *LinkerContext,
         flags: []JSMeta.Flags,
@@ -6446,6 +6632,9 @@ pub const Chunk = struct {
 
     is_executable: bool = false,
 
+    intermediate_output: IntermediateOutput = .{ .empty = {} },
+    isolated_hash: u64 = std.math.maxInt(u64),
+
     pub inline fn isEntryPoint(this: *const Chunk) bool {
         return this.entry_point.is_entry_point;
     }
@@ -6473,6 +6662,10 @@ pub const Chunk = struct {
         }
     };
 
+    /// TODO: rewrite this
+    /// This implementation is just slow.
+    /// Can we make the JSPrinter itself track this without increasing
+    /// complexity a lot?
     pub const IntermediateOutput = union(enum) {
         /// If the chunk has references to other chunks, then "pieces" contains the
         /// contents of the chunk. Another joiner
@@ -6483,6 +6676,8 @@ pub const Chunk = struct {
         /// "joiner" contains the contents of the chunk. This is more efficient
         /// because it avoids doing a join operation twice.
         joiner: bun.Joiner,
+
+        empty: void,
     };
 
     pub const OutputPiece = struct {
@@ -6634,5 +6829,23 @@ const CompileResult = union(enum) {
             .javascript => |r| r.source_index,
             else => 0,
         };
+    }
+};
+
+const ContentHasher = struct {
+    hasher: std.hash.XxHash64 = std.hash.XxHash64.init(0),
+
+    pub fn write(self: *ContentHasher, bytes: []const u8) void {
+        self.hasher.update(std.mem.asBytes(&bytes.len));
+        self.hasher.update(bytes);
+    }
+
+    pub fn writeInts(self: *ContentHasher, i: []const u32) void {
+        // TODO: BigEndian
+        self.hasher.update(std.mem.sliceAsBytes(i));
+    }
+
+    pub fn digest(self: *ContentHasher) u64 {
+        return self.hasher.final();
     }
 };

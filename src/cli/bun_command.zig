@@ -198,7 +198,7 @@ pub const BunCommand = struct {
                 const root_dir = try std.fs.cwd().openIterableDir(root_path, .{});
                 var all_paths = try ctx.allocator.alloc([]const u8, output_files.items.len);
                 var max_path_len: usize = 0;
-                for (output_files.items, all_paths) |*dest, src| {
+                for (all_paths, output_files.items) |*dest, src| {
                     dest.* = src.input.text;
                 }
 
@@ -228,10 +228,10 @@ pub const BunCommand = struct {
                             rel_path = resolve_path.relative(from_path, f.input.text);
                             if (std.fs.path.dirname(rel_path)) |parent| {
                                 if (parent.len > root_path.len) {
-                                    root_dir.makePath(parent);
+                                    try root_dir.dir.makePath(parent);
                                 }
                             }
-                            try root_dir.writeFile(rel_path, value);
+                            try root_dir.dir.writeFile(rel_path, value);
                         },
                         .move => |value| {
                             // const primary = f.input.text[from_path.len..];
@@ -244,7 +244,7 @@ pub const BunCommand = struct {
                         .copy => |value| {
                             rel_path = value.pathname;
 
-                            try f.copyTo(root_path, bun.constStrToU8(rel_path), root_dir.fd);
+                            try f.copyTo(root_path, bun.constStrToU8(rel_path), root_dir.dir.fd);
                         },
                         .noop => {},
                         .pending => unreachable,

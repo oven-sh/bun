@@ -33,7 +33,7 @@ const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
 const Api = schema.Api;
 const _resolver = @import("../resolver/resolver.zig");
-const sync = @import("../sync.zig");
+const sync = bun.ThreadPool;
 const ImportRecord = bun.ImportRecord;
 const ImportKind = bun.ImportKind;
 const allocators = @import("../allocators.zig");
@@ -342,36 +342,24 @@ pub const BundleV2 = struct {
         allocator: std.mem.Allocator,
         framework_config: ?Api.LoadedFramework,
         route_config: ?Api.LoadedRouteConfig,
-        destination: [*:0]const u8,
+        _: [*:0]const u8,
         estimated_input_lines_of_code: *usize,
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
         unique_key: u64,
     ) !std.ArrayList(options.OutputFile) {
         _ = try bundler.fs.fs.openTmpDir();
-        var tmpname_buf: [64]u8 = undefined;
         bundler.resetStore();
         try bundler.configureDefines();
         _ = route_config;
         _ = estimated_input_lines_of_code;
         _ = package_bundle_map;
 
-        const tmpname = try bundler.fs.tmpname(
-            ".bun",
-            std.mem.span(&tmpname_buf),
-            wyhash(@intCast(usize, std.time.milliTimestamp()) % std.math.maxInt(u32), std.mem.span(destination)),
-        );
-
-        var tmpfile = Fs.FileSystem.RealFS.Tmpfile{};
-        try tmpfile.create(&bundler.fs.fs, tmpname);
-
-        errdefer tmpfile.closeAndDelete(tmpname);
-
         var generator = try allocator.create(BundleV2);
 
         defer allocator.destroy(generator);
         generator.* = BundleV2{
-            .tmpfile = tmpfile.file(),
+            .tmpfile = undefined,
             .bundler = bundler,
             .graph = .{
                 .pool = undefined,
@@ -1608,7 +1596,7 @@ const LinkerContext = struct {
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
         try this.graph.load(entry_points, sources);
-        try this.wait_group.init();
+        this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
     }
 
@@ -1625,7 +1613,7 @@ const LinkerContext = struct {
 
         // Stop now if there were errors
         if (this.log.hasErrors()) {
-            return;
+            return &[_]Chunk{};
         }
 
         try this.treeShakingAndCodeSplitting();
@@ -3486,7 +3474,7 @@ const LinkerContext = struct {
         c: *LinkerContext,
         allocator: std.mem.Allocator,
         chunk: *Chunk,
-        files_in_order: []u32,
+        files_in_order: []const u32,
     ) !renamer.Renamer {
 
         // TODO: minify identifiers
@@ -3504,7 +3492,7 @@ const LinkerContext = struct {
                 var reserved_names = try renamer.computeInitialReservedNames(allocator);
 
                 for (files_in_order) |source_index| {
-                    renamer.computeReservedNamesForScope(all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
+                    renamer.computeReservedNamesForScope(&all_module_scopes[source_index].?, &c.graph.symbols, &reserved_names, allocator);
                 }
 
                 break :brk reserved_names;
@@ -3621,7 +3609,7 @@ const LinkerContext = struct {
                             }
                         }
                     }
-                    r.assignNamesRecursiveWithNumberScope(child_number_scope, all_module_scopes[source_index], source_index, sorted);
+                    r.assignNamesRecursiveWithNumberScope(child_number_scope, &all_module_scopes[source_index].?, source_index, sorted);
                     continue;
                 },
 
@@ -3661,7 +3649,7 @@ const LinkerContext = struct {
 
     fn generateChunkJS_(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) !void {
         _ = chunk_index;
-        defer ctx.wg.done();
+        defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get();
         const allocator = worker.allocator;
         const c = ctx.c;
@@ -3669,7 +3657,7 @@ const LinkerContext = struct {
 
         var repr = &chunk.content.javascript;
 
-        var runtime_scope: *Scope = c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Ref.RuntimeRef.sourceIndex()]];
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()].?;
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("toESM").?.ref);
@@ -3687,12 +3675,12 @@ const LinkerContext = struct {
         defer arena.deinit();
         var compile_results = std.ArrayList(CompileResult).initCapacity(allocator, part_ranges.len) catch unreachable;
         {
-            defer arena.reset(.retain_capacity);
+            defer _ = arena.reset(.retain_capacity);
 
             var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
 
             for (part_ranges, 0..) |part_range, i| {
-                if (i > 0) arena.reset(.retain_capacity);
+                if (i > 0) _ = arena.reset(.retain_capacity);
                 const result = c.generateCodeForFileInChunkJS(
                     &buffer_writer,
                     r,
@@ -3701,7 +3689,6 @@ const LinkerContext = struct {
                     toCommonJSRef,
                     toESMRef,
                     runtimeRequireRef,
-                    &chunk.entry_bits,
                     &stmts,
                     allocator,
                     arena.allocator(),
@@ -3710,7 +3697,12 @@ const LinkerContext = struct {
                 if (i < part_ranges.len - 1) {
                     compile_results.appendAssumeCapacity(
                         // we reuse the memory buffer up until the final chunk to minimize reallocations
-                        result.clone(allocator) catch unreachable,
+                        .{
+                            .javascript = .{
+                                .result = result.clone(allocator) catch unreachable,
+                                .source_index = part_range.source_index.get(),
+                            },
+                        },
                     );
                 } else {
                     if (comptime Environment.allow_assert) {
@@ -3724,7 +3716,12 @@ const LinkerContext = struct {
                     }
 
                     // the final chunk owns the memory buffer
-                    compile_results.appendAssumeCapacity(result);
+                    compile_results.appendAssumeCapacity(.{
+                        .javascript = .{
+                            .result = result,
+                            .source_index = part_range.source_index.get(),
+                        },
+                    });
                 }
             }
         }
@@ -3747,12 +3744,13 @@ const LinkerContext = struct {
             };
 
             var cross_chunk_import_records = ImportRecord.List.initCapacity(allocator, chunk.cross_chunk_imports.len) catch unreachable;
-            defer cross_chunk_import_records.deinit();
+            defer cross_chunk_import_records.deinitWithAllocator(allocator);
             for (chunk.cross_chunk_imports.slice()) |import_record| {
                 cross_chunk_import_records.appendAssumeCapacity(
                     .{
                         .kind = import_record.import_kind,
                         .path = Fs.Path.init(chunk.unique_key),
+                        .range = Logger.Range.None,
                     },
                 );
             }
@@ -3783,7 +3781,6 @@ const LinkerContext = struct {
         const entry_point_tail = brk: {
             if (chunk.isEntryPoint()) {
                 break :brk c.generateEntryPointTailJS(
-                    c,
                     toCommonJSRef,
                     toESMRef,
                     chunk.entry_point.source_index,
@@ -4049,21 +4046,24 @@ const LinkerContext = struct {
                                 // "export default require_foo();"
                                 S.ExportDefault,
                                 .{
-                                    .value = Stmt.alloc(
-                                        S.SExpr,
-                                        .{
-                                            .value = Expr.init(
-                                                E.Call,
-                                                E.Call{
-                                                    .target = Expr.initIdentifier(
-                                                        ast.wrapper_ref.?,
-                                                        Logger.Loc.Empty,
-                                                    ),
-                                                },
-                                                Logger.Loc.Empty,
-                                            ),
-                                        },
-                                    ),
+                                    .value = .{
+                                        .stmt = Stmt.alloc(
+                                            S.SExpr,
+                                            .{
+                                                .value = Expr.init(
+                                                    E.Call,
+                                                    E.Call{
+                                                        .target = Expr.initIdentifier(
+                                                            ast.wrapper_ref.?,
+                                                            Logger.Loc.Empty,
+                                                        ),
+                                                    },
+                                                    Logger.Loc.Empty,
+                                                ),
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                    },
                                 },
                                 Logger.Loc.Empty,
                             ),
@@ -4417,6 +4417,7 @@ const LinkerContext = struct {
                         .decls = try bun.fromSlice(
                             []G.Decl,
                             allocator,
+                            []const G.Decl,
                             &.{
                                 .{
                                     .binding = Binding.alloc(
@@ -4463,6 +4464,7 @@ const LinkerContext = struct {
                             .decls = try bun.fromSlice(
                                 []G.Decl,
                                 allocator,
+                                []const G.Decl,
                                 &.{
                                     .{
                                         .binding = Binding.alloc(
@@ -4517,6 +4519,7 @@ const LinkerContext = struct {
                             E.Await{
                                 .value = default,
                             },
+                            loc,
                         );
                     }
 
@@ -4534,6 +4537,8 @@ const LinkerContext = struct {
                 );
             },
         }
+
+        return true;
     }
 
     fn convertStmtsForChunk(
@@ -4549,7 +4554,7 @@ const LinkerContext = struct {
         const shouldExtractESMStmtsForWrap = wrap != .none;
         const shouldStripExports = c.options.mode != .passthrough or !chunk.isEntryPoint();
 
-        const flags = c.graph.meta.items(.flag);
+        const flags = c.graph.meta.items(.flags);
 
         // If this file is a CommonJS entry point, double-write re-exports to the
         // external CommonJS "module.exports" object in addition to our internal ESM
@@ -4571,6 +4576,7 @@ const LinkerContext = struct {
                         Logger.Loc.Empty,
                     ),
                     .name = "exports",
+                    .name_loc = Logger.Loc.Empty,
                 },
                 Logger.Loc.Empty,
             );
@@ -4582,8 +4588,7 @@ const LinkerContext = struct {
                 .s_import => |s| {
                     // "import * as ns from 'path'"
                     // "import {foo} from 'path'"
-                    if (c.shouldRemoveImportExportStmt(
-                        source_index,
+                    if (try c.shouldRemoveImportExportStmt(
                         stmts,
                         stmt.loc,
                         s.namespace_ref,
@@ -4603,13 +4608,11 @@ const LinkerContext = struct {
                 .s_export_star => |s| {
                     // "export * as ns from 'path'"
                     if (s.alias) |alias| {
-                        if (c.shouldRemoveImportExportStmt(
-                            source_index,
+                        if (try c.shouldRemoveImportExportStmt(
                             stmts,
                             stmt.loc,
                             s.namespace_ref,
                             s.import_record_index,
-                            chunk,
                             allocator,
                             ast,
                         )) {
@@ -4661,7 +4664,7 @@ const LinkerContext = struct {
 
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             const export_star_ref = c.runtimeFunction("__reExport");
-                            var args = try allocator.alloc(Expr, 2 + @boolToInt(module_exports_for_export != null));
+                            var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
                             args[0..2].* = .{
                                 Expr.init(
                                     E.Identifier,
@@ -4687,7 +4690,7 @@ const LinkerContext = struct {
                                 Stmt.alloc(
                                     S.SExpr,
                                     S.SExpr{
-                                        .expr = Expr.init(
+                                        .value = Expr.init(
                                             E.Call,
                                             E.Call{
                                                 .target = Expr.init(
@@ -4808,7 +4811,6 @@ const LinkerContext = struct {
                     // "export {foo} from 'path'"
 
                     if (try c.shouldRemoveImportExportStmt(
-                        source_index,
                         stmts,
                         stmt.loc,
                         s.namespace_ref,
@@ -5013,7 +5015,7 @@ const LinkerContext = struct {
     }
 
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
-        return c.graph.ast.items(.module_scope)[Ref.RuntimeRef.source_index].members.get(name).?.ref;
+        return c.graph.ast.items(.module_scope)[Index.runtime.value].?.members.get(name).?.ref;
     }
 
     fn generateCodeForFileInChunkJS(
@@ -5030,7 +5032,7 @@ const LinkerContext = struct {
         temp_allocator: std.mem.Allocator,
     ) js_printer.PrintResult {
         // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
-        var parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()][part_range.part_index_begin..part_range.part_index_end];
+        var parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
         const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
         _ = resolved_exports;
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
@@ -5055,13 +5057,13 @@ const LinkerContext = struct {
             parts[namespace_export_part_index].is_live)
         {
             c.convertStmtsForChunk(
-                part_range.source_index,
+                part_range.source_index.get(),
                 stmts,
                 parts[namespace_export_part_index].stmts,
                 chunk,
                 temp_allocator,
                 flags.wrap,
-                ast,
+                &ast,
             ) catch |err| return .{
                 .err = err,
             };
@@ -5431,12 +5433,12 @@ const LinkerContext = struct {
             debug("START Generating {d} chunks in parallel", .{chunks.len});
             defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
-            wait_group.* = sync.WaitGroup.init();
+            wait_group.init();
             defer {
                 wait_group.deinit();
                 c.allocator.destroy(wait_group);
             }
-            wait_group.addN(chunks.len);
+            wait_group.counter = @truncate(u32, chunks.len);
             var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
         }
@@ -5451,7 +5453,7 @@ const LinkerContext = struct {
                 // TODO: non-isolated-hash
                 chunk.template.placeholder.hash = chunk.isolated_hash;
 
-                chunk.final_rel_path = std.fmt.allocPrint("{any}", .{chunk.template}) catch unreachable;
+                chunk.final_rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch unreachable;
             }
         }
 
@@ -6622,7 +6624,7 @@ pub const PathTemplate = struct {
     data: string = "",
     placeholder: Placeholder = .{},
 
-    pub fn format(self: PathTemplate, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: PathTemplate, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         var remain = self.data;
         while (strings.indexOfChar(remain, '[')) |j| {
             try writer.writeAll(remain[0..j]);
@@ -6651,18 +6653,18 @@ pub const PathTemplate = struct {
 
             const placeholder = remain[0..end_len];
 
-            const field = self.placeholder.map.get(placeholder) orelse {
+            const field = PathTemplate.Placeholder.map.get(placeholder) orelse {
                 try writer.writeAll(placeholder);
                 remain = remain[end_len..];
                 continue;
             };
 
             switch (field) {
-                .dir => try writer.writeAll(opts.context.dir),
-                .name => try writer.writeAll(opts.context.name),
-                .ext => try writer.writeAll(opts.context.ext),
+                .dir => try writer.writeAll(self.placeholder.dir),
+                .name => try writer.writeAll(self.placeholder.name),
+                .ext => try writer.writeAll(self.placeholder.ext),
                 .hash => {
-                    if (opts.context.hash) |hash| {
+                    if (self.placeholder.hash) |hash| {
                         try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
                     }
                 },

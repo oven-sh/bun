@@ -231,7 +231,6 @@ pub const Ref = packed struct(u64) {
 
     // 2 bits of padding for whatever is the parent
     pub const None = Ref{ .inner_index = 0, .source_index = 0, .tag = .invalid };
-    pub const RuntimeRef = Ref{ .inner_index = 0, .source_index = 0, .tag = .runtime };
 
     pub inline fn sourceIndex(this: Ref) Int {
         return this.source_index;

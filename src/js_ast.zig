@@ -776,7 +776,7 @@ pub const Symbol = struct {
         }
 
         return switch (kind) {
-            .mangled_prop => .mangled_prop,
+            // .mangled_prop => .mangled_prop,
             .label => .label,
             else => .default,
         };
@@ -968,7 +968,7 @@ pub const Symbol = struct {
             return new;
         }
 
-        pub fn get(self: *Map, ref: Ref) ?*Symbol {
+        pub fn get(self: *const Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
@@ -993,7 +993,7 @@ pub const Symbol = struct {
             return Map{ .symbols_for_source = list };
         }
 
-        pub fn getWithLink(symbols: *Map, ref: Ref) ?*Symbol {
+        pub fn getWithLink(symbols: *const Map, ref: Ref) ?*Symbol {
             var symbol: *Symbol = symbols.get(ref) orelse return null;
             if (symbol.hasLink()) {
                 return symbols.get(symbol.link) orelse symbol;
@@ -1019,7 +1019,7 @@ pub const Symbol = struct {
             }
         }
 
-        pub fn follow(symbols: *Map, ref: Ref) Ref {
+        pub fn follow(symbols: *const Map, ref: Ref) Ref {
             if (symbols.get(ref)) |symbol| {
                 const link = symbol.link;
                 if (link.isNull())

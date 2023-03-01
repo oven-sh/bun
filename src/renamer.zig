@@ -167,7 +167,7 @@ pub const NumberRenamer = struct {
         // Symbols in child scopes may also have to be renamed to avoid conflicts
         for (scope.children.slice()) |child| {
             child_scope.name_counts.clearRetainingCapacity();
-            r.assignNamesRecursiveWithNumberScope(child_scope, child, source_index, s, sorted);
+            r.assignNamesRecursiveWithNumberScope(child_scope, child, source_index, sorted);
         }
     }
 
@@ -243,7 +243,7 @@ pub const NumberRenamer = struct {
                 // avoid rehashing the same string over for each scope
                 const ctx = bun.StringHashMapContext.pre(name);
 
-                while (s) |*scope| : (s = scope.parent) {
+                while (s) |scope| : (s = scope.parent) {
                     if (scope.name_counts.getAdapted(name, ctx)) |count| {
                         if (scope == this) {
                             return .{ .same_scope = count };
@@ -376,12 +376,12 @@ pub fn computeInitialReservedNames(
 ) !bun.StringHashMapUnmanaged(u32) {
     var names = bun.StringHashMapUnmanaged(u32){};
 
-    const extras = &.{
+    const extras = .{
         "Promise",
         "Require",
     };
 
-    try names.ensureTotalCapacity(allocator, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len);
+    try names.ensureTotalCapacity(allocator, @truncate(u32, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len));
 
     for (JSLexer.Keywords.keys()) |keyword| {
         names.putAssumeCapacity(keyword, 1);
@@ -391,7 +391,7 @@ pub fn computeInitialReservedNames(
         names.putAssumeCapacity(keyword, 1);
     }
 
-    for (extras) |extra| {
+    inline for (comptime extras) |extra| {
         names.putAssumeCapacity(extra, 1);
     }
 

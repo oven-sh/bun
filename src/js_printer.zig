@@ -1508,7 +1508,7 @@ fn NewPrinter(
             }
         }
 
-        inline fn symbols(p: *const Printer) js_ast.Symbol.Map {
+        inline fn symbols(p: *Printer) js_ast.Symbol.Map {
             return p.renamer.symbols();
         }
 
@@ -2373,7 +2373,7 @@ fn NewPrinter(
                                     p.printWhitespacer(ws("(0, "));
                                 }
                                 p.addSourceMapping(expr.loc);
-                                p.printNamespaceAlias(import_record, namespace);
+                                p.printNamespaceAlias(import_record.*, namespace);
 
                                 if (wrap) {
                                     p.print(")");
@@ -3461,7 +3461,7 @@ fn NewPrinter(
                                 p.printSpace();
                                 const last = s.items.len - 1;
                                 for (s.items, 0..) |item, i| {
-                                    const symbol = p.symbols.getWithLink(item.name.ref.?).?;
+                                    const symbol = p.symbols().getWithLink(item.name.ref.?).?;
                                     const name = symbol.original_name;
                                     var did_print = false;
 
@@ -3470,7 +3470,7 @@ fn NewPrinter(
                                         if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
-                                            p.printNamespaceAlias(import_record, namespace);
+                                            p.printNamespaceAlias(import_record.*, namespace);
                                             did_print = true;
                                         }
                                     }
@@ -3542,7 +3542,7 @@ fn NewPrinter(
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.@"print = "();
-                                            p.printNamespaceAlias(import_record, namespace);
+                                            p.printNamespaceAlias(import_record.*, namespace);
                                             p.printSemicolonAfterStatement();
                                             _ = array.swapRemove(i);
 
@@ -3678,7 +3678,7 @@ fn NewPrinter(
                             }
 
                             p.print("}=import.meta.require(");
-                            p.printImportRecordPath(&import_record);
+                            p.printImportRecordPath(import_record);
                             p.print(")");
                             p.printSemicolonAfterStatement();
                             p.printWhitespacer(ws("export {"));
@@ -3741,7 +3741,7 @@ fn NewPrinter(
                     }
 
                     p.printWhitespacer(ws("} from "));
-                    p.printImportRecordPath(&import_record);
+                    p.printImportRecordPath(import_record);
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
@@ -5419,8 +5419,9 @@ pub fn printJSON(
     var stmts = &[_]js_ast.Stmt{stmt};
     var parts = &[_]js_ast.Part{.{ .stmts = stmts }};
     const ast = Ast.initTest(parts);
-
-    var renamer = rename.NoOpRenamer.init(ast.symbols, source);
+    var list = js_ast.Symbol.List.init(ast.symbols.slice());
+    var nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
+    var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
 
     var printer = PrinterType.init(
         writer,
@@ -5448,11 +5449,11 @@ pub fn print(
     renamer: bun.renamer.Renamer,
 ) PrintResult {
     var buffer_writer = BufferWriter.init(allocator) catch |err| return .{ .err = err };
-    var buffer_printer = BufferPrinter.init(&buffer_writer);
+    var buffer_printer = BufferPrinter.init(buffer_writer);
 
     return printWithWriter(
         *BufferPrinter,
-        buffer_printer,
+        &buffer_printer,
         platform,
         opts,
         import_records,
@@ -5471,7 +5472,7 @@ pub fn printWithWriter(
     renamer: bun.renamer.Renamer,
 ) PrintResult {
     return switch (platform.isBun()) {
-        inline else => |is_bun_platform| printWithWriter(
+        inline else => |is_bun_platform| printWithWriterAndPlatform(
             Writer,
             _writer,
             is_bun_platform,
@@ -5555,7 +5556,7 @@ pub fn printCommonJS(
         tree.import_records.slice(),
         opts,
         renamer.toRenamer(),
-        getSourceMapBuilder(generate_source_map, false, opts, source, tree),
+        getSourceMapBuilder(generate_source_map, false, opts, source, &tree),
     );
     defer {
         imported_module_ids_list = printer.imported_module_ids;

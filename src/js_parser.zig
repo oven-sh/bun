@@ -4216,8 +4216,8 @@ fn NewParser_(
             var symbol_use_values = part.symbol_uses.values();
             var symbols = p.symbols.items;
 
-            for (symbol_use_refs, 0..) |ref, i| {
-                symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
+            for (symbol_use_refs, symbol_use_values) |ref, prev| {
+                symbols[ref.innerIndex()].use_count_estimate -|= prev.count_estimate;
             }
             const declared_refs = part.declared_symbols.refs.items;
             for (declared_refs) |declared| {
@@ -4590,11 +4590,11 @@ fn NewParser_(
             bun.copy(u8, namespace_identifier[suffix.len..], import_path_identifier);
 
             const namespace_ref = try p.newSymbol(.other, namespace_identifier);
-            try p.module_scope.generated.append(allocator, namespace_ref);
-            for (imports, 0..) |alias, i| {
+            try p.module_scope.generated.push(allocator, namespace_ref);
+            for (imports, clause_items) |alias, *clause_item| {
                 const ref = symbols.get(alias) orelse unreachable;
                 const alias_name = if (@TypeOf(symbols) == RuntimeImports) RuntimeImports.all[alias] else alias;
-                clause_items[i] = js_ast.ClauseItem{
+                clause_item.* = js_ast.ClauseItem{
                     .alias = alias_name,
                     .original_name = alias_name,
                     .alias_loc = logger.Loc{},
@@ -4610,11 +4610,14 @@ fn NewParser_(
                 });
             }
 
-            stmts[0] = p.s(S.Import{
-                .namespace_ref = namespace_ref,
-                .items = clause_items,
-                .import_record_index = import_record_i,
-            }, logger.Loc{});
+            stmts[0] = p.s(
+                S.Import{
+                    .namespace_ref = namespace_ref,
+                    .items = clause_items,
+                    .import_record_index = import_record_i,
+                },
+                logger.Loc{},
+            );
             if (additional_stmt) |add| {
                 stmts[1] = add;
             }

@@ -130,7 +130,7 @@ pub const WaitGroup = struct {
     counter: u32 = 0,
     event: std.Thread.ResetEvent,
 
-    pub fn init(self: *WaitGroup) !void {
+    pub fn init(self: *WaitGroup) void {
         self.* = .{
             .mutex = .{},
             .counter = 0,
@@ -284,7 +284,7 @@ pub fn Do(
 
     var wait_group = wg orelse brk: {
         allocated_wait_group = try allocator.create(WaitGroup);
-        try allocated_wait_group.?.init();
+        allocated_wait_group.?.init();
         break :brk allocated_wait_group.?;
     };
     const WaitContext = struct {

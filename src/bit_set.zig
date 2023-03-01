@@ -879,8 +879,8 @@ pub const DynamicBitSetUnmanaged = struct {
     pub fn toggleSet(self: *Self, toggles: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(toggles.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* ^= toggles.masks[i];
+        for (self.masks[0..num_masks], toggles.masks[0..num_masks]) |*mask, other_mask| {
+            mask.* ^= other_mask;
         }
     }
 
@@ -898,7 +898,7 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks]) |*mask| {
+        for (self.masks[0..num_masks]) |*mask| {
             mask.* = ~mask.*;
         }
 
@@ -913,8 +913,8 @@ pub const DynamicBitSetUnmanaged = struct {
         if (bit_length == 0) return;
 
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* = other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* = other_mask;
         }
 
         const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
@@ -929,8 +929,8 @@ pub const DynamicBitSetUnmanaged = struct {
     pub fn setUnion(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* |= other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* |= other_mask;
         }
     }
 
@@ -941,25 +941,25 @@ pub const DynamicBitSetUnmanaged = struct {
     pub fn setIntersection(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* &= other_mask;
         }
     }
 
     pub fn setExcludeTwo(self: *Self, other: Self, third: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= ~other.masks[i];
-            mask.* &= ~third.masks[i];
+        for (self.masks[0..num_masks], other.masks[0..num_masks], third.masks[0..num_masks]) |*mask, other_mask, third_mask| {
+            mask.* &= ~other_mask;
+            mask.* &= ~third_mask;
         }
     }
 
     pub fn setExclude(self: *Self, other: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(other.bit_length == self.bit_length);
         const num_masks = numMasks(self.bit_length);
-        for (&self.masks[0..num_masks], 0..) |*mask, i| {
-            mask.* &= ~other.masks[i];
+        for (self.masks[0..num_masks], other.masks) |*mask, other_mask| {
+            mask.* &= ~other_mask;
         }
     }
 

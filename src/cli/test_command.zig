@@ -362,7 +362,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        JSC.C.JSCInitialize();
+        bun.JSC.initialize();
         HTTPThread.init() catch {};
 
         var reporter = try ctx.allocator.create(CommandLineReporter);

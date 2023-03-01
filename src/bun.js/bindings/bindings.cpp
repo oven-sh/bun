@@ -3358,8 +3358,11 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
 
     vm->finalizeSynchronousJSExecution();
 
+    WTF::releaseFastMallocFreeMemory();
+
     if (sync) {
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        WTF::releaseFastMallocFreeMemory();
     } else {
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }

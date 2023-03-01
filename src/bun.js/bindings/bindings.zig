@@ -4720,3 +4720,31 @@ pub const DOMCalls = .{
     @import("../api/bun.zig").FFI.Reader,
     @import("../webcore.zig").Crypto,
 };
+
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
+pub fn initialize() void {
+    JSCInitialize(
+        std.os.environ.ptr,
+        std.os.environ.len,
+        struct {
+            pub fn callback(name: [*]const u8, len: usize) callconv(.C) void {
+                Output.prettyErrorln(
+                    \\<r><red>error<r><d>:<r> invalid JSC environment variable
+                    \\
+                    \\    <b>{s}<r>
+                    \\
+                    \\For a list of options, see this file:
+                    \\
+                    \\    https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h
+                    \\
+                    \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here. 
+                    \\
+                    \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
+                ,
+                    .{name[0..len]},
+                );
+                bun.Global.exit(1);
+            }
+        }.callback,
+    );
+}

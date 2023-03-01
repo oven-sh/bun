@@ -419,7 +419,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 - {% anchor id="node_formdata" %} [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData) {% /anchor %}
 - 🟢
-- Fully implemented. Added in Bun 0.7.0.
+- Fully implemented. Added in Bun 0.5.7.
 
 ---
 

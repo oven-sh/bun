@@ -47,7 +47,7 @@ pub const Run = struct {
     pub fn boot(ctx_: Command.Context, file: std.fs.File, entry_path: string) !void {
         var ctx = ctx_;
         JSC.markBinding(@src());
-        @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
+        bun.JSC.initialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);

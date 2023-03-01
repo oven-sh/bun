@@ -1433,10 +1433,9 @@ pub const Blob = struct {
                     this.doClose();
                 }
 
-                if (this.io_task != null) {
-                    var io_task = this.io_task.?;
-                    this.io_task = null;
+                if (this.io_task) |io_task| {
                     io_task.onFinish();
+                    this.io_task = null;
                 }
             }
 
@@ -1659,10 +1658,9 @@ pub const Blob = struct {
                     this.doClose();
                 }
 
-                if (this.io_task != null) {
-                    var io_task = this.io_task.?;
-                    this.io_task = null;
+                if (this.io_task) |io_task| {
                     io_task.onFinish();
+                    this.io_task = null;
                 }
             }
 

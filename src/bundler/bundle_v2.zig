@@ -347,7 +347,7 @@ pub const BundleV2 = struct {
         package_bundle_map: options.BundlePackage.Map,
         event_loop: EventLoop,
         unique_key: u64,
-    ) !void {
+    ) !std.ArrayList(options.OutputFile) {
         _ = try bundler.fs.fs.openTmpDir();
         var tmpname_buf: [64]u8 = undefined;
         bundler.resetStore();
@@ -533,14 +533,16 @@ pub const BundleV2 = struct {
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
 
-        try this.linker.link(
+        var chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
             try this.findReachableFiles(),
             unique_key,
         );
 
-        // return null;
+        const output_files = try this.linker.generateChunksInParallel(chunks);
+
+        return output_files;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -1616,7 +1618,7 @@ const LinkerContext = struct {
         entry_points: []Index,
         reachable: []Index,
         unique_key: u64,
-    ) !void {
+    ) ![]Chunk {
         try this.load(bundle, entry_points, reachable);
 
         try this.scanImportsAndExports();
@@ -1633,6 +1635,8 @@ const LinkerContext = struct {
         try this.computeCrossChunkDependencies(chunks);
 
         this.graph.symbols.followAll();
+
+        return chunks;
     }
 
     pub noinline fn computeChunks(
@@ -5422,24 +5426,48 @@ const LinkerContext = struct {
         };
     }
 
-    pub fn generateChunksInParallel(c: *LinkerContext, chunks_: []Chunk) ![]options.OutputFile {
+    pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk) !std.ArrayList(options.OutputFile) {
         {
+            debug("START Generating {d} chunks in parallel", .{chunks.len});
+            defer debug(" DONE Generating {d} chunks in parallel", .{chunks.len});
             var wait_group = try c.allocator.create(sync.WaitGroup);
             wait_group.* = sync.WaitGroup.init();
             defer {
                 wait_group.deinit();
                 c.allocator.destroy(wait_group);
             }
-            wait_group.addN(chunks_.len);
-            var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks_ };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks_);
+            wait_group.addN(chunks.len);
+            var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks };
+            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks);
         }
 
         // TODO: enforceNoCyclicChunkImports()
+        {
 
-        // Compute the final hashes of each chunk. This can technically be done in
-        // parallel but it probably doesn't matter so much because we're not hashing
-        // that much data.
+            // Compute the final hashes of each chunk. This can technically be done in
+            // parallel but it probably doesn't matter so much because we're not hashing
+            // that much data.
+            for (chunks) |*chunk| {
+                // TODO: non-isolated-hash
+                chunk.template.placeholder.hash = chunk.isolated_hash;
+
+                chunk.final_rel_path = std.fmt.allocPrint("{any}", .{chunk.template}) catch unreachable;
+            }
+        }
+
+        // Generate the final output files by joining file pieces together
+        var output_files = std.ArrayList(options.OutputFile).initCapacity(c.allocator, chunks.len) catch unreachable;
+        output_files.expandToCapacity();
+        for (chunks, output_files.items) |*chunk, *output_file| {
+            output_file.* = options.OutputFile.initBuf(
+                chunk.intermediate_output.code(c.allocator) catch @panic("Failed to allocate memory for output file"),
+                chunk.final_rel_path,
+                // TODO: remove this field
+                .js,
+            );
+        }
+
+        return output_files;
     }
 
     // Sort cross-chunk exports by chunk name for determinism
@@ -6594,11 +6622,72 @@ pub const PathTemplate = struct {
     data: string = "",
     placeholder: Placeholder = .{},
 
+    pub fn format(self: PathTemplate, comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        var remain = self.data;
+        while (strings.indexOfChar(remain, '[')) |j| {
+            try writer.writeAll(remain[0..j]);
+            remain = remain[j + 1 ..];
+            if (remain.len == 0) {
+                // TODO: throw error
+                try writer.writeAll("[");
+                break;
+            }
+
+            var count: isize = 1;
+            var end_len: usize = remain.len;
+            for (remain) |*c| {
+                count += switch (c.*) {
+                    '[' => 1,
+                    ']' => -1,
+                    else => 0,
+                };
+
+                if (count == 0) {
+                    end_len = @ptrToInt(c) - @ptrToInt(remain.ptr);
+                    std.debug.assert(end_len <= remain.len);
+                    break;
+                }
+            }
+
+            const placeholder = remain[0..end_len];
+
+            const field = self.placeholder.map.get(placeholder) orelse {
+                try writer.writeAll(placeholder);
+                remain = remain[end_len..];
+                continue;
+            };
+
+            switch (field) {
+                .dir => try writer.writeAll(opts.context.dir),
+                .name => try writer.writeAll(opts.context.name),
+                .ext => try writer.writeAll(opts.context.ext),
+                .hash => {
+                    if (opts.context.hash) |hash| {
+                        try writer.print("{any}", .{bun.fmt.hexIntLower(hash)});
+                    }
+                },
+            }
+            remain = remain[end_len + 1 ..];
+        }
+
+        try writer.writeAll(remain);
+    }
+
     pub const Placeholder = struct {
         dir: []const u8 = "",
         name: []const u8 = "",
         ext: []const u8 = "",
         hash: ?u64 = null,
+
+        pub const map = bun.ComptimeStringMap(
+            std.meta.FieldEnum(Placeholder),
+            .{
+                .{ "dir", .dir },
+                .{ "name", .name },
+                .{ "ext", .ext },
+                .{ "hash", .hash },
+            },
+        );
     };
 
     pub const chunk = PathTemplate{
@@ -6679,11 +6768,43 @@ pub const Chunk = struct {
         pieces: bun.BabyList(OutputPiece),
 
         /// If the chunk doesn't have any references to other chunks, then
-        /// "joiner" contains the contents of the chunk. This is more efficient
+        /// `joiner` contains the contents of the chunk. This is more efficient
         /// because it avoids doing a join operation twice.
         joiner: bun.Joiner,
 
         empty: void,
+
+        pub fn code(this: IntermediateOutput, allocator: std.mem.Allocator) ![]const u8 {
+            switch (this) {
+                .pieces => |*pieces| {
+                    var count: usize = 0;
+
+                    for (pieces.slice()) |piece| {
+                        count += piece.data_len;
+                    }
+
+                    var total_buf = try allocator.alloc(u8, count);
+                    var remain = total_buf;
+
+                    for (pieces.slice()) |piece| {
+                        const data = piece.data();
+                        @memcpy(remain.ptr, data.ptr, data.len);
+                        remain = remain[data.len..];
+                    }
+
+                    std.debug.assert(remain.len == 0);
+                    std.debug.assert(total_buf.len == count);
+
+                    return total_buf;
+                },
+                .joiner => |joiner_| {
+                    // TODO: make this safe
+                    var joiny = joiner_;
+                    return joiny.done(allocator);
+                },
+                .empty => return "",
+            }
+        }
     };
 
     pub const OutputPiece = struct {

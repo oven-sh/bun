@@ -178,7 +178,7 @@ pub const BunCommand = struct {
 
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
-            try BundleV2.generate(
+            const output_files = try BundleV2.generate(
                 &this_bundler,
                 allocator,
                 loaded_framework,
@@ -190,55 +190,79 @@ pub const BunCommand = struct {
                 std.crypto.random.int(u64),
             );
 
-            // const estimated_input_lines_of_code = estimated_input_lines_of_code_;
+            {
+                defer Output.flush();
+                var writer = Output.errorWriter();
 
-            // if (node_modules_) |node_modules| {
-            //     if (log.errors > 0) {
-            //         try log.printForLogLevel(Output.errorWriter());
-            //     } else {
-            //         var elapsed = @divTrunc(std.time.nanoTimestamp() - ctx.start_time, @as(i128, std.time.ns_per_ms));
-            //         const print_summary = !(ctx.args.no_summary orelse false);
-            //         if (print_summary) {
-            //             var bundle = NodeModuleBundle.init(node_modules, allocator);
-            //             bundle.printSummary();
-            //         }
-            //         const indent = comptime " ";
+                const root_path = ctx.args.output_dir orelse "out";
+                const root_dir = try std.fs.cwd().openIterableDir(root_path, .{});
+                var all_paths = try ctx.allocator.alloc([]const u8, output_files.items.len);
+                var max_path_len: usize = 0;
+                for (output_files.items, all_paths) |*dest, src| {
+                    dest.* = src.input.text;
+                }
 
-            //         switch (estimated_input_lines_of_code) {
-            //             0...99999 => {
-            //                 if (generated_server) {
-            //                     Output.prettyln(indent ++ "<d>{d:<5} LOC parsed x2", .{estimated_input_lines_of_code});
-            //                 } else {
-            //                     Output.prettyln(indent ++ "<d>{d:<5} LOC parsed", .{estimated_input_lines_of_code});
-            //                 }
-            //             },
-            //             else => {
-            //                 const formatted_loc: f32 = @floatCast(f32, @intToFloat(f128, estimated_input_lines_of_code) / 1000);
-            //                 if (generated_server) {
-            //                     Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed x2", .{formatted_loc});
-            //                 } else {
-            //                     Output.prettyln(indent ++ "<d>{d:<5.2}k LOC parsed", .{
-            //                         formatted_loc,
-            //                     });
-            //                 }
-            //             },
-            //         }
+                var from_path = resolve_path.longestCommonPath(all_paths);
 
-            //         Output.prettyln(indent ++ "<d>{d:6}ms elapsed", .{@intCast(u32, elapsed)});
+                for (output_files.items) |f| {
+                    max_path_len = std.math.max(
+                        std.math.max(from_path.len, f.input.text.len) + 2 - from_path.len,
+                        max_path_len,
+                    );
+                }
 
-            //         if (generated_server) {
-            //             Output.prettyln(indent ++ "<r>Saved to ./{s}, ./{s}", .{ filepath, server_bundle_filepath });
-            //         } else {
-            //             Output.prettyln(indent ++ "<r>Saved to ./{s}", .{filepath});
-            //         }
+                // On posix, file handles automatically close on process exit by the OS
+                // Closing files shows up in profiling.
+                // So don't do that unless we actually need to.
+                // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.items.len;
 
-            //         Output.flush();
+                var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                filepath_buf[0] = '.';
+                filepath_buf[1] = '/';
 
-            //         try log.printForLogLevel(Output.errorWriter());
-            //     }
-            // } else {
+                for (output_files.items) |f| {
+                    var rel_path: []const u8 = undefined;
+                    switch (f.value) {
+                        // easy mode: write the buffer
+                        .buffer => |value| {
+                            rel_path = resolve_path.relative(from_path, f.input.text);
+                            if (std.fs.path.dirname(rel_path)) |parent| {
+                                if (parent.len > root_path.len) {
+                                    root_dir.makePath(parent);
+                                }
+                            }
+                            try root_dir.writeFile(rel_path, value);
+                        },
+                        .move => |value| {
+                            // const primary = f.input.text[from_path.len..];
+                            // bun.copy(u8, filepath_buf[2..], primary);
+                            // rel_path = filepath_buf[0 .. primary.len + 2];
+                            rel_path = value.pathname;
+
+                            // try f.moveTo(result.outbase, constStrToU8(rel_path), root_dir.fd);
+                        },
+                        .copy => |value| {
+                            rel_path = value.pathname;
+
+                            try f.copyTo(root_path, bun.constStrToU8(rel_path), root_dir.fd);
+                        },
+                        .noop => {},
+                        .pending => unreachable,
+                    }
+
+                    // Print summary
+                    _ = try writer.write("\n");
+                    const padding_count = 2 + (std.math.max(rel_path.len, max_path_len) - rel_path.len);
+                    try writer.writeByteNTimes(' ', 2);
+                    try writer.writeAll(rel_path);
+                    try writer.writeByteNTimes(' ', padding_count);
+                    const size = @intToFloat(f64, f.size) / 1000.0;
+                    try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                    try writer.writeAll(" KB\n");
+                }
+            }
+
             try log.printForLogLevel(Output.errorWriter());
-            // }
         }
     }
 };

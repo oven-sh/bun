@@ -3836,7 +3836,7 @@ const LinkerContext = struct {
 
         var prev_filename_comment: Index.Int = 0;
 
-        const sources: []const Logger.Source = c.graph.files.items(.source);
+        const sources: []const Logger.Source = c.parse_graph.input_files.items(.source);
         for (@as([]CompileResult, compile_results.items)) |compile_result| {
             const source_index = compile_result.sourceIndex();
             const is_runtime = source_index == Index.runtime.value;
@@ -3862,7 +3862,7 @@ const LinkerContext = struct {
                 const pretty = sources[source_index].path.pretty;
 
                 // TODO: quote this. This is really janky.
-                const comment_type = if (strings.indexOfNewlineOrNonASCII(pretty) != null)
+                const comment_type = if (strings.indexOfNewlineOrNonASCII(pretty, 0) != null)
                     CommentType.multiline
                 else
                     CommentType.single;
@@ -3944,7 +3944,7 @@ const LinkerContext = struct {
         chunk.intermediate_output = c.breakOutputIntoPieces(
             allocator,
             &j,
-            ctx.chunks.len,
+            @truncate(u32, ctx.chunks.len),
         ) catch @panic("Unhandled out of memory error in breakOutputIntoPieces()");
 
         // TODO: meta contents
@@ -3961,7 +3961,7 @@ const LinkerContext = struct {
         // that live in separate parts in the same file must not be merged. This only
         // needs to be done for JavaScript files, not CSS files.
         if (chunk.content == .javascript) {
-            const sources = c.graph.files.items(.source);
+            const sources = c.parse_graph.input_files.items(.source);
             for (chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
                 const source: Logger.Source = sources[part_range.source_index.get()];
 
@@ -4011,10 +4011,13 @@ const LinkerContext = struct {
         // data in the spans between them.
         if (chunk.intermediate_output == .pieces) {
             for (chunk.intermediate_output.pieces.slice()) |piece| {
-                hasher.write(piece.data);
+                hasher.write(piece.data());
             }
         } else {
-            hasher.write(chunk.intermediate_output.single_piece.data);
+            var el = chunk.intermediate_output.joiner.head;
+            while (el) |e| : (el = e.next) {
+                hasher.write(e.data.slice);
+            }
         }
 
         return hasher.digest();
@@ -4046,6 +4049,9 @@ const LinkerContext = struct {
                                 // "export default require_foo();"
                                 S.ExportDefault,
                                 .{
+                                    .default_name = .{
+                                        .loc = Logger.Loc.Empty,
+                                    },
                                     .value = .{
                                         .stmt = Stmt.alloc(
                                             S.SExpr,
@@ -4142,7 +4148,7 @@ const LinkerContext = struct {
                                 // already been resolved by this point, so we can't generate a new import
                                 // and have that be resolved later.
                                 if (imports_to_bind.get(resolved_export.data.import_ref)) |import_data| {
-                                    resolved_export.data.import_ref = import_data.import_ref;
+                                    resolved_export.data.import_ref = import_data.data.import_ref;
                                     resolved_export.data.source_index = import_data.data.source_index;
                                 }
 
@@ -4192,6 +4198,7 @@ const LinkerContext = struct {
                                                 .decls = bun.fromSlice(
                                                     []js_ast.G.Decl,
                                                     temp_allocator,
+                                                    []const js_ast.G.Decl,
                                                     &.{
                                                         .{
                                                             .binding = Binding.alloc(
@@ -4199,6 +4206,7 @@ const LinkerContext = struct {
                                                                 B.Identifier{
                                                                     .ref = temp_ref,
                                                                 },
+                                                                Logger.Loc.Empty,
                                                             ),
                                                         },
                                                     },
@@ -4212,8 +4220,10 @@ const LinkerContext = struct {
                                         .{
                                             .name = js_ast.LocRef{
                                                 .ref = temp_ref,
+                                                .loc = Logger.Loc.Empty,
                                             },
                                             .alias = alias,
+                                            .alias_loc = Logger.Loc.Empty,
                                         },
                                     ) catch unreachable;
                                 } else {
@@ -4243,8 +4253,10 @@ const LinkerContext = struct {
                                     items.append(.{
                                         .name = js_ast.LocRef{
                                             .ref = resolved_export.data.import_ref,
+                                            .loc = resolved_export.data.name_loc,
                                         },
                                         .alias = alias,
+                                        .alias_loc = resolved_export.data.name_loc,
                                     }) catch unreachable;
                                 }
                             }
@@ -4272,12 +4284,15 @@ const LinkerContext = struct {
                         // "module.exports = require_foo();"
                         stmts.append(
                             Stmt.assign(
-                                Expr.init(E.Dot, .{
-                                    .target = .{
+                                Expr.init(
+                                    E.Dot,
+                                    .{
                                         .target = Expr.initIdentifier(c.unbound_module_ref, Logger.Loc.Empty),
                                         .name = "exports",
+                                        .name_loc = Logger.Loc.Empty,
                                     },
-                                }, Logger.Loc.Empty),
+                                    Logger.Loc.Empty,
+                                ),
                                 Expr.init(
                                     E.Call,
                                     .{
@@ -4293,7 +4308,7 @@ const LinkerContext = struct {
                         // "init_foo();"
                         stmts.append(
                             Stmt.alloc(
-                                S.Expr,
+                                S.SExpr,
                                 .{
                                     .value = Expr.init(
                                         E.Call,
@@ -4322,8 +4337,10 @@ const LinkerContext = struct {
         if (stmts.items.len == 0) {
             return .{
                 .javascript = .{
-                    .source_index = source_index,
-                    .code = "",
+                    .result = .{
+                        .source_index = source_index,
+                        .code = "",
+                    },
                 },
             };
         }
@@ -4700,7 +4717,7 @@ const LinkerContext = struct {
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                .args = args,
+                                                .args = bun.BabyList(Expr).init(args),
                                             },
                                             stmt.loc,
                                         ),
@@ -4756,13 +4773,12 @@ const LinkerContext = struct {
                                         .import_record_index = s.import_record_index,
                                     },
                                     stmt.loc,
-                                    .{},
                                 );
                             };
 
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             const export_star_ref = c.runtimeFunction("__reExport");
-                            var args = try allocator.alloc(Expr, 2 + @boolToInt(module_exports_for_export != null));
+                            var args = try allocator.alloc(Expr, 2 + @as(usize, @boolToInt(module_exports_for_export != null)));
                             args[0..2].* = .{
                                 Expr.init(
                                     E.Identifier,
@@ -4782,7 +4798,7 @@ const LinkerContext = struct {
                                 Stmt.alloc(
                                     S.SExpr,
                                     S.SExpr{
-                                        .expr = Expr.init(
+                                        .value = Expr.init(
                                             E.Call,
                                             E.Call{
                                                 .target = Expr.init(
@@ -4792,7 +4808,7 @@ const LinkerContext = struct {
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                .args = args,
+                                                .args = js_ast.ExprNodeList.init(args),
                                             },
                                             stmt.loc,
                                         ),
@@ -4922,9 +4938,10 @@ const LinkerContext = struct {
                                         stmt = Stmt.alloc(
                                             S.Local,
                                             S.Local{
-                                                .decls = try bun.from(
-                                                    []js_ast.Decl,
+                                                .decls = try bun.fromSlice(
+                                                    []js_ast.G.Decl,
                                                     allocator,
+                                                    []const js_ast.G.Decl,
                                                     &.{
                                                         .{
                                                             .binding = Binding.alloc(
@@ -4932,7 +4949,7 @@ const LinkerContext = struct {
                                                                 B.Identifier{
                                                                     .ref = s.default_name.ref.?,
                                                                 },
-                                                                s2.loc,
+                                                                s2.value.loc,
                                                             ),
                                                             .value = s2.value,
                                                         },
@@ -4983,9 +5000,10 @@ const LinkerContext = struct {
                                 stmt = Stmt.alloc(
                                     S.Local,
                                     S.Local{
-                                        .decls = try bun.from(
-                                            []js_ast.Decl,
+                                        .decls = try bun.fromSlice(
+                                            []js_ast.G.Decl,
                                             allocator,
+                                            []const js_ast.G.Decl,
                                             &.{
                                                 .{
                                                     .binding = Binding.alloc(
@@ -5075,6 +5093,7 @@ const LinkerContext = struct {
                 .cjs => {
                     stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
                 },
+                else => {},
             }
             stmts.inside_wrapper_suffix.clearRetainingCapacity();
         }
@@ -5082,19 +5101,19 @@ const LinkerContext = struct {
         // TODO: defaultLazyExport
 
         // Add all other parts in this chunk
-        for (parts) |part| {
+        for (parts, 0..) |part, index| {
             if (!part.is_live) {
                 // Skip the part if it's not in this chunk
 
                 continue;
             }
 
-            if (part.part_index == namespace_export_part_index) {
+            if (index == namespace_export_part_index) {
                 // Skip the namespace export part because we already handled it above
                 continue;
             }
 
-            if (part.part_index == wrapper_part_index) {
+            if (index == wrapper_part_index.value) {
                 // Skip the wrapper part because we already handled it above
                 needs_wrapper = true;
                 continue;
@@ -5104,7 +5123,7 @@ const LinkerContext = struct {
 
             // convert
             c.convertStmtsForChunk(
-                part_range.source_index,
+                part_range.source_index.get(),
                 stmts,
                 part.stmts,
                 chunk,
@@ -6412,7 +6431,7 @@ const LinkerContext = struct {
         while (true) {
             const invalid_boundary = std.math.maxInt(usize);
             // Scan for the next piece boundary
-            const boundary = strings.indexOf(output, prefix) orelse invalid_boundary;
+            var boundary = strings.indexOf(output, prefix) orelse invalid_boundary;
 
             var output_piece_index = Chunk.OutputPieceIndex{};
 
@@ -6468,7 +6487,8 @@ const LinkerContext = struct {
             if (boundary == invalid_boundary) {
                 try pieces.append(Chunk.OutputPiece{
                     .index = output_piece_index,
-                    .data = output,
+                    .data_ptr = output.ptr,
+                    .data_len = @truncate(u32, output.len),
                 });
                 break;
             }
@@ -6946,17 +6966,17 @@ const CompileResult = union(enum) {
     pub fn code(this: *const CompileResult) []const u8 {
         return switch (this.*) {
             .javascript => |r| switch (r.result) {
-                .code => |c| c,
+                .result => |r2| r2.code,
                 else => "",
             },
-            else => "",
+            // else => "",
         };
     }
 
     pub fn sourceIndex(this: *const CompileResult) Index.Int {
         return switch (this.*) {
             .javascript => |r| r.source_index,
-            else => 0,
+            // else => 0,
         };
     }
 };

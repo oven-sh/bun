@@ -75,7 +75,7 @@ pub const NumberRenamer = struct {
     root: NumberScope = .{},
 
     pub fn deinit(self: *NumberRenamer) void {
-        self.names.deinit(self.allocator);
+        self.names.deinitWithAllocator(self.allocator);
         self.root.deinit(self.temp_allocator);
     }
 

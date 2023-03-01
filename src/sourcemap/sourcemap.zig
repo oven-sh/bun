@@ -325,8 +325,8 @@ pub const LineColumnOffset = packed struct {
 
         pub fn advance(this: *Optional, input: []const u8) void {
             switch (this.*) {
-                .none => {},
-                .value => this.offset.advance(input),
+                .null => {},
+                .value => this.value.advance(input),
             }
         }
     };
@@ -343,8 +343,9 @@ pub const LineColumnOffset = packed struct {
             offset = i;
 
             var cp = strings.CodepointIterator.initOffset(input, offset);
-            _ = cp.next();
-            switch (cp.c) {
+            var cursor = strings.CodepointIterator.Cursor{};
+            _ = cp.next(&cursor);
+            switch (cursor.c) {
                 '\r', '\n', 0x2028, 0x2029 => {
                     // Handle Windows-specific "\r\n" newlines
                     if (cp.c == '\r' and input.len > offset + 1 and input[offset + 1] == '\n') {

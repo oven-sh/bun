@@ -3473,7 +3473,7 @@ const LinkerContext = struct {
         chunks: []Chunk,
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
-        generateChunkJS_(ctx, chunk, chunk_index) catch |err| std.debug.panic("TODO: handle error: {s}", .{@errorName(err)});
+        generateChunkJS_(ctx, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
 
     // TODO: investigate if we need to parallelize this function
@@ -5434,6 +5434,12 @@ const LinkerContext = struct {
             var ctx = GenerateChunkCtx{ .wg = wait_group, .c = c, .chunks = chunks_ };
             try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateChunkJS, chunks_);
         }
+
+        // TODO: enforceNoCyclicChunkImports()
+
+        // Compute the final hashes of each chunk. This can technically be done in
+        // parallel but it probably doesn't matter so much because we're not hashing
+        // that much data.
     }
 
     // Sort cross-chunk exports by chunk name for determinism

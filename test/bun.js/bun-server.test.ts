@@ -90,8 +90,8 @@ describe("Server", () => {
       try {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
+      await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
-      await Bun.sleep(5);
       server.stop(true);
     }
   });
@@ -135,8 +135,8 @@ describe("Server", () => {
       try {
         await fetch(`http://${server.hostname}:${server.port}`, { signal: abortController.signal });
       } catch {}
+      await Bun.sleep(10);
       expect(signalOnServer).toBe(true);
-      await Bun.sleep(5);
       server.stop(true);
     }
   });

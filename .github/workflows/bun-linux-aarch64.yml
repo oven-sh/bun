@@ -128,3 +128,28 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"
+  linux-test:
+    name: linux-aarch64-test
+    needs: [linux]
+    runs-on: linux-arm64
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/bun-test
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - id: setup
+        name: Setup
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{github.sha}}
+      - id: install
+        name: Install
+        run: bun install
+      - id: test
+        name: Test
+        run: bun run test

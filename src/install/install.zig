@@ -5324,6 +5324,11 @@ pub const PackageManager = struct {
         \\<STR> ...                         "name" uninstall package as a link
     );
 
+    pub const pm_params = install_params ++ clap.parseParamsComptime(
+        \\-a, --all                         List all dependencies, including aliased (bun pm ls only)
+        \\-A, --ALL                         List all dependencies, including aliased (bun pm ls only)
+    );
+
     pub const CommandLineArguments = struct {
         registry: string = "",
         cache_dir: string = "",

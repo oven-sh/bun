@@ -27,13 +27,13 @@ export default {
     divider("Intro"),
     page("index", "What is Bun?", {
       description:
-        "Bun is an all-in-one toolkit and runtime for JavaScript and TypeScript apps. Develop, bundle, test, and run your app with one fast tool.",
+        "Bun is an all-in-one runtime for JavaScript and TypeScript apps. Run, bundle, and test apps with one fast tool.",
     }),
     page("installation", "Installation", {
       description: "Install Bun with npm, Homebrew, Docker, or the official install script.",
     }),
     page("quickstart", "Quickstart", {
-      description: "Get started with Bun by building abd running a simple HTTP server in 5 lines of TypeScript.",
+      description: "Get started with Bun by building and running a simple HTTP server in 5 lines of TypeScript.",
     }),
     // page("typescript", "TypeScript"),
 
@@ -76,7 +76,7 @@ export default {
     }),
     // page("runtime/web-apis", "Web APIs"),
     page("runtime/modules", "Module resolution", {
-      description: `Bun uses ES modules internally. It implements an extended version of the Node.js module resolution algorithm.`,
+      description: `Bun uses ESM and implements an extended version of the Node.js module resolution algorithm.`,
     }),
     page("runtime/hot", "Hot reloading", {
       description: `Reload a running application without restarting the Bun process.`,
@@ -97,10 +97,10 @@ export default {
       description: `Track the status of Bun's API compatibility with Node.js.`,
     }),
     page("ecosystem/typescript", "TypeScript", {
-      description: `Bun treats TypeScript as a first-class citizen. Learn how to configure your project and IDE for TypeScript.`,
+      description: `Bun can directly execute TypeScript files without additional configuration.`,
     }),
     page("ecosystem/react", "React", {
-      description: `The Bun runtime implements JSX syntax out of the box, plus some key optimizations for server-side rendered.`,
+      description: `The Bun runtime supports JSX syntax out of the box and optimizes server-side rendering.`,
     }),
     page("ecosystem/elysia", "Elysia", {
       description: `Get started with Elysia, a Bun-native framework designed for the edge.`,
@@ -109,7 +109,7 @@ export default {
       description: `Hono is an ultra-fast, Bun-friendly web framework designed for edge environments.`,
     }),
     page("ecosystem/express", "Express", {
-      description: `Servers built with Express and all other major Node.js HTTP libraries out of the box.`,
+      description: `Servers built with Express and other major Node.js HTTP libraries work out of the box.`,
     }),
     page("ecosystem/awesome", "Awesome", {
       href: "https://github.com/apvarun/awesome-bun",
@@ -136,10 +136,10 @@ export default {
       description: `Resolve incoming HTTP requests against a local file system directory with Bun's fast, Next.js-compatible router.`,
     }), // "`Bun.FileSystemRouter`"),
     page("api/globals", "Globals", {
-      description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available globally.`,
+      description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available in the global scope.`,
     }), // "`Bun.write`"),
     page("api/spawn", "Spawn", {
-      description: `Spawn child processes with easily configurable input and output streams.`,
+      description: `Spawn sync and async child processes with easily configurable input and output streams.`,
     }), // "`Bun.spawn`"),
     page("api/transpiler", "Transpiler", {
       description: `Bun exposes its internal transpiler as a pluggable API.`,
@@ -163,7 +163,7 @@ export default {
       description: `Resolve domain names to IP addresses.`,
     }), // "`bun:dns`"),
     page("api/node-api", "Node-API", {
-      description: `Bun implements (most of) the Node-API spec for native addons.`,
+      description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
 
     // divider("Dev Server"),
@@ -178,7 +178,7 @@ export default {
       description: `Track Bun's near-term and long-term goals.`,
     }),
     page("project/configuration", "Configuration", {
-      description: `Bun's runtime is configurable via environment variables and the Bunfig configuration file.`,
+      description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
     page("project/profiling", "Profiling", {
       description: `Bun is designed for performance. Learn how to benchmark and profile Bun yourself.`,

@@ -699,10 +699,25 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            ctxLog("onResolve", .{});
+
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
             result.ensureStillAlive();
+
+            if (ctx.request_js_object != null) {
+                var request_js = ctx.request_js_object.?.value();
+                request_js.ensureStillAlive();
+                if (request_js.as(Request)) |request_object| {
+                    if (ctx.signal == null) {
+                        if (request_object.signal) |signal| {
+                            ctx.signal = signal;
+                            _ = signal.ref();
+                        }
+                    }
+                }
+            }
 
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
@@ -746,9 +761,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            ctxLog("onReject", .{});
+
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
+
+            if (ctx.request_js_object != null) {
+                var request_js = ctx.request_js_object.?.value();
+                request_js.ensureStillAlive();
+                if (request_js.as(Request)) |request_object| {
+                    if (ctx.signal == null) {
+                        if (request_object.signal) |signal| {
+                            ctx.signal = signal;
+                            _ = signal.ref();
+                        }
+                    }
+                }
+            }
 
             ctx.pending_promises_for_abort -|= 1;
 
@@ -1741,6 +1771,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
                     .Fulfilled => {
+                        if (ctx.signal == null) {
+                            if (request_object.signal) |signal| {
+                                ctx.signal = signal;
+                                _ = signal.ref();
+                            }
+                        }
                         const fulfilled_value = promise.result(vm.global.vm());
 
                         // if you return a Response object or a Promise<Response>
@@ -1783,6 +1819,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     },
                     .Rejected => {
+                        if (ctx.signal == null) {
+                            if (request_object.signal) |signal| {
+                                ctx.signal = signal;
+                                _ = signal.ref();
+                            }
+                        }
                         ctx.handleReject(promise.result(vm.global.vm()));
                         return;
                     },
@@ -1879,7 +1921,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
-           
             streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 

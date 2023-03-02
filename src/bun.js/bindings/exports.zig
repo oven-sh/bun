@@ -2088,6 +2088,10 @@ pub const ZigConsoleClient = struct {
                                     writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                 }
                             }
+
+                            if (i == len - 1) {
+                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            }
                         }
                     }
 

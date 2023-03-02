@@ -7,7 +7,10 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  "zig.buildArgs": ["obj", "-Dfor-editor"],
+  "zig.buildArgs": [
+    "obj",
+    "-Dfor-editor"
+  ],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
@@ -30,6 +33,9 @@
   },
   "[tsx]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[yaml]": {
     "editor.formatOnSave": true
   },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
@@ -203,5 +209,7 @@
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "Enabled",
-  "eslint.workingDirectories": ["packages/bun-types"]
+  "eslint.workingDirectories": [
+    "packages/bun-types"
+  ]
 }

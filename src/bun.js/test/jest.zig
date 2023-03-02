@@ -494,113 +494,96 @@ pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
     pub const Snapshots = struct {
-        pub var snapshot_dir: ?std.fs.Dir = null;
-        pub var snapshot_dir_path: ?[]const u8 = null;
-        pub var snapshot_file: ?std.fs.File = null;
+        pub var snapshot_count: usize = 0;
+        pub var update_snapshots: bool = false;
+        pub var initialized: bool = false;
 
-        pub var counts = bun.StringHashMap(usize).init(default_allocator);
-        pub var current_buf = std.ArrayList(u8).init(default_allocator);
-        pub var values = bun.StringHashMap(string).init(default_allocator);
+        pub var snapshot_dir: std.fs.Dir = undefined;
+        pub var snapshot_dir_path: []const u8 = undefined;
+        pub var snapshot_file: std.fs.File = undefined;
 
-        pub var current_test_id: ?TestRunner.Test.ID = null;
-        pub var current_describe_scope: ?*DescribeScope = null;
+        pub var file_buf: std.ArrayList(u8) = undefined;
+        pub var values: bun.StringHashMap(string) = undefined;
+        pub var counts: bun.StringHashMap(usize) = undefined;
 
-        pub var current_file_id: ?TestRunner.File.ID = null;
+        pub var current_file_id: TestRunner.File.ID = undefined;
 
         pub fn getOrPut(expect: *Expect, pretty_value: string, hint: string) !?string {
-            const snapshot_name = expect.getSnapshotName(default_allocator, hint) catch unreachable;
+            const snapshot_name = try expect.getSnapshotName(default_allocator, hint);
 
-            if (current_file_id == null) {
-                // first time setup
+            if (current_file_id != expect.scope.file_id or !initialized) {
                 current_file_id = expect.scope.file_id;
-                snapshot_dir_path = runner.?.files.get(current_file_id.?).source.path.name.dirWithTrailingSlash();
-                snapshot_file = getSnapshotFile(current_file_id.?) catch unreachable;
+
+                try cleanup();
 
                 counts = bun.StringHashMap(usize).init(default_allocator);
-
-                const file_length = snapshot_file.?.getEndPos() catch unreachable;
-                var bytes = snapshot_file.?.readToEndAlloc(default_allocator, file_length) catch unreachable;
-                snapshot_file.?.seekTo(0) catch unreachable;
-                current_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
                 values = bun.StringHashMap(string).init(default_allocator);
+
+                var dir_path = runner.?.files.get(current_file_id).source.path.name.dirWithTrailingSlash();
+                if (!initialized) snapshot_dir = try getSnapshotDir(dir_path);
+                snapshot_file = try getSnapshotFile(current_file_id);
+
+                const file_length = try snapshot_file.getEndPos();
+                var bytes = try snapshot_file.readToEndAlloc(default_allocator, file_length);
+                file_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
                 try parseFile();
+
+                initialized = initialized or true;
             }
 
-            if (current_file_id) |file_id| {
-                if (file_id == expect.scope.file_id) {
-                    // return cached string if found
-                    var count_entry = counts.getOrPut(snapshot_name) catch unreachable;
-                    if (!count_entry.found_existing) {}
-                    const counter = brk: {
-                        if (count_entry.found_existing) {
-                            default_allocator.free(snapshot_name);
-                            count_entry.value_ptr.* += 1;
-                            break :brk count_entry.value_ptr.*;
-                        }
+            snapshot_count += 1;
 
-                        count_entry.value_ptr.* = 1;
-                        break :brk count_entry.value_ptr.*;
-                    };
-
-                    const name = count_entry.key_ptr.*;
-
-                    var counter_string_buf = [_]u8{0} ** 32;
-                    var counter_string = std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter}) catch unreachable;
-
-                    var name_with_counter = default_allocator.alloc(u8, name.len + 1 + counter_string.len) catch unreachable;
-                    defer default_allocator.free(name_with_counter);
-                    bun.copy(u8, name_with_counter[0..name.len], name);
-                    name_with_counter[name.len] = ' ';
-                    bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
-
-                    if (values.get(name_with_counter)) |value| {
-                        return value;
-                    }
-
-                    // doesn't exist. append to file bytes and add to hashmap.
-                    current_buf.appendSlice("exports[`") catch unreachable;
-                    const key_start = current_buf.items.len;
-                    const key_end = key_start + name_with_counter.len;
-                    current_buf.appendSlice(name_with_counter) catch unreachable;
-                    current_buf.appendSlice("`] = `") catch unreachable;
-                    const value_start = current_buf.items.len;
-                    const value_end = value_start + pretty_value.len;
-                    current_buf.appendSlice(pretty_value) catch unreachable;
-                    current_buf.appendSlice("`;\n\n") catch unreachable;
-
-                    values.put(current_buf.items[key_start..key_end], current_buf.items[value_start..value_end]) catch unreachable;
-                    return null;
+            var count_entry = try counts.getOrPut(snapshot_name);
+            if (!count_entry.found_existing) {}
+            const counter = brk: {
+                if (count_entry.found_existing) {
+                    default_allocator.free(snapshot_name);
+                    count_entry.value_ptr.* += 1;
+                    break :brk count_entry.value_ptr.*;
                 }
+                count_entry.value_ptr.* = 1;
+                break :brk count_entry.value_ptr.*;
+            };
+
+            const name = count_entry.key_ptr.*;
+
+            var counter_string_buf = [_]u8{0} ** 32;
+            var counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
+
+            var name_with_counter = try default_allocator.alloc(u8, name.len + 1 + counter_string.len);
+            defer default_allocator.free(name_with_counter);
+            bun.copy(u8, name_with_counter[0..name.len], name);
+            name_with_counter[name.len] = ' ';
+            bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
+
+            if (values.get(name_with_counter)) |value| {
+                return value;
             }
 
-            // reset
-            current_file_id = expect.scope.file_id;
-            saveToDisk();
-            snapshot_file = getSnapshotFile(current_file_id.?) catch unreachable;
+            // doesn't exist. append to file bytes and add to hashmap.
+            try file_buf.appendSlice("exports[`");
+            const key_start = file_buf.items.len;
+            const key_end = key_start + name_with_counter.len;
+            try file_buf.appendSlice(name_with_counter);
+            try file_buf.appendSlice("`] = `");
+            const value_start = file_buf.items.len;
+            const value_end = value_start + pretty_value.len;
 
-            var itr = counts.iterator();
-            while (itr.next()) |entry| {
-                default_allocator.free(entry.key_ptr.*);
-            }
-            counts.clearAndFree();
-            counts = bun.StringHashMap(usize).init(default_allocator);
+            try file_buf.appendSlice(pretty_value);
+            try file_buf.appendSlice("`;\n\n");
 
-            const file_length = snapshot_file.?.getEndPos() catch unreachable;
-            var bytes = snapshot_file.?.readToEndAlloc(default_allocator, file_length) catch unreachable;
-            snapshot_file.?.seekTo(0) catch unreachable;
-            current_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
-            values = bun.StringHashMap(string).init(default_allocator);
-            try parseFile();
-
+            const key = file_buf.items[key_start..key_end];
+            const value = file_buf.items[value_start..value_end];
+            try values.put(key, value);
             return null;
         }
 
         pub fn parseFile() !void {
             // parse file. use the allocated bytes for keys and values
             var i: usize = 0;
-            outer: while (i < current_buf.items.len) {
+            outer: while (i < file_buf.items.len) {
                 const key_start: usize = brk: {
-                    while (strings.indexOf(current_buf.items[i..], "exports[`")) |j| {
+                    while (strings.indexOf(file_buf.items[i..], "exports[`")) |j| {
                         i += j + "exports[`".len;
                         break :brk i;
                     }
@@ -608,9 +591,9 @@ pub const Jest = struct {
                     break :outer;
                 };
                 const key_end: usize = brk: {
-                    while (strings.indexOf(current_buf.items[i..], "`]")) |j| {
+                    while (strings.indexOf(file_buf.items[i..], "`]")) |j| {
                         i += j + "`]".len;
-                        if (current_buf.items[i - 3] != '\\') {
+                        if (file_buf.items[i - 3] != '\\') {
                             break :brk i - 2;
                         }
                     }
@@ -622,9 +605,9 @@ pub const Jest = struct {
 
                 const value_start = i;
                 const value_end: usize = brk: {
-                    while (strings.indexOf(current_buf.items[i..], "`;")) |j| {
+                    while (strings.indexOf(file_buf.items[i..], "`;")) |j| {
                         i += j + "`;".len;
-                        if (current_buf.items[i - 3] != '\\') {
+                        if (file_buf.items[i - 3] != '\\') {
                             break :brk i - 2;
                         }
                     }
@@ -632,36 +615,34 @@ pub const Jest = struct {
                     break :outer;
                 };
 
-                const key = current_buf.items[key_start..key_end];
-                const value = current_buf.items[value_start..value_end];
+                const key = file_buf.items[key_start..key_end];
+                const value = file_buf.items[value_start..value_end];
                 values.put(key, value) catch unreachable;
             }
 
             return;
         }
 
-        pub fn saveToDisk() void {
-            const dir_path = runner.?.files.get(current_file_id.?).source.path.name.dirWithTrailingSlash();
-            if (snapshot_dir) |_dir| {
-                var dir = _dir;
-                if (!strings.eql(dir_path, snapshot_dir_path.?)) {
-                    dir.close();
-                    snapshot_dir_path = dir_path;
-                    _ = getSnapshotDir(snapshot_dir_path.?);
-                }
-            } else {
-                snapshot_dir_path = dir_path;
-                _ = getSnapshotDir(dir_path);
+        pub fn cleanup() !void {
+            if (snapshot_count == 0) return;
+
+            const dir_path = runner.?.files.get(current_file_id).source.path.name.dirWithTrailingSlash();
+            if (!strings.eql(dir_path, snapshot_dir_path)) {
+                snapshot_dir.close();
+                snapshot_dir = try getSnapshotDir(dir_path);
             }
 
-            if (snapshot_file) |_file| {
-                var file = _file;
-                file.seekTo(0) catch unreachable;
-                file.writeAll(current_buf.items) catch unreachable;
-                current_buf.clearAndFree();
-                values.deinit();
-                file.close();
+            try snapshot_file.seekTo(0);
+            try snapshot_file.writeAll(file_buf.items);
+            file_buf.clearAndFree();
+            values.deinit();
+            snapshot_file.close();
+
+            var count_itr = counts.iterator();
+            while (count_itr.next()) |entry| {
+                default_allocator.free(entry.key_ptr.*);
             }
+            counts.clearAndFree();
         }
 
         pub fn getSnapshotFile(file_id: TestRunner.File.ID) !std.fs.File {
@@ -670,14 +651,16 @@ pub const Jest = struct {
             const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
             var snapshot_filename_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-            std.mem.copy(u8, &snapshot_filename_buf, test_filename);
-            std.mem.copy(u8, snapshot_filename_buf[test_filename.len..], ".snap");
+            bun.copy(u8, &snapshot_filename_buf, test_filename);
+            bun.copy(u8, snapshot_filename_buf[test_filename.len..], ".snap");
             const snapshot_filename = snapshot_filename_buf[0 .. test_filename.len + ".snap".len];
 
-            const dir = getSnapshotDir(dir_path);
-            const file = dir.openFile(snapshot_filename, .{ .mode = .read_write }) catch |err| {
+            if (!strings.eql(dir_path, snapshot_dir_path)) {
+                snapshot_dir = try getSnapshotDir(dir_path);
+            }
+            const file = snapshot_dir.openFile(snapshot_filename, .{ .mode = .read_write }) catch |err| {
                 if (err == error.FileNotFound) {
-                    const file = dir.createFile(snapshot_filename, .{ .read = true }) catch unreachable;
+                    const file = snapshot_dir.createFile(snapshot_filename, .{ .read = true }) catch unreachable;
                     file.writeAll("// Bun Snapshot v1, https://goo.gl/fbAQLP\n\n") catch unreachable;
                     file.seekTo(0) catch unreachable;
                     return file;
@@ -689,16 +672,10 @@ pub const Jest = struct {
             return file;
         }
 
-        pub fn getSnapshotDir(dir_path: []const u8) std.fs.Dir {
-            return snapshot_dir orelse brk: {
-                snapshot_dir = ensureSnapshotDir(dir_path);
-                break :brk snapshot_dir.?;
-            };
-        }
-
-        pub fn ensureSnapshotDir(dir_path: []const u8) std.fs.Dir {
-            const dir = std.fs.openDirAbsolute(dir_path, .{}) catch unreachable;
-            return dir.makeOpenPath("__snapshots__", .{}) catch unreachable;
+        pub fn getSnapshotDir(dir_path: []const u8) !std.fs.Dir {
+            snapshot_dir_path = dir_path;
+            const dir = try std.fs.openDirAbsolute(dir_path, .{});
+            return try dir.makeOpenPath("__snapshots__", .{});
         }
     };
 
@@ -2350,26 +2327,37 @@ pub const Expect = struct {
             return .zero;
         };
 
-        const pretty_value = value.jestPrettyFormat(default_allocator, globalObject) catch {
+        var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+        value.jestPrettyFormat(&pretty_value, globalObject) catch {
             globalObject.throw("Failed to pretty format value", .{});
             return .zero;
         };
-        defer default_allocator.free(pretty_value);
+        defer pretty_value.deinit();
 
-        const result = Jest.Snapshots.getOrPut(this, pretty_value, hint.slice()) catch {
+        var i: usize = 0;
+        while (i < pretty_value.list.items.len) {
+            const c = pretty_value.list.items[i];
+            if (c == '`') {
+                pretty_value.list.insert(pretty_value.allocator, i, '\\') catch unreachable;
+                i += 1;
+            }
+            i += 1;
+        }
+
+        const result = Jest.Snapshots.getOrPut(this, pretty_value.list.items, hint.slice()) catch {
             // handle parsing and other errors
             return .zero;
         };
 
         if (result) |saved_value| {
-            if (strings.eql(pretty_value, saved_value)) {
+            if (strings.eql(pretty_value.toOwnedSliceLeaky(), saved_value)) {
                 return thisValue;
             }
 
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
             const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
-                .received_string = pretty_value,
+                .received_string = pretty_value.toOwnedSliceLeaky(),
                 .expected_string = saved_value,
                 .globalObject = globalObject,
             };
@@ -2382,7 +2370,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        std.debug.print("new value inserted into snapshot file: {s}\n", .{pretty_value});
+        std.debug.print("new value inserted into snapshot file: {s}\n", .{pretty_value.toOwnedSliceLeaky()});
         return .zero;
     }
 

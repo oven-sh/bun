@@ -354,6 +354,10 @@ pub const TestCommand = struct {
         }
         Output.flush();
 
+        const args = try std.process.argsAlloc(ctx.allocator);
+        jest.Jest.Snapshots.update_snapshots = strings.leftHasAnyInRight(args, &.{ "-u", "--update" });
+        std.process.argsFree(ctx.allocator, args);
+
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -421,7 +425,7 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
-        jest.Jest.Snapshots.saveToDisk();
+        try jest.Jest.Snapshots.cleanup();
 
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {

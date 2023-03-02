@@ -3137,9 +3137,8 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
     }
 
-    pub fn jestPrettyFormat(this: JSValue, allocator: std.mem.Allocator, globalObject: *JSGlobalObject) !string {
-        var buf = MutableString.init(allocator, 0) catch unreachable;
-        var buffered_writer = MutableString.BufferedWriter{ .context = &buf };
+    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+        var buffered_writer = MutableString.BufferedWriter{ .context = out };
         var writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
@@ -3163,8 +3162,6 @@ pub const JSValue = enum(JSValueReprInt) {
         );
 
         try buffered_writer.flush();
-
-        return buf.toOwnedSlice();
     }
 
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;

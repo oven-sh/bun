@@ -1,0 +1,46 @@
+name: zig-fmt
+
+env:
+  ZIG_VERSION: 0.11.0-dev.1783+436e99d13
+
+on:
+  pull_request:
+    branches:
+      - main
+      - jarred/test-actions
+    paths:
+      - "src/**/*.zig"
+      - "src/*.zig"
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  zig-fmt:
+    name: zig fmt
+    runs-on: ubuntu-latest
+    outputs:
+      zig_fmt_errs: ${{ steps.fmt.outputs.zig_fmt_errs }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install zig
+        run: |
+          curl https://ziglang.org/builds/${{env.ZIG_VERSION}}/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.xz | tar -xJ
+          sudo mv zig-linux-x86_64-${{env.ZIG_VERSION}}/zig /usr/local/bin
+      - name: Run zig fmt
+        id: fmt
+        run: |
+          zig fmt --check src/*.zig src/**/*.zig > zig-fmt.err 2> zig-fmt.err
+          echo "::set-output name=zig_fmt_errs::$(cat zig-fmt.err)"
+      - name: Comment on PR
+        if: steps.fmt.outputs.zig_fmt_errs != ''
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          message: |
+            @${{ github.actor }} please run `zig fmt` on your code. It's easiest if you configure your text editor to auto-format on save. If you use VSCode, consider the https://github.com/ziglang/vscode-zig extension.
+
+            The following files are not formatted correctly:
+            ```zig
+            ${{ steps.fmt.outputs.zig_fmt_errs }}
+            ```

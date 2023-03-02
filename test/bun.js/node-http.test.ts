@@ -386,6 +386,31 @@ describe("node:http", () => {
       req.write("Hello World");
       req.end();
     });
+
+    it("should ignore body when method is GET/HEAD/OPTIONS", done => {
+      const createDone = createDoneDotAll(done);
+      const methods = ["GET", "HEAD", "OPTIONS"];
+      const dones = {};
+      for (const method of methods) {
+        dones[method] = createDone();
+      }
+      for (const method of methods) {
+        const req = request(`http://localhost:${serverPort}`, { method }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            expect(data).toBe(method === "GET" ? "Maybe GET maybe not\nHello World" : "");
+            dones[method]();
+          });
+          res.on("error", err => dones[method](err));
+        });
+        req.write("BODY");
+        req.end();
+      }
+    });
   });
 
   describe("signal", () => {

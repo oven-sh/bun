@@ -1304,6 +1304,108 @@ it("should not hoist if name collides with alias", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should handle unscoped alias on scoped dependency", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.1.0": {} }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "@barn/moo": "latest",
+        moo: "npm:@barn/moo",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + @barn/moo@0.1.0",
+    " + moo@0.1.0",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/@barn/moo`, `${root_url}/@barn/moo-0.1.0.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@barn", "moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "moo"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "moo", "package.json")).json()).toEqual({
+    name: "@barn/moo",
+    version: "0.1.0",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
+it("should handle scoped alias on unscoped dependency", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        "@baz/bar": "npm:bar",
+        bar: "latest",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + @baz/bar@0.0.2",
+    " + bar@0.0.2",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "@baz", "bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@baz"))).toEqual(["bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "@baz", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "@baz", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2",
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle GitHub URL in dependencies (user/repo)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -2440,11 +2542,11 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
       name: "foo",
       version: "0.0.1",
       dependencies: {
-        "baz": "0.0.5",
+        baz: "0.0.5",
       },
       optionalDependencies: {
-        "baz": "0.0.3",
-      }
+        baz: "0.0.3",
+      },
     }),
   );
   const { stdout, stderr, exited } = spawn({
@@ -2466,10 +2568,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.3.tgz`,
-  ]);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
@@ -2496,11 +2595,11 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
       name: "foo",
       version: "0.0.1",
       dependencies: {
-        "baz": "0.0.5",
+        baz: "0.0.5",
       },
       peerDependencies: {
-        "baz": "0.0.3",
-      }
+        baz: "0.0.3",
+      },
     }),
   );
   const { stdout, stderr, exited } = spawn({
@@ -2522,10 +2621,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     " 1 packages installed",
   ]);
   expect(await exited).toBe(0);
-  expect(urls.sort()).toEqual([
-    `${root_url}/baz`,
-    `${root_url}/baz-0.0.5.tgz`,
-  ]);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.5.tgz`]);
   expect(requested).toBe(2);
   expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "baz"]);
   expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);

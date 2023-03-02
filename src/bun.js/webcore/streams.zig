@@ -2760,10 +2760,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn onAborted(this: *@This(), _: *UWSResponse) void {
             log("onAborted()", .{});
-            this.done = true;
             this.aborted = true;
-            this.signal.close(null);
             this.flushPromise();
+            this.signal.close(null);
+            this.done = true;
             this.finalize();
         }
 

@@ -163,6 +163,22 @@ describe("node:http", () => {
       req.end();
     });
 
+    it("should make a https:// GET request when passed string as first arg", done => {
+      const req = request("https://example.com", res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toContain("This domain is for use in illustrative examples in documents");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
+      req.end();
+    });
+
     it("should make a POST request when provided POST method, even without a body", done => {
       const req = request({ host: "localhost", port: serverPort, method: "POST" }, res => {
         let data = "";

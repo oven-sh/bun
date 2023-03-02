@@ -8,7 +8,7 @@ const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
 
-const __DEBUG__ = process.env.BUN_JS_DEBUG;
+const __DEBUG__ = process.env.__DEBUG__;
 const debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop;
 
 const kEmptyObject = Object.freeze(Object.create(null));
@@ -1018,8 +1018,7 @@ export class ClientRequest extends OutgoingMessage {
     }
 
     const defaultAgent = options._defaultAgent || Agent.globalAgent;
-    const protocol = (this.#protocol = options.protocol || defaultAgent.protocol);
-    const expectedProtocol = defaultAgent.protocol;
+    const protocol = (this.#protocol = options.protocol ||= defaultAgent.protocol);
 
     if (options.path) {
       const path = String(options.path);
@@ -1030,14 +1029,14 @@ export class ClientRequest extends OutgoingMessage {
       }
     }
 
-    if (protocol !== expectedProtocol) {
+    // Since we don't implement Agent, we don't need this
+    if (protocol !== "http:" && protocol !== "https:" && protocol) {
+      const expectedProtocol = defaultAgent?.protocol ?? "http:";
       throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
-    const defaultPort = options.defaultPort || (this.#agent && this.#agent.defaultPort);
-
-    this.#port = options.port = options.port || defaultPort || 80;
+    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || 80;
     const host =
       (this.#host =
       options.host =
@@ -1102,7 +1101,8 @@ export class ClientRequest extends OutgoingMessage {
       this.once("response", cb);
     }
 
-    debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+    __DEBUG__ &&
+      debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
 
     // if (
     //   method === "GET" ||
@@ -1194,13 +1194,13 @@ export class ClientRequest extends OutgoingMessage {
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
 }
 
 function urlToHttpOptions(url) {
   var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  const options = {
+  return {
     protocol,
     hostname:
       typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
@@ -1211,14 +1211,9 @@ function urlToHttpOptions(url) {
     pathname,
     path: `${pathname || ""}${search || ""}`,
     href,
+    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
+    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
   };
-  if (port !== "") {
-    options.port = Number(port);
-  }
-  if (username || password) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
-  }
-  return options;
 }
 
 function validateHost(host, name) {

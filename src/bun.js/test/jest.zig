@@ -665,6 +665,12 @@ pub const Jest = struct {
             if (!strings.eql(dir_path, snapshot_dir_path)) {
                 snapshot_dir = try getSnapshotDir(dir_path);
             }
+
+            if (update_snapshots) {
+                const file = try snapshot_dir.createFile(snapshot_filename, .{ .read = true });
+                return file;
+            }
+
             const file = snapshot_dir.openFile(snapshot_filename, .{ .mode = .read_write }) catch |err| {
                 if (err == error.FileNotFound) {
                     const file = snapshot_dir.createFile(snapshot_filename, .{ .read = true }) catch unreachable;

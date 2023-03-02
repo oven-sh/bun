@@ -1395,9 +1395,9 @@ pub const VirtualMachine = struct {
         writer: Writer,
     ) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, false);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, false);
         }
     }
 
@@ -1422,9 +1422,9 @@ pub const VirtualMachine = struct {
                 Output.errorWriter(),
             );
         } else if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), true, false);
         } else {
-            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false);
+            this.printErrorlikeObject(result, null, exception_list, @TypeOf(Output.errorWriter()), Output.errorWriter(), false, false);
         }
     }
 
@@ -1624,7 +1624,6 @@ pub const VirtualMachine = struct {
     // If there were multiple errors, it could be contained in an AggregateError.
     // In that case, this function becomes recursive.
     // In all other cases, we will convert it to a ZigException.
-    const errors_property = ZigString.init("errors");
     pub fn printErrorlikeObject(
         this: *VirtualMachine,
         value: JSValue,
@@ -1633,8 +1632,21 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
+        snapshot_format: bool,
     ) void {
         if (comptime JSC.is_bindgen) {
+            return;
+        }
+
+        if (snapshot_format) {
+            var classname = ZigString.Empty;
+            value.getClassName(this.global, &classname);
+            var message_prop = ZigString.Empty;
+            if (value.get(this.global, "message")) |message| {
+                message.toZigString(&message_prop, this.global);
+            }
+
+            writer.print("[{s} {s}]", .{ classname, message_prop }) catch {};
             return;
         }
 
@@ -1674,7 +1686,7 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     var this_ = @intToPtr(*@This(), @ptrToInt(ctx));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, false);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };

@@ -1646,7 +1646,7 @@ pub const VirtualMachine = struct {
                 message.toZigString(&message_prop, this.global);
             }
 
-            writer.print("[{s} {s}]", .{ classname, message_prop }) catch {};
+            writer.print("[{s}: {s}]", .{ classname, message_prop }) catch {};
             return;
         }
 

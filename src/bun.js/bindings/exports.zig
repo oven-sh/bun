@@ -1636,7 +1636,11 @@ pub const ZigConsoleClient = struct {
                         this.formatter.globalThis,
                         enable_ansi_colors,
                     );
-                    this.writer.writeAll(": ") catch unreachable;
+                    if (this.formatter.snapshot_format) {
+                        this.writer.writeAll(" => ") catch unreachable;
+                    } else {
+                        this.writer.writeAll(": ") catch unreachable;
+                    }
                     const value_tag = Tag.get(value, globalObject);
                     this.formatter.format(
                         value_tag,
@@ -1882,6 +1886,22 @@ pub const ZigConsoleClient = struct {
                     var str = ZigString.init("");
                     value.toZigString(&str, this.globalThis);
                     this.addForNewLine(str.len);
+
+                    if (this.snapshot_format and (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject)) {
+                        writer.writeAll("String {\n");
+                        this.indent += 1;
+                        defer this.indent -|= 1;
+                        this.resetLine();
+                        this.writeIndent(Writer, writer_) catch unreachable;
+                        const length = str.len;
+                        for (str.slice(), 0..) |c, i| {
+                            writer.print("\"{d}\": \"{c}\",\n", .{ i, c });
+                            if (i != length - 1) this.writeIndent(Writer, writer_) catch unreachable;
+                        }
+                        this.resetLine();
+                        writer.writeAll("}");
+                        return;
+                    }
 
                     if (this.quote_strings and jsType != .RegExpObject) {
                         if (str.len == 0) {
@@ -2184,6 +2204,12 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
                     }
+
+                    if (this.snapshot_format) {
+                        writer.writeAll("Promise {}");
+                        return;
+                    }
+
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
                     switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
@@ -2220,11 +2246,17 @@ pub const ZigConsoleClient = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
+                    const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+
                     if (length == 0) {
-                        return writer.writeAll("Map {}");
+                        return writer.print("{s} {{}}", .{map_name});
                     }
 
-                    writer.print("Map({d}) {{\n", .{length});
+                    if (this.snapshot_format) {
+                        writer.print("\n{s} {{\n", .{map_name});
+                    } else {
+                        writer.print("{s}({d}) {{\n", .{ map_name, length });
+                    }
                     {
                         this.indent += 1;
                         defer this.indent -|= 1;
@@ -2236,6 +2268,9 @@ pub const ZigConsoleClient = struct {
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
+                    if (this.snapshot_format) {
+                        writer.writeAll("\n");
+                    }
                 },
                 .Set => {
                     const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
@@ -2246,10 +2281,18 @@ pub const ZigConsoleClient = struct {
                     defer this.quote_strings = prev_quote_strings;
 
                     this.writeIndent(Writer, writer_) catch {};
+
+                    const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+
                     if (length == 0) {
-                        return writer.writeAll("Set {}");
+                        return writer.print("{s} {{}}", .{set_name});
                     }
-                    writer.print("Set({d}) {{\n", .{length});
+
+                    if (this.snapshot_format) {
+                        writer.print("\n{s} {{\n", .{set_name});
+                    } else {
+                        writer.print("{s}({d}) {{\n", .{ set_name, length });
+                    }
                     {
                         this.indent += 1;
                         defer this.indent -|= 1;
@@ -2261,6 +2304,9 @@ pub const ZigConsoleClient = struct {
                     }
                     this.writeIndent(Writer, writer_) catch {};
                     writer.writeAll("}");
+                    if (this.snapshot_format) {
+                        writer.writeAll("\n");
+                    }
                 },
                 .JSON => {
                     var str = ZigString.init("");

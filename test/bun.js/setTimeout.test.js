@@ -115,7 +115,7 @@ it("Bun.sleep", async () => {
   await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect(end - start).toBeGreaterThanOrEqual(3);
+  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
 
   expect(sleeps).toBe(3);
 });

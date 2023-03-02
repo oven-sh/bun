@@ -474,11 +474,10 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
 		-Wl,-z,stack-size=12800000 \
-		-static-libstdc++ \
 		-static-libgcc \
 		-fno-omit-frame-pointer \
 		-Wl,--compress-debug-sections,zlib \
-		-l:libatomic.a \
+		-latomic \
 		${STATIC_MUSL_FLAG}  \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \

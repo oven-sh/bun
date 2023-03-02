@@ -549,11 +549,12 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
 
 describe("Bun.file", () => {
   const tempdir = require("os").tmpdir();
+  const { join } = require("path");
   var callCount = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer());
-    const path = tempdir + "-" + callCount++ + ".bytes";
+    const path = join(tempdir , "tmp-" + callCount++ + ".bytes");
     require("fs").writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);

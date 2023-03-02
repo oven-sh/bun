@@ -27,14 +27,13 @@ export default {
     divider("Intro"),
     page("index", "What is Bun?", {
       description:
-        "Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun`​.",
+        "Bun is an all-in-one toolkit and runtime for JavaScript and TypeScript apps. Develop, bundle, test, and run your app with one fast tool.",
     }),
     page("installation", "Installation", {
-      description:
-        "Bun ships as a single executable that can be installed through with the Bun install script, npm, Homebrew, or Docker.",
+      description: "Install Bun with npm, Homebrew, Docker, or the official install script.",
     }),
     page("quickstart", "Quickstart", {
-      description: "Get started with Bun: run a file, install a package, and use the script runner.",
+      description: "Get started with Bun by building abd running a simple HTTP server in 5 lines of TypeScript.",
     }),
     // page("typescript", "TypeScript"),
 
@@ -77,10 +76,10 @@ export default {
     }),
     // page("runtime/web-apis", "Web APIs"),
     page("runtime/modules", "Module resolution", {
-      description: `Bun uses ES modules internally and implements an extended version of the Node.js module resolution algorithm.`,
+      description: `Bun uses ES modules internally. It implements an extended version of the Node.js module resolution algorithm.`,
     }),
     page("runtime/hot", "Hot reloading", {
-      description: `Reload your app without restarting the Bun process.`,
+      description: `Reload a running application without restarting the Bun process.`,
     }),
     // page("runtime/loaders", "Loaders"),
     page("runtime/plugins", "Plugins", {

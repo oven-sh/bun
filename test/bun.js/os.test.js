@@ -42,7 +42,11 @@ it("tmpdir", () => {
     expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
     expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
   } else {
-    expect(os.tmpdir()).toBe(process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp");
+    let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
+    if (dir.length > 1 && dir.endsWith("/")) {
+      dir = dir.substring(0, dir.length - 1);
+    }
+    expect(os.tmpdir()).toBe(dir);
   }
 });
 
@@ -110,7 +114,8 @@ it("networkInterfaces", () => {
       expect(typeof nI.family === "string").toBe(true);
       expect(typeof nI.mac === "string").toBe(true);
       expect(typeof nI.internal === "boolean").toBe(true);
-      if (nI.cidr)  // may be null
+      if (nI.cidr)
+        // may be null
         expect(typeof nI.cidr).toBe("string");
     }
   }

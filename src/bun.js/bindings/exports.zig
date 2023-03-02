@@ -2016,7 +2016,7 @@ pub const ZigConsoleClient = struct {
                     var printable = ZigString.init(&name_buf);
                     value.getNameProperty(this.globalThis, &printable);
 
-                    if (printable.len == 0) {
+                    if (printable.len == 0 or this.snapshot_format) {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
@@ -2065,6 +2065,10 @@ pub const ZigConsoleClient = struct {
                                 if (comptime enable_ansi_colors) {
                                     writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                 }
+                            }
+
+                            if (len == 1) {
+                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             }
                         }
 

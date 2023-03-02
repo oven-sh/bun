@@ -4723,6 +4723,7 @@ pub const DOMCalls = .{
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
 pub fn initialize() void {
+    JSC.markBinding(@src());
     JSCInitialize(
         std.os.environ.ptr,
         std.os.environ.len,

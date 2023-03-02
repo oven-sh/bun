@@ -497,6 +497,7 @@ pub const Jest = struct {
         pub var snapshot_count: usize = 0;
         pub var update_snapshots: bool = false;
         pub var initialized: bool = false;
+        pub var file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n\n";
 
         pub var snapshot_dir: std.fs.Dir = undefined;
         pub var snapshot_dir_path: []const u8 = undefined;
@@ -523,9 +524,15 @@ pub const Jest = struct {
                 if (!initialized) snapshot_dir = try getSnapshotDir(dir_path);
                 snapshot_file = try getSnapshotFile(current_file_id);
 
-                const file_length = try snapshot_file.getEndPos();
-                var bytes = try snapshot_file.readToEndAlloc(default_allocator, file_length);
-                file_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
+                if (update_snapshots) {
+                    file_buf = try std.ArrayList(u8).initCapacity(default_allocator, file_header.len);
+                    file_buf.appendSliceAssumeCapacity(file_header);
+                } else {
+                    const file_length = try snapshot_file.getEndPos();
+                    const bytes = try snapshot_file.readToEndAlloc(default_allocator, file_length);
+                    file_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
+                }
+
                 try parseFile();
 
                 initialized = initialized or true;

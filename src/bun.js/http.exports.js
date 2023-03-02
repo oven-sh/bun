@@ -962,7 +962,7 @@ export class ClientRequest extends OutgoingMessage {
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
       method: this.#method,
       headers: this.getHeaders(),
-      body: this.#body,
+      body: this.#body || undefined,
       redirect: "manual",
       verbose: Boolean(__DEBUG__),
       signal: this[kAbortController].signal,

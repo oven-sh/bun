@@ -44,7 +44,7 @@ export default {
         "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
     }),
     page("cli/install", "`bun install`", {
-      description: "Bun's package manager is Node.js-compatible and faster than npm, yarn, and pnpm.",
+      description: "A 100x faster npm client with workspaces, git dependencies, and private registry support.",
     }),
     page("cli/test", "`bun test`", {
       description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",

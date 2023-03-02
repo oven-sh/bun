@@ -15,30 +15,51 @@ type NavDivider = {
   title: string;
 };
 
-
-function page(slug: string, title: string, props?: {disabled?: boolean; href?: string}): NavPage {
+function page(slug: string, title: string, props: { disabled?: boolean; href?: string; description: string }): NavPage {
   return { type: "page", slug, title, ...props };
 }
 function divider(title: string): NavDivider {
   return { type: "divider", title };
 }
 
-
 export default {
   items: [
     divider("Intro"),
-    page("index", "What is Bun?"),
-    page("installation", "Installation"),
-    page("quickstart", "Quickstart"),
+    page("index", "What is Bun?", {
+      description:
+        "Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun`​.",
+    }),
+    page("installation", "Installation", {
+      description:
+        "Bun ships as a single executable that can be installed through with the Bun install script, npm, Homebrew, or Docker.",
+    }),
+    page("quickstart", "Quickstart", {
+      description: "Get started with Bun: run a file, install a package, and use the script runner.",
+    }),
     // page("typescript", "TypeScript"),
 
     divider("CLI"),
-    page("cli/run", "`bun run`"),
-    page("cli/install", "`bun install`"),
-    page("cli/test", "`bun test`"),
-    page("cli/create", "`bun create`"),
-    page("cli/bunx", "`bunx`"),
-    page("cli/deploy", "`bun deploy`", {disabled: true}),
+    page("cli/run", "`bun run`", {
+      description:
+        "Use `bun run` to execute JavaScript/TypeScript files, package.json scripts, and executable packages.",
+    }),
+    page("cli/install", "`bun install`", {
+      description: "Bun's package manager is Node.js-compatible and faster than npm, yarn, and pnpm.",
+    }),
+    page("cli/test", "`bun test`", {
+      description: "Bun's test runner uses Jest-compatible syntax but runs 100x faster.",
+    }),
+    page("cli/create", "`bun create`", {
+      description: "Scaffold a new Bun project from an official template or GitHub repo.",
+    }),
+    page("cli/bunx", "`bunx`", {
+      description:
+        "Use `bunx` to auto-install and run executable packages from npm, or use locally installed command-line tools.",
+    }),
+    page("cli/deploy", "`bun deploy`", {
+      disabled: true,
+      description: "Deploy your Bun app to the cloud (eventually)",
+    }),
 
     // page("bundler", "Bundler"),
     // page("cli/bun-install", "`bun install`"),
@@ -51,44 +72,100 @@ export default {
     // page("benchmarks", "Benchmarks"),
 
     divider("Runtime"),
-    page("runtime/index", "Runtime"),
+    page("runtime/index", "Runtime", {
+      description: `Bun is a new JavaScript runtime designed to be a faster, leaner, more modern replacement for Node.js.`,
+    }),
     // page("runtime/web-apis", "Web APIs"),
-    page("runtime/modules", "Module resolution"),
-    page("runtime/hot", "Hot reloading"),
+    page("runtime/modules", "Module resolution", {
+      description: `Bun uses ES modules internally and implements an extended version of the Node.js module resolution algorithm.`,
+    }),
+    page("runtime/hot", "Hot reloading", {
+      description: `Reload your app without restarting the Bun process.`,
+    }),
     // page("runtime/loaders", "Loaders"),
-    page("runtime/plugins", "Plugins"),
-    page("runtime/framework", "Framework API", {disabled: true}),
+    page("runtime/plugins", "Plugins", {
+      description: `Implement custom loaders and module resolution logic with Bun's plugin system.`,
+    }),
+    page("runtime/framework", "Framework API", {
+      disabled: true,
+      description:
+        "Coming soon. Use the Framework API to build a fast, cloud-ready framework on top of Bun's bundler and runtime.",
+    }),
     // page("runtime/nodejs", "Node.js APIs"),
 
     divider("Ecosystem"),
-    page("ecosystem/nodejs", "Node.js"),
-    page("ecosystem/typescript", "TypeScript"),
-    page("ecosystem/react", "React"),
-    page("ecosystem/elysia", "Elysia"),
-    page("ecosystem/hono", "Hono"),
-    page("ecosystem/express", "Express"),
+    page("ecosystem/nodejs", "Node.js", {
+      description: `Track the status of Bun's API compatibility with Node.js.`,
+    }),
+    page("ecosystem/typescript", "TypeScript", {
+      description: `Bun treats TypeScript as a first-class citizen. Learn how to configure your project and IDE for TypeScript.`,
+    }),
+    page("ecosystem/react", "React", {
+      description: `The Bun runtime implements JSX syntax out of the box, plus some key optimizations for server-side rendered.`,
+    }),
+    page("ecosystem/elysia", "Elysia", {
+      description: `Get started with Elysia, a Bun-native framework designed for the edge.`,
+    }),
+    page("ecosystem/hono", "Hono", {
+      description: `Hono is an ultra-fast, Bun-friendly web framework designed for edge environments.`,
+    }),
+    page("ecosystem/express", "Express", {
+      description: `Servers built with Express and all other major Node.js HTTP libraries out of the box.`,
+    }),
     page("ecosystem/awesome", "Awesome", {
-      href:"https://github.com/apvarun/awesome-bun"
+      href: "https://github.com/apvarun/awesome-bun",
+      description: ``,
     }),
 
     divider("API"),
-    page("api/http", "HTTP"), // "`Bun.serve`"),
-    page("api/websockets", "WebSockets"), // "`Bun.serve`"),
-    page("api/tcp", "TCP Sockets"), // "`Bun.{listen|connect}`"),
-    page("api/file-io", "File I/O"), // "`Bun.write`"),
-    page("api/sqlite", "SQLite"), // "`bun:sqlite`"),
-    page("api/file-system-router", "FileSystemRouter"), // "`Bun.FileSystemRouter`"),
-    page("api/globals", "Globals"), // "`Bun.write`"),
-    page("api/spawn", "Spawn"), // "`Bun.spawn`"),
-    page("api/transpiler", "Transpiler"), // "`Bun.Transpiler`"),
-    page("api/console", "Console"), // "`Node-API`"),
-    page("api/ffi", "FFI"), // "`bun:ffi`"),
-    page("api/html-rewriter", "HTMLRewriter"), // "`HTMLRewriter`"),
-    page("api/test", "Testing"), // "`bun:test`"),
-    page("api/utils", "Utils"), // "`Bun.peek`"),
-    page("api/dns", "DNS"), // "`bun:dns`"),
-    page("api/node-api", "Node-API"), // "`Node-API`"),
-
+    page("api/http", "HTTP", {
+      description: `Bun implements Web-standard fetch, plus a Bun-native API for building fast HTTP servers.`,
+    }), // "`Bun.serve`"),
+    page("api/websockets", "WebSockets", {
+      description: `Bun supports server-side WebSockets with on-the-fly compression, TLS support, and a Bun-native pubsub API.`,
+    }), // "`Bun.serve`"),
+    page("api/tcp", "TCP Sockets", {
+      description: `Bun's native API implements Web-standard TCP Sockets, plus a Bun-native API for building fast TCP servers.`,
+    }), // "`Bun.{listen|connect}`"),
+    page("api/file-io", "File I/O", {
+      description: `Read and write files fast with Bun's heavily optimized file system API.`,
+    }), // "`Bun.write`"),
+    page("api/sqlite", "SQLite", {
+      description: `The fastest SQLite driver for JavaScript is baked directly into Bun.`,
+    }), // "`bun:sqlite`"),
+    page("api/file-system-router", "FileSystemRouter", {
+      description: `Resolve incoming HTTP requests against a local file system directory with Bun's fast, Next.js-compatible router.`,
+    }), // "`Bun.FileSystemRouter`"),
+    page("api/globals", "Globals", {
+      description: `Bun implements a range of Web APIs, Node.js APIs, and Bun-native APIs that are available globally.`,
+    }), // "`Bun.write`"),
+    page("api/spawn", "Spawn", {
+      description: `Spawn child processes with easily configurable input and output streams.`,
+    }), // "`Bun.spawn`"),
+    page("api/transpiler", "Transpiler", {
+      description: `Bun exposes its internal transpiler as a pluggable API.`,
+    }), // "`Bun.Transpiler`"),
+    page("api/console", "Console", {
+      description: `Bun implements a Node.js-compatible \`console\` object with colorized output and deep pretty-printing.`,
+    }), // "`Node-API`"),
+    page("api/ffi", "FFI", {
+      description: `Call native code from JavaScript with Bun's foreign function interface (FFI) API.`,
+    }), // "`bun:ffi`"),
+    page("api/html-rewriter", "HTMLRewriter", {
+      description: `Parse and transform HTML with Bun's native HTMLRewriter API, inspired by Cloudflare Workers.`,
+    }), // "`HTMLRewriter`"),
+    page("api/test", "Testing", {
+      description: `Bun's built-in test runner is fast and uses Jest-compatible syntax.`,
+    }), // "`bun:test`"),
+    page("api/utils", "Utils", {
+      description: `Bun implements a set of utilities that are commonly required by developers.`,
+    }), // "`Bun.peek`"),
+    page("api/dns", "DNS", {
+      description: `Resolve domain names to IP addresses.`,
+    }), // "`bun:dns`"),
+    page("api/node-api", "Node-API", {
+      description: `Bun implements (most of) the Node-API spec for native addons.`,
+    }), // "`Node-API`"),
 
     // divider("Dev Server"),
     // page("bun-dev", "Vanilla"),
@@ -98,11 +175,21 @@ export default {
     // page("dev/cra", "Create React App"),
 
     divider("Project"),
-    page("project/roadmap", "Roadmap"),
-    page("project/configuration", "Configuration"),
-    page("project/profiling", "Profiling"),
-    page("project/developing", "Development"),
-    page("project/licensing", "License"),
+    page("project/roadmap", "Roadmap", {
+      description: `Track Bun's near-term and long-term goals.`,
+    }),
+    page("project/configuration", "Configuration", {
+      description: `Bun's runtime is configurable via environment variables and the Bunfig configuration file.`,
+    }),
+    page("project/profiling", "Profiling", {
+      description: `Bun is designed for performance. Learn how to benchmark and profile Bun yourself.`,
+    }),
+    page("project/developing", "Development", {
+      description: "Learn how to contribute to Bun and get your local development environment up and running.",
+    }),
+    page("project/licensing", "License", {
+      description: `Bun is a MIT-licensed project with a large number of statically-linked dependencies with various licenses.`,
+    }),
 
     // misc
     // page("roadmap", "Roadmap"),

@@ -1033,10 +1033,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             //if have sink, call onAborted on sink
             if (this.sink) |wrapper| {
-                wrapper.detach();
-                wrapper.sink.onAborted(resp);
-                this.sink = null;
-                wrapper.sink.destroy();
+                wrapper.sink.abort();
                 return;
             }
 
@@ -1861,11 +1858,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn handleResolveStream(req: *RequestContext) void {
             streamLog("handleResolveStream", .{});
-            //aborted so call finalizeForAbort
-            if (req.aborted) {
-                req.finalizeForAbort();
-                return;
-            }
 
             var wrote_anything = false;
             if (req.sink) |wrapper| {
@@ -1884,6 +1876,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value.Locked.readable.?.done();
                     resp.body.value = .{ .Used = {} };
                 }
+            }
+            
+            streamLog("onResolve({any})", .{wrote_anything});
+
+            //aborted so call finalizeForAbort
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
             }
 
             const responded = req.resp.hasResponded();

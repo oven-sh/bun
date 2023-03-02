@@ -5271,58 +5271,56 @@ pub const PackageManager = struct {
     else
         "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
 
-    pub const install_params_ = clap.parseParamsComptime(
-        \\-c, --config <STR>?               Load config (bunfig.toml)
-        \\-y, --yarn                        Write a yarn.lock file (yarn v1)
-        \\-p, --production                  Don't install devDependencies
-        \\--no-save                         Don't save a lockfile
-        \\--dry-run                         Don't install anything
-        \\--lockfile <PATH>                 Store & load a lockfile at a specific filepath
-        \\-f, --force                       Always request the latest versions from the registry & reinstall all dependencies
-        \\--cache-dir <PATH>                Store & load cached data from a specific directory path
-        \\--no-cache                        Ignore manifest cache entirely
-        \\--silent                          Don't log anything
-        \\--verbose                         Excessively verbose logging
-        \\--no-progress                     Disable the progress bar
-        \\--no-summary                      Don't print a summary
-        \\--no-verify                       Skip verifying integrity of newly downloaded packages
-        \\--ignore-scripts                  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)
-        \\-g, --global                      Install globally
-        \\--cwd <STR>                       Set a specific cwd
-        \\--backend <STR>                   Platform-specific optimizations for installing dependencies.
-        \\
-         ++ platform_specific_backend_label ++
-        \\
-        \\--link-native-bins <STR>...       Link "bin" from a matching platform-specific "optionalDependencies" instead. Default: esbuild, turbo
-        \\--help                            Print this help menu
-    );
-        // clap.parseParam("--omit <str>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
+    pub const install_params_ = [_]ParamType{
+        clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
+        clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
+        clap.parseParam("-p, --production                  Don't install devDependencies") catch unreachable,
+        clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
+        clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
+        clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
+        clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
+        clap.parseParam("--cache-dir <PATH>                 Store & load cached data from a specific directory path") catch unreachable,
+        clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
+        clap.parseParam("--silent                          Don't log anything") catch unreachable,
+        clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
+        clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
+        clap.parseParam("--no-summary                      Don't print a summary") catch unreachable,
+        clap.parseParam("--no-verify                       Skip verifying integrity of newly downloaded packages") catch unreachable,
+        clap.parseParam("--ignore-scripts                  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
+        clap.parseParam("-g, --global                      Install globally") catch unreachable,
+        clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
+        clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
+        clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
+
+        // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
         // clap.parseParam("--no-dedupe                       Disable automatic downgrading of dependencies that would otherwise cause unnecessary duplicate package versions ($BUN_CONFIG_NO_DEDUPLICATE)") catch unreachable,
 
+        clap.parseParam("--help                            Print this help menu") catch unreachable,
+    };
 
-    // Note that zig-clap currently doesn't support multiple short or long names,
-    //  so for npm/yarn compatibility we'll specify both --development and --dev
-    pub const install_params = install_params_ ++ clap.parseParamsComptime(
-        \\-d, --development                 Add dependency to "devDependencies"
-        \\-D, --dev                         Add dependency to "devDependencies" (npm/yarn compat)
-        \\-O, --optional                    Add dependency to "optionalDependencies"
-        \\<STR> ...                         "name" or "name@version" of packages to install
-    );
-    pub const add_params = install_params;
+    pub const install_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         ") catch unreachable,
+    };
 
-    pub const remove_params = install_params_ ++ clap.parseParamsComptime(
-        \\<STR> ...                         "name" of packages to remove from package.json
-    );
+    pub const add_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
+    };
 
-    pub const link_params = install_params_ ++ clap.parseParamsComptime(
-        \\--save                            Save to package.json
-        \\<STR> ...                         "name" install package as a link
-    );
+    pub const remove_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
+    };
 
-    pub const unlink_params = install_params_ ++ clap.parseParamsComptime(
-        \\--save                            Save to package.json
-        \\<STR> ...                         "name" uninstall package as a link
-    );
+    pub const link_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Save to package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
+    };
+
+    pub const unlink_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Save to package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
+    };
 
     pub const CommandLineArguments = struct {
         registry: string = "",
@@ -5379,63 +5377,62 @@ pub const PackageManager = struct {
         ) !CommandLineArguments {
             var diag = clap.Diagnostic{};
 
-            var res = clap.parse(clap.Help, params, BunArguments.parser, .{
+            var args = clap.parse(clap.Help, params, .{
                 .diagnostic = &diag,
                 .allocator = allocator,
             }) catch |err| {
-                clap.help(Output.errorWriter(), clap.Help, params, .{}) catch {};
+                clap.help(Output.errorWriter(), params) catch {};
                 Output.errorWriter().writeAll("\n") catch {};
                 diag.report(Output.errorWriter(), err) catch {};
                 return err;
             };
 
-            if (res.args.help) {
+            if (args.flag("--help")) {
                 Output.prettyln("\n<b><magenta>bun<r> (package manager) flags:<r>\n\n", .{});
                 Output.flush();
 
-                clap.help(Output.writer(), clap.Help, params, .{}) catch {};
+                clap.help(Output.writer(), params) catch {};
 
                 Global.exit(0);
             }
 
             var cli = CommandLineArguments{};
-            cli.yarn = res.args.yarn;
-            cli.production = res.args.production;
-            cli.no_save = res.args.@"no-save";
-            cli.no_progress = res.args.@"no-progress";
-            cli.dry_run = res.args.@"dry-run";
-            cli.global = res.args.global;
-            cli.force = res.args.force;
-            cli.no_verify = res.args.@"no-verify";
-            // cli.no_dedupe = res.args.no_dedupe;
-            cli.no_cache = res.args.@"no-cache";
-            cli.silent = res.args.silent;
-            cli.verbose = res.args.verbose;
-            cli.ignore_scripts = res.args.@"ignore-scripts";
-            cli.no_summary = res.args.@"no-summary";
-
-            if (comptime @hasField(@TypeOf(res.args), "save")) {
+            cli.yarn = args.flag("--yarn");
+            cli.production = args.flag("--production");
+            cli.no_save = args.flag("--no-save");
+            cli.no_progress = args.flag("--no-progress");
+            cli.dry_run = args.flag("--dry-run");
+            cli.global = args.flag("--global");
+            cli.force = args.flag("--force");
+            cli.no_verify = args.flag("--no-verify");
+            // cli.no_dedupe = args.flag("--no-dedupe");
+            cli.no_cache = args.flag("--no-cache");
+            cli.silent = args.flag("--silent");
+            cli.verbose = args.flag("--verbose");
+            cli.ignore_scripts = args.flag("--ignore-scripts");
+            cli.no_summary = args.flag("--no-summary");
+            if (comptime @TypeOf(args).hasFlag("--save")) {
                 cli.no_save = true;
 
-                if (res.args.save) {
+                if (args.flag("--save")) {
                     cli.no_save = false;
                 }
             }
 
-            if (res.args.config) |opt| {
+            if (args.option("--config")) |opt| {
                 cli.config = opt;
             }
 
             try BunArguments.loadConfig(allocator, cli.config, ctx, .InstallCommand);
 
-            cli.link_native_bins = res.args.@"link-native-bins";
+            cli.link_native_bins = args.options("--link-native-bins");
 
-            if (@hasField(@TypeOf(res.args), "development"))
-                cli.development = res.args.development or res.args.dev;
-            if (@hasField(@TypeOf(res.args), "optional"))
-                cli.optional = res.args.optional;
+            if (comptime params.len == add_params.len) {
+                cli.development = args.flag("--development");
+                cli.optional = args.flag("--optional");
+            }
 
-            // for (res.args.omit) |omit| {
+            // for (args.options("--omit")) |omit| {
             //     if (strings.eqlComptime(omit, "dev")) {
             //         cli.omit.dev = true;
             //     } else if (strings.eqlComptime(omit, "optional")) {
@@ -5448,11 +5445,11 @@ pub const PackageManager = struct {
             //     }
             // }
 
-            if (res.args.lockfile) |lockfile| {
+            if (args.option("--lockfile")) |lockfile| {
                 cli.lockfile = lockfile;
             }
 
-            if (res.args.cwd) |cwd_| {
+            if (args.option("--cwd")) |cwd_| {
                 var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
                 var final_path: [:0]u8 = undefined;
@@ -5471,7 +5468,7 @@ pub const PackageManager = struct {
             }
 
             const specified_backend: ?PackageInstall.Method = brk: {
-                if (res.args.backend) |backend_| {
+                if (args.option("--backend")) |backend_| {
                     break :brk PackageInstall.Method.map.get(backend_);
                 }
                 break :brk null;
@@ -5483,7 +5480,7 @@ pub const PackageManager = struct {
                 }
             }
 
-            cli.positionals = res.positionals;
+            cli.positionals = args.positionals();
 
             return cli;
         }

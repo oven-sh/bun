@@ -861,12 +861,32 @@ pub fn sleepSync(
     arguments: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    if (js.JSValueIsNumber(ctx, arguments[0])) {
-        const seconds = JSValue.fromRef(arguments[0]).asNumber();
-        if (seconds > 0 and std.math.isFinite(seconds)) std.time.sleep(@floatToInt(u64, seconds * 1000) * std.time.ns_per_ms);
+    // This function always returns undefined
+    const ret = js.JSValueMakeUndefined(ctx);
+
+    // Expect at least one argument.  We allow more than one but ignore them; this
+    //  is useful for supporting things like `[1, 2].map(sleepSync)`
+    if (arguments.len < 1) {
+        ctx.throwInvalidArguments("expected one argument, got {}", .{arguments.len});
+        return ret;
+    }
+    const arg = JSValue.fromRef(arguments[0]);
+
+    // The argument must be a number
+    if (!arg.isNumber()) {
+        ctx.throwInvalidArguments("argument to sleepSync must be a number, got {}", .{arg.jsTypeLoose()});
+        return ret;
     }
 
-    return js.JSValueMakeUndefined(ctx);
+    //NOTE: if argument is > max(i32) then it will be truncated
+    const milliseconds = arg.coerce(i32, ctx);
+    if (milliseconds < 0) {
+        ctx.throwInvalidArguments("argument to sleepSync must not be negative, got {}", .{milliseconds});
+        return ret;
+    }
+
+    std.time.sleep(@intCast(u64, milliseconds) * std.time.ns_per_ms);
+    return ret;
 }
 
 pub fn createNodeFS(

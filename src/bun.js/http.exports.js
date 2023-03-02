@@ -959,10 +959,14 @@ export class ClientRequest extends OutgoingMessage {
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
+
+    var method = this.#method,
+      body = this.#body;
+
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
-      method: this.#method,
+      method,
       headers: this.getHeaders(),
-      body: this.#body || undefined,
+      body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
       redirect: "manual",
       verbose: Boolean(__DEBUG__),
       signal: this[kAbortController].signal,

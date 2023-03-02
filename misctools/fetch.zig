@@ -78,7 +78,7 @@ pub const Arguments = struct {
     pub fn parse(allocator: std.mem.Allocator) !Arguments {
         var diag = clap.Diagnostic{};
 
-        var res = clap.parse(clap.Help, &params, clap.parsers.default, .{
+        var args = clap.parse(clap.Help, &params, .{
             .diagnostic = &diag,
             .allocator = allocator,
         }) catch |err| {
@@ -87,7 +87,7 @@ pub const Arguments = struct {
             return err;
         };
 
-        var positionals = res.positionals;
+        var positionals = args.positionals();
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
@@ -96,16 +96,16 @@ pub const Arguments = struct {
             raw_args = .{};
         }
 
-        if (res.args.version) {
+        if (args.flag("--version")) {
             try Output.writer().writeAll(VERSION);
             Global.exit(0);
         }
 
         var method = Method.GET;
         var url: URL = .{};
-        var body_string: string = res.args.body orelse "";
+        var body_string: string = args.option("--body") orelse "";
 
-        if (res.args.file) |file_path| {
+        if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
                 var cwd = try std.process.getCwd(&cwd_buf);
                 var parts = [_]string{file_path};
@@ -154,12 +154,12 @@ pub const Arguments = struct {
         return Arguments{
             .url = url,
             .method = method,
-            .verbose = res.args.verbose,
+            .verbose = args.flag("--verbose"),
             .headers = .{},
             .headers_buf = "",
             .body = body_string,
-            .turbo = res.args.turbo,
-            .quiet = res.args.quiet,
+            .turbo = args.flag("--turbo"),
+            .quiet = args.flag("--quiet"),
         };
     }
 };

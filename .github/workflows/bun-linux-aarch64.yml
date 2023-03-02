@@ -146,7 +146,7 @@ jobs:
         name: Setup
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: ${{github.sha}}
+          bun-version: action:${{github.run_id}}
       - id: install
         name: Install
         run: bun install

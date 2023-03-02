@@ -7,7 +7,9 @@ const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
-const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : nop;
+
+const __DEBUG__ = process.env.BUN_JS_DEBUG;
+const debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop;
 
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
@@ -962,7 +964,7 @@ export class ClientRequest extends OutgoingMessage {
       headers: this.getHeaders(),
       body: this.#body,
       redirect: "manual",
-      verbose: Boolean(process.env.BUN_JS_DEBUG),
+      verbose: Boolean(__DEBUG__),
       signal: this[kAbortController].signal,
     })
       .then(response => {
@@ -972,7 +974,7 @@ export class ClientRequest extends OutgoingMessage {
         this.emit("response", res);
       })
       .catch(err => {
-        if (process.env.BUN_JS_DEBUG) globalReportError(err);
+        if (__DEBUG__) globalReportError(err);
         this.emit("error", err);
       })
       .finally(() => {

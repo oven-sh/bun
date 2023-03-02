@@ -12,7 +12,7 @@ const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
-const AbortSignal = JSC.AbortSignal;
+const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = @import("bun").Output;

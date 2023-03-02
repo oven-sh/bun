@@ -996,13 +996,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
+                this.signal = null;
                 if (!signal.aborted()) {
                     const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
                 }
                 _ = signal.unref();
-                this.signal = null;
             }
 
             //if have sink, call onAborted on sink
@@ -1097,13 +1097,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
+                this.signal = null;
                 if (this.aborted and !signal.aborted()) {
                     const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
                 }
                 _ = signal.unref();
-                this.signal = null;
             }
 
             if (this.request_js_object != null) {
@@ -1879,11 +1879,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
-            //aborted so call finalizeForAbort
-            if (req.aborted) {
-                req.finalizeForAbort();
-                return;
-            }
+           
             streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 
@@ -1906,6 +1902,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onReject({any})", .{wrote_anything});
+
+            //aborted so call finalizeForAbort
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
+            }
 
             if (!err.isEmptyOrUndefinedOrNull() and !wrote_anything) {
                 req.response_jsvalue.unprotect();

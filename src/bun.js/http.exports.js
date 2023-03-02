@@ -1,5 +1,6 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
+const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
 const globalReportError = globalThis.reportError;
@@ -236,13 +237,13 @@ export class Server extends EventEmitter {
     if (typeof port === "function") {
       onListen = port;
     } else if (typeof port === "object") {
-      port?.signal?.addEventListener("abort", ()=> {
+      port?.signal?.addEventListener("abort", () => {
         this.close();
       });
 
       host = port?.host;
       port = port?.port;
-      
+
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
@@ -548,7 +549,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
 
   return true;
 }
-
 
 export class OutgoingMessage extends Writable {
   #headers;
@@ -951,10 +951,10 @@ export class ClientRequest extends OutgoingMessage {
   _final(callback) {
     this.#finished = true;
     this[kAbortController] = new AbortController();
-    this[kAbortController].signal.addEventListener("abort", ()=> {
-        this[kClearTimeout]();
+    this[kAbortController].signal.addEventListener("abort", () => {
+      this[kClearTimeout]();
     });
-    if(this.#signal?.aborted){
+    if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
@@ -963,7 +963,7 @@ export class ClientRequest extends OutgoingMessage {
       body: this.#body,
       redirect: "manual",
       verbose: Boolean(process.env.BUN_JS_DEBUG),
-      signal: this[kAbortController].signal
+      signal: this[kAbortController].signal,
     })
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
@@ -999,7 +999,7 @@ export class ClientRequest extends OutgoingMessage {
     if (typeof input === "string") {
       const urlStr = input;
       input = urlToHttpOptions(new URL(urlStr));
-    } else if (input && input[searchParamsSymbol] && input[searchParamsSymbol][searchParamsSymbol]) {
+    } else if (input && typeof input === "object" && input instanceof URL) {
       // url.URL instance
       input = urlToHttpOptions(input);
     } else {
@@ -1045,13 +1045,12 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    if (options.timeout !== undefined)
-      this.setTimeout(options.timeout, null);
+    if (options.timeout !== undefined) this.setTimeout(options.timeout, null);
 
     const signal = options.signal;
     if (signal) {
       //We still want to control abort function and timeout so signal call our AbortController
-      signal.addEventListener("abort", ()=> {
+      signal.addEventListener("abort", () => {
         this[kAbortController]?.abort();
       });
       this.#signal = signal;

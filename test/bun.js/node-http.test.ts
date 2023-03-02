@@ -81,6 +81,7 @@ describe("node:http", () => {
 
   describe("request", () => {
     let server;
+    let serverPort;
     let timer = null;
     beforeAll(() => {
       server = createServer((req, res) => {
@@ -89,7 +90,7 @@ describe("node:http", () => {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
             res.writeHead(301, {
-              Location: "http://localhost:8126/redirected",
+              Location: `http://localhost:${serverPort}/redirected`,
             });
             res.end("Got redirect!\n");
             return;
@@ -137,7 +138,9 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen(8126);
+      server.listen({ port: 0 }, (_, __, port) => {
+        serverPort = port;
+      });
     });
     afterAll(() => {
       server.close();
@@ -145,7 +148,7 @@ describe("node:http", () => {
     });
 
     it("should make a standard GET request when passed string as first arg", done => {
-      const req = request("http://localhost:8126", res => {
+      const req = request(`http://localhost:${serverPort}`, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -161,7 +164,7 @@ describe("node:http", () => {
     });
 
     it("should make a POST request when provided POST method, even without a body", done => {
-      const req = request({ host: "localhost", port: 8126, method: "POST" }, res => {
+      const req = request({ host: "localhost", port: serverPort, method: "POST" }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -177,7 +180,7 @@ describe("node:http", () => {
     });
 
     it("should correctly handle a POST request with a body", done => {
-      const req = request({ host: "localhost", port: 8126, method: "POST" }, res => {
+      const req = request({ host: "localhost", port: serverPort, method: "POST" }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -194,7 +197,7 @@ describe("node:http", () => {
     });
 
     it("should noop request.setSocketKeepAlive without error", () => {
-      const req = request("http://localhost:8126");
+      const req = request(`http://localhost:${serverPort}`);
       req.setSocketKeepAlive(true, 1000);
       req.end();
       expect(true).toBe(true);
@@ -209,7 +212,7 @@ describe("node:http", () => {
       const req1 = request(
         {
           host: "localhost",
-          port: 8126,
+          port: serverPort,
           path: "/timeout",
           timeout: 500,
         },
@@ -222,7 +225,7 @@ describe("node:http", () => {
       const req2 = request(
         {
           host: "localhost",
-          port: 8126,
+          port: serverPort,
           path: "/timeout",
         },
         res => {
@@ -242,7 +245,7 @@ describe("node:http", () => {
       const req1Done = createDone();
       const req2Done = createDone();
 
-      const req1 = request("http://localhost:8126/pathTest", res => {
+      const req1 = request(`http://localhost:${serverPort}/pathTest`, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -255,7 +258,7 @@ describe("node:http", () => {
         res.on("error", err => req1Done(err));
       });
 
-      const req2 = request("http://localhost:8126", { path: "/pathTest" }, res => {
+      const req2 = request(`http://localhost:${serverPort}`, { path: "/pathTest" }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -276,7 +279,7 @@ describe("node:http", () => {
     });
 
     it("should emit response when response received", done => {
-      const req = request("http://localhost:8126");
+      const req = request(`http://localhost:${serverPort}`);
 
       req.on("response", res => {
         expect(res.statusCode).toBe(200);
@@ -287,7 +290,7 @@ describe("node:http", () => {
 
     // NOTE: Node http.request doesn't follow redirects by default
     it("should handle redirects properly", done => {
-      const req = request("http://localhost:8126/redirect", res => {
+      const req = request(`http://localhost:${serverPort}/redirect`, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -303,7 +306,7 @@ describe("node:http", () => {
     });
 
     it("should correctly attach headers to request", done => {
-      const req = request({ host: "localhost", port: 8126, headers: { "X-Test": "test" } }, res => {
+      const req = request({ host: "localhost", port: serverPort, headers: { "X-Test": "test" } }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -320,7 +323,7 @@ describe("node:http", () => {
     });
 
     it("should correct casing of method param", done => {
-      const req = request({ host: "localhost", port: 8126, method: "get" }, res => {
+      const req = request({ host: "localhost", port: serverPort, method: "get" }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -336,7 +339,7 @@ describe("node:http", () => {
     });
 
     it("should allow for port as a string", done => {
-      const req = request({ host: "localhost", port: "8126", method: "GET" }, res => {
+      const req = request({ host: "localhost", port: `${serverPort}`, method: "GET" }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -350,10 +353,26 @@ describe("node:http", () => {
       });
       req.end();
     });
+
+    it("should allow us to pass a URL object", done => {
+      const req = request(new URL(`http://localhost:${serverPort}`), { method: "POST" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => {
+          data += chunk;
+        });
+        res.on("end", () => {
+          expect(data).toBe("Hello WorldPOST\nHello World");
+          done();
+        });
+        res.on("error", err => done(err));
+      });
+      req.write("Hello World");
+      req.end();
+    });
   });
 
   describe("signal", () => {
-
     it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -361,19 +380,19 @@ describe("node:http", () => {
       });
 
       //force timeout to not hang tests
-      const interval = setTimeout(()=> {
+      const interval = setTimeout(() => {
         expect(false).toBe(true);
         server.close();
-        done()
+        done();
       }, 100);
-      
+
       const signal = AbortSignal.timeout(30);
-      signal.addEventListener("abort", ()=> {
+      signal.addEventListener("abort", () => {
         clearTimeout(interval);
         expect(true).toBe(true);
-        done()
+        done();
       });
-      
+
       server.listen({ signal, port: 8130 });
     });
   });
@@ -464,12 +483,12 @@ describe("node:http", () => {
     let server_host;
     beforeAll(() => {
       server = createServer((req, res) => {
-        Bun.sleep(10).then(()=> {
+        Bun.sleep(10).then(() => {
           res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");  
-        })
+          res.end("Hello World");
+        });
       });
-      server.listen({ port: 0}, (_err,host, port)=> {
+      server.listen({ port: 0 }, (_err, host, port) => {
         server_port = port;
         server_host = host;
       });
@@ -478,7 +497,7 @@ describe("node:http", () => {
       server.close();
     });
     it("should attempt to make a standard GET request and abort", done => {
-      get(`http://127.0.0.1:${server_port}`,{ signal: AbortSignal.timeout(5)  }, res => {
+      get(`http://127.0.0.1:${server_port}`, { signal: AbortSignal.timeout(5) }, res => {
         let data = "";
         res.setEncoding("utf8");
         res.on("data", chunk => {
@@ -492,7 +511,7 @@ describe("node:http", () => {
           expect(true).toBeFalsy();
           done();
         });
-      }).on("error", (err)=>{
+      }).on("error", err => {
         expect(err?.name).toBe("AbortError");
         done();
       });

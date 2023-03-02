@@ -706,15 +706,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const result = arguments.ptr[0];
             result.ensureStillAlive();
 
-            if (ctx.request_js_object != null) {
+            if (ctx.request_js_object != null and ctx.signal == null) {
                 var request_js = ctx.request_js_object.?.value();
                 request_js.ensureStillAlive();
                 if (request_js.as(Request)) |request_object| {
-                    if (ctx.signal == null) {
-                        if (request_object.signal) |signal| {
-                            ctx.signal = signal;
-                            _ = signal.ref();
-                        }
+                    if (request_object.signal) |signal| {
+                        ctx.signal = signal;
+                        _ = signal.ref();
                     }
                 }
             }
@@ -767,15 +765,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
 
-            if (ctx.request_js_object != null) {
+            if (ctx.request_js_object != null and ctx.signal == null) {
                 var request_js = ctx.request_js_object.?.value();
                 request_js.ensureStillAlive();
                 if (request_js.as(Request)) |request_object| {
-                    if (ctx.signal == null) {
-                        if (request_object.signal) |signal| {
-                            ctx.signal = signal;
-                            _ = signal.ref();
-                        }
+                    if (request_object.signal) |signal| {
+                        ctx.signal = signal;
+                        _ = signal.ref();
                     }
                 }
             }

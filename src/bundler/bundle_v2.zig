@@ -598,7 +598,7 @@ pub const BundleV2 = struct {
                 var import_records = result.ast.import_records.slice();
                 for (import_records) |*record| {
                     if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
-                        record.source_index.set(source_index);
+                        record.source_index.value = source_index;
                     }
                 }
 
@@ -1391,7 +1391,8 @@ const LinkerGraph = struct {
         if (use_count == 0) return;
 
         // Mark this symbol as used by this part
-        var part: *js_ast.Part = &g.ast.items(.parts)[id].slice()[part_index];
+        var parts_list = g.ast.items(.parts)[id].slice();
+        var part: *js_ast.Part = &parts_list[part_index];
 
         var uses = part.symbol_uses.getOrPut(g.allocator, ref) catch unreachable;
         if (uses.found_existing) {
@@ -1481,9 +1482,13 @@ const LinkerGraph = struct {
 
         // Setup files
         {
-            var stable_source_indices = try this.allocator.alloc(Index, sources.len);
-            for (this.reachable_files, 0..) |_, i| {
-                stable_source_indices[i] = Index.source(i);
+            var stable_source_indices = try this.allocator.alloc(Index, sources.len + 1);
+
+            // set it to max value so that if we access an invalid one, it crashes
+            @memset(std.mem.sliceAsBytes(stable_source_indices).ptr, 255, std.mem.sliceAsBytes(stable_source_indices).len);
+
+            for (this.reachable_files, 0..) |source_index, i| {
+                stable_source_indices[source_index.get()] = Index.source(i);
             }
 
             const file = comptime LinkerGraph.File{};
@@ -1493,9 +1498,34 @@ const LinkerGraph = struct {
                 files.items(.distance_from_entry_point),
                 comptime file.distance_from_entry_point,
             );
+            this.stable_source_indices = @ptrCast([]const u32, stable_source_indices);
         }
 
         this.symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
+        var import_records_list: []ImportRecord.List = this.ast.items(.import_records);
+        try this.meta.ensureTotalCapacity(this.allocator, import_records_list.len);
+        this.meta.len = this.ast.len;
+        this.meta.zero();
+
+        var in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
+        var src_resolved_exports: []js_ast.Ast.NamedExports = this.ast.items(.named_exports);
+        for (src_resolved_exports, in_resolved_exports, 0..) |src, *dest, source_index| {
+            var resolved = ResolvedExports{};
+            resolved.ensureTotalCapacity(this.allocator, src.count()) catch unreachable;
+            for (src.keys(), src.values()) |key, value| {
+                resolved.putAssumeCapacityNoClobber(
+                    key,
+                    .{
+                        .data = .{
+                            .import_ref = value.ref,
+                            .name_loc = value.alias_loc,
+                            .source_index = Index.source(source_index),
+                        },
+                    },
+                );
+            }
+            dest.* = resolved;
+        }
     }
 
     pub const File = struct {
@@ -1728,7 +1758,7 @@ const LinkerContext = struct {
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
-                const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.source_index].slice());
+                const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
                 chunk.template.placeholder.dir = pathname.dir;
@@ -1913,9 +1943,6 @@ const LinkerContext = struct {
 
         {
             var import_records_list: []ImportRecord.List = this.graph.ast.items(.import_records);
-            try this.graph.meta.ensureTotalCapacity(this.graph.allocator, import_records_list.len);
-            this.graph.meta.len = this.graph.ast.len;
-            this.graph.meta.zero();
 
             // var parts_list: [][]js_ast.Part = this.graph.ast.items(.parts);
             var exports_kind: []js_ast.ExportsKind = this.graph.ast.items(.exports_kind);
@@ -2332,7 +2359,7 @@ const LinkerContext = struct {
                     ) catch unreachable;
                 }
 
-                var imports_to_bind = imports_to_bind_list[id];
+                var imports_to_bind = &imports_to_bind_list[id];
                 var imports_to_bind_iter = imports_to_bind.iterator();
 
                 var parts: []js_ast.Part = parts_list[id].slice();
@@ -2762,7 +2789,7 @@ const LinkerContext = struct {
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
         var export_stmts: []js_ast.Stmt = stmts.head;
-        std.debug.assert(stmts.head.len <= 2); // assert we allocated exactly the right amount
+        // std.debug.assert(stmts.head.len <= 3); // assert we allocated exactly the right amount
         stmts.head.len = 0;
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
@@ -2958,8 +2985,8 @@ const LinkerContext = struct {
                 const other_parts = c.topLevelSymbolsToParts(id, ref);
 
                 for (other_parts) |other_part_index| {
-                    var local = local_dependencies.getOrPutValue(@intCast(u32, other_part_index), @intCast(u32, part_index)) catch unreachable;
-                    if (local.value_ptr.* != @intCast(u32, part_index)) {
+                    var local = local_dependencies.getOrPut(@intCast(u32, other_part_index)) catch unreachable;
+                    if (!local.found_existing) {
                         local.value_ptr.* = @intCast(u32, part_index);
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
@@ -3659,8 +3686,8 @@ const LinkerContext = struct {
 
         var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()].?;
         var runtime_members = &runtime_scope.members;
-        const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("toCommonJS").?.ref);
-        const toESMRef = c.graph.symbols.follow(runtime_members.get("toESM").?.ref);
+        const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
+        const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
@@ -5579,12 +5606,20 @@ const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
+        if (comptime bun.Environment.allow_assert)
+            debug(
+                "markFileLiveForTreeShaking({d}, {s}) = {s}",
+                .{
+                    source_index,
+                    c.parse_graph.input_files.get(source_index).source.path.text,
+                    if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
+                },
+            );
+
         if (c.graph.files_live.isSet(source_index))
             return;
 
         c.graph.files_live.set(source_index);
-        if (comptime bun.Environment.allow_assert)
-            debug("markFileLiveForTreeShaking: {s}", .{c.parse_graph.input_files.get(source_index).source.path.text});
 
         // TODO: CSS source index
 
@@ -5726,7 +5761,7 @@ const LinkerContext = struct {
             const next_tracker = advanced.tracker.*;
             const status = advanced.status;
             const potentially_ambiguous_export_star_refs = advanced.import_data;
-            const other_id = tracker.source_index.get();
+            const other_id = advanced.value.source_index.get();
 
             switch (status) {
                 .cjs, .cjs_without_exports, .disabled, .external => {
@@ -5823,8 +5858,9 @@ const LinkerContext = struct {
                             source,
                             r,
                             c.allocator,
-                            "No matching export in \"{s}\" for import \"{s}\"",
+                            "No matching export \"{s}\" in \"{s}\" for import \"{s}\"",
                             .{
+                                named_import.alias.?,
                                 next_source.path.pretty,
                                 named_import.alias.?,
                             },
@@ -6186,12 +6222,15 @@ const LinkerContext = struct {
         };
     }
 
-    pub fn matchImportsWithExportsForFile(c: *LinkerContext, named_imports: *JSAst.NamedImports, imports_to_bind: *RefImportData, source_index: Index.Int) void {
-        var iter = named_imports.iterator();
-        // TODO: do we need to sort here? I don't think so
-        // because NamedImports is an ArrayHashMap, it's order should naturally be deterministic
+    pub fn matchImportsWithExportsForFile(
+        c: *LinkerContext,
+        named_imports_ptr: *JSAst.NamedImports,
+        imports_to_bind: *RefImportData,
+        source_index: Index.Int,
+    ) void {
+        var named_imports = named_imports_ptr.cloneWithAllocator(c.allocator) catch unreachable;
+        defer named_imports.deinit();
 
-        // Pair imports with their matching exports
         const Sorter = struct {
             imports: *JSAst.NamedImports,
 
@@ -6203,16 +6242,22 @@ const LinkerContext = struct {
             }
         };
         var sorter = Sorter{
-            .imports = named_imports,
+            .imports = &named_imports,
         };
         named_imports.sort(sorter);
+        var iter = named_imports.iterator();
 
         while (iter.next()) |entry| {
             // Re-use memory for the cycle detector
             c.cycle_detector.clearRetainingCapacity();
             const ref = entry.key_ptr.*;
 
-            const import_ref = Ref.init(ref.innerIndex(), @truncate(Ref.Int, source_index), ref.isSourceContentsSlice());
+            const import_ref = Ref{
+                .inner_index = ref.innerIndex(),
+                .source_index = @truncate(Ref.Int, source_index),
+                .tag = ref.tag,
+            };
+
             var import_tracker = ImportData{
                 .data = .{
                     .source_index = Index.source(source_index),

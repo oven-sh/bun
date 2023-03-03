@@ -335,7 +335,7 @@ export const Socket = (function (InternalSocket) {
 
     resume() {
       //TODO
-      return this;  
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -422,7 +422,7 @@ class Server extends EventEmitter {
     if (typeof options.maxConnections === "number" && options.maxConnections > 0) {
       this.maxConnections = options.maxConnections;
     }
-    
+
     this.#listening = false;
     this.#connections = 0;
     this.#connectionListener = connectionListener;
@@ -431,8 +431,8 @@ class Server extends EventEmitter {
 
   ref() {
     this.#server?.ref();
-    return this;}
-
+    return this;
+  }
 
   unref() {
     this.#server?.unref();
@@ -445,14 +445,14 @@ class Server extends EventEmitter {
       this.#server = null;
       this.#listening = false;
       this.#connections = 0;
-      this.emit('close');
-      if(typeof callback === "function") {
+      this.emit("close");
+      if (typeof callback === "function") {
         callback();
       }
       return this;
-    } 
-    
-    if(typeof callback === "function") {
+    }
+
+    if (typeof callback === "function") {
       callback(new Error("Server is not open"));
     }
     return this;
@@ -460,23 +460,23 @@ class Server extends EventEmitter {
 
   address() {
     if (this.#server) {
-      //TODO: fix adress when host is passed 
+      //TODO: fix adress when host is passed
       let address = this.#server.hostname;
       const type = isIP(address);
-      
+
       if (this.#server.port) {
         return {
           port,
           address,
-          family: type ? `IPv${type}` : undefined
-        }
+          family: type ? `IPv${type}` : undefined,
+        };
       }
 
       if (type) {
         return {
           address,
-          family: type ? `IPv${type}` : undefined
-        }
+          family: type ? `IPv${type}` : undefined,
+        };
       }
 
       return address;
@@ -500,7 +500,7 @@ class Server extends EventEmitter {
     if (typeof port === "function") {
       onListen = port;
     } else if (typeof port === "object") {
-      port?.signal?.addEventListener("abort", ()=> this.close());
+      port?.signal?.addEventListener("abort", () => this.close());
 
       hostname = port?.host;
       port = port?.port;
@@ -522,7 +522,7 @@ class Server extends EventEmitter {
     const connectionListener = this.#connectionListener;
     const { pauseOnConnect } = this.#options;
     const self = this;
-    try{
+    try {
       this.#server = Bun.listen({
         port,
         hostname,
@@ -540,17 +540,17 @@ class Server extends EventEmitter {
           open(socket) {
             const _socket = new SocketClass(self.#options);
             _socket._attach(port, socket);
-            if(self.maxConnections && self.#connections >= self.maxConnections) {
+            if (self.maxConnections && self.#connections >= self.maxConnections) {
               const data = {
                 localAddress: _socket.localAddress,
                 localPort: _socket.localPort,
                 localFamily: _socket.localFamily,
                 remoteAddress: _socket.remoteAddress,
                 remotePort: _socket.remotePort,
-                remoteFamily: _socket.remoteFamily 
+                remoteFamily: _socket.remoteFamily,
               };
               _socket.close();
-              self.emit('drop', data);
+              self.emit("drop", data);
               return;
             }
             if (pauseOnConnect) {
@@ -560,7 +560,7 @@ class Server extends EventEmitter {
             if (typeof connectionListener == "function") {
               connectionListener(_socket);
             }
-            self.emit('connection', _socket);
+            self.emit("connection", _socket);
           },
           error(socket, error) {
             SocketClass._Handlers.error(socket, error);
@@ -576,10 +576,10 @@ class Server extends EventEmitter {
         onListen();
       }
       this.#listening = true;
-      self.emit('listening');
+      self.emit("listening");
     } catch (err) {
       this.#listening = false;
-      self.emit('error', err);
+      self.emit("error", err);
     }
     return this;
   }

@@ -13,9 +13,11 @@ describe("net.creeateServer listen", () => {
     server.listen(
       0,
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("::");
-        expect(address4.family).toStrictEqual("IPv6");
+        const address = server.address();
+        expect(address.address).toStrictEqual("::");
+        //system should provide an port when 0 or no port is passed
+        expect(address.port).toBeGreaterThan(100);
+        expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
     );
@@ -33,9 +35,11 @@ describe("net.creeateServer listen", () => {
       0,
       "127.0.0.1",
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("127.0.0.1");
-        expect(address4.family).toStrictEqual("IPv4");
+        const address = server.address();
+        expect(address.address).toStrictEqual("127.0.0.1");
+        //system should provide an port when 0 or no port is passed
+        expect(address.port).toBeGreaterThan(100);
+        expect(address.family).toStrictEqual("IPv4");
         server.close();
       }),
     );
@@ -53,9 +57,11 @@ describe("net.creeateServer listen", () => {
       0,
       "::1",
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("::1");
-        expect(address4.family).toStrictEqual("IPv6");
+        const address = server.address();
+        expect(address.address).toStrictEqual("::1");
+        //system should provide an port when 0 or no port is passed
+        expect(address.port).toBeGreaterThan(100);
+        expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
     );
@@ -73,9 +79,9 @@ describe("net.creeateServer listen", () => {
       0,
       "::1",
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("::1");
-        expect(address4.family).toStrictEqual("IPv6");
+        const address = server.address();
+        expect(address.address).toStrictEqual("::1");
+        expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
     );
@@ -91,9 +97,11 @@ describe("net.creeateServer listen", () => {
 
     server.listen(
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("::");
-        expect(address4.family).toStrictEqual("IPv6");
+        const address = server.address();
+        expect(address.address).toStrictEqual("::");
+        //system should provide an port when 0 or no port is passed
+        expect(address.port).toBeGreaterThan(100);
+        expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
     );
@@ -110,10 +118,10 @@ describe("net.creeateServer listen", () => {
     server.listen(
       65535,
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("::");
-        expect(address4.port).toStrictEqual(65535);
-        expect(address4.family).toStrictEqual("IPv6");
+        const address = server.address();
+        expect(address.address).toStrictEqual("::");
+        expect(address.port).toStrictEqual(65535);
+        expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
     );
@@ -131,10 +139,10 @@ describe("net.creeateServer listen", () => {
       65534,
       "127.0.0.1",
       mustCall(() => {
-        const address4 = server.address();
-        expect(address4.address).toStrictEqual("127.0.0.1");
-        expect(address4.port).toStrictEqual(65534);
-        expect(address4.family).toStrictEqual("IPv4");
+        const address = server.address();
+        expect(address.address).toStrictEqual("127.0.0.1");
+        expect(address.port).toStrictEqual(65534);
+        expect(address.family).toStrictEqual("IPv4");
         server.close();
       }),
     );

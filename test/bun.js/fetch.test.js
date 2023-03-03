@@ -554,7 +554,7 @@ describe("Bun.file", () => {
   testBlobInterface(data => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer());
-    const path = join(tempdir , "tmp-" + callCount++ + ".bytes");
+    const path = join(tempdir, "tmp-" + callCount++ + ".bytes");
     require("fs").writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);

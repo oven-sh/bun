@@ -319,9 +319,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         }
 
         pub fn from(socket: *Socket) ThisSocket {
-            return ThisSocket {
-                .socket = socket
-            };
+            return ThisSocket{ .socket = socket };
         }
 
         pub fn adopt(

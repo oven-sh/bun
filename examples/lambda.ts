@@ -38,21 +38,17 @@ try {
 } catch (e: any) {
   console.error("Error loading sourcefile:", e);
   try {
-    await fetch(
-      new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`)
-        .href,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          errorMessage: e.message,
-          errorType: e.name,
-          stackTrace: e?.stack?.split("\n") ?? [],
-        }),
+    await fetch(new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`).href, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        errorMessage: e.message,
+        errorType: e.name,
+        stackTrace: e?.stack?.split("\n") ?? [],
+      }),
+    });
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
   }
@@ -79,21 +75,17 @@ export default {
   console.error(e);
 
   try {
-    await fetch(
-      new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`)
-        .href,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          errorMessage: e.message,
-          errorType: e.name,
-          stackTrace: e?.stack?.split("\n") ?? [],
-        }),
+    await fetch(new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`).href, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        errorMessage: e.message,
+        errorType: e.name,
+        stackTrace: e?.stack?.split("\n") ?? [],
+      }),
+    });
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
   }
@@ -112,21 +104,17 @@ try {
 } catch (e: any) {
   console.error("Error parsing baseURI:", e);
   try {
-    await fetch(
-      new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`)
-        .href,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          errorMessage: e.message,
-          errorType: e.name,
-          stackTrace: e?.stack?.split("\n") || [],
-        }),
+    await fetch(new URL(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/init/error`).href, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        errorMessage: e.message,
+        errorType: e.name,
+        stackTrace: e?.stack?.split("\n") || [],
+      }),
+    });
   } catch (e2) {
     console.error("Error sending error to runtime:", e2);
   }
@@ -140,10 +128,7 @@ async function runHandler(response: Response) {
   var request = new Request(baseURL.href, {
     method,
     headers: response.headers,
-    body:
-      parseInt(response.headers.get("Content-Length") || "0", 10) > 0
-        ? await response.blob()
-        : undefined,
+    body: parseInt(response.headers.get("Content-Length") || "0", 10) > 0 ? await response.blob() : undefined,
   });
   // we are done with the Response object here
   // allow it to be GC'd
@@ -162,18 +147,15 @@ async function runHandler(response: Response) {
     if (typeof process.env.VERBOSE !== "undefined") {
       console.error(`[${traceID}] Error running handler:`, e1);
     }
-    fetch(
-      `http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/error`,
-      {
-        method: "POST",
+    fetch(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/error`, {
+      method: "POST",
 
-        body: JSON.stringify({
-          errorMessage: e1.message,
-          errorType: e1.name,
-          stackTrace: e1?.stack?.split("\n") ?? [],
-        }),
-      },
-    ).finally(noop);
+      body: JSON.stringify({
+        errorMessage: e1.message,
+        errorType: e1.name,
+        stackTrace: e1?.stack?.split("\n") ?? [],
+      }),
+    }).finally(noop);
     return;
   } finally {
     if (typeof process.env.VERBOSE !== "undefined") {
@@ -182,28 +164,22 @@ async function runHandler(response: Response) {
   }
 
   if (!result || !("headers" in result)) {
-    await fetch(
-      `http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/error`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          errorMessage: "Expected Response object",
-          errorType: "ExpectedResponseObject",
-          stackTrace: [],
-        }),
-      },
-    );
+    await fetch(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/error`, {
+      method: "POST",
+      body: JSON.stringify({
+        errorMessage: "Expected Response object",
+        errorType: "ExpectedResponseObject",
+        stackTrace: [],
+      }),
+    });
     return;
   }
 
-  await fetch(
-    `http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/response`,
-    {
-      method: "POST",
-      headers: result.headers,
-      body: await result.blob(),
-    },
-  );
+  await fetch(`http://${AWS_LAMBDA_RUNTIME_API}/2018-06-01/runtime/invocation/${requestID}/response`, {
+    method: "POST",
+    headers: result.headers,
+    body: await result.blob(),
+  });
   (result as any) = undefined;
 }
 

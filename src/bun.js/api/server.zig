@@ -1877,7 +1877,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value = .{ .Used = {} };
                 }
             }
-            
+
             streamLog("onResolve({any})", .{wrote_anything});
 
             //aborted so call finalizeForAbort

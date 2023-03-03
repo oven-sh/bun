@@ -8,7 +8,7 @@ var bunEscapeHTML = globalThis.escapeHTML || Bun.escapeHTML;
 const FIXTURE = require("fs")
   .readFileSync(import.meta.dir + "/_fixture.txt", "utf8")
   .split("")
-  .map((a) => {
+  .map(a => {
     if (a.charCodeAt(0) > 127) {
       return "a";
     }
@@ -16,10 +16,7 @@ const FIXTURE = require("fs")
   })
   .join("");
 
-const FIXTURE_WITH_UNICODE = require("fs").readFileSync(
-  import.meta.dir + "/_fixture.txt",
-  "utf8"
-);
+const FIXTURE_WITH_UNICODE = require("fs").readFileSync(import.meta.dir + "/_fixture.txt", "utf8");
 
 // from react-dom:
 const matchHtmlRegExp = /["'&<>]/;
@@ -116,7 +113,7 @@ for (let input of [
       // bench(`html-entities.encode`, () => htmlEntityEncode(input));
       // bench(`he.escape`, () => heEscape(input));
       bench(`Bun.escapeHTML`, () => bunEscapeHTML(input));
-    }
+    },
   );
 }
 await run();

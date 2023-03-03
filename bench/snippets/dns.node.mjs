@@ -7,7 +7,7 @@ bench("(cached) dns.lookup remote x 50", async () => {
   const total = 50;
   var remain = total;
   var done;
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     for (var i = 0; i < total; i++)
       run().finally(() => {
         remain--;
@@ -25,7 +25,7 @@ bench("(cached in batch) dns.lookup remote x 50", async () => {
   const total = 50;
   var remain = total;
   var done;
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     for (var i = 0; i < total; i++)
       run().finally(() => {
         remain--;
@@ -40,10 +40,9 @@ bench("(cached in batch) dns.lookup remote x 50", async () => {
 bench("dns.lookup remote x 50", async () => {
   var remain = 50;
   var done;
-  const run = () =>
-    lookup(Math.random().toString() + ".example.com").catch(() => {});
+  const run = () => lookup(Math.random().toString() + ".example.com").catch(() => {});
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     for (var i = 0; i < 50; i++)
       run().finally(() => {
         remain--;
@@ -58,10 +57,9 @@ bench("dns.lookup remote x 50", async () => {
 bench("dns.resolve remote x 50", async () => {
   var remain = 50;
   var done;
-  const run = () =>
-    resolve(Math.random().toString() + ".example.com").catch(() => {});
+  const run = () => resolve(Math.random().toString() + ".example.com").catch(() => {});
 
-  await new Promise((resolve) => {
+  await new Promise(resolve => {
     for (var i = 0; i < 50; i++)
       run().finally(() => {
         remain--;

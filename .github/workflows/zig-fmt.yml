@@ -33,9 +33,10 @@ jobs:
         id: fmt
         run: |
           zig fmt --check src/*.zig src/**/*.zig >> zig-fmt.err 2>> zig-fmt.err || echo "Failed"
-          # Pipe to $GITHUB_OUTPUT and replace newlines with \\n
-          echo "::set-output name=zig_fmt_errs::$(cat zig-fmt.err | sed 's/$/\\n/')"
-
+          delimiter="$(openssl rand -hex 8)"
+          echo "zig_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
+          cat zig-fmt.err >> "${GITHUB_OUTPUT}"
+          echo "${delimiter}" >> "${GITHUB_OUTPUT}"
       - name: Comment on PR
         if: steps.fmt.outputs.zig_fmt_errs != ''
         uses: thollander/actions-comment-pull-request@v2

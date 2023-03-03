@@ -1,6 +1,20 @@
 import * as http from "http";
 
-const _server = new http.Server({});
+const server = new http.Server({});
+server.address;
+server.close();
+server.eventNames;
+server.getMaxListeners();
+server.listeners;
+server.on;
+server.once;
+server.prependListener;
+server.prependOnceListener;
+server.rawListeners;
+server.removeAllListeners;
+server.removeListener;
+server.setMaxListeners;
+server;
 const agent = new http.Agent({});
 
 http.globalAgent;

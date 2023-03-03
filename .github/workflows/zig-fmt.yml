@@ -44,3 +44,13 @@ jobs:
             ```zig
             ${{ steps.fmt.outputs.zig_fmt_errs }}
             ```
+
+            To one-off fix this manually, run:
+
+            ```sh
+            zig fmt src/*.zig src/**/*.zig
+            ```
+
+      - name: Fail the job
+        if: steps.fmt.outputs.zig_fmt_errs != ''
+        run: exit 1

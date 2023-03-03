@@ -55,3 +55,6 @@ jobs:
             ```
 
             But you should really configure your editor to auto-format on save.
+      - name: Fail the job
+        if: steps.fmt.outputs.prettier_fmt_errs != ''
+        run: exit 1

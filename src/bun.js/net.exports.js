@@ -56,6 +56,7 @@ export function isIP(s) {
 const { Bun, createFIFO, Object } = import.meta.primordials;
 const { connect: bunConnect } = Bun;
 const { Duplex } = import.meta.require("node:stream");
+const { EventEmitter } = import.meta.require("node:events");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 var SocketClass;
@@ -79,7 +80,7 @@ export const Socket = (function (InternalSocket) {
   );
 })(
   class Socket extends Duplex {
-    static #Handlers = {
+    static _Handlers = {
       close: Socket.#Close,
       connectError(socket, error) {
         const self = socket.data;
@@ -107,6 +108,15 @@ export const Socket = (function (InternalSocket) {
         console.error(error);
         self.emit("error", error);
       },
+      serverOpen(socket) {
+        const self = socket.data;
+        socket.timeout(self.timeout);
+        socket.ref();
+        self.#socket = socket;
+        self.connecting = false;
+        self.emit("connect");
+        Socket.#Drain(socket);
+      },
       open(socket) {
         const self = socket.data;
         socket.timeout(self.timeout);
@@ -116,7 +126,7 @@ export const Socket = (function (InternalSocket) {
         self.emit("connect");
         Socket.#Drain(socket);
       },
-      timeout() {
+      timeout(socket) {
         const self = socket.data;
         self.emit("timeout");
       },
@@ -190,6 +200,17 @@ export const Socket = (function (InternalSocket) {
       return this.writableLength;
     }
 
+    _attach(port, socket) {
+      this.remotePort = port;
+      socket.data = this;
+      socket.timeout(this.timeout);
+      socket.ref();
+      this.#socket = socket;
+      this.connecting = false;
+      this.emit("connect");
+      Socket.#Drain(socket);
+    }
+
     connect(port, host, connectListener) {
       // TODO support IPC sockets
       var path;
@@ -233,14 +254,14 @@ export const Socket = (function (InternalSocket) {
           ? {
               data: this,
               unix: path,
-              socket: Socket.#Handlers,
+              socket: Socket._Handlers,
               tls,
             }
           : {
               data: this,
               hostname: host || "localhost",
               port: port,
-              socket: Socket.#Handlers,
+              socket: Socket._Handlers,
               tls,
             },
       );
@@ -307,6 +328,16 @@ export const Socket = (function (InternalSocket) {
       this.#socket?.end();
     }
 
+    pause() {
+      //TODO
+      return this;
+    }
+
+    resume() {
+      //TODO
+      return this;  
+    }
+
     setKeepAlive(enable = false, initialDelay = 0) {
       // TODO
       return this;
@@ -368,7 +399,187 @@ export function createConnection(port, host, connectListener) {
 
 export const connect = createConnection;
 
+class Server extends EventEmitter {
+  #connectionListener;
+  #options;
+  #server;
+  #listening;
+  #connections;
+
+  constructor(options, connectionListener) {
+    super();
+    this.maxConnections = 0;
+
+    if (typeof options === "function") {
+      connectionListener = options;
+      options = {};
+    } else if (options == null || typeof options === "object") {
+      options = { ...options };
+    } else {
+      throw new Error("bun-net-polyfill: invalid arguments");
+    }
+
+    if (typeof options.maxConnections === "number" && options.maxConnections > 0) {
+      this.maxConnections = options.maxConnections;
+    }
+    
+    this.#listening = false;
+    this.#connections = 0;
+    this.#connectionListener = connectionListener;
+    this.#options = options;
+  }
+
+  ref() {
+    this.#server?.ref();
+    return this;}
+
+
+  unref() {
+    this.#server?.unref();
+    return this;
+  }
+
+  close(callback) {
+    if (this.#server) {
+      this.#server.stop(true);
+      this.#server = null;
+      this.#listening = false;
+      this.#connections = 0;
+      this.emit('close');
+      if(typeof callback === "function") {
+        callback();
+      }
+      return this;
+    } 
+    
+    if(typeof callback === "function") {
+      callback(new Error("Server is not open"));
+    }
+    return this;
+  }
+
+  address() {
+    if (this.#server) {
+      let address = this.#server.hostname;
+      const type = isIP(address);
+      //TODO: fix adress when host is passed 
+      return {
+        port: this.#server.port,
+        address,
+        family: type ? `IPv${type}` : undefined
+      }
+    }
+    return null;
+  }
+
+  getConnections(callback) {
+    if (typeof callback === "function") {
+      callback(this.#server ? null : new Error("Server is not open"), this.#connections);
+    }
+    return this;
+  }
+
+  listen(port, hostname, onListen) {
+    if (typeof hostname === "function") {
+      onListen = hostname;
+      hostname = undefined;
+    }
+
+    if (typeof port === "function") {
+      onListen = port;
+    } else if (typeof port === "object") {
+      port?.signal?.addEventListener("abort", ()=> this.close());
+
+      hostname = port?.host;
+      port = port?.port;
+
+      // port <number>
+      // host <string>
+      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
+      // backlog <number> Common parameter of server.listen() functions.
+      // exclusive <boolean> Default: false
+      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
+      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
+      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
+      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
+
+      if (typeof port?.callback === "function") onListen = port?.callback;
+    }
+
+    hostname = hostname || "0.0.0.0";
+    const connectionListener = this.#connectionListener;
+    const { pauseOnConnect } = this.#options;
+    const self = this;
+    try{
+      this.#server = Bun.listen({
+        port,
+        hostname,
+        tls: false,
+        socket: {
+          data: SocketClass._Handlers.data,
+          close(socket) {
+            SocketClass._Handlers.close(socket);
+            self.#connections--;
+          },
+          end(socket) {
+            SocketClass._Handlers.end(socket);
+            self.#connections--;
+          },
+          open(socket) {
+            const _socket = new SocketClass(self.#options);
+            _socket._attach(port, socket);
+            if(self.maxConnections && self.#connections >= self.maxConnections) {
+              const data = {
+                localAddress: _socket.localAddress,
+                localPort: _socket.localPort,
+                localFamily: _socket.localFamily,
+                remoteAddress: _socket.remoteAddress,
+                remotePort: _socket.remotePort,
+                remoteFamily: _socket.remoteFamily 
+              };
+              _socket.close();
+              self.emit('drop', data);
+              return;
+            }
+            if (pauseOnConnect) {
+              _socket.pause();
+            }
+            self.#connections++;
+            if (typeof connectionListener == "function") {
+              connectionListener(_socket);
+            }
+            self.emit('connection', _socket);
+          },
+          error(socket, error) {
+            SocketClass._Handlers.error(socket, error);
+            self.emit("error", error);
+          },
+          timeout: SocketClass._Handlers.timeuout,
+          connectError: SocketClass._Handlers.connectError,
+          drain: SocketClass._Handlers.drain,
+          binaryType: "buffer",
+        },
+      });
+      if (typeof onListen === "function") {
+        onListen();
+      }
+      this.#listening = true;
+      self.emit('listening');
+    } catch (err) {
+      this.#listening = false;
+      self.emit('error', err);
+    }
+    return this;
+  }
+}
+
+function createServer(options, connectionListener) {
+  return new Server(options, connectionListener);
+}
+
 export default {
+  createServer,
+  Server,
   createConnection,
   connect,
   isIP,

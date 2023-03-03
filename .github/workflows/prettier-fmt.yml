@@ -53,6 +53,8 @@ jobs:
             ```sh
             bun fmt
             ```
+
+            <sup>${{github.ref}}</sup>
       - name: Uncomment on PR
         if: steps.fmt.outputs.prettier_fmt_errs == ''
         uses: thollander/actions-comment-pull-request@v2
@@ -62,6 +64,8 @@ jobs:
           create_if_not_exists: false
           message: |
             ✅ `prettier` errors have been resolved. Thank you.
+
+            <sup>${{github.ref}}</sup>
       - name: Fail the job
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         run: exit 1

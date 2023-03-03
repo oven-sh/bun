@@ -67,6 +67,7 @@ jobs:
             ```
 
             <sup>zig v${{env.ZIG_VERSION}}</sup>
+            <sup>${{github.ref}}</sup>
 
       - name: Uncomment on PR
         if: steps.fmt.outputs.zig_fmt_errs == ''
@@ -76,7 +77,10 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            ✅ `zig fmt` errors have been resolved. Thank you.
+            ✅ `zig fmt` errors have been resolved. Thank you
+
+            <sup>zig v${{env.ZIG_VERSION}}</sup>
+            <sup>${{github.ref}}</sup>
 
       - name: Fail the job
         if: steps.fmt.outputs.zig_fmt_errs != ''

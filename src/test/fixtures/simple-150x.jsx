@@ -27,19 +27,10 @@ import { SPACING } from "../helpers/styles";
     return (
       <Link route={buildProfileURL(profile.id)}>
         <a className="Profile">
-          <img
-            src={_.first(profile.photos)}
-            srcSet={buildImgSrcSet(_.first(profile.photos), 250)}
-          />
+          <img src={_.first(profile.photos)} srcSet={buildImgSrcSet(_.first(profile.photos), 250)} />
           <div className="Text">
             <div className="Title">
-              <Text
-                font="sans-serif"
-                lineHeight="20px"
-                weight="semiBold"
-                size="18px"
-                color="#000"
-              >
+              <Text font="sans-serif" lineHeight="20px" weight="semiBold" size="18px" color="#000">
                 {profile.name}
               </Text>
             </div>
@@ -111,18 +102,16 @@ import { SPACING } from "../helpers/styles";
       };
     }
 
-    setEmail = (evt) => this.setState({ email: evt.target.value });
+    setEmail = evt => this.setState({ email: evt.target.value });
 
     componentDidMount() {
       Router.prefetchRoute(`/sign-up/verify`);
     }
 
-    handleSubmit = (evt) => {
+    handleSubmit = evt => {
       evt.preventDefault();
 
-      Router.pushRoute(
-        `/sign-up/verify?${qs.stringify({ email: this.state.email })}`,
-      );
+      Router.pushRoute(`/sign-up/verify?${qs.stringify({ email: this.state.email })}`);
     };
 
     render() {
@@ -223,24 +212,15 @@ import { SPACING } from "../helpers/styles";
           <article>
             <main>
               <div className="Copy">
-                <img
-                  className="Logo Logo-Home"
-                  src="/static/animatedlogo.gif"
-                />
+                <img className="Logo Logo-Home" src="/static/animatedlogo.gif" />
                 <div className="Copy-title">
-                  <Text
-                    font="serif"
-                    size="36px"
-                    lineHeight="44px"
-                    weight="bold"
-                  >
+                  <Text font="serif" size="36px" lineHeight="44px" weight="bold">
                     Your own game of The Bachelor(ette)
                   </Text>
                 </div>
                 <div className="Copy-body">
                   <Text size="16px" lineHeight="24px" font="sans-serif">
-                    Create a page where people apply to go on a date with you.
-                    You pick the winners.
+                    Create a page where people apply to go on a date with you. You pick the winners.
                   </Text>
                 </div>
 
@@ -282,9 +262,7 @@ import { SPACING } from "../helpers/styles";
               {this.state.isLoadingProfiles && <div className="Spinner" />}
               <div className="FeaturedProfiles">
                 {!_.isEmpty(this.state.profiles) &&
-                  this.state.profiles.map((profile) => (
-                    <FeaturedProfile key={profile.id} profile={profile} />
-                  ))}
+                  this.state.profiles.map(profile => <FeaturedProfile key={profile.id} profile={profile} />)}
               </div>
             </div>
           </footer>
@@ -438,7 +416,7 @@ import { SPACING } from "../helpers/styles";
     }
   }
 
-  const HomepageWithStore = withRedux(initStore, null, (dispatch) =>
+  const HomepageWithStore = withRedux(initStore, null, dispatch =>
     bindActionCreators({ updateEntities, setCurrentUser }, dispatch),
   )(LoginGate(Homepage));
 })();

@@ -7,7 +7,9 @@ on:
       - jarred/test-actions
     paths:
       - "test/**/*.{js,ts,tsx,mjs,cjs,cts,mts}"
+      - "bench/**/*.{js,ts,tsx,mjs,cjs,cts,mts}"
       - "src/**/*.{js,ts,tsx,mjs,cjs,cts,mts}"
+      - "packages/**/*.{js,ts,tsx,mjs,cjs,cts,mts}"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -33,7 +35,7 @@ jobs:
       - name: Run prettier
         id: fmt
         run: |
-          bun prettier --check ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err
+          bun prettier --check ./bench/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts}  ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err
           echo "::set-output name=prettier_fmt_errs::$(cat prettier-fmt.err)"
       - name: Comment on PR
         if: steps.fmt.outputs.prettier_fmt_errs != ''
@@ -53,8 +55,6 @@ jobs:
             ```sh
             bun fmt
             ```
-
-            But you should really configure your editor to auto-format on save.
       - name: Fail the job
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         run: exit 1

@@ -463,8 +463,8 @@ class Server extends EventEmitter {
       //TODO: fix adress when host is passed
       let address = this.#server.hostname;
       const type = isIP(address);
-
-      if (this.#server.port) {
+      const port = this.#server.port;
+      if (typeof port === "number") {
         return {
           port,
           address,
@@ -499,6 +499,7 @@ class Server extends EventEmitter {
 
     if (typeof port === "function") {
       onListen = port;
+      port = 0;
     } else if (typeof port === "object") {
       port?.signal?.addEventListener("abort", () => this.close());
 
@@ -518,7 +519,7 @@ class Server extends EventEmitter {
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
 
-    hostname = hostname || "0.0.0.0";
+    hostname = hostname || "::";
     const connectionListener = this.#connectionListener;
     const { pauseOnConnect } = this.#options;
     const self = this;
@@ -539,7 +540,7 @@ class Server extends EventEmitter {
           },
           open(socket) {
             const _socket = new SocketClass(self.#options);
-            _socket._attach(port, socket);
+            _socket._attach(self.#server?.port, socket);
             if (self.maxConnections && self.#connections >= self.maxConnections) {
               const data = {
                 localAddress: _socket.localAddress,

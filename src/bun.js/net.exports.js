@@ -321,7 +321,7 @@ export const Socket = (function (InternalSocket) {
     }
 
     get remoteAddress() {
-      return this.#socket.remoteAddress;
+      return this.#socket?.remoteAddress;
     }
 
     get remoteFamily() {

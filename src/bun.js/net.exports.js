@@ -445,7 +445,7 @@ class Server extends EventEmitter {
       if (typeof callback === "function") {
         callback();
       }
-
+      
       return this;
     }
 

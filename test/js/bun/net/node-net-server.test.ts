@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { close } from "fs";
 import { createServer } from "net";
 import { createCallCheckCtx } from "node-test-helpers";
 
@@ -148,4 +149,54 @@ describe("net.creeateServer listen", () => {
     );
     done();
   });
+});
+it("should receive data", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const server = createServer(socket => {
+    const onData = mustCall(data => {
+      server.close();
+      expect(data.byteLength).toBe(5);
+      expect(data.toString("utf8")).toBe("Hello");
+      done();
+    });
+    socket.on("data", onData);
+  });
+  function closeAndFail() {
+    console.log("closed!");
+    server.close();
+    expect("").toBe("Hello");
+  }
+  server.on("error", mustNotCall("no data received"));
+
+  //should be faster than 100ms
+  setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server.listen(
+    65534,
+    "127.0.0.1",
+    mustCall(() => {
+      const address = server.address();
+      Bun.connect({
+        hostname: address.address,
+        port: address.port,
+        socket: {
+          data(socket) {},
+          open(socket) {
+            socket.write("Hello");
+          },
+          close: closeAndFail,
+          // client-specific handlers
+          connectError: closeAndFail, // connection failed
+          end: closeAndFail,
+        },
+      })
+        .then(client => {
+          client.unref();
+        })
+        .catch(closeAndFail);
+    }),
+  );
 });

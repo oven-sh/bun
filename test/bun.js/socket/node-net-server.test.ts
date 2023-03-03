@@ -163,7 +163,6 @@ it("should receive data", done => {
     socket.on("data", onData);
   });
   function closeAndFail() {
-    console.log("closed!");
     server.close();
     expect("").toBe("Hello");
   }
@@ -186,17 +185,11 @@ it("should receive data", done => {
           data(socket) {},
           open(socket) {
             socket.write("Hello");
+            socket.end();
           },
-          close: closeAndFail,
-          // client-specific handlers
           connectError: closeAndFail, // connection failed
-          end: closeAndFail,
         },
-      })
-        .then(client => {
-          client.unref();
-        })
-        .catch(closeAndFail);
+      }).catch(closeAndFail);
     }),
   );
 });

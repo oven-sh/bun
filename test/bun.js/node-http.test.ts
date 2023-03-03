@@ -6,12 +6,13 @@ describe("node:http", () => {
   describe("createServer", async () => {
     it("hello world", async () => {
       const server = createServer((req, res) => {
+        expect(req.url).toBe("/hello?world");
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
       });
       server.listen(8123);
 
-      const res = await fetch("http://localhost:8123");
+      const res = await fetch("http://localhost:8123/hello?world");
       expect(await res.text()).toBe("Hello World");
       server.close();
     });

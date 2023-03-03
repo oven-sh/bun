@@ -27,8 +27,8 @@ jobs:
       - name: Install zig
         run: |
           curl https://ziglang.org/builds/${{env.ZIG_VERSION}}/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.xz -L -o zig.tar.xz
-          sudo apt install xz-utils
-          tar -xf zig.tar.xz
+          gzip -d zig.tar.xz
+          tar -xf zig.tar
           sudo mv zig-linux-x86_64-${{env.ZIG_VERSION}}/zig /usr/local/bin
       - name: Run zig fmt
         id: fmt

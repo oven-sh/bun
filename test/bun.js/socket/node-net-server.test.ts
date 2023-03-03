@@ -150,11 +150,14 @@ describe("net.creeateServer listen", () => {
     done();
   });
 });
+
 it("should receive data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  let timeout;
 
   const server = createServer(socket => {
     const onData = mustCall(data => {
+      clearTimeout(timeout);
       server.close();
       expect(data.byteLength).toBe(5);
       expect(data.toString("utf8")).toBe("Hello");
@@ -162,22 +165,67 @@ it("should receive data", done => {
     });
     socket.on("data", onData);
   });
+
   function closeAndFail() {
+    clearTimeout(timeout);
     server.close();
     expect("").toBe("Hello");
   }
   server.on("error", mustNotCall("no data received"));
 
   //should be faster than 100ms
-  setTimeout(() => {
+  timeout = setTimeout(() => {
     closeAndFail();
   }, 100);
 
   server.listen(
-    65534,
-    "127.0.0.1",
     mustCall(() => {
       const address = server.address();
+      console.log("address", address);
+      Bun.connect({
+        hostname: address.address,
+        port: address.port,
+        socket: {
+          data(socket) {},
+          open(socket) {
+            socket.write("Hello");
+            socket.end();
+          },
+          connectError: closeAndFail, // connection failed
+        },
+      }).catch(closeAndFail);
+    }),
+  );
+});
+
+it("should call end", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  let timeout;
+
+  const server = createServer(socket => {
+    const onEnd = mustCall(() => {
+      clearTimeout(timeout);
+      server.close();
+      done();
+    });
+    socket.on("end", onEnd);
+  });
+
+  const closeAndFail = mustNotCall("end not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+  });
+  server.on("error", mustNotCall("end not called"));
+
+  //should be faster than 100ms
+  // timeout = setTimeout(() => {
+  //   closeAndFail();
+  // }, 100);
+
+  server.listen(
+    mustCall(() => {
+      const address = server.address();
+      console.log("address", address);
       Bun.connect({
         hostname: address.address,
         port: address.port,

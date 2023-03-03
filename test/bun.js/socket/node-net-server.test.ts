@@ -182,7 +182,6 @@ it("should receive data", done => {
   server.listen(
     mustCall(() => {
       const address = server.address();
-      console.log("address", address);
       Bun.connect({
         hostname: address.address,
         port: address.port,
@@ -242,4 +241,69 @@ it("should call end", done => {
       }).catch(closeAndFail);
     }),
   );
+});
+
+it("should call close", done => {
+  let closed = false;
+  const server = createServer();
+  server.listen().on("close", () => {
+    closed = true;
+  });
+  server.close();
+  expect(closed).toBe(true);
+  done();
+});
+it("should call drop", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  let timeout;
+  const server = createServer();
+  let maxClients = 2;
+  server.maxConnections = maxClients - 1;
+
+  const closeAndFail = mustNotCall("end not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server
+    .on(
+      "drop",
+      mustCall(data => {
+        server.close();
+        clearTimeout(timeout);
+        expect(data.localPort).toBeDefined();
+        expect(data.remotePort).toBeDefined();
+        expect(data.remoteFamily).toBeDefined();
+        expect(data.localFamily).toBeDefined();
+        expect(data.localAddress).toBeDefined();
+        done();
+      }),
+    )
+    .listen(() => {
+      const address = server.address();
+
+      function spawnClient() {
+        Bun.connect({
+          port: address.port,
+          hostname: address.address,
+          socket: {
+            data(socket) {},
+            open(socket) {
+              socket.end();
+            },
+          },
+        });
+      }
+      for (let i = 0; i < maxClients; i++) {
+        spawnClient();
+        spawnClient();
+      }
+    });
 });

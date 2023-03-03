@@ -509,7 +509,7 @@ class Server extends EventEmitter {
       port?.signal?.addEventListener("abort", () => this.close());
 
       hostname = port?.host;
-      port = port?.port;
+      port = port?.port || 0;
 
       // port <number>
       // host <string>
@@ -522,6 +522,9 @@ class Server extends EventEmitter {
       // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
       if (typeof port?.callback === "function") onListen = port?.callback;
+    }
+    if (typeof port !== "number") {
+      port = 0;
     }
 
     hostname = hostname || "::";
@@ -558,7 +561,7 @@ class Server extends EventEmitter {
                 remotePort: _socket.remotePort,
                 remoteFamily: _socket.remoteFamily,
               };
-              _socket.close();
+              socket.end();
               self.emit("drop", data);
               return;
             }

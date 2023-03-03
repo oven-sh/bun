@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`d0 d1 t1 1`] = `"hello\`snapshot\\"`;
+
+exports[`d0 d1 t2 1`] = `"hey"`;
+
+exports[`d0 hello snapshot 1`] = `1`;
+
+exports[`d0 hello snapshot 2`] = `
+"
+export with test name noooooooo
+
+"
+`;
+
+exports[`d0 hello snapshot 3`] = `1`;
+
+exports[`d0 hello snapshot 4`] = `2`;
+
+exports[`d0 hello snapshot 5`] = `"one two three"`;
+
+exports[`d0 hello snapshot 6`] = `
+"
+export[\\\`hello snap'shot 2\`] = \`"
+`;
+
+exports[`d0 hello snapshot 7`] = `
+"
+export[\`hello snapshot 2\`] = \`"
+`;
+
+exports[`d0 hello snapshot: one 1`] = `1`;
+
+exports[`d0 hello snapshot: one 2`] = `3`;
+
+exports[`d0 t3 1`] = `"hello snapshot"`;
+
+exports[`d0 t4 1`] = `"hello\`snapshot\\"`;

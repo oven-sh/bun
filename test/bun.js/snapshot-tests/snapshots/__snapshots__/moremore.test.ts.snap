@@ -1,0 +1,41 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`debug 1`] = `1`;
+
+exports[`debug 2`] = `NaN`;
+
+exports[`debug 3`] = `Infinity`;
+
+exports[`debug 4`] = `-Infinity`;
+
+exports[`debug 5`] = `Number {}`;
+
+exports[`debug 6`] = `Number2 {}`;
+
+exports[`debug 7`] = `Number3 {}`;
+
+exports[`debug 8`] = `123348923.2341281`;
+
+exports[`debug 9`] = `false`;
+
+exports[`debug 10`] = `true`;
+
+exports[`debug 11`] = `Boolean {}`;
+
+exports[`debug 12`] = `Boolean {}`;
+
+exports[`debug 13`] = `Boolean2 {}`;
+
+exports[`debug 14`] = `Boolean2 {}`;
+
+exports[`debug 15`] = `
+Boolean3 {
+  "false": true,
+}
+`;
+
+exports[`debug 16`] = `
+Boolean3 {
+  "false": true,
+}
+`;

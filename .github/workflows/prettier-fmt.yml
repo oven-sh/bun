@@ -43,7 +43,7 @@ jobs:
         with:
           comment_tag: prettier-fmt
           message: |
-            @${{ github.actor }} `prettier` reported errors. Please configure your text editor to format on save.
+            ❌ @${{ github.actor }} `prettier` reported errors. Please configure your text editor to format on save.
 
             ```js
             ${{ steps.fmt.outputs.prettier_fmt_errs }}
@@ -61,7 +61,7 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            `prettier` errors have been resolved. Thank you.
+            ✅ `prettier` errors have been resolved. Thank you.
       - name: Fail the job
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         run: exit 1

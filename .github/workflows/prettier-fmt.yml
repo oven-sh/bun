@@ -26,21 +26,21 @@ jobs:
         name: Setup
         uses: oven-sh/setup-bun@v1
         with:
-          bun-version: action:${{github.run_id}}
+          bun-version: latest
       - id: install
         name: Install prettier
         run: bun install
       - name: Run prettier
         id: fmt
         run: |
-          bun prettier --check './test/**/*.{ts,tsx,js,jsx}' './src/**/*.{ts,tsx,js,jsx}' --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err
+          bun prettier --check ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err
           echo "::set-output name=prettier_fmt_errs::$(cat prettier-fmt.err)"
       - name: Comment on PR
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         uses: thollander/actions-comment-pull-request@v2
         with:
           message: |
-            @${{ github.actor }} please run `prettier` on your code. 
+            @${{ github.actor }} please run `prettier` on your code.
 
             It's easiest if you configure your text editor to auto-format on save. If you use VSCode, consider the Prettier VSCode extension.
 
@@ -48,3 +48,10 @@ jobs:
             ```js
             ${{ steps.fmt.outputs.prettier_fmt_errs }}
             ```
+
+            To one-off fix this manually, run:
+            ```sh
+            bun fmt
+            ```
+
+            But you should really configure your editor to auto-format on save.

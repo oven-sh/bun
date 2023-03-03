@@ -2257,16 +2257,41 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
                 },
                 .Boolean => {
+                    if (value.isObject()) {
+                        var bool_name = ZigString.Empty;
+                        value.getClassName(this.globalThis, &bool_name);
+                        if (this.snapshot_format) {
+                            this.addForNewLine(" {}".len + bool_name.len);
+                            writer.print("{s} {{}}", .{bool_name});
+                            return;
+                        }
+                        var bool_value = ZigString.Empty;
+                        value.toZigString(&bool_value, this.globalThis);
+
+                        if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
+                            this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
+                            writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]", enable_ansi_colors), .{
+                                bool_name,
+                                bool_value,
+                            });
+                            return;
+                        }
+                        this.addForNewLine(bool_value.len + "[Boolean: ]".len);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
+                        return;
+                    }
                     if (value.toBoolean()) {
-                        this.addForNewLine(5);
+                        this.addForNewLine(4);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
                     } else {
-                        this.addForNewLine(4);
+                        this.addForNewLine(5);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
                     }
                 },
                 .GlobalObject => {
-                    writer.writeAll(comptime Output.prettyFmt("<cyan>[this.globalThis]<r>", enable_ansi_colors));
+                    const fmt = "[this.globalThis]";
+                    this.addForNewLine(fmt.len);
+                    writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
                     const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);

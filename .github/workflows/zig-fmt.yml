@@ -26,8 +26,9 @@ jobs:
           submodules: recursive
       - name: Install zig
         run: |
-          curl https://ziglang.org/builds/${{env.ZIG_VERSION}}/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.gz -L -o zig.tar.gz
-          tar -xf zig.tar.gz
+          curl https://ziglang.org/builds/${{env.ZIG_VERSION}}/zig-linux-x86_64-${{env.ZIG_VERSION}}.tar.xz -L -o zig.tar.xz
+          sudo apt install xz-utils
+          tar -xf zig.tar.xz
           sudo mv zig-linux-x86_64-${{env.ZIG_VERSION}}/zig /usr/local/bin
       - name: Run zig fmt
         id: fmt

@@ -133,7 +133,7 @@ declare module "http" {
     // localPort?: number | undefined;
     // lookup?: LookupFunction | undefined;
     /**
-     * @default 8162
+     * @default 8192
      */
     maxHeaderSize?: number | undefined;
     method?: string | undefined;

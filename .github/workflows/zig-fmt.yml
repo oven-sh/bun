@@ -66,8 +66,8 @@ jobs:
             zig fmt src/*.zig src/**/*.zig
             ```
 
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
             <sup>zig v${{env.ZIG_VERSION}}</sup>
-            <sup>${{github.ref}}</sup>
 
       - name: Uncomment on PR
         if: steps.fmt.outputs.zig_fmt_errs == ''
@@ -79,8 +79,8 @@ jobs:
           message: |
             ✅ `zig fmt` errors have been resolved. Thank you.
 
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
             <sup>zig v${{env.ZIG_VERSION}}</sup>
-            <sup>${{github.ref}}</sup>
 
       - name: Fail the job
         if: steps.fmt.outputs.zig_fmt_errs != ''

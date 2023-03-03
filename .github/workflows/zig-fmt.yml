@@ -32,10 +32,11 @@ jobs:
       - name: Run zig fmt
         id: fmt
         run: |
-          zig fmt --check src/*.zig src/**/*.zig 2> zig-fmt.err || echo "Failed"
+          zig fmt --check src/*.zig src/**/*.zig 2> zig-fmt.err > zig-fmt.err2 || echo "Failed"
           delimiter="$(openssl rand -hex 8)"
           echo "zig_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
           cat zig-fmt.err >> "${GITHUB_OUTPUT}"
+          cat zig-fmt.err2 >> "${GITHUB_OUTPUT}"
           echo "${delimiter}" >> "${GITHUB_OUTPUT}"
       - name: Comment on PR
         if: steps.fmt.outputs.zig_fmt_errs != ''

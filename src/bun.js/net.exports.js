@@ -460,14 +460,26 @@ class Server extends EventEmitter {
 
   address() {
     if (this.#server) {
+      //TODO: fix adress when host is passed 
       let address = this.#server.hostname;
       const type = isIP(address);
-      //TODO: fix adress when host is passed 
-      return {
-        port: this.#server.port,
-        address,
-        family: type ? `IPv${type}` : undefined
+      
+      if (this.#server.port) {
+        return {
+          port,
+          address,
+          family: type ? `IPv${type}` : undefined
+        }
       }
+
+      if (type) {
+        return {
+          address,
+          family: type ? `IPv${type}` : undefined
+        }
+      }
+
+      return address;
     }
     return null;
   }

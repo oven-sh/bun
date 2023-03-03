@@ -415,3 +415,36 @@ it("should call error", done => {
     )
     .listen(123456);
 });
+
+it("should call abort with signal", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  const controller = new AbortController();
+  let timeout;
+  const server = createServer();
+  let maxClients = 2;
+  server.maxConnections = maxClients - 1;
+
+  const closeAndFail = mustNotCall("close not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server
+    .on(
+      "close",
+      mustCall(() => {
+        clearImmediate(timeout);
+        done();
+      }),
+    )
+    .listen({ signal: controller.signal }, () => {
+      controller.abort();
+    });
+});

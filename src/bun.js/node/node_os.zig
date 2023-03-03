@@ -633,11 +633,8 @@ pub const Os = struct {
                     break :brk systemdir_ ++ "\\temp";
                 }
             } else {
-                var dir = bun.asByteSlice(bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp");
-                if (dir.len > 1 and strings.endsWithChar(dir, '/')) {
-                    dir = dir[0 .. dir.len - 1];
-                }
-                break :brk dir;
+                const dir = bun.asByteSlice(bun.getenvZ("TMPDIR") orelse bun.getenvZ("TMP") orelse bun.getenvZ("TEMP") orelse "/tmp");
+                break :brk strings.withoutTrailingSlash(dir);
             }
 
             break :brk "unknown";

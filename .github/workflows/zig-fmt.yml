@@ -33,6 +33,7 @@ jobs:
         id: fmt
         run: |
           zig fmt --check src/*.zig src/**/*.zig >> zig-fmt.err 2>> zig-fmt.err || echo "Failed"
+          cat zig-fmt.err >> $GITHUB_OUTPUT
 
       - name: Comment on PR
         if: steps.fmt.outputs.zig_fmt_errs != ''

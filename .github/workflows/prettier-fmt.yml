@@ -30,12 +30,14 @@ jobs:
       - name: Run prettier
         id: fmt
         run: |
-          bun prettier --check ./bench/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts}  ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err
-          echo "::set-output name=prettier_fmt_errs::$(cat prettier-fmt.err)"
+          bun prettier --check ./bench/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts}  ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err || echo "Failed"
+          cat prettier-fmt.err >> $GITHUB_OUTPUT
+
       - name: Comment on PR
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         uses: thollander/actions-comment-pull-request@v2
         with:
+          comment_tag: prettier-fmt
           message: |
             @${{ github.actor }} please run `prettier` on your code.
 

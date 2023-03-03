@@ -1979,7 +1979,7 @@ pub const ZigConsoleClient = struct {
                         value.getClassName(this.globalThis, &number_name);
 
                         if (this.snapshot_format) {
-                            // jest doesn't include the number
+                            // jest snapshots don't include the number
                             this.addForNewLine(number_name.len + " {}".len);
                             writer.print("{s} {{}}", .{number_name});
                             return;
@@ -1988,12 +1988,20 @@ pub const ZigConsoleClient = struct {
                         var number_value = ZigString.Empty;
                         value.toZigString(&number_value, this.globalThis);
 
+                        if (!strings.eqlComptime(number_name.slice(), "Number")) {
+                            this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
+                            writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
+                                number_name,
+                                number_value,
+                            });
+                            return;
+                        }
+
                         this.addForNewLine(number_name.len + number_value.len + 4);
                         writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
                             number_name,
                             number_value,
                         });
-
                         return;
                     }
 

@@ -308,13 +308,17 @@ export class Server extends EventEmitter {
 
 function assignHeaders(object, req) {
   var headers = req.headers.toJSON();
+  var lowerHeaders = {};
   const rawHeaders = newArrayWithSize(req.headers.count * 2);
   var i = 0;
   for (const key in headers) {
     rawHeaders[i++] = key;
-    rawHeaders[i++] = headers[key];
+    var header = headers[key];
+
+    rawHeaders[i++] = header;
+    lowerHeaders[key.toLowerCase()] = header;
   }
-  object.headers = headers;
+  object.headers = lowerHeaders;
   object.rawHeaders = rawHeaders;
 }
 function destroyBodyStreamNT(bodyStream) {

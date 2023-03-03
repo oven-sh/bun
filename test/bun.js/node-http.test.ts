@@ -411,6 +411,15 @@ describe("node:http", () => {
         req.end();
       }
     });
+
+    it("should allow us to access headers on response object in lower-case", done => {
+      const req = request(`http://localhost:${serverPort}`, { method: "POST" }, res => {
+        expect(res.rawHeaders.indexOf("Content-Type")).toBeTruthy();
+        expect(res.headers["content-type"]).toBe("text/plain");
+        done();
+      });
+      req.end();
+    });
   });
 
   describe("signal", () => {

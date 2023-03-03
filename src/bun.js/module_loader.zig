@@ -1585,6 +1585,7 @@ pub const ModuleLoader = struct {
                     opts.features.dynamic_require = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = false;
+                    opts.features.top_level_await = true;
                     opts.features.react_fast_refresh = false;
                     opts.filepath_hash_for_hmr = 0;
                     opts.warn_about_unbundled_modules = false;

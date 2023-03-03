@@ -8,7 +8,7 @@ Bun provides a set of optimized APIs for reading and writing files.
 
 `Bun.file(path): BunFile`
 
-Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents represents a lazily-loaded file; initializing it does not actually read the file from disk.
+Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents a lazily-loaded file; initializing it does not actually read the file from disk.
 
 ```ts
 const foo = Bun.file("foo.txt"); // relative to cwd
@@ -45,7 +45,7 @@ The default MIME type is `text/plain;charset=utf-8`, but it can be overridden by
 
 ```ts
 const notreal = Bun.file("notreal.json", { type: "application/json" });
-notreal.type; // => "text/plain;charset=utf-8"
+notreal.type; // => "application/json;charset=utf-8"
 ```
 
 For convenience, Bun exposes `stdin`, `stdout` and `stderr` as instances of `BunFile`.

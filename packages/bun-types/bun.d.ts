@@ -395,7 +395,9 @@ declare module "bun" {
       stream?: boolean;
     }): void;
 
-    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
+    write(
+      chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    ): number;
     /**
      * Flush the internal buffer
      *
@@ -534,7 +536,9 @@ declare module "bun" {
      *
      * If the file descriptor is not writable yet, the data is buffered.
      */
-    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
+    write(
+      chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
+    ): number;
     /**
      * Flush the internal buffer, committing the data to disk or the pipe.
      */
@@ -650,38 +654,38 @@ declare module "bun" {
    * @param seed The seed to use.
    */
   export const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer,
+    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
     seed?: number,
   ) => number | bigint) &
     Hash;
 
   interface Hash {
     wyhash: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     crc32: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     adler32: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     cityHash32: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     cityHash64: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     murmur32v3: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
     murmur64v2: (
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       seed?: number,
     ) => number | bigint;
   }
@@ -989,7 +993,7 @@ declare module "bun" {
      *
      */
     send(
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1101,7 +1105,7 @@ declare module "bun" {
      */
     publish(
       topic: string,
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1739,7 +1743,7 @@ declare module "bun" {
      */
     publish(
       topic: string,
-      data: string | ArrayBufferView | ArrayBuffer,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
       compress?: boolean,
     ): ServerWebSocketSendStatus;
 
@@ -1944,7 +1948,7 @@ declare module "bun" {
      * @param level
      * @returns The previous level
      */
-    gcAggressionLevel(level: 0 | 1 | 2): 0 | 1 | 2;
+    gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
   }
   export const unsafe: unsafe;
 
@@ -2474,7 +2478,7 @@ declare module "bun" {
     /**
      * The source code of the module
      */
-    contents: string | ArrayBufferView | ArrayBuffer;
+    contents: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer;
     /**
      * The loader to use for this file
      *
@@ -3353,7 +3357,7 @@ type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 type PathLike = string | TypedArray | ArrayBufferLike | URL;
 type PathOrFileDescriptor = PathLike | number;
-type NoParamCallback = VoidFunction;
+type NoParamCallback = (err: ErrnoException | null) => void;
 type BufferEncoding =
   | "buffer"
   | "utf8"

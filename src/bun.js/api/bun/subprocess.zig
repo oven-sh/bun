@@ -1480,7 +1480,7 @@ pub const Subprocess = struct {
             jsc_vm.tick();
             jsc_vm.eventLoop().autoTick();
         }
-        // subprocess.wait(true);
+
         const exitCode = subprocess.exit_code orelse 1;
         const stdout = subprocess.stdout.toBufferedValue(globalThis);
         const stderr = subprocess.stderr.toBufferedValue(globalThis);

@@ -15,7 +15,7 @@
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js",
     "postinstall": "bash .scripts/postinstall.sh",
     "typecheck": "tsc",
-    "fmt": "prettier --write './**/*.{ts,tsx,js,jsx}' --config .prettierrc",
+    "fmt": "prettier --write  './test/**/*.{mjs,ts,tsx,js,jsx}' './src/*.{mjs,ts,tsx,js,jsx}' './src/*/*.{mjs,ts,tsx,js,jsx}' './src/*/*/*.{mjs,ts,tsx,js,jsx}' './bench/*.{mjs,ts,tsx,js,jsx}' --config .prettierrc.cjs",
     "lint": "eslint './**/*.d.ts' --cache",
     "lint:fix": "eslint './**/*.d.ts' --cache --fix"
   },
@@ -25,5 +25,6 @@
     "@typescript-eslint/parser": "^5.31.0",
     "bun-webkit": "0.0.1-595dd33692e02001631f6c3ab6f2bbb199278d26"
   },
-  "version": "0.0.0"
+  "version": "0.0.0",
+  "prettier": "./.prettierrc.cjs"
 }

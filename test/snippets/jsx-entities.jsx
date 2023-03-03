@@ -926,10 +926,7 @@ export function test() {
       key = txt.value;
     }
 
-    console.assert(
-      elements[rawKey] === key.codePointAt(0),
-      `${key} is not ${elements[rawKey]}`,
-    );
+    console.assert(elements[rawKey] === key.codePointAt(0), `${key} is not ${elements[rawKey]}`);
   }
 
   return testDone(import.meta.url);

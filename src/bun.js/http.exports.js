@@ -1,16 +1,22 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
+const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
-const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : nop;
+
+const __DEBUG__ = process.env.__DEBUG__;
+const debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop;
 
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
+const kAbortController = Symbol.for("kAbortController");
+const kClearTimeout = Symbol("kClearTimeout");
+
 const kCorked = Symbol.for("kCorked");
 const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
 
@@ -233,13 +239,13 @@ export class Server extends EventEmitter {
     if (typeof port === "function") {
       onListen = port;
     } else if (typeof port === "object") {
-      port?.signal?.addEventListener("abort", ()=> {
+      port?.signal?.addEventListener("abort", () => {
         this.close();
       });
 
       host = port?.host;
       port = port?.port;
-      
+
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
@@ -546,8 +552,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
   return true;
 }
 
-const kClearTimeout = Symbol("kClearTimeout");
-
 export class OutgoingMessage extends Writable {
   #headers;
   headersSent = false;
@@ -559,6 +563,7 @@ export class OutgoingMessage extends Writable {
 
   #fakeSocket;
   #timeoutTimer = null;
+  [kAbortController] = null;
 
   // For compat with IncomingRequest
   get headers() {
@@ -652,7 +657,6 @@ export class OutgoingMessage extends Writable {
     }
   }
 
-  // TODO: Use fetch AbortSignal when implemented
   setTimeout(msecs, callback) {
     if (this.#timeoutTimer) return this;
     if (callback) {
@@ -660,8 +664,9 @@ export class OutgoingMessage extends Writable {
     }
 
     this.#timeoutTimer = setTimeout(async () => {
-      this.emit("timeout");
       this.#timeoutTimer = null;
+      this[kAbortController]?.abort();
+      this.emit("timeout");
     }, msecs);
 
     return this;
@@ -885,8 +890,6 @@ export class ServerResponse extends Writable {
 export class ClientRequest extends OutgoingMessage {
   #timeout;
   #res = null;
-  #aborted = false;
-  #timeoutCb = null;
   #upgradeOrConnect = false;
   #parser = null;
   #maxHeadersCount = null;
@@ -903,6 +906,8 @@ export class ClientRequest extends OutgoingMessage {
 
   #body = null;
   #fetchRequest;
+  #signal = null;
+  [kAbortController] = null;
 
   #options;
   #finished;
@@ -947,12 +952,24 @@ export class ClientRequest extends OutgoingMessage {
 
   _final(callback) {
     this.#finished = true;
+    this[kAbortController] = new AbortController();
+    this[kAbortController].signal.addEventListener("abort", () => {
+      this[kClearTimeout]();
+    });
+    if (this.#signal?.aborted) {
+      this[kAbortController].abort();
+    }
+
+    var method = this.#method,
+      body = this.#body;
+
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
-      method: this.#method,
+      method,
       headers: this.getHeaders(),
-      body: this.#body,
+      body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
       redirect: "manual",
-      verbose: Boolean(process.env.BUN_JS_DEBUG),
+      verbose: Boolean(__DEBUG__),
+      signal: this[kAbortController].signal,
     })
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
@@ -961,7 +978,7 @@ export class ClientRequest extends OutgoingMessage {
         this.emit("response", res);
       })
       .catch(err => {
-        if (process.env.BUN_JS_DEBUG) globalReportError(err);
+        if (__DEBUG__) globalReportError(err);
         this.emit("error", err);
       })
       .finally(() => {
@@ -970,19 +987,15 @@ export class ClientRequest extends OutgoingMessage {
       });
 
     callback();
-
-    // TODO: Clear timeout here
   }
 
   get aborted() {
-    return this.#aborted;
+    return this.#signal?.aborted || !!this[kAbortController]?.signal.aborted;
   }
 
-  // TODO: Use fetch AbortSignal when implemented
   abort() {
-    if (this.#aborted) return;
-    this.#aborted = true;
-    this[kClearTimeout]();
+    if (this.aborted) return;
+    this[kAbortController].abort();
     // TODO: Close stream if body streaming
   }
 
@@ -992,7 +1005,7 @@ export class ClientRequest extends OutgoingMessage {
     if (typeof input === "string") {
       const urlStr = input;
       input = urlToHttpOptions(new URL(urlStr));
-    } else if (input && input[searchParamsSymbol] && input[searchParamsSymbol][searchParamsSymbol]) {
+    } else if (input && typeof input === "object" && input instanceof URL) {
       // url.URL instance
       input = urlToHttpOptions(input);
     } else {
@@ -1009,8 +1022,7 @@ export class ClientRequest extends OutgoingMessage {
     }
 
     const defaultAgent = options._defaultAgent || Agent.globalAgent;
-    const protocol = (this.#protocol = options.protocol || defaultAgent.protocol);
-    const expectedProtocol = defaultAgent.protocol;
+    const protocol = (this.#protocol = options.protocol ||= defaultAgent.protocol);
 
     if (options.path) {
       const path = String(options.path);
@@ -1021,14 +1033,14 @@ export class ClientRequest extends OutgoingMessage {
       }
     }
 
-    if (protocol !== expectedProtocol) {
+    // Since we don't implement Agent, we don't need this
+    if (protocol !== "http:" && protocol !== "https:" && protocol) {
+      const expectedProtocol = defaultAgent?.protocol ?? "http:";
       throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
-    const defaultPort = options.defaultPort || (this.#agent && this.#agent.defaultPort);
-
-    this.#port = options.port = options.port || defaultPort || 80;
+    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || 80;
     const host =
       (this.#host =
       options.host =
@@ -1038,13 +1050,15 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    // if (options.timeout !== undefined)
-    //   this.timeout = getTimerDuration(options.timeout, "timeout");
+    if (options.timeout !== undefined) this.setTimeout(options.timeout, null);
 
     const signal = options.signal;
     if (signal) {
-      // TODO: Implement this when AbortSignal binding is available from Zig (required for fetch)
-      // addAbortSignal(signal, this);
+      //We still want to control abort function and timeout so signal call our AbortController
+      signal.addEventListener("abort", () => {
+        this[kAbortController]?.abort();
+      });
+      this.#signal = signal;
     }
     let method = options.method;
     const methodIsString = typeof method === "string";
@@ -1091,7 +1105,8 @@ export class ClientRequest extends OutgoingMessage {
       this.once("response", cb);
     }
 
-    debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+    __DEBUG__ &&
+      debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
 
     // if (
     //   method === "GET" ||
@@ -1108,8 +1123,6 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#finished = false;
     this.#res = null;
-    this.#aborted = false;
-    this.#timeoutCb = null;
     this.#upgradeOrConnect = false;
     this.#parser = null;
     this.#maxHeadersCount = null;
@@ -1185,13 +1198,13 @@ export class ClientRequest extends OutgoingMessage {
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
 }
 
 function urlToHttpOptions(url) {
   var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  const options = {
+  return {
     protocol,
     hostname:
       typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
@@ -1202,14 +1215,9 @@ function urlToHttpOptions(url) {
     pathname,
     path: `${pathname || ""}${search || ""}`,
     href,
+    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
+    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
   };
-  if (port !== "") {
-    options.port = Number(port);
-  }
-  if (username || password) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
-  }
-  return options;
 }
 
 function validateHost(host, name) {

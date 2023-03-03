@@ -21,9 +21,6 @@ export function test() {
   if (where.default !== "hi") {
     throw new Error(`_auth import is incorrect.`);
   }
-  console.assert(
-    powerLevel.description === "9001",
-    "Symbol is not exported correctly",
-  );
+  console.assert(powerLevel.description === "9001", "Symbol is not exported correctly");
   return testDone(import.meta.url);
 }

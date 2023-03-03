@@ -13,10 +13,7 @@ export async function getStaticProps(ctx) {
   return {
     props: {
       // not tested
-      code: readFile(
-        "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js",
-        { encoding: "utf-8" },
-      ),
+      code: readFile("/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js", { encoding: "utf-8" }),
       defaultFile: "magic-string.js",
     },
   };
@@ -33,11 +30,8 @@ export default function Home({ code, defaultFile }) {
   }, []);
 
   const runBuild = React.useCallback(
-    (event) => {
-      globalThis.Scan.transform(
-        event.target.value,
-        fileNameRef?.current?.value,
-      ).then((result) => {
+    event => {
+      globalThis.Scan.transform(event.target.value, fileNameRef?.current?.value).then(result => {
         setLexer(JSON.stringify(result.lexer, null, 2));
         setBunResult(JSON.stringify(result.bun, null, 2));
       }, console.error);
@@ -59,7 +53,7 @@ export default function Home({ code, defaultFile }) {
             type="text"
             placeholder="filename"
             value={file}
-            onChange={(event) => setFile(event.target.value)}
+            onChange={event => setFile(event.target.value)}
             ref={fileNameRef}
           />
           <textarea onChange={runBuild} defaultValue={code}></textarea>

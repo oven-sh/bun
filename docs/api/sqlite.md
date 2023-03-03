@@ -211,7 +211,7 @@ Queries can contain parameters. These can be numerical (`?1`) or named (`$param`
 
 ```ts#Query
 const query = db.query("SELECT * FROM foo WHERE bar = $bar");
-const results = await query.all({
+const results = query.all({
   $bar: "bar",
 });
 ```
@@ -230,7 +230,7 @@ Numbered (positional) parameters work too:
 
 ```ts#Query
 const query = db.query("SELECT ?1, ?2");
-const results = await query.all("hello", "goodbye");
+const results = query.all("hello", "goodbye");
 ```
 
 ```ts#Results

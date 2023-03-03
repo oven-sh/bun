@@ -157,12 +157,11 @@ pub const ClientEntryPoint = struct {
 };
 
 pub const ServerEntryPoint = struct {
-    code_buffer: [bun.MAX_PATH_BYTES * 2 + 500]u8 = undefined,
-    output_code_buffer: [bun.MAX_PATH_BYTES * 8 + 500]u8 = undefined,
     source: logger.Source = undefined,
 
     pub fn generate(
         entry: *ServerEntryPoint,
+        allocator: std.mem.Allocator,
         is_hot_reload_enabled: bool,
         original_path: Fs.PathName,
         name: string,
@@ -182,8 +181,8 @@ pub const ServerEntryPoint = struct {
 
         const code = brk: {
             if (is_hot_reload_enabled) {
-                break :brk try std.fmt.bufPrint(
-                    &entry.code_buffer,
+                break :brk try std.fmt.allocPrint(
+                    allocator,
                     \\//Auto-generated file
                     \\var cjsSymbol = Symbol.for("CommonJS");
                     \\var hmrSymbol = Symbol.for("BunServerHMR");
@@ -225,8 +224,8 @@ pub const ServerEntryPoint = struct {
                     },
                 );
             }
-            break :brk try std.fmt.bufPrint(
-                &entry.code_buffer,
+            break :brk try std.fmt.allocPrint(
+                allocator,
                 \\//Auto-generated file
                 \\var cjsSymbol = Symbol.for("CommonJS");
                 \\import * as start from '{s}{s}';

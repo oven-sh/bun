@@ -16,12 +16,8 @@ var WebSocketServer = require("ws").Server,
 var clients = [];
 
 wss.on("connection", function (ws, { url }) {
-  const name = new URL(new URL(url, "http://localhost:3000")).searchParams.get(
-    "name"
-  );
-  console.log(
-    `${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`
-  );
+  const name = new URL(new URL(url, "http://localhost:3000")).searchParams.get("name");
+  console.log(`${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`);
   clients.push(ws);
 
   ws.on("message", function (message) {

@@ -275,7 +275,7 @@ const fixture = [
     }),
   () => require("events"),
   () => {
-    return new import.meta.require("events").EventEmitter();
+    return new (import.meta.require("events").EventEmitter)();
   },
   async () => await import("node:assert"),
   async () => await import("./empty.js"),

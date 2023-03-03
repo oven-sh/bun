@@ -569,7 +569,11 @@ c-ares:
 	rm -rf $(BUN_DEPS_DIR)/c-ares/build && \
 	mkdir $(BUN_DEPS_DIR)/c-ares/build && \
 	cd $(BUN_DEPS_DIR)/c-ares/build && \
-    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS) -flto=full" -DCMAKE_BUILD_TYPE=Release -DCARES_STATIC=ON -DCARES_STATIC_PIC=ON -DCARES_SHARED=OFF -G "Ninja" .. && \
+    cmake $(CMAKE_FLAGS) -DCMAKE_C_FLAGS="$(CFLAGS) -flto=full" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCARES_STATIC=ON -DCARES_STATIC_PIC=ON -DCARES_SHARED=OFF \
+        -G "Ninja" .. && \
 	ninja && cp lib/libcares.a $(BUN_DEPS_OUT_DIR)/libcares.a
 
 .PHONY: prepare-types
@@ -832,7 +836,7 @@ fetch: $(IO_FILES)
 .PHONY: sha
 sha:
 	$(ZIG) build -Doptimize=ReleaseFast sha-bench-obj
-	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/sha.o -I$(BUN_DEPS_DIR) -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
 .PHONY: fetch-debug

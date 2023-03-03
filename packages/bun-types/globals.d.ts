@@ -842,7 +842,7 @@ interface RequestInit {
   /**
    * A string indicating how the request will interact with the browser's cache to set request's cache.
    *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
+   * Note: as of Bun v0.5.7, this is not implemented yet.
    */
   cache?: RequestCache;
   /**
@@ -856,7 +856,7 @@ interface RequestInit {
   /**
    * A cryptographic hash of the resource to be fetched by request. Sets request's integrity.
    *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
+   * Note: as of Bun v0.5.7, this is not implemented yet.
    */
   integrity?: string;
   /**
@@ -889,8 +889,6 @@ interface RequestInit {
   referrerPolicy?: ReferrerPolicy;
   /**
    * An AbortSignal to set request's signal.
-   *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
    */
   signal?: AbortSignal | null;
   /**

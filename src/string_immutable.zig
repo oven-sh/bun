@@ -588,7 +588,7 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
     while (href.len > 1 and href[href.len - 1] == '/') {
-        href = href[0 .. href.len - 1];
+        href.len -= 1;
     }
 
     return href;

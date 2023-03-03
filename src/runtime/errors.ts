@@ -76,8 +76,4 @@ var __ImportKind;
   __ImportKind = ImportKind;
 }
 
-export {
-  __ResolveError as ResolveError,
-  __BuildError as BuildError,
-  __ImportKind as ImportKind,
-};
+export { __ResolveError as ResolveError, __BuildError as BuildError, __ImportKind as ImportKind };

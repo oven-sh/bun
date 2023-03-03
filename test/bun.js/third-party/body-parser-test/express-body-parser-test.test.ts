@@ -57,3 +57,14 @@ test("httpServer", async done => {
   expect(reached).toBe(true);
   done();
 });
+
+// https://github.com/oven-sh/bun/issues/2282#issue-1607954059
+import express from "express";
+const app = express();
+
+app.get("/test", function (req, res) {
+  res.send(`test, this is query: ${JSON.stringify(req.query)}`);
+});
+
+app.listen(3000, () => {});
+// try hitting localhost:3000/test?key=value

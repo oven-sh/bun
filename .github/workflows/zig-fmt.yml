@@ -77,7 +77,7 @@ jobs:
           mode: upsert
           create_if_not_exists: false
           message: |
-            ✅ `zig fmt` errors have been resolved. Thank you
+            ✅ `zig fmt` errors have been resolved. Thank you.
 
             <sup>zig v${{env.ZIG_VERSION}}</sup>
             <sup>${{github.ref}}</sup>

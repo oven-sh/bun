@@ -43,11 +43,8 @@ jobs:
         with:
           comment_tag: prettier-fmt
           message: |
-            @${{ github.actor }} please run `prettier` on your code.
+            @${{ github.actor }} `prettier` reported errors. Please configure your text editor to format on save.
 
-            It's easiest if you configure your text editor to auto-format on save. If you use VSCode, consider the Prettier VSCode extension.
-
-            Prettier reported the following errors:
             ```js
             ${{ steps.fmt.outputs.prettier_fmt_errs }}
             ```
@@ -56,6 +53,15 @@ jobs:
             ```sh
             bun fmt
             ```
+      - name: Uncomment on PR
+        if: steps.fmt.outputs.prettier_fmt_errs == ''
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          comment_tag: prettier-fmt
+          mode: upsert
+          create_if_not_exists: false
+          message: |
+            `prettier` errors have been resolved. Thank you.
       - name: Fail the job
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         run: exit 1

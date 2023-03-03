@@ -58,6 +58,16 @@ jobs:
 
             zig version: `${{env.ZIG_VERSION}}`
 
+      - name: Uncomment on PR
+        if: steps.fmt.outputs.zig_fmt_errs == ''
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          comment_tag: zig-fmt
+          mode: upsert
+          create_if_not_exists: false
+          message: |
+            `zig fmt` errors have been resolved. Thank you.
+
       - name: Fail the job
         if: steps.fmt.outputs.zig_fmt_errs != ''
         run: exit 1

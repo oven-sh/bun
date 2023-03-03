@@ -32,11 +32,10 @@ jobs:
       - name: Run zig fmt
         id: fmt
         run: |
-          zig fmt --check src/*.zig src/**/*.zig > zig-fmt.err 2> zig-fmt1.err || echo "Failed"
+          zig fmt --check src/*.zig src/**/*.zig 2> zig-fmt.err || echo "Failed"
           delimiter="$(openssl rand -hex 8)"
           echo "zig_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
           cat zig-fmt.err >> "${GITHUB_OUTPUT}"
-          cat zig-fmt1.err >> "${GITHUB_OUTPUT}"
           echo "${delimiter}" >> "${GITHUB_OUTPUT}"
       - name: Comment on PR
         if: steps.fmt.outputs.zig_fmt_errs != ''
@@ -44,7 +43,7 @@ jobs:
         with:
           comment_tag: zig-fmt
           message: |
-            @${{ github.actor }} `zig fmt` reported errors. Consider configuring your text editor to [auto-format on save](https://github.com/ziglang/vscode-zig). 
+            @${{ github.actor }} `zig fmt` reported errors. Consider configuring your text editor to [auto-format on save](https://github.com/ziglang/vscode-zig)
 
             ```zig
             // # zig fmt --check src/*.zig src/**/*.zig
@@ -56,6 +55,8 @@ jobs:
             ```sh
             zig fmt src/*.zig src/**/*.zig
             ```
+
+            zig version: `${{env.ZIG_VERSION}}`
 
       - name: Fail the job
         if: steps.fmt.outputs.zig_fmt_errs != ''

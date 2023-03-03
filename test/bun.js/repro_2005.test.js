@@ -8,5 +8,4 @@ it("regex literal with non-Latin1 should work", () => {
 
   //Incorrect result: 这是一段要替换的文字
   expect(text.replace(/要替换/, "")).toBe("这是一段的文字");
-
 });

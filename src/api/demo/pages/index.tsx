@@ -14,10 +14,7 @@ export async function getStaticProps(ctx) {
   return {
     props: {
       // not tested
-      code: readFile(
-        "/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js",
-        { encoding: "utf-8" },
-      ),
+      code: readFile("/Users/jarred/Build/es-module-lexer/test/samples/magic-string.js", { encoding: "utf-8" }),
     },
   };
 }
@@ -33,11 +30,8 @@ export default function Home({ code }) {
   }, []);
 
   const runBuild = React.useCallback(
-    (event) => {
-      globalThis.Run.transform(
-        event.target.value,
-        fileNameRef?.current?.value,
-      ).then((result) => {
+    event => {
+      globalThis.Run.transform(event.target.value, fileNameRef?.current?.value).then(result => {
         setEsbuildResult(result.esbuild.code);
         setBunResult(textDecoder.decode(result.bun.files[0].data));
         setSWCResult(result.swc.code);

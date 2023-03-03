@@ -110,7 +110,8 @@ it("networkInterfaces", () => {
       expect(typeof nI.family === "string").toBe(true);
       expect(typeof nI.mac === "string").toBe(true);
       expect(typeof nI.internal === "boolean").toBe(true);
-      if (nI.cidr)  // may be null
+      if (nI.cidr)
+        // may be null
         expect(typeof nI.cidr).toBe("string");
     }
   }

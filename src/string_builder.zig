@@ -76,7 +76,6 @@ pub fn allocatedSlice(this: *StringBuilder) []u8 {
     var ptr = this.ptr orelse return &[_]u8{};
     if (comptime Environment.allow_assert) {
         assert(this.cap > 0);
-        assert(this.len > 0);
     }
     return ptr[0..this.cap];
 }

@@ -28,15 +28,15 @@ const IPv4Reg = new RegExp(`^${v4Str}$`);
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 const IPv6Reg = new RegExp(
   "^(" +
-  `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-  `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-  `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
-  `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
-  `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
-  `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
-  `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
-  `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-  ")(%[0-9a-zA-Z-.:]{1,})?$",
+    `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
+    `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
+    `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
+    `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
+    `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
+    `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
+    `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
+    `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
+    ")(%[0-9a-zA-Z-.:]{1,})?$",
 );
 
 export function isIPv4(s) {
@@ -53,17 +53,14 @@ export function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO, Object } =
-import.meta.primordials;
+const { Bun, createFIFO, Object } = import.meta.primordials;
 const { connect: bunConnect } = Bun;
-const { Duplex } =
-import.meta.require("node:stream");
-const { EventEmitter } =
-import.meta.require("node:events");
+const { Duplex } = import.meta.require("node:stream");
+const { EventEmitter } = import.meta.require("node:events");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 var SocketClass;
-export const Socket = (function(InternalSocket) {
+export const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
   Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "Socket",
@@ -74,7 +71,8 @@ export const Socket = (function(InternalSocket) {
     function Socket(options) {
       return new InternalSocket(options);
     },
-    Symbol.hasInstance, {
+    Symbol.hasInstance,
+    {
       value(instance) {
         return instance instanceof InternalSocket;
       },
@@ -89,7 +87,6 @@ export const Socket = (function(InternalSocket) {
       },
       connectError(socket, error) {
         const self = socket.data;
-
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
@@ -141,7 +138,7 @@ export const Socket = (function(InternalSocket) {
       binaryType: "buffer",
     };
 
-    static# Close(self) {
+    static #Close(self) {
       if (self.#closed) return;
       self.#closed = true;
       const queue = self.#readQueue;
@@ -151,7 +148,7 @@ export const Socket = (function(InternalSocket) {
       queue.push(null);
     }
 
-    static# Drain(socket) {
+    static #Drain(socket) {
       const self = socket.data;
       const callback = self.#writeCallback;
       if (callback) {
@@ -170,17 +167,17 @@ export const Socket = (function(InternalSocket) {
     }
 
     bytesRead = 0;
-    bytesWritten = 0;#
-    closed = false;
+    bytesWritten = 0;
+    #closed = false;
     connecting = false;
-    localAddress = "127.0.0.1";#
-    readQueue = createFIFO();
-    remotePort;#
-    socket;
-    timeout = 0;#
-    writeCallback;#
-    writeChunk;#
-    pendingRead;
+    localAddress = "127.0.0.1";
+    #readQueue = createFIFO();
+    remotePort;
+    #socket;
+    timeout = 0;
+    #writeCallback;
+    #writeChunk;
+    #pendingRead;
 
     constructor(options) {
       const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -191,7 +188,7 @@ export const Socket = (function(InternalSocket) {
         writable: true,
       });
       this.#pendingRead = undefined;
-      signal ? .once("abort", () => this.destroy());
+      signal?.once("abort", () => this.destroy());
       this.once("connect", () => this.emit("ready"));
     }
 
@@ -257,26 +254,26 @@ export const Socket = (function(InternalSocket) {
         tls = bunTLS.call(this, port, host);
       }
       bunConnect(
-        path ?
-        {
-          data: this,
-          unix: path,
-          socket: Socket._Handlers,
-          tls,
-        } :
-        {
-          data: this,
-          hostname: host || "localhost",
-          port: port,
-          socket: Socket._Handlers,
-          tls,
-        },
+        path
+          ? {
+              data: this,
+              unix: path,
+              socket: Socket._Handlers,
+              tls,
+            }
+          : {
+              data: this,
+              hostname: host || "localhost",
+              port: port,
+              socket: Socket._Handlers,
+              tls,
+            },
       );
       return this;
     }
 
     _destroy(err, callback) {
-      this.#socket ? .end();
+      this.#socket?.end();
       callback(err);
     }
 
@@ -294,7 +291,7 @@ export const Socket = (function(InternalSocket) {
     }
 
     get localPort() {
-      return this.#socket ? .localPort;
+      return this.#socket?.localPort;
     }
 
     get pending() {
@@ -320,7 +317,7 @@ export const Socket = (function(InternalSocket) {
     }
 
     ref() {
-      this.#socket ? .ref();
+      this.#socket?.ref();
     }
 
     get remoteAddress() {
@@ -332,7 +329,7 @@ export const Socket = (function(InternalSocket) {
     }
 
     resetAndDestroy() {
-      this.#socket ? .end();
+      this.#socket?.end();
     }
 
     pause() {
@@ -356,19 +353,19 @@ export const Socket = (function(InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
-      this.#socket ? .timeout(timeout);
+      this.#socket?.timeout(timeout);
       this.timeout = timeout;
       if (callback) this.once("timeout", callback);
       return this;
     }
 
     unref() {
-      this.#socket ? .unref();
+      this.#socket?.unref();
     }
 
     _write(chunk, encoding, callback) {
       if (typeof chunk == "string" && encoding !== "utf8") chunk = Buffer.from(chunk, encoding);
-      var written = this.#socket ? .write(chunk);
+      var written = this.#socket?.write(chunk);
       if (written == chunk.length) {
         callback();
       } else if (this.#writeCallback) {
@@ -395,23 +392,23 @@ export function createConnection(port, host, connectListener) {
     host = undefined;
   }
   var options =
-    typeof port == "object" ?
-    port :
-    {
-      host: host,
-      port: port,
-    };
+    typeof port == "object"
+      ? port
+      : {
+          host: host,
+          port: port,
+        };
   return new Socket(options).connect(options, connectListener);
 }
 
 export const connect = createConnection;
 
-class Server extends EventEmitter {#
-  connectionListener;#
-  options;#
-  server;#
-  listening;#
-  connections;
+class Server extends EventEmitter {
+  #connectionListener;
+  #options;
+  #server;
+  #listening;
+  #connections;
 
   constructor(options, connectionListener) {
     super();
@@ -421,7 +418,7 @@ class Server extends EventEmitter {#
       connectionListener = options;
       options = {};
     } else if (options == null || typeof options === "object") {
-      options = {...options };
+      options = { ...options };
     } else {
       throw new Error("bun-net-polyfill: invalid arguments");
     }
@@ -437,12 +434,12 @@ class Server extends EventEmitter {#
   }
 
   ref() {
-    this.#server ? .ref();
+    this.#server?.ref();
     return this;
   }
 
   unref() {
-    this.#server ? .unref();
+    this.#server?.unref();
     return this;
   }
 
@@ -509,10 +506,10 @@ class Server extends EventEmitter {#
       onListen = port;
       port = 0;
     } else if (typeof port === "object") {
-      port ? .signal ? .addEventListener("abort", () => this.close());
+      port?.signal?.addEventListener("abort", () => this.close());
 
-      hostname = port ? .host;
-      port = port ? .port;
+      hostname = port?.host;
+      port = port?.port;
 
       // port <number>
       // host <string>
@@ -524,7 +521,7 @@ class Server extends EventEmitter {#
       // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
       // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
-      if (typeof port ? .callback === "function") onListen = port ? .callback;
+      if (typeof port?.callback === "function") onListen = port?.callback;
     }
 
     hostname = hostname || "::";
@@ -551,7 +548,7 @@ class Server extends EventEmitter {#
           },
           open(socket) {
             const _socket = new SocketClass(self.#options);
-            _socket._attach(self.#server ? .port, socket);
+            _socket._attach(self.#server?.port, socket);
             if (self.maxConnections && self.#connections >= self.maxConnections) {
               const data = {
                 localAddress: _socket.localAddress,

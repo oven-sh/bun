@@ -155,22 +155,23 @@ it("should receive data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
   let timeout;
 
+  const onData = mustCall(data => {
+    clearTimeout(timeout);
+    server.close();
+    expect(data.byteLength).toBe(5);
+    expect(data.toString("utf8")).toBe("Hello");
+    done();
+  });
+
   const server = createServer(socket => {
-    const onData = mustCall(data => {
-      clearTimeout(timeout);
-      server.close();
-      expect(data.byteLength).toBe(5);
-      expect(data.toString("utf8")).toBe("Hello");
-      done();
-    });
     socket.on("data", onData);
   });
 
-  function closeAndFail() {
+  const closeAndFail = mustNotCall("no data received (timeout)", () => {
     clearTimeout(timeout);
     server.close();
-    expect("").toBe("Hello");
-  }
+  });
+
   server.on("error", mustNotCall("no data received"));
 
   //should be faster than 100ms
@@ -202,12 +203,13 @@ it("should call end", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
   let timeout;
 
+  const onEnd = mustCall(() => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
   const server = createServer(socket => {
-    const onEnd = mustCall(() => {
-      clearTimeout(timeout);
-      server.close();
-      done();
-    });
     socket.on("end", onEnd);
   });
 
@@ -218,9 +220,9 @@ it("should call end", done => {
   server.on("error", mustNotCall("end not called"));
 
   //should be faster than 100ms
-  // timeout = setTimeout(() => {
-  //   closeAndFail();
-  // }, 100);
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
 
   server.listen(
     mustCall(() => {

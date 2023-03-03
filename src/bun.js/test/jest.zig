@@ -129,219 +129,219 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        if (this.received != null and this.expected != null) {
-            const received = this.received.?;
-            const expected = this.expected.?;
-            var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
-            var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
-            defer {
-                received_buf.deinit();
-                expected_buf.deinit();
+        if (this.received == null or this.expected == null) return;
+
+        const received = this.received.?;
+        const expected = this.expected.?;
+        var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
+        var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
+        defer {
+            received_buf.deinit();
+            expected_buf.deinit();
+        }
+
+        {
+            var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
+            var buffered_writer = &buffered_writer_;
+
+            var buf_writer = buffered_writer.writer();
+            const Writer = @TypeOf(buf_writer);
+
+            const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+                .enable_colors = false,
+                .add_newline = false,
+                .flush = false,
+                .ordered_properties = true,
+                .quote_strings = true,
+            };
+            JSC.ZigConsoleClient.format(
+                .Debug,
+                this.globalObject,
+                @ptrCast([*]const JSValue, &received),
+                1,
+                Writer,
+                Writer,
+                buf_writer,
+                fmt_options,
+            );
+            buffered_writer.flush() catch unreachable;
+
+            buffered_writer_.context = &expected_buf;
+
+            JSC.ZigConsoleClient.format(
+                .Debug,
+                this.globalObject,
+                @ptrCast([*]const JSValue, &this.expected),
+                1,
+                Writer,
+                Writer,
+                buf_writer,
+                fmt_options,
+            );
+            buffered_writer.flush() catch unreachable;
+        }
+
+        const received_slice = received_buf.toOwnedSliceLeaky();
+        const expected_slice = expected_buf.toOwnedSliceLeaky();
+
+        if (this.not) {
+            const not_fmt = "Expected: not <green>{s}<r>";
+            if (Output.enable_ansi_colors) {
+                try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
+            } else {
+                try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
             }
+            return;
+        }
 
-            {
-                var buffered_writer_ = bun.MutableString.BufferedWriter{ .context = &received_buf };
-                var buffered_writer = &buffered_writer_;
-
-                var buf_writer = buffered_writer.writer();
-                const Writer = @TypeOf(buf_writer);
-
-                const fmt_options = JSC.ZigConsoleClient.FormatOptions{
-                    .enable_colors = false,
-                    .add_newline = false,
-                    .flush = false,
-                    .ordered_properties = true,
-                    .quote_strings = true,
-                };
-                JSC.ZigConsoleClient.format(
-                    .Debug,
-                    this.globalObject,
-                    @ptrCast([*]const JSValue, &received),
-                    1,
-                    Writer,
-                    Writer,
-                    buf_writer,
-                    fmt_options,
-                );
-                buffered_writer.flush() catch unreachable;
-
-                buffered_writer_.context = &expected_buf;
-
-                JSC.ZigConsoleClient.format(
-                    .Debug,
-                    this.globalObject,
-                    @ptrCast([*]const JSValue, &this.expected),
-                    1,
-                    Writer,
-                    Writer,
-                    buf_writer,
-                    fmt_options,
-                );
-                buffered_writer.flush() catch unreachable;
-            }
-
-            const received_slice = received_buf.toOwnedSliceLeaky();
-            const expected_slice = expected_buf.toOwnedSliceLeaky();
-
-            if (this.not) {
-                const not_fmt = "Expected: not <green>{s}<r>";
+        switch (received.determineDiffMethod(expected, this.globalObject)) {
+            .none => {
+                const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
                 if (Output.enable_ansi_colors) {
-                    try writer.print(Output.prettyFmt(not_fmt, true), .{expected_slice});
-                } else {
-                    try writer.print(Output.prettyFmt(not_fmt, false), .{expected_slice});
-                }
-                return;
-            }
-
-            switch (received.determineDiffMethod(expected, this.globalObject)) {
-                .none => {
-                    const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
-                    var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
-                    if (Output.enable_ansi_colors) {
-                        try writer.print(Output.prettyFmt(fmt, true), .{
-                            expected.toFmt(this.globalObject, &formatter),
-                            received.toFmt(this.globalObject, &formatter),
-                        });
-                        return;
-                    }
-
                     try writer.print(Output.prettyFmt(fmt, true), .{
                         expected.toFmt(this.globalObject, &formatter),
                         received.toFmt(this.globalObject, &formatter),
                     });
                     return;
-                },
-                .character => {
-                    var dmp = DiffMatchPatch.default;
-                    dmp.diff_timeout = 200;
-                    var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
-                    defer diffs.deinit(default_allocator);
+                }
 
-                    const equal_fmt = "<d>{s}<r>";
-                    const delete_fmt = "<red>{s}<r>";
-                    const insert_fmt = "<green>{s}<r>";
+                try writer.print(Output.prettyFmt(fmt, true), .{
+                    expected.toFmt(this.globalObject, &formatter),
+                    received.toFmt(this.globalObject, &formatter),
+                });
+                return;
+            },
+            .character => {
+                var dmp = DiffMatchPatch.default;
+                dmp.diff_timeout = 200;
+                var diffs = try dmp.diff(default_allocator, received_slice, expected_slice, false);
+                defer diffs.deinit(default_allocator);
 
-                    try writer.writeAll("Expected: ");
-                    for (diffs.items) |df| {
-                        switch (df.operation) {
-                            .delete => continue,
-                            .insert => {
-                                if (Output.enable_ansi_colors) {
-                                    try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
-                                } else {
-                                    try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
-                                }
-                            },
-                            .equal => {
-                                if (Output.enable_ansi_colors) {
-                                    try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                                } else {
-                                    try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                                }
-                            },
-                        }
+                const equal_fmt = "<d>{s}<r>";
+                const delete_fmt = "<red>{s}<r>";
+                const insert_fmt = "<green>{s}<r>";
+
+                try writer.writeAll("Expected: ");
+                for (diffs.items) |df| {
+                    switch (df.operation) {
+                        .delete => continue,
+                        .insert => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
+                }
 
-                    try writer.writeAll("\nReceived: ");
-                    for (diffs.items) |df| {
-                        switch (df.operation) {
-                            .insert => continue,
-                            .delete => {
-                                if (Output.enable_ansi_colors) {
-                                    try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
-                                } else {
-                                    try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
-                                }
-                            },
-                            .equal => {
-                                if (Output.enable_ansi_colors) {
-                                    try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
-                                } else {
-                                    try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
-                                }
-                            },
-                        }
+                try writer.writeAll("\nReceived: ");
+                for (diffs.items) |df| {
+                    switch (df.operation) {
+                        .insert => continue,
+                        .delete => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                            }
+                        },
+                        .equal => {
+                            if (Output.enable_ansi_colors) {
+                                try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                            } else {
+                                try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                            }
+                        },
                     }
+                }
+                return;
+            },
+            .line => {
+                var dmp = DiffMatchPatch.default;
+                dmp.diff_timeout = 200;
+                var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
+                defer diffs.deinit(default_allocator);
+
+                const equal_fmt = "<d>  {s}<r>";
+                const delete_fmt = "<red>+ {s}<r>";
+                const insert_fmt = "<green>- {s}<r>";
+
+                var insert_count: usize = 0;
+                var delete_count: usize = 0;
+
+                for (diffs.items) |df| {
+                    var prev: usize = 0;
+                    var curr: usize = 0;
+                    switch (df.operation) {
+                        .equal => {
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
+                            }
+                        },
+                        .insert => {
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    insert_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
+                            }
+                        },
+                        .delete => {
+                            while (curr < df.text.len) {
+                                if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
+                                    delete_count += 1;
+                                    if (Output.enable_ansi_colors) {
+                                        try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
+                                    } else {
+                                        try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
+                                    }
+                                    prev = curr + 1;
+                                }
+                                curr += 1;
+                            }
+                        },
+                    }
+                    if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
+                }
+
+                if (Output.enable_ansi_colors) {
+                    try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
+                    try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
                     return;
-                },
-                .line => {
-                    var dmp = DiffMatchPatch.default;
-                    dmp.diff_timeout = 200;
-                    var diffs = try dmp.diffLines(default_allocator, received_slice, expected_slice);
-                    defer diffs.deinit(default_allocator);
-
-                    const equal_fmt = "<d>  {s}<r>";
-                    const delete_fmt = "<red>+ {s}<r>";
-                    const insert_fmt = "<green>- {s}<r>";
-
-                    var insert_count: usize = 0;
-                    var delete_count: usize = 0;
-
-                    for (diffs.items) |df| {
-                        var prev: usize = 0;
-                        var curr: usize = 0;
-                        switch (df.operation) {
-                            .equal => {
-                                while (curr < df.text.len) {
-                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                        if (Output.enable_ansi_colors) {
-                                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text[prev .. curr + 1]});
-                                        } else {
-                                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text[prev .. curr + 1]});
-                                        }
-                                        prev = curr + 1;
-                                    }
-                                    curr += 1;
-                                }
-                            },
-                            .insert => {
-                                while (curr < df.text.len) {
-                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                        insert_count += 1;
-                                        if (Output.enable_ansi_colors) {
-                                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text[prev .. curr + 1]});
-                                        } else {
-                                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text[prev .. curr + 1]});
-                                        }
-                                        prev = curr + 1;
-                                    }
-                                    curr += 1;
-                                }
-                            },
-                            .delete => {
-                                while (curr < df.text.len) {
-                                    if (curr == df.text.len - 1 or df.text[curr] == '\n' and curr != 0) {
-                                        delete_count += 1;
-                                        if (Output.enable_ansi_colors) {
-                                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text[prev .. curr + 1]});
-                                        } else {
-                                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text[prev .. curr + 1]});
-                                        }
-                                        prev = curr + 1;
-                                    }
-                                    curr += 1;
-                                }
-                            },
-                        }
-                        if (df.text[df.text.len - 1] != '\n') try writer.writeAll("\n");
-                    }
-
-                    if (Output.enable_ansi_colors) {
-                        try writer.print(Output.prettyFmt("\n<green>- Expected  - {d}<r>\n", true), .{insert_count});
-                        try writer.print(Output.prettyFmt("<red>+ Received  + {d}<r>", true), .{delete_count});
-                        return;
-                    }
-                    try writer.print("\n- Expected  - {d}\n", .{insert_count});
-                    try writer.print("+ Received  + {d}", .{delete_count});
-                    return;
-                },
-                .word => {
-                    // not implemented
-                    // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
-                },
-            }
-            return;
+                }
+                try writer.print("\n- Expected  - {d}\n", .{insert_count});
+                try writer.print("+ Received  + {d}", .{delete_count});
+                return;
+            },
+            .word => {
+                // not implemented
+                // https://github.com/google/diff-match-patch/wiki/Line-or-Word-Diffs#word-mode
+            },
         }
+        return;
     }
 };
 
@@ -504,12 +504,13 @@ pub const Jest = struct {
         pub var snapshot_file: std.fs.File = undefined;
 
         pub var file_buf: std.ArrayList(u8) = undefined;
-        pub var values: bun.StringHashMap(string) = undefined;
+        pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
+        pub var values: ValuesHashMap = undefined;
         pub var counts: bun.StringHashMap(usize) = undefined;
 
         pub var current_file_id: TestRunner.File.ID = undefined;
 
-        pub fn getOrPut(expect: *Expect, pretty_value: string, hint: string) !?string {
+        pub fn getOrPut(expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
             const snapshot_name = try expect.getSnapshotName(default_allocator, hint);
 
             if (current_file_id != expect.scope.file_id or !initialized) {
@@ -518,7 +519,7 @@ pub const Jest = struct {
                 try cleanup();
 
                 counts = bun.StringHashMap(usize).init(default_allocator);
-                values = bun.StringHashMap(string).init(default_allocator);
+                values = ValuesHashMap.init(default_allocator);
 
                 var dir_path = runner.?.files.get(current_file_id).source.path.name.dirWithTrailingSlash();
                 if (!initialized) snapshot_dir = try getSnapshotDir(dir_path);
@@ -531,9 +532,9 @@ pub const Jest = struct {
                     const file_length = try snapshot_file.getEndPos();
                     const bytes = try snapshot_file.readToEndAlloc(default_allocator, file_length);
                     file_buf = std.ArrayList(u8).fromOwnedSlice(default_allocator, bytes);
-                }
 
-                try parseFile();
+                    try parseFile();
+                }
 
                 initialized = initialized or true;
             }
@@ -541,7 +542,6 @@ pub const Jest = struct {
             snapshot_count += 1;
 
             var count_entry = try counts.getOrPut(snapshot_name);
-            if (!count_entry.found_existing) {}
             const counter = brk: {
                 if (count_entry.found_existing) {
                     default_allocator.free(snapshot_name);
@@ -563,25 +563,21 @@ pub const Jest = struct {
             name_with_counter[name.len] = ' ';
             bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
 
-            if (values.get(name_with_counter)) |value| {
-                return value;
+            const name_hash = std.hash.Wyhash.hash(0, name_with_counter);
+            if (values.get(name_hash)) |expected| {
+                return expected;
             }
 
             // doesn't exist. append to file bytes and add to hashmap.
+            var pretty_value = try MutableString.init(default_allocator, 0);
+            try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
+
             try file_buf.appendSlice("exports[`");
-            const key_start = file_buf.items.len;
-            const key_end = key_start + name_with_counter.len;
             try file_buf.appendSlice(name_with_counter);
             try file_buf.appendSlice("`] = `");
-            const value_start = file_buf.items.len;
-            const value_end = value_start + pretty_value.len;
-
-            try file_buf.appendSlice(pretty_value);
+            try file_buf.appendSlice(pretty_value.list.items);
             try file_buf.appendSlice("`;\n\n");
-
-            const key = file_buf.items[key_start..key_end];
-            const value = file_buf.items[value_start..value_end];
-            try values.put(key, value);
+            try values.put(name_hash, pretty_value.toOwnedSlice());
             return null;
         }
 
@@ -623,8 +619,10 @@ pub const Jest = struct {
                 };
 
                 const key = file_buf.items[key_start..key_end];
-                const value = file_buf.items[value_start..value_end];
-                values.put(key, value) catch unreachable;
+                const pretty_value = try default_allocator.alloc(u8, value_end - value_start);
+                bun.copy(u8, pretty_value, file_buf.items[value_start..value_end]);
+                const name_hash = std.hash.Wyhash.hash(0, key);
+                try values.put(name_hash, pretty_value);
             }
 
             return;
@@ -642,7 +640,13 @@ pub const Jest = struct {
             try snapshot_file.seekTo(0);
             try snapshot_file.writeAll(file_buf.items);
             file_buf.clearAndFree();
+
+            var value_itr = values.valueIterator();
+            while (value_itr.next()) |value| {
+                default_allocator.free(value.*);
+            }
             values.deinit();
+
             snapshot_file.close();
 
             var count_itr = counts.iterator();
@@ -2340,35 +2344,26 @@ pub const Expect = struct {
             return .zero;
         };
 
-        var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
-        value.jestPrettyFormat(&pretty_value, globalObject) catch {
-            globalObject.throw("Failed to pretty format value", .{});
-            return .zero;
-        };
-        defer pretty_value.deinit();
-
-        var i: usize = 0;
-        while (i < pretty_value.list.items.len) {
-            const c = pretty_value.list.items[i];
-            if (c == '`') {
-                pretty_value.list.insert(pretty_value.allocator, i, '\\') catch unreachable;
-                i += 1;
-            }
-            i += 1;
-        }
-
-        const result = Jest.Snapshots.getOrPut(this, pretty_value.list.items, hint.slice()) catch {
+        const result = Jest.Snapshots.getOrPut(this, value, hint.slice(), globalObject) catch {
             // handle parsing and other errors
+            globalObject.throw("Failed to parse snapshot file!", .{});
             return .zero;
         };
 
         if (result) |saved_value| {
+            var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+            value.jestSnapshotPrettyFormat(&pretty_value, globalObject) catch {
+                globalObject.throw("Failed to pretty format value", .{});
+                return .zero;
+            };
+            defer pretty_value.deinit();
+
             if (strings.eql(pretty_value.toOwnedSliceLeaky(), saved_value)) {
                 return thisValue;
             }
 
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
-            const fmt = signature ++ "\n\n{any}\n";
+            const fmt = signature ++ "\n\n{any}";
             const diff_format = DiffFormatter{
                 .received_string = pretty_value.toOwnedSliceLeaky(),
                 .expected_string = saved_value,
@@ -2383,8 +2378,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        std.debug.print("new value inserted into snapshot file: {s}\n", .{pretty_value.toOwnedSliceLeaky()});
-        return .zero;
+        return thisValue;
     }
 
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;

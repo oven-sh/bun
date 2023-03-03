@@ -3137,7 +3137,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
     }
 
-    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
         var buffered_writer = MutableString.BufferedWriter{ .context = out };
         var writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
@@ -3156,6 +3156,43 @@ pub const JSValue = enum(JSValueReprInt) {
         if (array_newlines) {
             try writer.writeAll("\n");
         }
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &this),
+            1,
+            Writer,
+            Writer,
+            writer,
+            fmt_options,
+        );
+
+        try buffered_writer.flush();
+
+        var i: usize = 0;
+        while (i < out.list.items.len) {
+            const l = out.list.items[i];
+            if (l == '`') {
+                out.list.insert(out.allocator, i, '\\') catch unreachable;
+                i += 1;
+            }
+            i += 1;
+        }
+    }
+
+    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+        var buffered_writer = MutableString.BufferedWriter{ .context = out };
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+            .ordered_properties = true,
+            .quote_strings = true,
+        };
 
         JSC.ZigConsoleClient.format(
             .Debug,

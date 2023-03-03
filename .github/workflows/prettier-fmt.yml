@@ -30,13 +30,16 @@ jobs:
       - name: Run prettier
         id: fmt
         run: |
-          bun prettier --check "./bench/**/*.{ts,tsx,js,jsx,mjs}" "./test/**/*.{ts,tsx,js,jsx,mjs}" "./src/*/**/*.{ts,tsx,js,jsx}" --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt1.err || echo "Failed"
-          delimiter="$(openssl rand -hex 8)"
-          echo "prettier_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
-          cat prettier-fmt.err >> "${GITHUB_OUTPUT}"
-          cat prettier-fmt1.err >> "${GITHUB_OUTPUT}"
-          echo "${delimiter}" >> "${GITHUB_OUTPUT}"
+          rm -f .failed
+          bun prettier --check "./bench/**/*.{ts,tsx,js,jsx,mjs}" "./test/**/*.{ts,tsx,js,jsx,mjs}" "./src/**/*.{ts,tsx,js,jsx}" --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt1.err || echo 'failed' > .failed 
 
+          if [ -s .failed ]; then
+            delimiter="$(openssl rand -hex 8)"
+            echo "prettier_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
+            cat prettier-fmt.err >> "${GITHUB_OUTPUT}"
+            cat prettier-fmt1.err >> "${GITHUB_OUTPUT}"
+            echo "${delimiter}" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Comment on PR
         if: steps.fmt.outputs.prettier_fmt_errs != ''
         uses: thollander/actions-comment-pull-request@v2

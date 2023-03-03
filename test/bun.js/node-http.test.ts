@@ -83,10 +83,10 @@ describe("node:http", () => {
   describe("request", () => {
     let server;
     let serverPort;
-    let timer = null;
+    let timer: Timer | null = null;
     beforeAll(() => {
       server = createServer((req, res) => {
-        const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+        const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
@@ -146,6 +146,20 @@ describe("node:http", () => {
     afterAll(() => {
       server.close();
       if (timer) clearTimeout(timer);
+    });
+
+    it("check for expected fields", done => {
+      const req = request({ host: "localhost", port: serverPort, method: "GET" }, res => {
+        res.on("end", () => {
+          done();
+        });
+        res.on("error", err => done(err));
+      });
+      expect(req.path).toEqual("/");
+      expect(req.method).toEqual("GET");
+      expect(req.host).toEqual("localhost");
+      expect(req.protocol).toEqual("http:");
+      req.end();
     });
 
     it("should make a standard GET request when passed string as first arg", done => {
@@ -510,7 +524,9 @@ describe("node:http", () => {
 
     it("should noop keepSocketAlive", () => {
       const agent = new Agent({ keepAlive: true });
+      // @ts-ignore
       expect(agent.keepAlive).toBe(true);
+
       agent.keepSocketAlive(dummyReq.socket);
     });
 

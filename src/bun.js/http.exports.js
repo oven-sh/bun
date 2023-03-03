@@ -920,6 +920,10 @@ export class ClientRequest extends OutgoingMessage {
     return this.#port;
   }
 
+  get method() {
+    return this.#method;
+  }
+
   get host() {
     return this.#host;
   }

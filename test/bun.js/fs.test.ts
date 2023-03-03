@@ -26,6 +26,9 @@ import fs, {
   Dirent,
   Stats,
 } from "node:fs";
+
+import _promises from "node:fs/promises";
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -49,7 +52,7 @@ describe("copyFileSync", () => {
   it("should work for files < 128 KB", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
 
     // that don't exist
     copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
@@ -67,7 +70,7 @@ describe("copyFileSync", () => {
   it("should work for files > 128 KB ", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}-1/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     var buffer = new Int32Array(128 * 1024);
     for (let i = 0; i < buffer.length; i++) {
       buffer[i] = i % 256;
@@ -92,7 +95,7 @@ describe("mkdirSync", () => {
   it("should create a directory", () => {
     const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
     expect(existsSync(tempdir)).toBe(false);
-    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true })!)).toBe(true);
     expect(existsSync(tempdir)).toBe(true);
   });
 });
@@ -135,6 +138,7 @@ it("mkdtempSync, readdirSync, rmdirSync and unlinkSync with non-ascii", () => {
 });
 
 it("mkdtempSync() empty name", () => {
+  // @ts-ignore-next-line
   const tempdir = mkdtempSync();
   expect(existsSync(tempdir)).toBe(true);
   writeFileSync(tempdir + "/non-ascii-👍.txt", "hello");
@@ -188,7 +192,7 @@ it("readdirSync throws when given a file path", () => {
   try {
     readdirSync(import.meta.path);
     throw new Error("should not get here");
-  } catch (exception) {
+  } catch (exception: any) {
     expect(exception.name).toBe("ENOTDIR");
   }
 });
@@ -197,7 +201,7 @@ it("readdirSync throws when given a path that doesn't exist", () => {
   try {
     readdirSync(import.meta.path + "/does-not-exist/really");
     throw new Error("should not get here");
-  } catch (exception) {
+  } catch (exception: any) {
     expect(exception.name).toBe("ENOTDIR");
   }
 });
@@ -206,7 +210,7 @@ it("readdirSync throws when given a file path with trailing slash", () => {
   try {
     readdirSync(import.meta.path + "/");
     throw new Error("should not get here");
-  } catch (exception) {
+  } catch (exception: any) {
     expect(exception.name).toBe("ENOTDIR");
   }
 });
@@ -455,7 +459,7 @@ describe("stat", () => {
     try {
       statSync("/tmp/doesntexist");
       throw "statSync should throw";
-    } catch (e) {
+    } catch (e: any) {
       expect(e.code).toBe("ENOENT");
     }
   });
@@ -499,8 +503,8 @@ describe("rmdir", () => {
     rmdir(path, err => {
       try {
         expect(err).toBeDefined();
-        expect(err.code).toBe("EPERM");
-        expect(err.message).toBe("Operation not permitted");
+        expect(err!.code).toBe("EPERM");
+        expect(err!.message).toBe("Operation not permitted");
         expect(existsSync(path)).toBe(true);
       } catch (e) {
         return done(e);
@@ -621,6 +625,7 @@ describe("fs.WriteStream", () => {
   });
 
   it("should be constructable", () => {
+    // @ts-ignore-next-line
     const stream = new fs.WriteStream("test.txt");
     expect(stream instanceof fs.WriteStream).toBe(true);
   });
@@ -630,6 +635,7 @@ describe("fs.WriteStream", () => {
     mkdirForce(pathToDir);
     const path = join(pathToDir, `fs-writestream-test.txt`);
 
+    // @ts-ignore-next-line
     const stream = new fs.WriteStream(path, { flags: "w+" });
     stream.write("Test file written successfully");
     stream.end();
@@ -645,6 +651,7 @@ describe("fs.WriteStream", () => {
   });
 
   it("should work if re-exported by name", () => {
+    // @ts-ignore-next-line
     const stream = new WriteStream_("test.txt");
     expect(stream instanceof WriteStream_).toBe(true);
     expect(stream instanceof WriteStreamStar_).toBe(true);
@@ -652,6 +659,7 @@ describe("fs.WriteStream", () => {
   });
 
   it("should work if re-exported by name, called without new", () => {
+    // @ts-ignore-next-line
     const stream = WriteStream_("test.txt");
     expect(stream instanceof WriteStream_).toBe(true);
     expect(stream instanceof WriteStreamStar_).toBe(true);
@@ -659,6 +667,7 @@ describe("fs.WriteStream", () => {
   });
 
   it("should work if re-exported, as export * from ...", () => {
+    // @ts-ignore-next-line
     const stream = new WriteStreamStar_("test.txt");
     expect(stream instanceof WriteStream_).toBe(true);
     expect(stream instanceof WriteStreamStar_).toBe(true);
@@ -666,6 +675,7 @@ describe("fs.WriteStream", () => {
   });
 
   it("should work if re-exported, as export * from..., called without new", () => {
+    // @ts-ignore-next-line
     const stream = WriteStreamStar_("test.txt");
     expect(stream instanceof WriteStream_).toBe(true);
     expect(stream instanceof WriteStreamStar_).toBe(true);
@@ -676,7 +686,7 @@ describe("fs.WriteStream", () => {
     const pathToDir = `${tmpdir()}/${Date.now()}`;
     mkdirForce(pathToDir);
     const path = join(pathToDir, `fs-writestream-re-exported-test.txt`);
-
+    // @ts-ignore-next-line
     const stream = new WriteStream_(path, { flags: "w+" });
     stream.write("Test file written successfully");
     stream.end();
@@ -698,6 +708,7 @@ describe("fs.ReadStream", () => {
   });
 
   it("should be constructable", () => {
+    // @ts-ignore-next-line
     const stream = new fs.ReadStream("test.txt");
     expect(stream instanceof fs.ReadStream).toBe(true);
   });
@@ -711,7 +722,7 @@ describe("fs.ReadStream", () => {
       encoding: "utf8",
       flag: "w+",
     });
-
+    // @ts-ignore-next-line
     const stream = new fs.ReadStream(path);
     stream.setEncoding("utf8");
     stream.on("error", e => {
@@ -731,6 +742,7 @@ describe("fs.ReadStream", () => {
   });
 
   it("should work if re-exported by name", () => {
+    // @ts-ignore-next-line
     const stream = new ReadStream_("test.txt");
     expect(stream instanceof ReadStream_).toBe(true);
     expect(stream instanceof ReadStreamStar_).toBe(true);
@@ -738,6 +750,7 @@ describe("fs.ReadStream", () => {
   });
 
   it("should work if re-exported by name, called without new", () => {
+    // @ts-ignore-next-line
     const stream = ReadStream_("test.txt");
     expect(stream instanceof ReadStream_).toBe(true);
     expect(stream instanceof ReadStreamStar_).toBe(true);
@@ -745,6 +758,7 @@ describe("fs.ReadStream", () => {
   });
 
   it("should work if re-exported as export * from ...", () => {
+    // @ts-ignore-next-line
     const stream = new ReadStreamStar_("test.txt");
     expect(stream instanceof ReadStreamStar_).toBe(true);
     expect(stream instanceof ReadStream_).toBe(true);
@@ -752,6 +766,7 @@ describe("fs.ReadStream", () => {
   });
 
   it("should work if re-exported as export * from ..., called without new", () => {
+    // @ts-ignore-next-line
     const stream = ReadStreamStar_("test.txt");
     expect(stream instanceof ReadStreamStar_).toBe(true);
     expect(stream instanceof ReadStream_).toBe(true);
@@ -768,6 +783,7 @@ describe("fs.ReadStream", () => {
       flag: "w+",
     });
 
+    // @ts-ignore-next-line
     const stream = new ReadStream_(path);
     stream.setEncoding("utf8");
     stream.on("error", e => {
@@ -812,7 +828,7 @@ describe("createWriteStream", () => {
     try {
       stream.write(null);
       expect(() => {}).toThrow(Error);
-    } catch (exception) {
+    } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
   });
@@ -820,12 +836,13 @@ describe("createWriteStream", () => {
   it("writing null throws ERR_STREAM_NULL_VALUES (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamNulls.txt`;
     const stream = createWriteStream(path, {
+      // @ts-ignore-next-line
       objectMode: true,
     });
     try {
       stream.write(null);
       expect(() => {}).toThrow(Error);
-    } catch (exception) {
+    } catch (exception: any) {
       expect(exception.code).toBe("ERR_STREAM_NULL_VALUES");
     }
   });
@@ -836,7 +853,7 @@ describe("createWriteStream", () => {
     try {
       stream.write(false);
       expect(() => {}).toThrow(Error);
-    } catch (exception) {
+    } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
@@ -844,12 +861,13 @@ describe("createWriteStream", () => {
   it("writing false throws ERR_INVALID_ARG_TYPE (objectMode: true)", async () => {
     const path = `/tmp/fs.test.js/${Date.now()}.createWriteStreamFalse.txt`;
     const stream = createWriteStream(path, {
+      // @ts-ignore-next-line
       objectMode: true,
     });
     try {
       stream.write(false);
       expect(() => {}).toThrow(Error);
-    } catch (exception) {
+    } catch (exception: any) {
       expect(exception.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
@@ -893,7 +911,7 @@ describe("fs/promises", () => {
     for (const args of fizz) {
       try {
         // check it doens't segfault when called with invalid arguments
-        await promises.readdir(...args);
+        await promises.readdir(...(args as [any, ...any[]]));
       } catch (e) {
         // check that producing the error doesn't cause any crashes
         Bun.inspect(e);
@@ -909,7 +927,7 @@ describe("fs/promises", () => {
       try {
         await rmdir(path);
         expect(() => {}).toThrow();
-      } catch (err) {
+      } catch (err: any) {
         expect(err.code).toBe("ENOTDIR");
         // expect(err.message).toBe("Operation not permitted");
         expect(await exists(path)).toBe(true);
@@ -992,6 +1010,7 @@ it("fs.Stats", () => {
 it("repro 1516: can use undefined/null to specify default flag", () => {
   const path = "/tmp/repro_1516.txt";
   writeFileSync(path, "b", { flag: undefined });
+  // @ts-ignore-next-line
   expect(readFileSync(path, { encoding: "utf8", flag: null })).toBe("b");
   rmSync(path);
 });

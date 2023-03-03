@@ -20,10 +20,11 @@
 declare module "fs" {
   import * as stream from "stream";
   import type { SystemError, ArrayBufferView } from "bun";
-
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;
   }
+
+  const promises: Awaited<typeof import("fs/promises")>;
   type EncodingOption =
     | ObjectEncodingOptions
     | BufferEncoding
@@ -1517,6 +1518,7 @@ declare module "fs" {
    * See the POSIX [`mkdir(2)`](http://man7.org/linux/man-pages/man2/mkdir.2.html) documentation for more details.
    * @since v0.0.67
    */
+
   function mkdirSync(
     path: PathLike,
     options: MakeDirectoryOptions & {
@@ -3930,6 +3932,5 @@ declare module "fs" {
 }
 
 declare module "node:fs" {
-  import * as fs from "fs";
-  export = fs;
+  export * from "fs";
 }

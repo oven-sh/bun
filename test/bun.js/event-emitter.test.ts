@@ -150,7 +150,7 @@ test("EventEmitter GCs", () => {
   (function () {
     Bun.gc(true);
 
-    function EventEmitterSubclass() {
+    function EventEmitterSubclass(this: any) {
       EventEmitter.call(this);
     }
 

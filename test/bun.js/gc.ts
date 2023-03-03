@@ -1,5 +1,5 @@
-export function gc() {
-  Bun.gc(true);
+export function gc(force: boolean = true) {
+  Bun.gc(force);
 }
 
 // we must ensure that finalizers are run

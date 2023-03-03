@@ -113,15 +113,6 @@ export const Socket = (function (InternalSocket) {
         console.error(error);
         self.emit("error", error);
       },
-      serverOpen(socket) {
-        const self = socket.data;
-        socket.timeout(self.timeout);
-        socket.ref();
-        self.#socket = socket;
-        self.connecting = false;
-        self.emit("connect");
-        Socket.#Drain(socket);
-      },
       open(socket) {
         const self = socket.data;
         socket.timeout(self.timeout);
@@ -140,6 +131,7 @@ export const Socket = (function (InternalSocket) {
 
     static #Close(self) {
       if (self.#closed) return;
+      self.unref();
       self.#closed = true;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
@@ -578,7 +570,7 @@ class Server extends EventEmitter {
             SocketClass._Handlers.error(socket, error);
             self.emit("error", error);
           },
-          timeout: SocketClass._Handlers.timeuout,
+          timeout: SocketClass._Handlers.timeout,
           connectError: SocketClass._Handlers.connectError,
           drain: SocketClass._Handlers.drain,
           binaryType: "buffer",

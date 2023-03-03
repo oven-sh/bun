@@ -53,7 +53,7 @@ for (let [gcTick, label] of [
         const process = Bun.spawnSync({
           cmd: ["bash", "-c", "sleep 2"],
           stdout: "pipe",
-          signal: controller.signal
+          signal: controller.signal,
         });
         gcTick();
         expect(process.exitCode).toBe(null);
@@ -394,21 +394,20 @@ for (let [gcTick, label] of [
         const process = Bun.spawn({
           cmd: ["bash", "-c", "sleep 2"],
           stdout: "pipe",
-          signal: controller.signal
+          signal: controller.signal,
         });
         gcTick();
-        setTimeout(()=> {
+        setTimeout(() => {
           controller.abort();
-        }, 15)
-        
+        }, 15);
+
         try {
           await process.exited;
-        } catch(err) {
+        } catch (err) {
           expect(err instanceof DOMException).toBe(true);
           expect(err?.name).toBe("AbortError");
           expect(err?.message).toBe("The operation was aborted.");
         }
-        
       });
     });
   });

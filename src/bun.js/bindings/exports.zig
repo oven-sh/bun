@@ -1974,6 +1974,29 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
+                    if (value.isObject()) {
+                        var number_name = ZigString.Empty;
+                        value.getClassName(this.globalThis, &number_name);
+
+                        if (this.snapshot_format) {
+                            // jest doesn't include the number
+                            this.addForNewLine(number_name.len + " {}".len);
+                            writer.print("{s} {{}}", .{number_name});
+                            return;
+                        }
+
+                        var number_value = ZigString.Empty;
+                        value.toZigString(&number_value, this.globalThis);
+
+                        this.addForNewLine(number_name.len + number_value.len + 4);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+                            number_name,
+                            number_value,
+                        });
+
+                        return;
+                    }
+
                     const num = value.asNumber();
 
                     if (std.math.isPositiveInf(num)) {
@@ -2014,7 +2037,6 @@ pub const ZigConsoleClient = struct {
                         value,
                         null,
                         null,
-
                         Writer,
                         writer_,
                         enable_ansi_colors,

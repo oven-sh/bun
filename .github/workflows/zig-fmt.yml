@@ -56,7 +56,7 @@ jobs:
             zig fmt src/*.zig src/**/*.zig
             ```
 
-            zig version: `${{env.ZIG_VERSION}}`
+            <sup>zig v${{env.ZIG_VERSION}}</sup>
 
       - name: Uncomment on PR
         if: steps.fmt.outputs.zig_fmt_errs == ''

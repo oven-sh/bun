@@ -1,4 +1,4 @@
-const std = @import("std")
+const std = @import("std");
 const bun = @import("bun");
 const Environment = @import("./env.zig");
 

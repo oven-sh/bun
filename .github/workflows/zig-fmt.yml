@@ -32,14 +32,14 @@ jobs:
       - name: Run zig fmt
         id: fmt
         run: |
-          zig fmt --check src/*.zig src/**/*.zig > zig-fmt.err 2> zig-fmt.err || echo "Failed"
+          zig fmt --check src/*.zig src/**/*.zig >> zig-fmt.err 2>> zig-fmt.err || echo "Failed"
           echo "::set-output name=zig_fmt_errs::$(cat zig-fmt.err)"
       - name: Comment on PR
         if: steps.fmt.outputs.zig_fmt_errs != ''
         uses: thollander/actions-comment-pull-request@v2
         with:
           message: |
-            @${{ github.actor }} please run `zig fmt` on your code. It's easiest if you configure your text editor to auto-format on save. If you use VSCode, consider the https://github.com/ziglang/vscode-zig extension.
+            @${{ github.actor }} `zig fmt` reported errors. It's easiest if you configure your text editor to auto-format on save. If you use VSCode, consider the https://github.com/ziglang/vscode-zig extension.
 
             The following files are not formatted correctly:
             ```zig

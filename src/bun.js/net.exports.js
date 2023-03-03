@@ -449,6 +449,7 @@ class Server extends EventEmitter {
       if (typeof callback === "function") {
         callback();
       }
+      
       return this;
     }
 
@@ -529,7 +530,10 @@ class Server extends EventEmitter {
         hostname,
         tls: false,
         socket: {
-          data: SocketClass._Handlers.data,
+          data({ data: self }, buffer) {
+            self.bytesRead += buffer.length;
+            self.emit("data", buffer);
+          },
           close(socket) {
             SocketClass._Handlers.close(socket);
             self.#connections--;

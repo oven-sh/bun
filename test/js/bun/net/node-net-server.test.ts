@@ -253,6 +253,7 @@ it("should call close", done => {
   expect(closed).toBe(true);
   done();
 });
+
 it("should call drop", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -261,7 +262,7 @@ it("should call drop", done => {
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
 
-  const closeAndFail = mustNotCall("end not called (timeout)", () => {
+  const closeAndFail = mustNotCall("drop not called (timeout)", () => {
     clearTimeout(timeout);
     server.close();
     done();
@@ -306,4 +307,111 @@ it("should call drop", done => {
         spawnClient();
       }
     });
+});
+
+it("should call connection", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  let timeout;
+  const server = createServer();
+  let maxClients = 2;
+  server.maxConnections = maxClients - 1;
+
+  const closeAndFail = mustNotCall("connection not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server
+    .on(
+      "connection",
+      mustCall(() => {
+        server.close();
+        clearTimeout(timeout);
+        done();
+      }),
+    )
+    .listen(() => {
+      const address = server.address();
+
+      Bun.connect({
+        port: address.port,
+        hostname: address.address,
+        socket: {
+          data(socket) {},
+          open(socket) {
+            socket.end();
+          },
+        },
+      });
+    });
+});
+
+it("should call listening", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  let timeout;
+  const server = createServer();
+  let maxClients = 2;
+  server.maxConnections = maxClients - 1;
+
+  const closeAndFail = mustNotCall("listening not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server
+    .on(
+      "listening",
+      mustCall(() => {
+        server.close();
+        clearTimeout(timeout);
+        done();
+      }),
+    )
+    .listen();
+});
+
+it("should call error", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+  let timeout;
+  const server = createServer();
+  let maxClients = 2;
+  server.maxConnections = maxClients - 1;
+
+  const closeAndFail = mustNotCall("error not called (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+    done();
+  });
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server
+    .on(
+      "error",
+      mustCall(err => {
+        server.close();
+        clearTimeout(timeout);
+        expect(err).toBeDefined();
+        done();
+      }),
+    )
+    .listen(123456);
 });

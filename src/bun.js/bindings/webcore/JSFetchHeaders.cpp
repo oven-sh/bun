@@ -450,7 +450,7 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC
         for (auto it = vec.begin(); it != vec.end(); ++it) {
             auto& name = it->key;
             auto& value = it->value;
-            obj->putDirect(vm, Identifier::fromString(vm, name), jsString(vm, value), 0);
+            obj->putDirect(vm, Identifier::fromString(vm, name.convertToASCIILowercase()), jsString(vm, value), 0);
         }
     }
 

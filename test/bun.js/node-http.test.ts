@@ -101,6 +101,11 @@ describe("node:http", () => {
             res.end("Not Found");
             return;
           }
+          if (reqUrl.pathname === "/lowerCaseHeaders") {
+            res.writeHead(200, { "content-type": "text/plain", "X-Custom-Header": "custom_value" });
+            res.end("Hello World");
+            return;
+          }
           if (reqUrl.pathname.includes("timeout")) {
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
@@ -411,6 +416,16 @@ describe("node:http", () => {
         req.write("BODY");
         req.end();
       }
+    });
+
+    it("should return response with lowercase headers", done => {
+      const req = request(`http://localhost:${serverPort}/lowerCaseHeaders`, res => {
+        console.log(res.headers);
+        expect(res.headers["content-type"]).toBe("text/plain");
+        expect(res.headers["x-custom-header"]).toBe("custom_value");
+        done();
+      });
+      req.end();
     });
   });
 

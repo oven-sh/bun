@@ -30,10 +30,11 @@ jobs:
       - name: Run prettier
         id: fmt
         run: |
-          bun prettier --check ./bench/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts}  ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt.err || echo "Failed"
+          bun prettier --check ./bench/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts}  ./packages/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./test/**/*.{ts,tsx,js,jsx,mjs,mtsx,mts} ./src/**/*.{ts,tsx,js,jsx} --config .prettierrc.cjs 2> prettier-fmt.err > prettier-fmt1.err || echo "Failed"
           delimiter="$(openssl rand -hex 8)"
           echo "prettier_fmt_errs<<${delimiter}" >> "${GITHUB_OUTPUT}"
           cat prettier-fmt.err >> "${GITHUB_OUTPUT}"
+          cat prettier-fmt1.err >> "${GITHUB_OUTPUT}"
           echo "${delimiter}" >> "${GITHUB_OUTPUT}"
 
       - name: Comment on PR

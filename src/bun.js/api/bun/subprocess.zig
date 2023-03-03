@@ -1418,7 +1418,8 @@ pub const Subprocess = struct {
                 subprocess.stdout.pipe.buffer.readAll();
             }
 
-            subprocess.wait(true);
+            jsc_vm.tick();
+            jsc_vm.eventLoop().autoTick();
         }
 
         const exitCode = subprocess.exit_code orelse 1;

@@ -24,9 +24,7 @@ http
       onShellError(error) {
         // Something errored before we could complete the shell so we emit an alternative shell.
         res.statusCode = 500;
-        res.send(
-          '<!doctype html><p>Loading...</p><script src="clientrender.js"></script>'
-        );
+        res.send('<!doctype html><p>Loading...</p><script src="clientrender.js"></script>');
       },
       onAllReady() {
         // If you don't want streaming, use this instead of onShellReady.

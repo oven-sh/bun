@@ -625,7 +625,7 @@ pub const Fetch = struct {
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
 
-        signal: ?*JSC.AbortSignal = null,
+        signal: ?*JSC.WebCore.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
@@ -715,12 +715,12 @@ pub const Fetch = struct {
 
             if (this.result.isTimeout()) {
                 // Timeout without reason
-                return JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
             }
 
             if (this.result.isAbort()) {
                 // Abort without reason
-                return JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
             const fetch_error = JSC.SystemError{
@@ -864,7 +864,7 @@ pub const Fetch = struct {
             follow_redirects: bool = true,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
-            signal: ?*JSC.AbortSignal = null,
+            signal: ?*JSC.WebCore.AbortSignal = null,
             globalThis: ?*JSGlobalObject,
         };
 
@@ -928,7 +928,7 @@ pub const Fetch = struct {
         var verbose = false;
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
-        var signal: ?*JSC.AbortSignal = null;
+        var signal: ?*JSC.WebCore.AbortSignal = null;
 
         var url_proxy_buffer: []const u8 = undefined;
 
@@ -998,7 +998,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                        if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                             _ = signal_.ref();
                             signal = signal_;
                         }
@@ -1117,7 +1117,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                        if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                             _ = signal_.ref();
                             signal = signal_;
                         }

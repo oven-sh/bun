@@ -23,9 +23,7 @@ time("Uint8Array[]", () => array[0]);
 console.log("");
 
 time("Buffer.getBigInt64BE     ", () => buf.readBigInt64BE(0));
-time("DataView.getBigInt64 (BE)", () =>
-  view.getBigInt64(0, false).toString(10)
-);
+time("DataView.getBigInt64 (BE)", () => view.getBigInt64(0, false).toString(10));
 console.log("");
 
 time("Buffer.readBigInt64LE     ", () => buf.readBigInt64LE(0));

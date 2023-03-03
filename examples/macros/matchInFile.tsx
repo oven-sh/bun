@@ -12,10 +12,10 @@ export function matchInFile(callExpression: BunAST.CallExpression) {
     <array>
       {file
         .split("\n")
-        .map((line) => line.match(matcher))
+        .map(line => line.match(matcher))
         .filter(Boolean)
         .reverse()
-        .map((line) => (
+        .map(line => (
           <string value={line[0]} />
         ))}
     </array>

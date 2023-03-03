@@ -8,6 +8,7 @@ pub usingnamespace @import("./webcore/body.zig");
 const JSC = @import("bun").JSC;
 const std = @import("std");
 const bun = @import("bun");
+pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 
 pub const Lifetime = enum {
     clone,

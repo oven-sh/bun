@@ -1684,11 +1684,11 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
 }
 
 pub const AbortSignal = extern opaque {
-    pub const shim = Shimmer("JSC", "AbortSignal", @This());
+    pub const shim = Shimmer("WebCore", "AbortSignal", @This());
     const cppFn = shim.cppFn;
-    pub const include = "WebCore/AbortSignal.h";
-    pub const name = "JSC::AbortSignal";
-    pub const namespace = "JSC";
+    pub const include = "webcore/AbortSignal.h";
+    pub const name = "WebCore::AbortSignal";
+    pub const namespace = "WebCore";
 
     pub fn listen(
         this: *AbortSignal,
@@ -4723,6 +4723,7 @@ pub const DOMCalls = .{
 
 extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
 pub fn initialize() void {
+    JSC.markBinding(@src());
     JSCInitialize(
         std.os.environ.ptr,
         std.os.environ.len,

@@ -22,9 +22,13 @@ async function runTest(path: string): Promise<void> {
   const name = path.replace(cwd, "").slice(1);
   const runner = await spawn({
     cwd,
-    cmd: ["bun", "wiptest", path],
+    cmd: ["bun", "test", path],
     stdout: "pipe",
     stderr: "pipe",
+    env: {
+      ...process.env,
+      FORCE_COLOR: "1",
+    }
   });
   const exitCode = await Promise.race([
     new Promise((resolve) => {

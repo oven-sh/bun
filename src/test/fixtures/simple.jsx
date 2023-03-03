@@ -25,19 +25,10 @@ const FeaturedProfile = ({ profile }) => {
   return (
     <Link route={buildProfileURL(profile.id)}>
       <a className="Profile">
-        <img
-          src={_.first(profile.photos)}
-          srcSet={buildImgSrcSet(_.first(profile.photos), 250)}
-        />
+        <img src={_.first(profile.photos)} srcSet={buildImgSrcSet(_.first(profile.photos), 250)} />
         <div className="Text">
           <div className="Title">
-            <Text
-              font="sans-serif"
-              lineHeight="20px"
-              weight="semiBold"
-              size="18px"
-              color="#000"
-            >
+            <Text font="sans-serif" lineHeight="20px" weight="semiBold" size="18px" color="#000">
               {profile.name}
             </Text>
           </div>
@@ -109,18 +100,16 @@ class SignupForm extends React.Component {
     };
   }
 
-  setEmail = (evt) => this.setState({ email: evt.target.value });
+  setEmail = evt => this.setState({ email: evt.target.value });
 
   componentDidMount() {
     Router.prefetchRoute(`/sign-up/verify`);
   }
 
-  handleSubmit = (evt) => {
+  handleSubmit = evt => {
     evt.preventDefault();
 
-    Router.pushRoute(
-      `/sign-up/verify?${qs.stringify({ email: this.state.email })}`,
-    );
+    Router.pushRoute(`/sign-up/verify?${qs.stringify({ email: this.state.email })}`);
   };
 
   render() {
@@ -229,8 +218,7 @@ class Homepage extends React.Component {
               </div>
               <div className="Copy-body">
                 <Text size="16px" lineHeight="24px" font="sans-serif">
-                  Create a page where people apply to go on a date with you. You
-                  pick the winners.
+                  Create a page where people apply to go on a date with you. You pick the winners.
                 </Text>
               </div>
 
@@ -272,9 +260,7 @@ class Homepage extends React.Component {
             {this.state.isLoadingProfiles && <div className="Spinner" />}
             <div className="FeaturedProfiles">
               {!_.isEmpty(this.state.profiles) &&
-                this.state.profiles.map((profile) => (
-                  <FeaturedProfile key={profile.id} profile={profile} />
-                ))}
+                this.state.profiles.map(profile => <FeaturedProfile key={profile.id} profile={profile} />)}
             </div>
           </div>
         </footer>
@@ -428,7 +414,7 @@ class Homepage extends React.Component {
   }
 }
 
-const HomepageWithStore = withRedux(initStore, null, (dispatch) =>
+const HomepageWithStore = withRedux(initStore, null, dispatch =>
   bindActionCreators({ updateEntities, setCurrentUser }, dispatch),
 )(LoginGate(Homepage));
 

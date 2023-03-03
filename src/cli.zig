@@ -141,70 +141,59 @@ pub const Arguments = struct {
         }
     }
 
-    pub const parser = .{
-        .STR = clap.parsers.string,
-        .PATH = clap.parsers.string,
-        .POS = clap.parsers.string,
-    };
-
     pub const ParamType = clap.Param(clap.Help);
 
-    const public_params = clap.parseParamsComptime(
-        \\--use <STR>                       Choose a framework, e.g. "--use next". It checks first for a package named "bun-framework-packagename" and then "packagename".
-        \\-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)
-        \\--bunfile <STR>                   Use a .bun file (default: node_modules.bun)
-        \\--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)
-        \\--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.
-        \\-c, --config <PATH>               Config file to load bun from (e.g. -c bunfig.toml)
-        \\--disable-react-fast-refresh      Disable React Fast Refresh
-        \\--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev
-        \\--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json
-        \\--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime
-        \\--jsx-fragment <STR>              Changes the function called when compiling JSX fragments
-        \\--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"
-        \\--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime
-        \\--jsx-runtime <STR>               "automatic" (default) or "classic"
-        \\-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
-        \\--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent
-        \\--no-summary                      Don't print a summary (when generating .bun
-        \\-v, --version                     Print version and exit
-        \\--platform <STR>                  "bun" or "browser" or "node", used when building or bundling
-        \\--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to "<cwd>/public", to match create-react-app and Next.js
-        \\--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json
-        \\-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:"development". Values are parsed as JSON.
-        \\-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react
-        \\-h, --help                        Display this help and exit.
-        \\-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css
-        \\-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: ""
-        \\-p, --port <STR>                  Port to serve bun's dev server on. Default: "3000"
-        \\--hot                             Enable auto reload in bun's JavaScript runtime
-        \\--no-install                      Disable auto install in bun's JavaScript runtime
-        \\-i, --install-fallback            Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback
-        \\--install <STR>                   Install dependencies automatically when no node_modules are present, default: "auto". "force" to ignore node_modules, fallback to install any missing
-        \\--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk
-        \\--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm
-        \\--silent                          Don't repeat the command for bun run
-        \\<POS>...
-    );
+    const public_params = [_]ParamType{
+        clap.parseParam("--use <STR>                       Choose a framework, e.g. \"--use next\". It checks first for a package named \"bun-framework-packagename\" and then \"packagename\".") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun.js instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--bunfile <STR>                   Use a .bun file (default: node_modules.bun)") catch unreachable,
+        clap.parseParam("--server-bunfile <STR>            Use a .server.bun file (default: node_modules.server.bun)") catch unreachable,
+        clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?               Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
+        clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too) in bun dev") catch unreachable,
+        clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
+        clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
+        clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
+        clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
+        clap.parseParam("--jsx-production                  Use jsx instead of jsxDEV (default) for the automatic runtime") catch unreachable,
+        clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
+        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --platform dependent") catch unreachable,
+        clap.parseParam("--no-summary                     Don't print a summary (when generating .bun") catch unreachable,
+        clap.parseParam("-v, --version                    Print version and exit") catch unreachable,
+        clap.parseParam("--platform <STR>                  \"bun\" or \"browser\" or \"node\", used when building or bundling") catch unreachable,
+        // clap.parseParam("--production                      [not implemented] generate production code") catch unreachable,
+        clap.parseParam("--public-dir <STR>                Top-level directory for .html files, fonts or anything external. Defaults to \"<cwd>/public\", to match create-react-app and Next.js") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+        clap.parseParam("-h, --help                        Display this help and exit.              ") catch unreachable,
+        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
+        clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
+        clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("--no-install                      Disable auto install in bun's JavaScript runtime") catch unreachable,
+        clap.parseParam("-i                                Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback") catch unreachable,
+        clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
+        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
+        clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
+        clap.parseParam("<POS>...                          ") catch unreachable,
+    };
 
-    const debug_params = clap.parseParamsComptime(
-        \\--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging
-        \\--dump-limits                   Dump system limits. Useful for debugging
-    )
-    // clap can't handle parsing the '.'
-    ++ .{
-        clap.Param(clap.Help){
-            .id = .{ .val = "disable-bun.js", .desc = "Disable bun.js from loading in the dev server" },
-            .names = .{ .long = "disable-bun.js" },
-        }
+    const debug_params = [_]ParamType{
+        clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
+        clap.parseParam("--dump-limits                   Dump system limits. Useful for debugging") catch unreachable,
+        clap.parseParam("--disable-bun.js                Disable bun.js from loading in the dev server") catch unreachable,
     };
 
     pub const params = public_params ++ debug_params;
 
-    const build_only_params = clap.parseParamsComptime(
-        \\--sourcemap <STR>                Build with sourcemaps - "inline", "external", or "none"
-        \\--outdir <STR>                   Default to "dist" if multiple files
-    );
+    const build_only_params = [_]ParamType{
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+    };
 
     const build_params_public = public_params ++ build_only_params;
     pub const build_params = build_params_public ++ debug_params;
@@ -314,78 +303,40 @@ pub const Arguments = struct {
         try loadConfigPath(allocator, auto_loaded, config_path, ctx, comptime cmd);
     }
 
+    pub fn loadConfigWithCmdArgs(
+        comptime cmd: Command.Tag,
+        allocator: std.mem.Allocator,
+        args: clap.Args(clap.Help, cmd.params()),
+        ctx: *Command.Context,
+    ) !void {
+        return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
+    }
+
     pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
+        const params_to_use = comptime cmd.params();
 
-        return parseImpl(allocator, ctx, cmd, &diag) catch |err| {
+        var args = clap.parse(clap.Help, params_to_use, .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+            .stop_after_positional_at = if (cmd == .RunCommand) 2 else if (cmd == .AutoCommand)
+                1
+            else
+                0,
+        }) catch |err| {
             // Report useful error and exit
-            clap.help(Output.errorWriter(), clap.Help, cmd.params(), .{}) catch {};
+            clap.help(Output.errorWriter(), params_to_use) catch {};
             Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
             Global.exit(1);
         };
-    }
 
-    // This implementation is separated into a function so that we can use try at
-    //  various key points knowing that the public parse fn will catch and handle
-    //  those errors for us.
-    fn parseImpl(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag, diag: *clap.Diagnostic) !Api.TransformOptions {
-        const params_to_use = comptime cmd.params();
-
-        // We'll need to work around clap a bit to support this pattern:
-        //   bun run --bun-arg app.js --app-arg
-        //
-        // 1) Collect all args into a slice so that we can iterate them multiple times.
-        // 2) Count positionals until we hit the second one (in the example above,
-        //     could vary based on command).
-        // 3) Call clap.parse with only the slice up to and including that positional.
-        // 4) All remaining args become passthroughs
-        const full_args = try std.process.argsAlloc(allocator);
-        //NOTE: we won't free full_args because we'll make slices available to
-        // the running script and they need to remain available for the entire run
-        const args = full_args[1..]; // skip exe path
-
-        // 2: Find our parse stopping point
-        const passthrough_after_nth_positional = comptime if (cmd == .RunCommand) 2
-                                                 else if (cmd == .AutoCommand) 1
-                                                 else 0;
-        var it = clap.args.SliceIterator{ .args = args[0..] };
-        var streaming_clap = clap.streaming.Clap(clap.Help, clap.args.SliceIterator){
-            .params = params_to_use,
-            .iter = &it,
-            .diagnostic = diag,
-        };
-        var args_to_parse: usize = 0;
-        if (comptime passthrough_after_nth_positional > 0) {
-            var num_positionals_seen: usize = 0;
-            while (try streaming_clap.next()) |arg| : (args_to_parse += 1) {
-                if (arg.param.names.longest().kind == .positional) {
-                    num_positionals_seen += 1;
-
-                    if (num_positionals_seen == passthrough_after_nth_positional) {
-                        args_to_parse += 1;
-                        break;
-                    }
-                }
-            }
-        } else
-            args_to_parse = args.len;
-
-        // 3: parse but only up to args_to_parse
-        it = clap.args.SliceIterator{ .args = args[0..args_to_parse] };
-        var res = try clap.parseEx(clap.Help, params_to_use, Arguments.parser, &it, .{
-            .diagnostic = diag,
-            .allocator = allocator,
-        });
-        //defer res.deinit();
-
-
-        if (res.args.version) {
+        if (args.flag("--version")) {
             printVersionAndExit();
         }
 
         var cwd: []u8 = undefined;
-        if (res.args.cwd) |cwd_| {
+        if (args.option("--cwd")) |cwd_| {
             cwd = brk: {
                 var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
                 const out = std.os.realpath(cwd_, &outbuf) catch |err| {
@@ -399,17 +350,15 @@ pub const Arguments = struct {
         }
 
         ctx.args.absolute_working_dir = cwd;
-        ctx.positionals = res.positionals;
-        // All remaining args should be passed through
-        ctx.passthrough = args[args_to_parse..];
+        ctx.positionals = args.positionals();
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
-            try loadConfig(allocator, res.args.config, ctx, cmd);
+            try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
         }
 
         var opts: Api.TransformOptions = ctx.args;
 
-        var defines_tuple = try DefineColonList.resolve(allocator, res.args.define);
+        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
 
         if (defines_tuple.keys.len > 0) {
             opts.define = .{
@@ -418,7 +367,7 @@ pub const Arguments = struct {
             };
         }
 
-        var loader_tuple = try LoaderColonList.resolve(allocator, res.args.loader);
+        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -427,39 +376,40 @@ pub const Arguments = struct {
             };
         }
 
-        if (res.args.external.len > 0) {
-            var externals = try allocator.alloc([]u8, res.args.external.len);
-            for (res.args.external, 0..) |external, i| {
+        if (args.options("--external").len > 0) {
+            var externals = try allocator.alloc([]u8, args.options("--external").len);
+            for (args.options("--external"), 0..) |external, i| {
                 externals[i] = constStrToU8(external);
             }
             opts.external = externals;
         }
 
-        opts.tsconfig_override = if (res.args.@"tsconfig-override") |ts|
+        opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
             (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
         else
             null;
 
-        if (res.args.origin) |origin| {
+        if (args.option("--origin")) |origin| {
             opts.origin = origin;
         }
 
-        if (res.args.port) |port_str| {
+        if (args.option("--port")) |port_str| {
             opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
         }
         opts.serve = cmd == .DevCommand;
-        opts.main_fields = res.args.@"main-fields";
+        opts.main_fields = args.options("--main-fields");
         opts.generate_node_module_bundle = cmd == .BunCommand;
         // we never actually supported inject.
-        // opts.inject = res.args.inject;
-        opts.extension_order = res.args.@"extension-order";
-        ctx.debug.hot_reload = res.args.hot;
+        // opts.inject = args.options("--inject");
+        opts.extension_order = args.options("--extension-order");
+        ctx.debug.hot_reload = args.flag("--hot");
+        ctx.passthrough = args.remaining();
 
-        opts.no_summary = res.args.@"no-summary";
-        opts.disable_hmr = res.args.@"disable-hmr";
+        opts.no_summary = args.flag("--no-summary");
+        opts.disable_hmr = args.flag("--disable-hmr");
 
         if (cmd != .DevCommand) {
-            const preloads = res.args.preload;
+            const preloads = args.options("--preload");
             if (ctx.preloads.len > 0 and preloads.len > 0) {
                 var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
@@ -470,36 +420,37 @@ pub const Arguments = struct {
             }
         }
 
-        ctx.debug.silent = res.args.@"silent";
+        ctx.debug.silent = args.flag("--silent");
         if (opts.port != null and opts.origin == null) {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
-        if (res.args.help) {
+        const print_help = args.flag("--help");
+        if (print_help) {
             const params_len = if (cmd == .BuildCommand) build_params_public.len else public_params.len;
-            clap.help(Output.writer(), clap.Help, params_to_use[0..params_len], .{}) catch {};
+            clap.help(Output.writer(), params_to_use[0..params_len]) catch {};
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
             Global.exit(0);
         }
 
-        ctx.debug.dump_environment_variables = res.args.@"dump-environment-variables";
-        ctx.debug.fallback_only = ctx.debug.fallback_only or res.args.@"disable-bun.js";
-        ctx.debug.dump_limits = res.args.@"dump-limits";
+        ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
+        ctx.debug.fallback_only = ctx.debug.fallback_only or args.flag("--disable-bun.js");
+        ctx.debug.dump_limits = args.flag("--dump-limits");
 
-        ctx.debug.offline_mode_setting = if (res.args.@"prefer-offline")
+        ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
             Bunfig.OfflineMode.offline
-        else if (res.args.@"prefer-latest")
+        else if (args.flag("--prefer-latest"))
             Bunfig.OfflineMode.latest
         else
             Bunfig.OfflineMode.online;
 
-        if (res.args.@"no-install") {
+        if (args.flag("--no-install")) {
             ctx.debug.global_cache = .disable;
-        } else if (res.args.@"install-fallback") {
+        } else if (args.flag("-i")) {
             ctx.debug.global_cache = .fallback;
-        } else if (res.args.install) |enum_value| {
+        } else if (args.option("--install")) |enum_value| {
             // -i=auto --install=force, --install=disable
             if (options.GlobalCache.Map.get(enum_value)) |result| {
                 ctx.debug.global_cache = result;
@@ -512,18 +463,18 @@ pub const Arguments = struct {
             }
         }
 
-        // var output_dir = res.args.outdir;
+        // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
         const production = false;
 
-        if (comptime cmd == .BuildCommand) {
-            if (res.args.outdir) |outdir| {
+        if (cmd == .BuildCommand) {
+            if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     output_dir = outdir;
                 }
             }
 
-            if (res.args.sourcemap) |setting| {
+            if (args.option("--sourcemap")) |setting| {
                 if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
                     opts.source_map = Api.SourceMapMode.inline_into_file;
                 } else if (strings.eqlComptime(setting, "none")) {
@@ -595,24 +546,24 @@ pub const Arguments = struct {
             opts.entry_points = entry_points;
         }
 
-        var jsx_factory = res.args.@"jsx-factory";
-        var jsx_fragment = res.args.@"jsx-fragment";
-        var jsx_import_source = res.args.@"jsx-import-source";
-        var jsx_runtime = res.args.@"jsx-runtime";
-        var jsx_production = res.args.@"jsx-production";
+        var jsx_factory = args.option("--jsx-factory");
+        var jsx_fragment = args.option("--jsx-fragment");
+        var jsx_import_source = args.option("--jsx-import-source");
+        var jsx_runtime = args.option("--jsx-runtime");
+        var jsx_production = args.flag("--jsx-production");
         const react_fast_refresh = switch (comptime cmd) {
-            .BunCommand, .DevCommand => !(res.args.@"disable-react-fast-refresh" or jsx_production),
+            .BunCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
             else => true,
         };
 
         if (comptime Command.Tag.cares_about_bun_file.get(cmd)) {
-            opts.node_modules_bundle_path = res.args.bunfile orelse opts.node_modules_bundle_path orelse brk: {
+            opts.node_modules_bundle_path = args.option("--bunfile") orelse opts.node_modules_bundle_path orelse brk: {
                 const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.bun");
 
                 break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
             };
 
-            opts.node_modules_bundle_path_server = res.args.@"server-bunfile" orelse opts.node_modules_bundle_path_server orelse brk: {
+            opts.node_modules_bundle_path_server = args.option("--server-bunfile") orelse opts.node_modules_bundle_path_server orelse brk: {
                 const node_modules_bundle_path_absolute = resolve_path.joinAbs(cwd, .auto, "node_modules.server.bun");
 
                 break :brk std.fs.realpathAlloc(allocator, node_modules_bundle_path_absolute) catch null;
@@ -621,7 +572,7 @@ pub const Arguments = struct {
 
         switch (comptime cmd) {
             .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
-                if (res.args.@"public-dir") |public_dir| {
+                if (args.option("--public-dir")) |public_dir| {
                     if (public_dir.len > 0) {
                         opts.router = Api.RouteConfig{ .extensions = &.{}, .dir = &.{}, .static_dir = public_dir };
                     }
@@ -636,7 +587,7 @@ pub const Arguments = struct {
 
         switch (comptime cmd) {
             .BuildCommand => {
-                // if (res.args.resolve) |_resolve| {
+                // if (args.option("--resolve")) |_resolve| {
                 //     switch (ResolveMatcher.match(_resolve)) {
                 //         ResolveMatcher.case("disable") => {
                 //             opts.resolve = Api.ResolveMode.disable;
@@ -664,19 +615,19 @@ pub const Arguments = struct {
 
         const PlatformMatcher = strings.ExactSizeMatcher(8);
 
-        if (res.args.platform) |_platform| {
+        if (args.option("--platform")) |_platform| {
             opts.platform = opts.platform orelse switch (PlatformMatcher.match(_platform)) {
                 PlatformMatcher.case("browser") => Api.Platform.browser,
                 PlatformMatcher.case("node") => Api.Platform.node,
                 PlatformMatcher.case("macro") => if (cmd == .BuildCommand) Api.Platform.bun_macro else Api.Platform.bun,
                 PlatformMatcher.case("bun") => Api.Platform.bun,
-                else => invalidPlatform(diag, _platform),
+                else => invalidPlatform(&diag, _platform),
             };
 
             ctx.debug.run_in_bun = opts.platform.? == .bun;
         }
 
-        ctx.debug.run_in_bun = res.args.bun or ctx.debug.run_in_bun;
+        ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -708,7 +659,7 @@ pub const Arguments = struct {
             }
         }
 
-        if (res.args.use) |entry| {
+        if (args.option("--use")) |entry| {
             opts.framework = Api.FrameworkConfig{
                 .package = entry,
                 .development = !production,
@@ -849,17 +800,16 @@ pub const PrintBundleCommand = struct {
         var stdout = std.io.getStdOut();
 
         var input = try std.fs.openFileAbsolute(try std.os.realpath(entry_point, &out_buffer), .{ .mode = .read_only });
-        const params = comptime clap.parseParamsComptime(
-            \\--summary  Peek inside the .bun"
-        );
+        const params = comptime [_]Arguments.ParamType{
+            clap.parseParam("--summary  Peek inside the .bun") catch unreachable,
+        };
 
-        var jsBundleArgs = clap.parse(clap.Help, &params, Arguments.parser, .{ .allocator = ctx.allocator }) catch {
+        var jsBundleArgs = clap.parse(clap.Help, &params, .{ .allocator = ctx.allocator }) catch {
             try NodeModuleBundle.printBundle(std.fs.File, input, @TypeOf(stdout), stdout);
             return;
         };
-        defer jsBundleArgs.deinit();
 
-        if (jsBundleArgs.args.summary) {
+        if (jsBundleArgs.flag("--summary")) {
             NodeModuleBundle.printSummaryFromDisk(std.fs.File, input, @TypeOf(stdout), stdout, ctx.allocator) catch {};
             return;
         }

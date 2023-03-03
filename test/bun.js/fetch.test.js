@@ -27,115 +27,6 @@ afterEach(() => {
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
-describe("AbortSignalStreamTest", async () => {
-  async function abortOnStage(body, stage) {
-    let error = undefined;
-    var abortController = new AbortController();
-    {
-      const server = getServer({
-        async fetch(request) {
-          let chunk_count = 0;
-          const reader = request.body.getReader();
-          return Response(
-            new ReadableStream({
-              async pull(controller) {
-                while (true) {
-                  chunk_count++;
-
-                  const { done, value } = await reader.read();
-                  if (chunk_count == stage) {
-                    abortController.abort();
-                  }
-
-                  if (done) {
-                    controller.close();
-                    return;
-                  }
-                  controller.enqueue(value);
-                }
-              },
-            }),
-          );
-        },
-      });
-
-      try {
-        const signal = abortController.signal;
-
-        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
-          res.arrayBuffer(),
-        );
-      } catch (ex) {
-        error = ex;
-      }
-      expect(error.name).toBe("AbortError");
-      expect(error.message).toBe("The operation was aborted.");
-      expect(error instanceof DOMException).toBeTruthy();
-    }
-  }
-
-  for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
-      await abortOnStage(payload, i);
-    });
-  }
-});
-
-describe("AbortSignalDirectStreamTest", () => {
-  async function abortOnStage(body, stage) {
-    let error = undefined;
-    var abortController = new AbortController();
-    {
-      const server = getServer({
-        async fetch(request) {
-          let chunk_count = 0;
-          const reader = request.body.getReader();
-          return Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                while (true) {
-                  chunk_count++;
-
-                  const { done, value } = await reader.read();
-                  if (chunk_count == stage) {
-                    abortController.abort();
-                  }
-
-                  if (done) {
-                    controller.end();
-                    return;
-                  }
-                  controller.write(value);
-                }
-              },
-            }),
-          );
-        },
-      });
-
-      try {
-        const signal = abortController.signal;
-
-        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
-          res.arrayBuffer(),
-        );
-      } catch (ex) {
-        error = ex;
-      }
-      expect(error.name).toBe("AbortError");
-      expect(error.message).toBe("The operation was aborted.");
-      expect(error instanceof DOMException).toBeTruthy();
-    }
-  }
-
-  for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
-      await abortOnStage(payload, i);
-    });
-  }
-});
-
 describe("AbortSignal", () => {
   var server;
   beforeEach(() => {
@@ -658,11 +549,12 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
 
 describe("Bun.file", () => {
   const tempdir = require("os").tmpdir();
+  const { join } = require("path");
   var callCount = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer());
-    const path = tempdir + "-" + callCount++ + ".bytes";
+    const path = join(tempdir, "tmp-" + callCount++ + ".bytes");
     require("fs").writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);

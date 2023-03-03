@@ -3,21 +3,14 @@
 
 const filePath = process.argv.at(1);
 if (!filePath) {
-  var err = new Error(
-    "To run a wasm file with Bun, the first argument must be a path to a .wasm file",
-  );
+  var err = new Error("To run a wasm file with Bun, the first argument must be a path to a .wasm file");
   err.name = "WasmFileNotFound";
   throw err;
 }
 
 // The module specifier is the resolved path to the wasm file
 
-var {
-  WASM_CWD = process.cwd(),
-  WASM_ROOT_DIR = "/",
-  WASM_ENV_STR = undefined,
-  WASM_USE_ASYNC_INIT = "",
-} = process.env;
+var { WASM_CWD = process.cwd(), WASM_ROOT_DIR = "/", WASM_ENV_STR = undefined, WASM_USE_ASYNC_INIT = "" } = process.env;
 
 var env = process.env;
 if (WASM_ENV_STR?.length) {

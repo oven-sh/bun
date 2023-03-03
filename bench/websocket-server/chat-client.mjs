@@ -1,9 +1,4 @@
-const env =
-  "process" in globalThis
-    ? process.env
-    : "Deno" in globalThis
-    ? Deno.env.toObject()
-    : {};
+const env = "process" in globalThis ? process.env : "Deno" in globalThis ? Deno.env.toObject() : {};
 
 const SERVER = env.SERVER || "ws://0.0.0.0:4001";
 const WebSocket = globalThis.WebSocket || (await import("ws")).WebSocket;
@@ -105,10 +100,10 @@ for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
   clients[i] = new WebSocket(`${SERVER}?name=${NAMES[i]}`);
   promises.push(
     new Promise((resolve, reject) => {
-      clients[i].onmessage = (event) => {
+      clients[i].onmessage = event => {
         resolve();
       };
-    })
+    }),
   );
 }
 
@@ -121,7 +116,7 @@ var more = false;
 var remaining;
 
 for (let i = 0; i < CLIENTS_TO_WAIT_FOR; i++) {
-  clients[i].onmessage = (event) => {
+  clients[i].onmessage = event => {
     if (LOG_MESSAGES) console.log(event.data);
     received++;
     remaining--;
@@ -160,7 +155,7 @@ setInterval(() => {
   received = 0;
   console.log(
     last,
-    `messages per second (${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, min delay: ${DELAY}ms)`
+    `messages per second (${CLIENTS_TO_WAIT_FOR} clients x ${MESSAGES_TO_SEND.length} msg, min delay: ${DELAY}ms)`,
   );
 
   if (runs.length >= 10) {

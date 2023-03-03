@@ -1,12 +1,15 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
+const { URL } = import.meta.require("node:url");
 const { newArrayWithSize, String, Object, Array } = import.meta.primordials;
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
-const debug = process.env.BUN_JS_DEBUG ? (...args) => console.log("node:http", ...args) : nop;
+
+const __DEBUG__ = process.env.__DEBUG__;
+const debug = __DEBUG__ ? (...args) => console.log("node:http", ...args) : nop;
 
 const kEmptyObject = Object.freeze(Object.create(null));
 const kOutHeaders = Symbol.for("kOutHeaders");
@@ -236,13 +239,13 @@ export class Server extends EventEmitter {
     if (typeof port === "function") {
       onListen = port;
     } else if (typeof port === "object") {
-      port?.signal?.addEventListener("abort", ()=> {
+      port?.signal?.addEventListener("abort", () => {
         this.close();
       });
 
       host = port?.host;
       port = port?.port;
-      
+
       if (typeof port?.callback === "function") onListen = port?.callback;
     }
     const ResponseClass = this.#options.ServerResponse || ServerResponse;
@@ -548,7 +551,6 @@ function write_(msg, chunk, encoding, callback, fromEnd) {
 
   return true;
 }
-
 
 export class OutgoingMessage extends Writable {
   #headers;
@@ -951,19 +953,23 @@ export class ClientRequest extends OutgoingMessage {
   _final(callback) {
     this.#finished = true;
     this[kAbortController] = new AbortController();
-    this[kAbortController].signal.addEventListener("abort", ()=> {
-        this[kClearTimeout]();
+    this[kAbortController].signal.addEventListener("abort", () => {
+      this[kClearTimeout]();
     });
-    if(this.#signal?.aborted){
+    if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
+
+    var method = this.#method,
+      body = this.#body;
+
     this.#fetchRequest = fetch(`${this.#protocol}//${this.#host}:${this.#port}${this.#path}`, {
-      method: this.#method,
+      method,
       headers: this.getHeaders(),
-      body: this.#body,
+      body: body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? body : undefined,
       redirect: "manual",
-      verbose: Boolean(process.env.BUN_JS_DEBUG),
-      signal: this[kAbortController].signal
+      verbose: Boolean(__DEBUG__),
+      signal: this[kAbortController].signal,
     })
       .then(response => {
         var res = (this.#res = new IncomingMessage(response, {
@@ -972,7 +978,7 @@ export class ClientRequest extends OutgoingMessage {
         this.emit("response", res);
       })
       .catch(err => {
-        if (process.env.BUN_JS_DEBUG) globalReportError(err);
+        if (__DEBUG__) globalReportError(err);
         this.emit("error", err);
       })
       .finally(() => {
@@ -999,7 +1005,7 @@ export class ClientRequest extends OutgoingMessage {
     if (typeof input === "string") {
       const urlStr = input;
       input = urlToHttpOptions(new URL(urlStr));
-    } else if (input && input[searchParamsSymbol] && input[searchParamsSymbol][searchParamsSymbol]) {
+    } else if (input && typeof input === "object" && input instanceof URL) {
       // url.URL instance
       input = urlToHttpOptions(input);
     } else {
@@ -1016,8 +1022,7 @@ export class ClientRequest extends OutgoingMessage {
     }
 
     const defaultAgent = options._defaultAgent || Agent.globalAgent;
-    const protocol = (this.#protocol = options.protocol || defaultAgent.protocol);
-    const expectedProtocol = defaultAgent.protocol;
+    const protocol = (this.#protocol = options.protocol ||= defaultAgent.protocol);
 
     if (options.path) {
       const path = String(options.path);
@@ -1028,14 +1033,14 @@ export class ClientRequest extends OutgoingMessage {
       }
     }
 
-    if (protocol !== expectedProtocol) {
+    // Since we don't implement Agent, we don't need this
+    if (protocol !== "http:" && protocol !== "https:" && protocol) {
+      const expectedProtocol = defaultAgent?.protocol ?? "http:";
       throw new Error(`Protocol mismatch. Expected: ${expectedProtocol}. Got: ${protocol}`);
       // throw new ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
 
-    const defaultPort = options.defaultPort || (this.#agent && this.#agent.defaultPort);
-
-    this.#port = options.port = options.port || defaultPort || 80;
+    this.#port = options.port || options.defaultPort || this.#agent?.defaultPort || 80;
     const host =
       (this.#host =
       options.host =
@@ -1045,13 +1050,12 @@ export class ClientRequest extends OutgoingMessage {
 
     this.#socketPath = options.socketPath;
 
-    if (options.timeout !== undefined)
-      this.setTimeout(options.timeout, null);
+    if (options.timeout !== undefined) this.setTimeout(options.timeout, null);
 
     const signal = options.signal;
     if (signal) {
       //We still want to control abort function and timeout so signal call our AbortController
-      signal.addEventListener("abort", ()=> {
+      signal.addEventListener("abort", () => {
         this[kAbortController]?.abort();
       });
       this.#signal = signal;
@@ -1101,7 +1105,8 @@ export class ClientRequest extends OutgoingMessage {
       this.once("response", cb);
     }
 
-    debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
+    __DEBUG__ &&
+      debug(`new ClientRequest: ${this.#method} ${this.#protocol}//${this.#host}:${this.#port}${this.#path}`);
 
     // if (
     //   method === "GET" ||
@@ -1193,13 +1198,13 @@ export class ClientRequest extends OutgoingMessage {
   }
 
   setSocketKeepAlive(enable = true, initialDelay = 0) {
-    debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
+    __DEBUG__ && debug(`${NODE_HTTP_WARNING}\n`, "WARN: ClientRequest.setSocketKeepAlive is a no-op");
   }
 }
 
 function urlToHttpOptions(url) {
   var { protocol, hostname, hash, search, pathname, href, port, username, password } = url;
-  const options = {
+  return {
     protocol,
     hostname:
       typeof hostname === "string" && StringPrototypeStartsWith.call(hostname, "[")
@@ -1210,14 +1215,9 @@ function urlToHttpOptions(url) {
     pathname,
     path: `${pathname || ""}${search || ""}`,
     href,
+    port: port ? Number(port) : protocol === "https:" ? 443 : protocol === "http:" ? 80 : undefined,
+    auth: username || password ? `${decodeURIComponent(username)}:${decodeURIComponent(password)}` : undefined,
   };
-  if (port !== "") {
-    options.port = Number(port);
-  }
-  if (username || password) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
-  }
-  return options;
 }
 
 function validateHost(host, name) {

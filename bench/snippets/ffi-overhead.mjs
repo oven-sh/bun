@@ -1,13 +1,4 @@
-import {
-  viewSource,
-  dlopen,
-  CString,
-  ptr,
-  toBuffer,
-  toArrayBuffer,
-  FFIType,
-  callback,
-} from "bun:ffi";
+import { viewSource, dlopen, CString, ptr, toBuffer, toArrayBuffer, FFIType, callback } from "bun:ffi";
 import { bench, group, run } from "mitata";
 
 const types = {
@@ -235,9 +226,7 @@ var opened;
 try {
   opened = dlopen("/tmp/bun-ffi-test.dylib", types);
 } catch (e) {
-  throw new Error(
-    "Please run `make compile-ffi-test` to compile the ffi test library"
-  );
+  throw new Error("Please run `make compile-ffi-test` to compile the ffi test library");
 }
 
 const {
@@ -403,10 +392,10 @@ group("returns_true", () => {
 
 group("return_a_function_ptr_to_function_that_returns_true", () => {
   bench("return_a_function_ptr_to_function_that_returns_true (raw)", () =>
-    raw_return_a_function_ptr_to_function_that_returns_true()
+    raw_return_a_function_ptr_to_function_that_returns_true(),
   );
   bench("return_a_function_ptr_to_function_that_returns_true", () =>
-    return_a_function_ptr_to_function_that_returns_true()
+    return_a_function_ptr_to_function_that_returns_true(),
   );
 });
 group("returns_42_float", () => {
@@ -427,8 +416,7 @@ group("identity_double", () => {
 });
 
 var raw_return_a_function_ptr_to_function_that_returns_true =
-  return_a_function_ptr_to_function_that_returns_true.native ??
-  return_a_function_ptr_to_function_that_returns_true;
+  return_a_function_ptr_to_function_that_returns_true.native ?? return_a_function_ptr_to_function_that_returns_true;
 var raw_returns_42_float = returns_42_float.native ?? returns_42_float;
 var raw_returns_42_double = returns_42_double.native ?? returns_42_double;
 var raw_identity_float = identity_float.native ?? identity_float;
@@ -437,14 +425,11 @@ var raw_returns_true = returns_true.native ?? returns_true;
 var raw_returns_false = returns_false.native ?? returns_false;
 var raw_returns_42_char = returns_42_char.native ?? returns_42_char;
 var raw_returns_42_uint8_t = returns_42_uint8_t.native ?? returns_42_uint8_t;
-var raw_returns_neg_42_int8_t =
-  returns_neg_42_int8_t.native ?? returns_neg_42_int8_t;
+var raw_returns_neg_42_int8_t = returns_neg_42_int8_t.native ?? returns_neg_42_int8_t;
 var raw_returns_42_uint16_t = returns_42_uint16_t.native ?? returns_42_uint16_t;
 var raw_returns_42_uint32_t = returns_42_uint32_t.native ?? returns_42_uint32_t;
-var raw_returns_neg_42_int16_t =
-  returns_neg_42_int16_t.native ?? returns_neg_42_int16_t;
-var raw_returns_neg_42_int32_t =
-  returns_neg_42_int32_t.native ?? returns_neg_42_int32_t;
+var raw_returns_neg_42_int16_t = returns_neg_42_int16_t.native ?? returns_neg_42_int16_t;
+var raw_returns_neg_42_int32_t = returns_neg_42_int32_t.native ?? returns_neg_42_int32_t;
 var raw_identity_char = identity_char.native ?? identity_char;
 var raw_identity_bool = identity_bool.native ?? identity_bool;
 var raw_identity_bool = identity_bool.native ?? identity_bool;

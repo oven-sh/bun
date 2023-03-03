@@ -32,6 +32,9 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode",
     "editor.formatOnSave": true
   },
+  "[yaml]": {
+    "editor.formatOnSave": true
+  },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
   "[markdown]": {

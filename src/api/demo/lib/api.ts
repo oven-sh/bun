@@ -13,9 +13,7 @@ export interface WebAssemblyModule {
 }
 
 const wasm_imports_sym: symbol | string =
-  process.env.NODE_ENV === "development"
-    ? "wasm_imports"
-    : Symbol("wasm_imports");
+  process.env.NODE_ENV === "development" ? "wasm_imports" : Symbol("wasm_imports");
 
 const ptr_converter = new ArrayBuffer(16);
 const ptr_float = new BigUint64Array(ptr_converter);
@@ -150,10 +148,10 @@ export class Bun {
       return;
     }
 
-    Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
-      fetch(url),
-      { env: Bun[wasm_imports_sym], wasi_snapshot_preview1: Wasi },
-    );
+    Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(fetch(url), {
+      env: Bun[wasm_imports_sym],
+      wasi_snapshot_preview1: Wasi,
+    });
 
     const res = Bun.wasm_exports.init();
     if (res < 0) {
@@ -225,11 +223,7 @@ export class Bun {
     return response;
   }
 
-  static scan(
-    content: Uint8Array | string,
-    file_name: string,
-    loader?: Loader,
-  ) {
+  static scan(content: Uint8Array | string, file_name: string, loader?: Loader) {
     if (!Bun.has_initialized) {
       throw "Please run await Bun.init(wasm_url) before using this.";
     }

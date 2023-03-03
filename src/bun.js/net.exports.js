@@ -28,15 +28,15 @@ const IPv4Reg = new RegExp(`^${v4Str}$`);
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 const IPv6Reg = new RegExp(
   "^(" +
-    `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-    `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-    `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
-    `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
-    `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
-    `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
-    `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
-    `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-    ")(%[0-9a-zA-Z-.:]{1,})?$",
+  `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
+  `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
+  `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
+  `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
+  `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
+  `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
+  `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
+  `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
+  ")(%[0-9a-zA-Z-.:]{1,})?$",
 );
 
 export function isIPv4(s) {
@@ -53,14 +53,17 @@ export function isIP(s) {
   return 0;
 }
 
-const { Bun, createFIFO, Object } = import.meta.primordials;
+const { Bun, createFIFO, Object } =
+import.meta.primordials;
 const { connect: bunConnect } = Bun;
-const { Duplex } = import.meta.require("node:stream");
-const { EventEmitter } = import.meta.require("node:events");
+const { Duplex } =
+import.meta.require("node:stream");
+const { EventEmitter } =
+import.meta.require("node:events");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 var SocketClass;
-export const Socket = (function (InternalSocket) {
+export const Socket = (function(InternalSocket) {
   SocketClass = InternalSocket;
   Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "Socket",
@@ -71,8 +74,7 @@ export const Socket = (function (InternalSocket) {
     function Socket(options) {
       return new InternalSocket(options);
     },
-    Symbol.hasInstance,
-    {
+    Symbol.hasInstance, {
       value(instance) {
         return instance instanceof InternalSocket;
       },
@@ -140,7 +142,7 @@ export const Socket = (function (InternalSocket) {
       queue.push(null);
     }
 
-    static #Drain(socket) {
+    static# Drain(socket) {
       const self = socket.data;
       const callback = self.#writeCallback;
       if (callback) {
@@ -159,17 +161,17 @@ export const Socket = (function (InternalSocket) {
     }
 
     bytesRead = 0;
-    bytesWritten = 0;
-    #closed = false;
+    bytesWritten = 0;#
+    closed = false;
     connecting = false;
-    localAddress = "127.0.0.1";
-    #readQueue = createFIFO();
-    remotePort;
-    #socket;
-    timeout = 0;
-    #writeCallback;
-    #writeChunk;
-    #pendingRead;
+    localAddress = "127.0.0.1";#
+    readQueue = createFIFO();
+    remotePort;#
+    socket;
+    timeout = 0;#
+    writeCallback;#
+    writeChunk;#
+    pendingRead;
 
     constructor(options) {
       const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -246,20 +248,20 @@ export const Socket = (function (InternalSocket) {
         tls = bunTLS.call(this, port, host);
       }
       bunConnect(
-        path
-          ? {
-              data: this,
-              unix: path,
-              socket: Socket._Handlers,
-              tls,
-            }
-          : {
-              data: this,
-              hostname: host || "localhost",
-              port: port,
-              socket: Socket._Handlers,
-              tls,
-            },
+        path ?
+        {
+          data: this,
+          unix: path,
+          socket: Socket._Handlers,
+          tls,
+        } :
+        {
+          data: this,
+          hostname: host || "localhost",
+          port: port,
+          socket: Socket._Handlers,
+          tls,
+        },
       );
       return this;
     }
@@ -384,23 +386,23 @@ export function createConnection(port, host, connectListener) {
     host = undefined;
   }
   var options =
-    typeof port == "object"
-      ? port
-      : {
-          host: host,
-          port: port,
-        };
+    typeof port == "object" ?
+    port :
+    {
+      host: host,
+      port: port,
+    };
   return new Socket(options).connect(options, connectListener);
 }
 
 export const connect = createConnection;
 
-class Server extends EventEmitter {
-  #connectionListener;
-  #options;
-  #server;
-  #listening;
-  #connections;
+class Server extends EventEmitter {#
+  connectionListener;#
+  options;#
+  server;#
+  listening;#
+  connections;
 
   constructor(options, connectionListener) {
     super();
@@ -410,7 +412,7 @@ class Server extends EventEmitter {
       connectionListener = options;
       options = {};
     } else if (options == null || typeof options === "object") {
-      options = { ...options };
+      options = {...options };
     } else {
       throw new Error("bun-net-polyfill: invalid arguments");
     }
@@ -445,7 +447,7 @@ class Server extends EventEmitter {
       if (typeof callback === "function") {
         callback();
       }
-      
+
       return this;
     }
 

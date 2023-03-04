@@ -1021,7 +1021,8 @@ pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
 
 pub usingnamespace @import("./util.zig");
-pub const fast_debug_build_mode = false and
+pub const fast_debug_build_cmd = .BunCommand;
+pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
@@ -1043,4 +1044,11 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
             @compileError("Unsupported type " ++ @typeName(T));
         },
     };
+}
+
+comptime {
+    if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
+        _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
+        _ = @import("./cli/upgrade_command.zig").Version;
+    }
 }

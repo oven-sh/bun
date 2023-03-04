@@ -1032,85 +1032,86 @@ pub const Command = struct {
 
         switch (tag) {
             .BunCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunCommand);
 
                 try BunCommand.exec(ctx);
             },
             .DevCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .DevCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .DevCommand);
 
                 try DevCommand.exec(ctx);
             },
             .BuildCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BuildCommand);
 
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
                 try InstallCompletionsCommand.exec(allocator);
                 return;
             },
             .InstallCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .BunxCommand);
 
                 try BunxCommand.exec(ctx);
                 return;
             },
             .RemoveCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
@@ -1197,7 +1198,7 @@ pub const Command = struct {
                 return;
             },
             .CreateCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .CreateCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .CreateCommand);
                 var positionals: [2]string = undefined;
                 var positional_i: usize = 0;
@@ -1221,7 +1222,7 @@ pub const Command = struct {
                 return;
             },
             .RunCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
                     if (try RunCommand.exec(ctx, false, true)) {
@@ -1232,13 +1233,13 @@ pub const Command = struct {
                 }
             },
             .UpgradeCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
                 const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
-                if (comptime bun.fast_debug_build_mode) unreachable;
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
                 var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {

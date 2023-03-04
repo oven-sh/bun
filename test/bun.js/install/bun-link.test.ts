@@ -278,7 +278,7 @@ it("should link dependency without crashing", async () => {
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

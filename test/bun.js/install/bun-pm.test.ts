@@ -47,7 +47,7 @@ it("should list top-level dependency", async () => {
   );
   expect(
     await spawn({
-      cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+      cmd: [bunExe(), "install"],
       cwd: package_dir,
       stdout: null,
       stdin: "pipe",
@@ -103,7 +103,7 @@ it("should list all dependencies", async () => {
   );
   expect(
     await spawn({
-      cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+      cmd: [bunExe(), "install"],
       cwd: package_dir,
       stdout: null,
       stdin: "pipe",
@@ -160,7 +160,7 @@ it("should list top-level aliased dependency", async () => {
   );
   expect(
     await spawn({
-      cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+      cmd: [bunExe(), "install"],
       cwd: package_dir,
       stdout: null,
       stdin: "pipe",
@@ -216,7 +216,7 @@ it("should list aliased dependencies", async () => {
   );
   expect(
     await spawn({
-      cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+      cmd: [bunExe(), "install"],
       cwd: package_dir,
       stdout: null,
       stdin: "pipe",

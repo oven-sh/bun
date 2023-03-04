@@ -46,6 +46,18 @@ describe("Headers", async () => {
     // This would hang
     expect(await fetchContent({ "x-test": origString })).toBe(origString);
   });
+
+  describe("toJSON()", () => {
+    it("should provide lowercase header names", () => {
+      const headers1 = new Headers({ "X-Test": "yep", "Content-Type": "application/json" });
+      expect(headers1.toJSON()).toEqual({ "x-test": "yep", "content-type": "application/json" });
+
+      const headers2 = new Headers();
+      headers2.append("X-Test", "yep");
+      headers2.append("Content-Type", "application/json");
+      expect(headers2.toJSON()).toEqual({ "x-test": "yep", "content-type": "application/json" });
+    });
+  });
 });
 
 async function fetchContent(headers) {

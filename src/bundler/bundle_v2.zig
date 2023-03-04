@@ -595,12 +595,13 @@ pub const BundleV2 = struct {
                     }
                 }
 
-                var import_records = result.ast.import_records.slice();
-                for (import_records) |*record| {
+                var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
+                for (import_records.slice()) |*record| {
                     if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
                         record.source_index.value = source_index;
                     }
                 }
+                result.ast.import_records = import_records;
 
                 graph.ast.set(result.source.index.get(), result.ast);
                 // schedule as early as possible
@@ -1715,14 +1716,14 @@ const LinkerContext = struct {
                             .javascript = .{},
                         },
                     };
-                }
+                } else {}
 
                 var files = try js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, source_index.get());
                 _ = files;
             }
         }
 
-        js_chunks.sort(strings.StringArrayByIndexSorter.init(js_chunks.keys()));
+        js_chunks.sort(strings.StringArrayByIndexSorter.init(try temp_allocator.dupe(string, js_chunks.keys())));
 
         var chunks: []Chunk = js_chunks.values();
 
@@ -1837,14 +1838,14 @@ const LinkerContext = struct {
                 }) catch unreachable;
             }
 
+            // Traverse the graph using this stable order and linearize the files with
+            // dependencies before dependents
             pub fn visit(v: *@This(), source_index: Index.Int) void {
                 if (source_index == Index.invalid.value) return;
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = v.entry_bits.isSet(
-                    source_index,
-                );
+                var is_file_in_chunk = v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index]);
 
                 // Wrapped files can't be split because they are all inside the wrapper
                 const can_be_split = v.flags[source_index].wrap == .none;
@@ -1856,7 +1857,7 @@ const LinkerContext = struct {
 
                 const records = v.import_records[source_index].slice();
 
-                for (parts, 0..) |*part, part_index_| {
+                for (parts, 0..) |part, part_index_| {
                     const part_index = @truncate(u32, part_index_);
                     const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
 
@@ -3525,7 +3526,6 @@ const LinkerContext = struct {
                 break :brk reserved_names;
             },
         );
-
         {
             var sorted_imports_from_other_chunks: std.ArrayList(StableRef) = brk: {
                 var list = std.ArrayList(StableRef).init(allocator);
@@ -5117,10 +5117,9 @@ const LinkerContext = struct {
                 .esm => {
                     stmts.outside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
                 },
-                .cjs => {
+                else => {
                     stmts.inside_wrapper_prefix.appendSlice(stmts.inside_wrapper_suffix.items) catch unreachable;
                 },
-                else => {},
             }
             stmts.inside_wrapper_suffix.clearRetainingCapacity();
         }
@@ -5168,8 +5167,9 @@ const LinkerContext = struct {
         // evaluated (well, except for cyclic import scenarios). We need to preserve
         // these semantics even when modules imported via ES6 import statements end
         // up being CommonJS modules.
-
-        stmts.all_stmts.appendSlice(stmts.inside_wrapper_prefix.items) catch unreachable;
+        stmts.all_stmts.ensureUnusedCapacity(stmts.outside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
+        stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
         // Optionally wrap all statements in a closure
@@ -5550,11 +5550,13 @@ const LinkerContext = struct {
         }
         const out_dist = distance + 1;
 
+        var bits = &file_entry_bits[source_index];
+
         // Don't mark this file more than once
-        if (file_entry_bits[source_index].isSet(entry_points_count) and !traverse_again)
+        if (bits.isSet(entry_points_count) and !traverse_again)
             return;
 
-        file_entry_bits[source_index].set(entry_points_count);
+        bits.set(entry_points_count);
 
         if (comptime bun.Environment.allow_assert)
             debug(
@@ -5581,7 +5583,7 @@ const LinkerContext = struct {
             }
         }
 
-        for (parts[source_index].slice()) |*part| {
+        for (parts[source_index].slice()) |part| {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
                     c.markFileReachableForCodeSplitting(
@@ -5627,7 +5629,7 @@ const LinkerContext = struct {
         if (@as(usize, id) >= c.graph.ast.len)
             return;
         var _parts = parts[id].slice();
-        for (_parts, 0..) |*part, part_index| {
+        for (_parts, 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             // Also include any statement-level imports
@@ -5757,6 +5759,7 @@ const LinkerContext = struct {
 
             // Resolve the import by one step
             var advanced = c.advanceImportTracker(tracker);
+            advanced.tracker.* = advanced.value;
             const next_tracker = advanced.tracker.*;
             const status = advanced.status;
             const potentially_ambiguous_export_star_refs = advanced.import_data;
@@ -5878,12 +5881,11 @@ const LinkerContext = struct {
                     for (potentially_ambiguous_export_star_refs) |*ambiguous_tracker| {
                         // If this is a re-export of another import, follow the import
                         if (named_imports[ambiguous_tracker.data.source_index.get()].contains(ambiguous_tracker.data.import_ref)) {
+                            c.cycle_detector.clearRetainingCapacity();
+                            c.swap_cycle_detector.clearRetainingCapacity();
 
-                            // TODO: not fully confident this will work
-                            // test with nested ambiguous re-exports
                             var old_cycle_detector = c.cycle_detector;
                             c.cycle_detector = c.swap_cycle_detector;
-                            c.cycle_detector.clearRetainingCapacity();
                             var ambig = c.matchImportWithExport(&ambiguous_tracker.data, re_exports);
                             c.cycle_detector.clearRetainingCapacity();
                             c.swap_cycle_detector = c.cycle_detector;
@@ -5920,7 +5922,7 @@ const LinkerContext = struct {
                             re_exports.appendAssumeCapacity(
                                 .{
                                     .part_index = dep,
-                                    .source_index = tracker.source_index,
+                                    .source_index = next_tracker.source_index,
                                 },
                             );
                         }

@@ -102,9 +102,11 @@ pub const NumberRenamer = struct {
 
         const name = scope.findUnusedName(r.allocator, symbol.original_name);
 
-        if (inner.cap < ref.innerIndex() + 1) {
-            inner.ensureUnusedCapacity(r.allocator, ref.innerIndex() + 1) catch unreachable;
+        const new_len = @max(inner.len, ref.innerIndex() + 1);
+        if (inner.cap < new_len) {
+            inner.ensureUnusedCapacity(r.allocator, new_len) catch unreachable;
         }
+        inner.len = new_len;
         inner.mut(ref.innerIndex()).* = name;
     }
 
@@ -122,6 +124,10 @@ pub const NumberRenamer = struct {
             .names = try bun.BabyList(bun.BabyList(string)).initCapacity(allocator, symbols.symbols_for_source.len),
         };
         renamer.root.name_counts = root_names;
+        renamer.names.len = symbols.symbols_for_source.len;
+        for (renamer.names.slice()) |*inner| {
+            inner.* = .{};
+        }
         return renamer;
     }
 

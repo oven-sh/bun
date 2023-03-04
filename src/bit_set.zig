@@ -1112,6 +1112,10 @@ pub const AutoBitSet = union(enum) {
         };
     }
 
+    pub fn eql(this: *const AutoBitSet, b: *const AutoBitSet) bool {
+        return bun.strings.eqlLong(this.bytes(), b.bytes(), true);
+    }
+
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {
         switch (std.meta.activeTag(this.*)) {
             .static => {},

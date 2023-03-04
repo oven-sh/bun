@@ -2446,6 +2446,13 @@ pub const Parser = struct {
         var after = ListManaged(js_ast.Part).init(p.allocator);
         var parts = ListManaged(js_ast.Part).init(p.allocator);
 
+        if (p.options.bundle) {
+            // allocate an empty part for the bundle
+            before.append(
+                js_ast.Part{},
+            ) catch unreachable;
+        }
+
         if (!p.options.tree_shaking) {
             try p.appendPart(&parts, stmts);
         } else {
@@ -18359,7 +18366,9 @@ fn NewParser_(
                         }
 
                         if (part.import_record_indices.len == 0) {
-                            part.import_record_indices.update(p.import_records_for_current_part.clone(p.allocator) catch unreachable);
+                            part.import_record_indices = @TypeOf(part.import_record_indices).init(
+                                (p.import_records_for_current_part.clone(p.allocator) catch unreachable).items,
+                            );
                         } else {
                             part.import_record_indices.append(p.allocator, p.import_records_for_current_part.items) catch unreachable;
                         }

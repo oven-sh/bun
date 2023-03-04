@@ -56,6 +56,16 @@ pub fn BabyList(comptime Type: type) type {
             return this.ptr[this.len];
         }
 
+        pub fn clone(this: @This(), allocator: std.mem.Allocator) !@This() {
+            var list_ = this.listManaged(allocator);
+            var copy = try list_.clone();
+            return ListType{
+                .ptr = copy.items.ptr,
+                .len = @truncate(u32, copy.items.len),
+                .cap = @truncate(u32, copy.capacity),
+            };
+        }
+
         pub inline fn appendAssumeCapacity(this: *@This(), value: Type) void {
             this.ptr[this.len] = value;
             this.len += 1;

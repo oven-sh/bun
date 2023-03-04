@@ -211,18 +211,11 @@ pub const BunxCommand = struct {
 
         var initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
+            update_request.name[index + 1 ..]
         else
             update_request.name;
 
-        if (strings.startsWithChar(update_request.name, '@')) {
-            // Should be unreachable
-            if (!strings.containsChar(update_request.name, '/')) {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> Invalid package name: {s}", .{update_request.name});
-                Global.exit(1);
-            }
-
-            initial_bin_name = update_request.name[strings.indexOfChar(update_request.name, '/').? + 1 ..];
-        }
         // fast path: they're actually using this interchangably with `bun run`
         // so we use Bun.which to check
         var this_bundler: bun.Bundler = undefined;
@@ -383,7 +376,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //

@@ -118,6 +118,25 @@ pub const BunxCommand = struct {
         };
     }
 
+    fn exit_with_usage() noreturn {
+        Output.prettyErrorln(
+            \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
+            \\
+            \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
+            \\
+            \\example<d>:<r>
+            \\
+            \\  <cyan>bunx bun-repl<r>
+            \\  <cyan>bunx prettier foo.js<r>
+            \\
+            \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
+            \\
+            \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
+            \\
+        , .{});
+        Global.exit(1);
+    }
+
     pub fn exec(ctx: bun.CLI.Command.Context) !void {
         var requests_buf = bun.PackageManager.UpdateRequest.Array.init(0) catch unreachable;
         var run_in_bun = ctx.debug.run_in_bun;
@@ -158,7 +177,10 @@ pub const BunxCommand = struct {
             }
         }
 
-        const passthrough = passthrough_list.items;
+        // check if package_name_for_update_request is empty string or " "
+        if (package_name_for_update_request[0].len == 0) {
+            exit_with_usage();
+        }
 
         var update_requests = bun.PackageManager.UpdateRequest.parse(
             ctx.allocator,
@@ -169,22 +191,7 @@ pub const BunxCommand = struct {
         );
 
         if (update_requests.len == 0) {
-            Output.prettyErrorln(
-                \\usage<r><d>:<r> <cyan>bunx <r><d>[<r><blue>--bun<r><d>]<r><cyan> package<r><d>[@version] [...flags or arguments to pass through]<r>
-                \\
-                \\bunx runs an npm package executable, automatically installing into a global shared cache if not installed in node_modules.
-                \\
-                \\example<d>:<r>
-                \\
-                \\  <cyan>bunx bun-repl<r>
-                \\  <cyan>bunx prettier foo.js<r>
-                \\
-                \\The <blue>--bun<r> flag forces the package to run in Bun's JavaScript runtime, even when it tries to use Node.js.
-                \\
-                \\  <cyan>bunx <r><blue>--bun<r><cyan> tsc --version<r>
-                \\
-            , .{});
-            Global.exit(1);
+            exit_with_usage();
         }
 
         // this shouldn't happen
@@ -256,6 +263,8 @@ pub const BunxCommand = struct {
 
         var absolute_in_cache_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
         var absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "/{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
+
+        const passthrough = passthrough_list.items;
 
         // Similar to "npx":
         //

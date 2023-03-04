@@ -1,7 +1,7 @@
 Bun exposes its internal transpiler via the `Bun.Transpiler` class. To create an instance of Bun's transpiler:
 
 ```ts
-const tx = new Bun.Transpiler({
+const transpiler = new Bun.Transpiler({
   loader: "tsx", // "js | "jsx" | "ts" | "tsx"
 });
 ```
@@ -25,7 +25,7 @@ export function Home(props: {title: string}){
   return <p>{props.title}</p>;
 }`;
 
-const result = tx.transformSync(code);
+const result = transpiler.transformSync(code);
 ```
 
 ```js#Result

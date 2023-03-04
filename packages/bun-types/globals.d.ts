@@ -1316,17 +1316,17 @@ declare var performance: {
  * Cancel a repeating timer by its timer ID.
  * @param id timer id
  */
-declare function clearInterval(id?: number): void;
+declare function clearInterval(id?: number | Timer): void;
 /**
  * Cancel a delayed function call by its timer ID.
  * @param id timer id
  */
-declare function clearTimeout(id?: number): void;
+declare function clearTimeout(id?: number | Timer): void;
 /**
  * Cancel an immediate function call by its immediate ID.
  * @param id immediate id
  */
-declare function clearImmediate(id?: number): void;
+declare function clearImmediate(id?: number | Timer): void;
 // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 /**
@@ -1981,6 +1981,8 @@ interface AbortSignal extends EventTarget {
 declare var AbortSignal: {
   prototype: AbortSignal;
   new (): AbortSignal;
+  abort(reason?: any): AbortSignal;
+  timeout(milliseconds: number): AbortSignal;
 };
 
 // type AlgorithmIdentifier = Algorithm | string;

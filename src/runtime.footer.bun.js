@@ -14,8 +14,7 @@ export var __merge = BUN_RUNTIME.__merge;
 export var __decorateClass = BUN_RUNTIME.__decorateClass;
 export var __decorateParam = BUN_RUNTIME.__decorateParam;
 export var $$bun_runtime_json_parse = JSON.parse;
-export var __internalIsCommonJSNamespace =
-  BUN_RUNTIME.__internalIsCommonJSNamespace;
+export var __internalIsCommonJSNamespace = BUN_RUNTIME.__internalIsCommonJSNamespace;
 
 export var __require = (globalThis.require ||= function (moduleId) {
   if (typeof moduleId === "string") {
@@ -25,5 +24,4 @@ export var __require = (globalThis.require ||= function (moduleId) {
   return BUN_RUNTIME.__require(moduleId);
 });
 __require.d ||= BUN_RUNTIME.__require.d;
-globalThis.__internalIsCommonJSNamespace ||=
-  BUN_RUNTIME.__internalIsCommonJSNamespace;
+globalThis.__internalIsCommonJSNamespace ||= BUN_RUNTIME.__internalIsCommonJSNamespace;

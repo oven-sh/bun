@@ -348,7 +348,7 @@ export class IncomingMessage extends Readable {
     this.#bodyStream = null;
     this.#fakeSocket = undefined;
 
-    this.url = url.pathname;
+    this.url = url.pathname + url.search;
     assignHeaders(this, req);
   }
 
@@ -918,6 +918,10 @@ export class ClientRequest extends OutgoingMessage {
 
   get port() {
     return this.#port;
+  }
+
+  get method() {
+    return this.#method;
   }
 
   get host() {

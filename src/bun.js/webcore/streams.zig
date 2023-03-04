@@ -2758,7 +2758,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return Sink.init(this);
         }
 
-        pub fn onAborted(this: *@This(), _: *UWSResponse) void {
+        pub fn abort(this: *@This()) void {
             log("onAborted()", .{});
             this.signal.close(null);
             this.done = true;

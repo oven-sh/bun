@@ -3,7 +3,7 @@ export * from "crypto-browserify";
 export var DEFAULT_ENCODING = "buffer";
 
 // we deliberately reference crypto. directly here because we want to preserve the This binding
-export const getRandomValues = (array) => {
+export const getRandomValues = array => {
   return crypto.getRandomValues(array);
 };
 
@@ -16,10 +16,7 @@ export const timingSafeEqual =
     ? (a, b) => {
         const { byteLength: byteLengthA } = a;
         const { byteLength: byteLengthB } = b;
-        if (
-          typeof byteLengthA !== "number" ||
-          typeof byteLengthB !== "number"
-        ) {
+        if (typeof byteLengthA !== "number" || typeof byteLengthB !== "number") {
           throw new TypeError("Input must be an array buffer view");
         }
 
@@ -37,9 +34,7 @@ export const scryptSync =
   "scryptSync" in crypto
     ? (password, salt, keylen, options) => {
         const res = crypto.scryptSync(password, salt, keylen, options);
-        return DEFAULT_ENCODING !== "buffer"
-          ? new Buffer(res).toString(DEFAULT_ENCODING)
-          : new Buffer(res);
+        return DEFAULT_ENCODING !== "buffer" ? new Buffer(res).toString(DEFAULT_ENCODING) : new Buffer(res);
       }
     : undefined;
 
@@ -62,9 +57,7 @@ export const scrypt =
           process.nextTick(
             callback,
             null,
-            DEFAULT_ENCODING !== "buffer"
-              ? new Buffer(result).toString(DEFAULT_ENCODING)
-              : new Buffer(result),
+            DEFAULT_ENCODING !== "buffer" ? new Buffer(result).toString(DEFAULT_ENCODING) : new Buffer(result),
           );
         } catch (err) {
           throw err;

@@ -1685,11 +1685,11 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
 }
 
 pub const AbortSignal = extern opaque {
-    pub const shim = Shimmer("JSC", "AbortSignal", @This());
+    pub const shim = Shimmer("WebCore", "AbortSignal", @This());
     const cppFn = shim.cppFn;
-    pub const include = "WebCore/AbortSignal.h";
-    pub const name = "JSC::AbortSignal";
-    pub const namespace = "JSC";
+    pub const include = "webcore/AbortSignal.h";
+    pub const name = "WebCore::AbortSignal";
+    pub const namespace = "WebCore";
 
     pub fn listen(
         this: *AbortSignal,
@@ -2829,7 +2829,19 @@ pub const JSValue = enum(JSValueReprInt) {
 
         pub fn isTypedArray(this: JSType) bool {
             return switch (this) {
-                .Int8Array, .Int16Array, .Int32Array, .Uint8Array, .Uint8ClampedArray, .Uint16Array, .Uint32Array, .Float32Array, .Float64Array, .ArrayBuffer => true,
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
                 else => false,
             };
         }
@@ -2895,17 +2907,24 @@ pub const JSValue = enum(JSValueReprInt) {
             return switch (this) {
                 .Object,
                 .FinalObject,
-                .Int8Array,
-                .Int16Array,
-                .Int32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                .Uint16Array,
-                .Uint32Array,
-                .Float32Array,
-                .Float64Array,
                 .Array,
                 .DerivedArray,
+                .ErrorInstance,
+                .JSFunction,
+                .InternalFunction,
+
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
                 => true,
                 else => false,
             };

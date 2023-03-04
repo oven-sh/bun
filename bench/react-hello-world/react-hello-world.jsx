@@ -1,10 +1,9 @@
 // to run this:
-//   bun --jsx-production react-hello-world.jsx
+//  NODE_ENV=production bun --jsx-production react-hello-world.jsx
 
-// This will become the official react-dom/server.bun build a little later
-// It will be the default when you import from "react-dom/server"
-// That will work via the "bun" package.json export condition (which bun already supports)
-import { renderToReadableStream } from "../../test/bun.js/react-dom-server.bun";
+// Make sure you're using react-dom@18.3.0 or later.
+// Currently that is available at react-dom@next (which is installed in this repository)
+import { renderToReadableStream } from "react-dom/server";
 const headers = {
   headers: {
     "Content-Type": "text/html",

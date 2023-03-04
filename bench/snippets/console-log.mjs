@@ -9,8 +9,7 @@ const json = {
   url: "https://api.github.com/users/wongmjane",
   html_url: "https://github.com/wongmjane",
   followers_url: "https://api.github.com/users/wongmjane/followers",
-  following_url:
-    "https://api.github.com/users/wongmjane/following{/other_user}",
+  following_url: "https://api.github.com/users/wongmjane/following{/other_user}",
   gists_url: "https://api.github.com/users/wongmjane/gists{/gist_id}",
   starred_url: "https://api.github.com/users/wongmjane/starred{/owner}{/repo}",
   subscriptions_url: "https://api.github.com/users/wongmjane/subscriptions",
@@ -37,11 +36,7 @@ const json = {
 };
 
 const inspect =
-  "Bun" in globalThis
-    ? Bun.inspect
-    : "Deno" in globalThis
-    ? Deno.inspect
-    : (await import("util")).inspect;
+  "Bun" in globalThis ? Bun.inspect : "Deno" in globalThis ? Deno.inspect : (await import("util")).inspect;
 bench("big json object", () => {
   console.error(json);
 });

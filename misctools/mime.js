@@ -1,17 +1,6 @@
-const json = await (
-  await fetch("https://raw.githubusercontent.com/jshttp/mime-db/master/db.json")
-).json();
+const json = await (await fetch("https://raw.githubusercontent.com/jshttp/mime-db/master/db.json")).json();
 
-json["application/javascript"].extensions.push(
-  `ts`,
-  `tsx`,
-  `mts`,
-  `mtsx`,
-  `cts`,
-  `cjs`,
-  `mjs`,
-  `js`,
-);
+json["application/javascript"].extensions.push(`ts`, `tsx`, `mts`, `mtsx`, `cts`, `cjs`, `mjs`, `js`);
 
 delete json["application/node"];
 delete json["application/deno"];
@@ -28,11 +17,11 @@ for (let key of Object.keys(json).sort()) {
 const withExtensions = [
   ...new Set([
     ...Object.keys(json)
-      .filter((key) => {
+      .filter(key => {
         return !!json[key]?.extensions?.length;
       })
-      .flatMap((mime) => {
-        return [...new Set([...json[mime].extensions])].map((ext) => {
+      .flatMap(mime => {
+        return [...new Set([...json[mime].extensions])].map(ext => {
           return [`.{.@"${ext}", all.@"${mime}"}`];
         });
       })

@@ -9,4 +9,4 @@ export default () => (
       <p>two</p>
     </body>
   </html>
-)
+);

@@ -9,7 +9,7 @@
  */
 declare module "fs/promises" {
   import { ArrayBufferView } from "bun";
-  import {
+  import type {
     Stats,
     BigIntStats,
     StatOptions,
@@ -25,6 +25,7 @@ declare module "fs/promises" {
     SimlinkType,
     Abortable,
     RmOptions,
+    RmDirOptions,
   } from "node:fs";
 
   interface FlagAndOpenMode {
@@ -677,9 +678,39 @@ declare module "fs/promises" {
    * @since v14.14.0
    */
   export function rm(path: PathLike, options?: RmOptions): Promise<void>;
+
+  /**
+   * Asynchronously test whether or not the given path exists by checking with the file system.
+   *
+   * ```ts
+   * import { exists } from 'fs/promises';
+   *
+   * const e = await exists('/etc/passwd');
+   * e; // boolean
+   * ```
+   */
+  function exists(path: PathLike): Promise<boolean>;
+
+  /**
+   * @deprecated Use `fs.promises.rm()` instead.
+   *
+   * Asynchronously remove a directory.
+   *
+   * ```ts
+   * import { rmdir } from 'fs/promises';
+   *
+   * // remove a directory
+   * await rmdir('/tmp/mydir'); // Promise<void>
+   * ```
+   *
+   * To remove a directory recursively, use `fs.promises.rm()` instead, with the `recursive` option set to `true`.
+   */
+  function rmdir(
+    path: PathLike,
+    options?: Omit<RmDirOptions, "recursive">,
+  ): Promise<void>;
 }
 
 declare module "node:fs/promises" {
-  import * as fsPromises from "fs/promises";
-  export = fsPromises;
+  export * from "fs/promises";
 }

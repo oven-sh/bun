@@ -3830,22 +3830,22 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject* arg0
         JSC::JSValue::decode(JSValue4));
 }
 
-extern "C" JSC__JSValue JSC__AbortSignal__create(JSC__JSGlobalObject* globalObject)
+extern "C" JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* globalObject)
 {
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(globalObject);
     auto* context = thisObject->scriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
-    return JSValue::encode(toJSNewlyCreated<IDLInterface<JSC__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(abortSignal)));
+    return JSValue::encode(toJSNewlyCreated<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), WTFMove(abortSignal)));
 }
-extern "C" JSC__JSValue JSC__AbortSignal__toJS(JSC__AbortSignal* arg0, JSC__JSGlobalObject* globalObject)
+extern "C" JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, JSC__JSGlobalObject* globalObject)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
-    return JSValue::encode(toJS<IDLInterface<JSC__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
+    return JSValue::encode(toJS<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JSC__JSValue JSValue1)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSValue JSValue1)
 {
 
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
@@ -3853,38 +3853,38 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__signal(JSC__AbortSignal* arg0, JS
     return arg0;
 }
 
-extern "C" bool JSC__AbortSignal__aborted(JSC__AbortSignal* arg0)
+extern "C" bool WebCore__AbortSignal__aborted(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     return abortSignal->aborted();
 }
 
-extern "C" JSC__JSValue JSC__AbortSignal__abortReason(JSC__AbortSignal* arg0)
+extern "C" JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     return JSC::JSValue::encode(abortSignal->reason().getValue());
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__ref(JSC__AbortSignal* arg0)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->ref();
     return arg0;
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__unref(JSC__AbortSignal* arg0)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
     return arg0;
 }
-extern "C" void JSC__AbortSignal__cleanNativeBindings(JSC__AbortSignal* arg0, void* arg1)
+extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->cleanNativeBindings(arg1);
 }
 
-extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason))
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__AbortSignal* arg0, void* ctx, void (*callback)(void* ctx, JSC__JSValue reason))
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
 
@@ -3897,7 +3897,7 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__addListener(JSC__AbortSignal* arg
 
     return arg0;
 }
-extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__fromJS(JSC__JSValue value)
 {
     JSC::JSValue decodedValue = JSC::JSValue::decode(value);
     if (decodedValue.isEmpty())
@@ -3906,10 +3906,10 @@ extern "C" JSC__AbortSignal* JSC__AbortSignal__fromJS(JSC__JSValue value)
     if (!object)
         return nullptr;
 
-    return reinterpret_cast<JSC__AbortSignal*>(&object->wrapped());
+    return reinterpret_cast<WebCore__AbortSignal*>(&object->wrapped());
 }
 static auto ABORT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("AbortError");
-extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* message, const ZigString* arg1,
+extern "C" JSC__JSValue WebCore__AbortSignal__createAbortError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -3931,7 +3931,7 @@ extern "C" JSC__JSValue JSC__AbortSignal__createAbortError(const ZigString* mess
 }
 
 static auto TIMEOUT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("TimeoutError");
-extern "C" JSC__JSValue JSC__AbortSignal__createTimeoutError(const ZigString* message, const ZigString* arg1,
+extern "C" JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();

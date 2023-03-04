@@ -5736,7 +5736,6 @@ const LinkerContext = struct {
         defer ambiguous_results.clearAndFree();
         var result: MatchImport = MatchImport{};
         const named_imports = c.graph.ast.items(.named_imports);
-        var top_level_symbols_to_parts: []js_ast.Ast.TopLevelSymbolToParts = c.graph.ast.items(.top_level_symbols_to_parts);
 
         loop: while (true) {
             // Make sure we avoid infinite loops trying to resolve cycles:
@@ -5915,7 +5914,7 @@ const LinkerContext = struct {
                     // Depend on the statement(s) that declared this import symbol in the
                     // original file
                     {
-                        var deps = top_level_symbols_to_parts[other_id].get(tracker.import_ref).?.slice();
+                        var deps = c.graph.topLevelSymbolToParts(other_id, tracker.import_ref);
                         re_exports.ensureUnusedCapacity(deps.len) catch unreachable;
                         for (deps) |dep| {
                             re_exports.appendAssumeCapacity(

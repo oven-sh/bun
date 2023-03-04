@@ -209,7 +209,7 @@ pub const BunxCommand = struct {
             update_request.name = "typescript";
         }
 
-        var initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
+        const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
         else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
             update_request.name[index + 1 ..]

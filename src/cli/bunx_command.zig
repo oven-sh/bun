@@ -211,6 +211,8 @@ pub const BunxCommand = struct {
 
         const initial_bin_name = if (strings.eqlComptime(update_request.name, "typescript"))
             "tsc"
+        else if (strings.lastIndexOfChar(update_request.name, '/')) |index|
+            update_request.name[index + 1 ..]
         else
             update_request.name;
 
@@ -374,7 +376,7 @@ pub const BunxCommand = struct {
             },
         }
 
-        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, update_request.name }) catch unreachable;
+        absolute_in_cache_dir = std.fmt.bufPrint(&absolute_in_cache_dir_buf, "{s}/node_modules/.bin/{s}", .{ bunx_cache_dir, initial_bin_name }) catch unreachable;
 
         // Similar to "npx":
         //

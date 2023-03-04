@@ -61,7 +61,7 @@ declare module "bun" {
   /**
    * Start a fast HTTP server.
    *
-   * @param options Server options (port defaults to $PORT || 8080)
+   * @param options Server options (port defaults to $PORT || 3000)
    *
    * -----
    *

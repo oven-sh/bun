@@ -53,6 +53,25 @@ it("should install and run specified version", async () => {
   expect(await exited).toBe(0);
 });
 
+it("should output usage if no arguments are passed", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("usage: ");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out).toHaveLength(0);
+  expect(await exited).toBe(1);
+});
+
 it("should download dependency to run local file", async () => {
   await writeFile(
     join(x_dir, "test.js"),

@@ -2363,7 +2363,7 @@ pub const Expect = struct {
             }
 
             const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
-            const fmt = signature ++ "\n\n{any}";
+            const fmt = signature ++ "\n\n{any}\n";
             const diff_format = DiffFormatter{
                 .received_string = pretty_value.toOwnedSliceLeaky(),
                 .expected_string = saved_value,

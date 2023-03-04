@@ -3153,10 +3153,6 @@ pub const JSValue = enum(JSValueReprInt) {
             .snapshot_format = true,
         };
 
-        if (array_newlines) {
-            try writer.writeAll("\n");
-        }
-
         JSC.ZigConsoleClient.format(
             .Debug,
             globalObject,

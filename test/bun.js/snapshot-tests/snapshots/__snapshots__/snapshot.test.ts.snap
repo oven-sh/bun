@@ -50,7 +50,57 @@ exports[`most types: Array2 1`] = `
 ]
 `;
 
+exports[`most types: ArrayBuffer 1`] = `ArrayBuffer []`;
+
 exports[`most types: Boolean 1`] = `Boolean {}`;
+
+exports[`most types: Buffer 1`] = `
+{
+  "data": [],
+  "type": "Buffer",
+}
+`;
+
+exports[`most types: Buffer with property 1`] = `
+{
+  "data": [
+    104,
+    101,
+    108,
+    108,
+    111,
+  ],
+  "type": "Buffer",
+}
+`;
+
+exports[`most types: Buffer2 1`] = `
+{
+  "data": [
+    104,
+    101,
+    108,
+    108,
+    111,
+  ],
+  "type": "Buffer",
+}
+`;
+
+exports[`most types: Buffer3 1`] = `
+{
+  "data": [
+    104,
+    101,
+    108,
+    96,
+    10,
+    10,
+    96,
+  ],
+  "type": "Buffer",
+}
+`;
 
 exports[`most types: Class 1`] = `
 A {
@@ -60,11 +110,38 @@ A {
 }
 `;
 
+exports[`most types: DataView 1`] = `DataView []`;
+
 exports[`most types: Date 1`] = `1970-01-01T00:00:00.000Z`;
 
 exports[`most types: Error 1`] = `[Error: hello]`;
 
+exports[`most types: Float32Array 1`] = `Float32Array []`;
+
+exports[`most types: Float64Array 1`] = `Float64Array []`;
+
 exports[`most types: Function 1`] = `[Function]`;
+
+exports[`most types: Int8Array 1`] = `Int8Array []`;
+
+exports[`most types: Int8Array with elements 1`] = `
+Int8Array [
+  1,
+  2,
+  3,
+  4,
+]
+`;
+
+exports[`most types: Int8Array with one element 1`] = `
+Int8Array [
+  3,
+]
+`;
+
+exports[`most types: Int16Array 1`] = `Int16Array []`;
+
+exports[`most types: Int32Array 1`] = `Int32Array []`;
 
 exports[`most types: Map 1`] = `
 Map {
@@ -76,6 +153,48 @@ Map {
 exports[`most types: Number 1`] = `Number {}`;
 
 exports[`most types: Object 1`] = `{}`;
+
+exports[`most types: Object with Buffer 1`] = `
+{
+  "a": {
+    "data": [
+      104,
+      101,
+      108,
+      108,
+      111,
+    ],
+    "type": "Buffer",
+  },
+}
+`;
+
+exports[`most types: Object with Int8Array 1`] = `
+{
+  "a": 1,
+  "b": Int8Array [
+    123,
+    -89,
+    4,
+    34,
+  ],
+}
+`;
+
+exports[`most types: Object with empty Buffer 1`] = `
+{
+  "a": {
+    "data": [],
+    "type": "Buffer",
+  },
+}
+`;
+
+exports[`most types: Object with empty object 1`] = `
+{
+  "a": {},
+}
+`;
 
 exports[`most types: Object2 1`] = `
 {
@@ -114,6 +233,14 @@ String {
 }
 `;
 
+exports[`most types: Uint8Array 1`] = `Uint8Array []`;
+
+exports[`most types: Uint8ClampedArray 1`] = `Uint8ClampedArray []`;
+
+exports[`most types: Uint16Array 1`] = `Uint16Array []`;
+
+exports[`most types: Uint32Array 1`] = `Uint32Array []`;
+
 exports[`most types: WeakMap 1`] = `WeakMap {}`;
 
 exports[`most types: WeakSet 1`] = `WeakSet {}`;
@@ -121,6 +248,42 @@ exports[`most types: WeakSet 1`] = `WeakSet {}`;
 exports[`most types: arrow function 1`] = `[Function]`;
 
 exports[`most types: empty map 1`] = `Map {}`;
+
+exports[`most types: nested object with Buffer 1`] = `
+{
+  "a": {
+    "b": {
+      "data": [
+        104,
+        101,
+        108,
+        108,
+        111,
+      ],
+      "type": "Buffer",
+    },
+  },
+}
+`;
+
+exports[`most types: nested object with empty Buffer 1`] = `
+{
+  "a": {
+    "b": {
+      "data": [],
+      "type": "Buffer",
+    },
+  },
+}
+`;
+
+exports[`most types: nested object with empty Int8Array 1`] = `
+{
+  "a": {
+    "b": Int8Array [],
+  },
+}
+`;
 
 exports[`most types: null 1`] = `null`;
 

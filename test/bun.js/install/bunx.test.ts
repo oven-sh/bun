@@ -72,6 +72,25 @@ it("should output usage if no arguments are passed", async () => {
   expect(await exited).toBe(1);
 });
 
+it("should work for @scoped packages", async () => {
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "x", "@antfu/ni@0.20.0", "--version"],
+    cwd: x_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toBe("");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.trim().split(/\r?\n/)).toEqual(["@antfu/ni v0.20.0"]);
+  expect(await exited).toBe(0);
+});
+
 it("should download dependency to run local file", async () => {
   await writeFile(
     join(x_dir, "test.js"),

@@ -207,7 +207,7 @@ jobs:
           fi
 
       - name: Comment on PR
-        if: steps.fmt.outputs.failing_tests != '' && github.event_name == "pull_request"
+        if: steps.fmt.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-failures-${{matrix.tag}}
@@ -220,7 +220,7 @@ jobs:
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR
-        if: steps.fmt.outputs.failing_tests == '' && github.event_name == "pull_request"
+        if: steps.fmt.outputs.failing_tests == '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2
         with:
           comment_tag: test-failures-${{matrix.tag}}

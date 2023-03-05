@@ -3,10 +3,15 @@ name: Run Tests Manually
 on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-
+    inputs:
+      version:
+        description: "Version"
+        required: true
+        default: "canary"
+        type: string
 jobs:
   linux-test:
-    name: Tests ${{matrix.tag}}
+    name: Tests ${{matrix.tag}} ${{github.event.inputs.version}}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -24,7 +29,7 @@ jobs:
       - id: install
         name: Install
         run: |
-          npm install @oven/bun-${{matrix.tag}}@canary
+          npm install @oven/bun-${{matrix.tag}}@${{github.event.inputs.version}}
           chmod +x node_modules/@oven/bun-${{matrix.tag}}/bin/bun
           sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
       - id: test

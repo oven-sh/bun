@@ -13,6 +13,8 @@ const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 function* findTests(dir: string, query?: string): Generator<string> {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
     const path = resolve(dir, entry.name);
+    if (path.includes("node_modules")) continue;
+
     if (entry.isDirectory()) {
       yield* findTests(path, query);
     } else if (entry.isFile() && entry.name.includes(".test.")) {

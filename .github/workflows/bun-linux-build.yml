@@ -191,14 +191,6 @@ jobs:
           bun install --cwd test/bun.js/third-party/body-parser-test
           bun install --cwd packages/bun-internal-test
           node packages/bun-internal-test/src/runner.node.mjs || true
-          if [ -s failing-tests.txt ]; then
-            delimiter="$(openssl rand -hex 8)"
-            echo "failing_tests<<${delimiter}" >> "${GITHUB_OUTPUT}"
-            # prefix each non-empty line with a markdown bullet point
-            cat failing-tests.txt | sed -e 's/^/- /' >> "${GITHUB_OUTPUT}"
-            echo "${delimiter}" >> "${GITHUB_OUTPUT}"
-            echo "failing_tests_count=$(wc -l < failing-tests.txt)" >> "${GITHUB_OUTPUT}" 
-          fi
       - name: Comment on PR
         if: steps.fmt.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2

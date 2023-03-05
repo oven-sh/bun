@@ -111,7 +111,12 @@ for (const path of findTests(resolve(cwd, "test/bun.js"))) {
 await Promise.allSettled(tests);
 
 rmSync("failing-tests.txt", { force: true });
-if (failingTests.length > 0) {
-  writeFileSync("failing-tests.txt", failingTests.join("\n") + "\n", "utf-8");
+
+if (isAction) {
+  action.setOutput("failing_tests", failingTests.map(a => `- \`${a}\``).join("\n"));
+  action.setOutput("failing_tests_count", failingTests.length);
+} else {
+  writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
+
 process.exit(failed ? 1 : 0);

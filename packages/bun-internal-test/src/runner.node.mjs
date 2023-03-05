@@ -1,5 +1,6 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
+import { fsyncSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -18,6 +19,19 @@ function* findTests(dir, query) {
       yield* findTests(path, query);
     } else if (entry.isFile() && entry.name.includes(".test.")) {
       yield path;
+    }
+  }
+}
+
+function dump(buf) {
+  var offset = 0,
+    length = buf.byteLength;
+  while (offset < length) {
+    const wrote = writeSync(1, buf);
+    offset += wrote;
+    if (offset < length) {
+      fsyncSync(1);
+      buf = buf.slice(wrote);
     }
   }
 }
@@ -41,15 +55,15 @@ async function runTest(path) {
     action.startGroup(`${prefix} - ${name}`);
   }
 
-  process.stdout.write(stdout);
+  dump(stdout);
 
   if (isAction) {
     findErrors(stdout);
-    process.stdout.write(stderr);
+    dump(stderr);
 
     findErrors(stderr);
   } else {
-    process.stdout.write(stderr);
+    dump(stderr);
     findErrors(stderr);
   }
 

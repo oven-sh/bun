@@ -10,7 +10,7 @@ on:
         default: "canary"
         type: string
       use_bun:
-        description: "Bun or Node?"
+        description: "Use Bun?"
         required: true
         default: true
         type: boolean
@@ -49,7 +49,7 @@ jobs:
           bun run test
       - id: test-node-runner
         name: Test (node runner)
-        if: ${{!github.event.inputs.use_bun}}
+        if: ${{github.event.inputs.use_bun == false}}
         run: |
           bun install
           bun install --cwd test/bun.js

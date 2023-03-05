@@ -9,10 +9,6 @@ on:
         required: true
         default: "canary"
         type: string
-      artifact:
-        description: "Artifact"
-        required: false
-        type: string
       use_bun:
         description: "Use Bun?"
         required: true
@@ -37,25 +33,10 @@ jobs:
           submodules: false
       - id: install-npm
         name: Install (npm)
-        if: ${{github.event.inputs.artifact == ''}}
         run: |
           npm install @oven/bun-${{matrix.tag}}@${{github.event.inputs.version}}
           chmod +x node_modules/@oven/bun-${{matrix.tag}}/bin/bun
           sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
-      - id: download-artifact
-        name: Download (artifact)
-        if: ${{github.event.inputs.artifact != ''}}
-        uses: actions/download-artifact@v2
-        with:
-          name: ${{github.event.inputs.artifact}}
-          path: ${{runner.temp}}/bun.zip
-      - id: install-artifact
-        name: Install (artifact)
-        if: ${{github.event.inputs.artifact != ''}}
-        run: |
-          unzip ${{runner.temp}}/bun.zip -d ${{runner.temp}}
-          chmod +x ${{runner.temp}}/bun
-          sudo cp ${{runner.temp}}/bun /usr/bin/bun
       - id: test
         name: Test
         if: ${{github.event.inputs.use_bun == 'true'}}

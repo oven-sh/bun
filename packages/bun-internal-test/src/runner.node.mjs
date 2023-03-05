@@ -1,6 +1,6 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
+import { fsyncSync, rmSync, statSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -11,6 +11,9 @@ const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
+console.log(JSON.stringify(statSync(1), null, 2));
+console.log(JSON.stringify(statSync(2), null, 2));
+console.log(JSON.stringify(statSync(0), null, 2));
 
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {

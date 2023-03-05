@@ -36,45 +36,20 @@ async function runTest(path) {
       FORCE_COLOR: "1",
     },
   });
-
   if (isAction) {
     const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
     action.startGroup(`${prefix} - ${name}`);
   }
 
-  await new Promise((resolve, reject) => {
-    process.stdout.write(stdout, err => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
+  process.stdout.write(stdout);
 
   if (isAction) {
     findErrors(stdout);
-    await new Promise((resolve, reject) => {
-      process.stdout.write(stderr, err => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
+    process.stdout.write(stderr);
 
     findErrors(stderr);
   } else {
-    await new Promise((resolve, reject) => {
-      process.stdout.write(stderr, err => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    });
+    process.stdout.write(stderr);
     findErrors(stderr);
   }
 

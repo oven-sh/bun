@@ -42,14 +42,39 @@ async function runTest(path) {
     action.startGroup(`${prefix} - ${name}`);
   }
 
-  process.stdout.write(stdout);
+  await new Promise((resolve, reject) => {
+    process.stdout.write(stdout, err => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
 
   if (isAction) {
     findErrors(stdout);
-    process.stderr.write(stderr);
+    await new Promise((resolve, reject) => {
+      process.stdout.write(stderr, err => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+
     findErrors(stderr);
   } else {
-    process.stderr.write(stderr);
+    await new Promise((resolve, reject) => {
+      process.stdout.write(stderr, err => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
     findErrors(stderr);
   }
 

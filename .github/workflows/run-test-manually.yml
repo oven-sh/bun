@@ -1,0 +1,35 @@
+name: Run Tests Manually
+env:
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  linux-test:
+    name: Tests ${{matrix.tag}}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: linux-x64
+          - tag: linux-x64-baseline
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: false
+      - id: install
+        name: Install
+        run: |
+          npm install -g @oven/bun-${{matrix.tag}}@canary
+          chmod +x node_modules/@oven/bun-${{matrix.tag}}/bin/bun
+          cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
+      - id: test
+        name: Test
+        run: |
+          cd packages/bun-test
+          bun run test

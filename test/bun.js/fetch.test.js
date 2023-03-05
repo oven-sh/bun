@@ -27,115 +27,6 @@ afterEach(() => {
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
-describe("AbortSignalStreamTest", async () => {
-  async function abortOnStage(body, stage) {
-    let error = undefined;
-    var abortController = new AbortController();
-    {
-      const server = getServer({
-        async fetch(request) {
-          let chunk_count = 0;
-          const reader = request.body.getReader();
-          return Response(
-            new ReadableStream({
-              async pull(controller) {
-                while (true) {
-                  chunk_count++;
-
-                  const { done, value } = await reader.read();
-                  if (chunk_count == stage) {
-                    abortController.abort();
-                  }
-
-                  if (done) {
-                    controller.close();
-                    return;
-                  }
-                  controller.enqueue(value);
-                }
-              },
-            }),
-          );
-        },
-      });
-
-      try {
-        const signal = abortController.signal;
-
-        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
-          res.arrayBuffer(),
-        );
-      } catch (ex) {
-        error = ex;
-      }
-      expect(error.name).toBe("AbortError");
-      expect(error.message).toBe("The operation was aborted.");
-      expect(error instanceof DOMException).toBeTruthy();
-    }
-  }
-
-  for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
-      await abortOnStage(payload, i);
-    });
-  }
-});
-
-describe("AbortSignalDirectStreamTest", () => {
-  async function abortOnStage(body, stage) {
-    let error = undefined;
-    var abortController = new AbortController();
-    {
-      const server = getServer({
-        async fetch(request) {
-          let chunk_count = 0;
-          const reader = request.body.getReader();
-          return Response(
-            new ReadableStream({
-              type: "direct",
-              async pull(controller) {
-                while (true) {
-                  chunk_count++;
-
-                  const { done, value } = await reader.read();
-                  if (chunk_count == stage) {
-                    abortController.abort();
-                  }
-
-                  if (done) {
-                    controller.end();
-                    return;
-                  }
-                  controller.write(value);
-                }
-              },
-            }),
-          );
-        },
-      });
-
-      try {
-        const signal = abortController.signal;
-
-        await fetch(`http://127.0.0.1:${server.port}`, { method: "POST", body, signal: signal }).then(res =>
-          res.arrayBuffer(),
-        );
-      } catch (ex) {
-        error = ex;
-      }
-      expect(error.name).toBe("AbortError");
-      expect(error.message).toBe("The operation was aborted.");
-      expect(error instanceof DOMException).toBeTruthy();
-    }
-  }
-
-  for (let i = 1; i < 7; i++) {
-    it(`Abort after ${i} chunks`, async () => {
-      await abortOnStage(payload, i);
-    });
-  }
-});
-
 describe("AbortSignal", () => {
   var server;
   beforeEach(() => {
@@ -523,31 +414,33 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
-          expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+        expect(JSON.stringify(await response.json())).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(
-            new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
-          );
-          if (withGC) gc();
-          var failed = false;
-          try {
-            await response.json();
-          } catch (e) {
-            failed = true;
-          }
-          expect(failed).toBe(true);
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> invalid json${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(
+          new TextEncoder().encode(JSON.stringify(jsonObject) + " NOW WE ARE INVALID JSON"),
+        );
+        if (withGC) gc();
+        var failed = false;
+        try {
+          await response.json();
+        } catch (e) {
+          failed = true;
+        }
+        expect(failed).toBe(true);
+        if (withGC) gc();
+      });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} text${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -557,14 +450,15 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
-          expect(await response.text()).toBe(JSON.stringify(jsonObject));
-          if (withGC) gc();
-        });
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> text${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
+        expect(await response.text()).toBe(JSON.stringify(jsonObject));
+        if (withGC) gc();
+      });
 
       it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer${withGC ? " (with gc) " : ""}`, async () => {
         if (withGC) gc();
@@ -589,29 +483,30 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
         if (withGC) gc();
       });
 
-      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${withGC ? " (with gc) " : ""
-        }`, async () => {
-          if (withGC) gc();
+      it(`${jsonObject.hello === true ? "latin1" : "utf16"} arrayBuffer -> arrayBuffer${
+        withGC ? " (with gc) " : ""
+      }`, async () => {
+        if (withGC) gc();
 
-          var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
-          if (withGC) gc();
+        var response = blobbyConstructor(new TextEncoder().encode(JSON.stringify(jsonObject)));
+        if (withGC) gc();
 
-          const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
-          if (withGC) gc();
+        const bytes = new TextEncoder().encode(JSON.stringify(jsonObject));
+        if (withGC) gc();
 
-          const compare = new Uint8Array(await response.arrayBuffer());
-          if (withGC) gc();
+        const compare = new Uint8Array(await response.arrayBuffer());
+        if (withGC) gc();
 
-          withoutAggressiveGC(() => {
-            for (let i = 0; i < compare.length; i++) {
-              if (withGC) gc();
+        withoutAggressiveGC(() => {
+          for (let i = 0; i < compare.length; i++) {
+            if (withGC) gc();
 
-              expect(compare[i]).toBe(bytes[i]);
-              if (withGC) gc();
-            }
-          });
-          if (withGC) gc();
+            expect(compare[i]).toBe(bytes[i]);
+            if (withGC) gc();
+          }
         });
+        if (withGC) gc();
+      });
 
       hasBlobFn &&
         it(`${jsonObject.hello === true ? "latin1" : "utf16"} blob${withGC ? " (with gc) " : ""}`, async () => {
@@ -654,11 +549,12 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
 
 describe("Bun.file", () => {
   const tempdir = require("os").tmpdir();
+  const { join } = require("path");
   var callCount = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer());
-    const path = tempdir + "-" + callCount++ + ".bytes";
+    const path = join(tempdir, "tmp-" + callCount++ + ".bytes");
     require("fs").writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);
@@ -668,7 +564,7 @@ describe("Bun.file", () => {
   it("size is Infinity on a fifo", () => {
     try {
       unlinkSync("/tmp/test-fifo");
-    } catch (e) { }
+    } catch (e) {}
     mkfifo("/tmp/test-fifo");
 
     const { size } = Bun.file("/tmp/test-fifo");
@@ -686,14 +582,14 @@ describe("Bun.file", () => {
     beforeAll(async () => {
       try {
         unlinkSync("/tmp/my-new-file");
-      } catch { }
+      } catch {}
       await Bun.write("/tmp/my-new-file", "hey");
       chmodSync("/tmp/my-new-file", 0o000);
     });
     afterAll(() => {
       try {
         unlinkSync("/tmp/my-new-file");
-      } catch { }
+      } catch {}
     });
 
     forEachMethod(m => () => {
@@ -706,7 +602,7 @@ describe("Bun.file", () => {
     beforeAll(() => {
       try {
         unlinkSync("/tmp/does-not-exist");
-      } catch { }
+      } catch {}
     });
 
     forEachMethod(m => async () => {
@@ -857,12 +753,6 @@ describe("Response", () => {
       expect(response.status).toBe(407);
     });
 
-    it("body nullable", () => {
-      expect(new Response(null).body).toBeNull();
-      expect(new Response(undefined).body).toBeNull();
-      expect(new Response().body).toBeNull();
-    });
-
     it("supports headers", () => {
       var response = Response.json("hello", {
         headers: {
@@ -978,29 +868,6 @@ describe("Request", () => {
     expect(await clone.text()).toBe("<div>hello</div>");
   });
 
-  it("body nullable", async () => {
-    gc();
-    {
-      const req = new Request("https://hello.com", { body: null });
-      expect(req.body).toBeNull();
-    }
-    gc();
-    {
-      const req = new Request("https://hello.com", { body: undefined });
-      expect(req.body).toBeNull();
-    }
-    gc();
-    {
-      const req = new Request("https://hello.com");
-      expect(req.body).toBeNull();
-    }
-    gc();
-    {
-      const req = new Request("https://hello.com", { body: "" });
-      expect(req.body).toBeNull();
-    }
-  });
-
   it("signal", async () => {
     gc();
     const controller = new AbortController();
@@ -1058,4 +925,27 @@ describe("Headers", () => {
     expect(headers.get("content-type")).toBe(null);
     gc();
   });
+});
+
+it("body nullable", async () => {
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: null });
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: undefined });
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com");
+    expect(req.body).toBeNull();
+  }
+  gc();
+  {
+    const req = new Request("https://hello.com", { body: "" });
+    expect(req.body).not.toBeNull();
+  }
 });

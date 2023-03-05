@@ -555,24 +555,29 @@ declare module "stream" {
        */
       destroyed: boolean;
       constructor(opts?: WritableOptions);
-      _write(
-        chunk: any,
-        encoding: BufferEncoding,
-        callback: (error?: Error | null) => void,
-      ): void;
-      _writev?(
-        chunks: Array<{
-          chunk: any;
-          encoding: BufferEncoding;
-        }>,
-        callback: (error?: Error | null) => void,
-      ): void;
-      _construct?(callback: (error?: Error | null) => void): void;
-      _destroy(
-        error: Error | null,
-        callback: (error?: Error | null) => void,
-      ): void;
-      _final(callback: (error?: Error | null) => void): void;
+
+      /**
+       * Hide internal methods from the public API.
+       */
+      // _write(
+      //   chunk: any,
+      //   encoding: BufferEncoding,
+      //   callback: (error?: Error | null) => void,
+      // ): void;
+      // _writev?(
+      //   chunks: Array<{
+      //     chunk: any;
+      //     encoding: BufferEncoding;
+      //   }>,
+      //   callback: (error?: Error | null) => void,
+      // ): void;
+      // _construct?(callback: (error?: Error | null) => void): void;
+      // _destroy(
+      //   error: Error | null,
+      //   callback: (error?: Error | null) => void,
+      // ): void;
+      // _final(callback: (error?: Error | null) => void): void;
+
       /**
        * The `writable.write()` method writes some data to the stream, and calls the
        * supplied `callback` once the data has been fully handled. If an error

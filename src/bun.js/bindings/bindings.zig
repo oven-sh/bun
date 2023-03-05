@@ -1684,11 +1684,11 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
 }
 
 pub const AbortSignal = extern opaque {
-    pub const shim = Shimmer("JSC", "AbortSignal", @This());
+    pub const shim = Shimmer("WebCore", "AbortSignal", @This());
     const cppFn = shim.cppFn;
-    pub const include = "WebCore/AbortSignal.h";
-    pub const name = "JSC::AbortSignal";
-    pub const namespace = "JSC";
+    pub const include = "webcore/AbortSignal.h";
+    pub const name = "WebCore::AbortSignal";
+    pub const namespace = "WebCore";
 
     pub fn listen(
         this: *AbortSignal,
@@ -2828,7 +2828,19 @@ pub const JSValue = enum(JSValueReprInt) {
 
         pub fn isTypedArray(this: JSType) bool {
             return switch (this) {
-                .Int8Array, .Int16Array, .Int32Array, .Uint8Array, .Uint8ClampedArray, .Uint16Array, .Uint32Array, .Float32Array, .Float64Array, .ArrayBuffer => true,
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                => true,
                 else => false,
             };
         }
@@ -2894,17 +2906,24 @@ pub const JSValue = enum(JSValueReprInt) {
             return switch (this) {
                 .Object,
                 .FinalObject,
-                .Int8Array,
-                .Int16Array,
-                .Int32Array,
-                .Uint8Array,
-                .Uint8ClampedArray,
-                .Uint16Array,
-                .Uint32Array,
-                .Float32Array,
-                .Float64Array,
                 .Array,
                 .DerivedArray,
+                .ErrorInstance,
+                .JSFunction,
+                .InternalFunction,
+
+                .ArrayBuffer,
+                .BigInt64Array,
+                .BigUint64Array,
+                .Float32Array,
+                .Float64Array,
+                .Int16Array,
+                .Int32Array,
+                .Int8Array,
+                .Uint16Array,
+                .Uint32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
                 => true,
                 else => false,
             };
@@ -4720,3 +4739,32 @@ pub const DOMCalls = .{
     @import("../api/bun.zig").FFI.Reader,
     @import("../webcore.zig").Crypto,
 };
+
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
+pub fn initialize() void {
+    JSC.markBinding(@src());
+    JSCInitialize(
+        std.os.environ.ptr,
+        std.os.environ.len,
+        struct {
+            pub fn callback(name: [*]const u8, len: usize) callconv(.C) void {
+                Output.prettyErrorln(
+                    \\<r><red>error<r><d>:<r> invalid JSC environment variable
+                    \\
+                    \\    <b>{s}<r>
+                    \\
+                    \\For a list of options, see this file:
+                    \\
+                    \\    https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h
+                    \\
+                    \\Environment variables must be prefixed with "BUN_JSC_". This code runs before .env files are loaded, so those won't work here. 
+                    \\
+                    \\Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.
+                ,
+                    .{name[0..len]},
+                );
+                bun.Global.exit(1);
+            }
+        }.callback,
+    );
+}

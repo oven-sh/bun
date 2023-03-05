@@ -318,6 +318,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
         }
 
+        pub fn from(socket: *Socket) ThisSocket {
+            return ThisSocket{ .socket = socket };
+        }
+
         pub fn adopt(
             socket: *Socket,
             socket_ctx: *SocketContext,

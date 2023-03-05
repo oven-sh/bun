@@ -47,11 +47,7 @@ fs.writeFileSync(
   output + `/file${count}.mjs`,
   `
     export const THE_END = true;
-  ${
-    saveStack
-      ? `globalThis.evaluationOrder.push("${output}/file${count}.mjs");`
-      : ""
-  }    
+  ${saveStack ? `globalThis.evaluationOrder.push("${output}/file${count}.mjs");` : ""}    
 `,
   "utf8",
 );
@@ -60,11 +56,7 @@ fs.writeFileSync(
   output + `/file${count}.js`,
   `
       module.exports.THE_END = true;
-      ${
-        saveStack
-          ? `globalThis.evaluationOrder.push("${output}/file${count}.js");`
-          : ""
-      }
+      ${saveStack ? `globalThis.evaluationOrder.push("${output}/file${count}.js");` : ""}
       `,
   "utf8",
 );

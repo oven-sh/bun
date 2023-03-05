@@ -3,10 +3,7 @@ var { readFileSync, writeFileSync } = require("fs");
 var { join } = require("path");
 
 const destination = join(__dirname, "../src/bun.js/bindings/headers.zig");
-const replacements = join(
-  __dirname,
-  "../src/bun.js/bindings/headers-replacements.zig",
-);
+const replacements = join(__dirname, "../src/bun.js/bindings/headers-replacements.zig");
 
 console.log("Writing to", destination);
 var output = "// GENERATED CODE - DO NOT MODIFY BY HAND\n\n";
@@ -16,16 +13,9 @@ const first_extern = input.indexOf("extern fn");
 const first_extern_line = input.indexOf("\n", first_extern - 128);
 const last_extern_fn = input.lastIndexOf("extern");
 const last_extern_fn_line = input.indexOf("\n", last_extern_fn);
-const keep = (
-  input.substring(0, first_extern_line) + input.substring(last_extern_fn_line)
-)
+const keep = (input.substring(0, first_extern_line) + input.substring(last_extern_fn_line))
   .split("\n")
-  .filter(
-    (a) =>
-      /const (JSC|WTF|Web)_/gi.test(a) &&
-      !a.includes("JSValue") &&
-      !a.includes("CatchScope"),
-  )
+  .filter(a => /const (JSC|WTF|Web)_/gi.test(a) && !a.includes("JSValue") && !a.includes("CatchScope"))
   .join("\n")
   .trim();
 
@@ -34,21 +24,12 @@ input = input.replaceAll("*WebCore__", "*bindings.");
 input = input.replaceAll("*JSC__", "*bindings.");
 input = input.replaceAll("[*c] JSC__", "[*c]bindings.");
 input = input.replaceAll("[*c]JSC__", "[*c]bindings.");
-input = input.replaceAll(
-  "[*c]bindings.JSGlobalObject",
-  "*bindings.JSGlobalObject",
-);
+input = input.replaceAll("[*c]bindings.JSGlobalObject", "*bindings.JSGlobalObject");
 input = input.replaceAll("[*c]bindings.JSPromise", "?*bindings.JSPromise");
-input = input.replaceAll(
-  "[*c]const bindings.JSPromise",
-  "?*const bindings.JSPromise",
-);
+input = input.replaceAll("[*c]const bindings.JSPromise", "?*const bindings.JSPromise");
 
 input = input.replaceAll("[*c] const JSC__", "[*c]const bindings.");
-input = input.replaceAll(
-  "[*c]Inspector__ScriptArguments",
-  "[*c]bindings.ScriptArguments",
-);
+input = input.replaceAll("[*c]Inspector__ScriptArguments", "[*c]bindings.ScriptArguments");
 
 input = input
   .replaceAll("VirtualMachine", "bindings.VirtualMachine")
@@ -104,14 +85,6 @@ for (let i = 0; i < lines.length; i++) {
     continue;
   }
 }
-input = lines.filter((a) => a.length > 0).join("\n");
+input = lines.filter(a => a.length > 0).join("\n");
 
-writeFileSync(
-  destination,
-  output +
-    "\n" +
-    readFileSync(replacements, "utf8").trim() +
-    "\n" +
-    input.trim() +
-    "\n",
-);
+writeFileSync(destination, output + "\n" + readFileSync(replacements, "utf8").trim() + "\n" + input.trim() + "\n");

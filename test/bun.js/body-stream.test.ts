@@ -3,7 +3,7 @@ import { file, gc, serve, ServeOptions } from "bun";
 import { afterAll, afterEach, describe, expect, it, test } from "bun:test";
 import { readFileSync } from "fs";
 
-var port = 4021;
+var port = 0;
 
 {
   const BodyMixin = [

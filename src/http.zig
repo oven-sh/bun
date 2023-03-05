@@ -1461,7 +1461,7 @@ pub const RequestContext = struct {
             handler.start_timer = std.time.Timer.start() catch unreachable;
 
             Output.Source.configureThread();
-            @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
+            bun.JSC.initialize();
 
             js_ast.Stmt.Data.Store.create(bun.default_allocator);
             js_ast.Expr.Data.Store.create(bun.default_allocator);
@@ -3505,9 +3505,8 @@ pub const Server = struct {
         }
 
         const addr = listener.listen_address;
-
-        if (port != addr.getPort()) {
-            server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.getPort()});
+        if (server.bundler.options.origin.getPort() != addr.getPort()) {
+            server.bundler.options.origin = ZigURL.parse(try std.fmt.allocPrint(server.allocator, "{s}://{s}:{d}", .{ server.bundler.options.origin.displayProtocol(), server.bundler.options.origin.displayHostname(), addr.getPort() }));
         }
 
         const start_time = Global.getStartTime();

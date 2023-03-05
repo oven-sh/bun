@@ -842,7 +842,7 @@ interface RequestInit {
   /**
    * A string indicating how the request will interact with the browser's cache to set request's cache.
    *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
+   * Note: as of Bun v0.5.7, this is not implemented yet.
    */
   cache?: RequestCache;
   /**
@@ -856,7 +856,7 @@ interface RequestInit {
   /**
    * A cryptographic hash of the resource to be fetched by request. Sets request's integrity.
    *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
+   * Note: as of Bun v0.5.7, this is not implemented yet.
    */
   integrity?: string;
   /**
@@ -889,8 +889,6 @@ interface RequestInit {
   referrerPolicy?: ReferrerPolicy;
   /**
    * An AbortSignal to set request's signal.
-   *
-   * Note: as of Bun v0.0.74, this is not implemented yet.
    */
   signal?: AbortSignal | null;
   /**
@@ -1318,17 +1316,17 @@ declare var performance: {
  * Cancel a repeating timer by its timer ID.
  * @param id timer id
  */
-declare function clearInterval(id?: number): void;
+declare function clearInterval(id?: number | Timer): void;
 /**
  * Cancel a delayed function call by its timer ID.
  * @param id timer id
  */
-declare function clearTimeout(id?: number): void;
+declare function clearTimeout(id?: number | Timer): void;
 /**
  * Cancel an immediate function call by its immediate ID.
  * @param id immediate id
  */
-declare function clearImmediate(id?: number): void;
+declare function clearImmediate(id?: number | Timer): void;
 // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
 /**
@@ -1983,6 +1981,8 @@ interface AbortSignal extends EventTarget {
 declare var AbortSignal: {
   prototype: AbortSignal;
   new (): AbortSignal;
+  abort(reason?: any): AbortSignal;
+  timeout(milliseconds: number): AbortSignal;
 };
 
 // type AlgorithmIdentifier = Algorithm | string;

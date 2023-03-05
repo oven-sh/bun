@@ -4,9 +4,7 @@ const path = require("path");
 const PROJECT = process.env.PROJECT || "bun";
 const percentile = require("percentile");
 const PACKAGE_NAME = process.env.PACKAGE_NAME;
-const label = `${PACKAGE_NAME}@${
-  require(PACKAGE_NAME + "/package.json").version
-}`;
+const label = `${PACKAGE_NAME}@${require(PACKAGE_NAME + "/package.json").version}`;
 
 const BASEFOLDER = path.resolve(PROJECT);
 const OUTFILE = path.join(process.cwd(), process.env.OUTFILE);
@@ -20,10 +18,10 @@ const TOTAL_FRAMES = VALID_TIMES.length;
 const timings = fs
   .readFileSync(BASEFOLDER + "/frames.all.clean", "utf8")
   .split("\n")
-  .map((a) => a.replace(/[Ran:'\.]?/gm, "").trim())
-  .filter((a) => parseInt(a, 10))
-  .filter((a) => a.length > 0 && VALID_TIMES.includes(BigInt(parseInt(a, 10))))
-  .map((num) => BigInt(num));
+  .map(a => a.replace(/[Ran:'\.]?/gm, "").trim())
+  .filter(a => parseInt(a, 10))
+  .filter(a => a.length > 0 && VALID_TIMES.includes(BigInt(parseInt(a, 10))))
+  .map(num => BigInt(num));
 
 timings.sort();
 
@@ -47,7 +45,7 @@ const report = {
     name: PACKAGE_NAME,
     version: require(PACKAGE_NAME + "/package.json").version,
   },
-  timestamps: timings.map((a) => Number(a)),
+  timestamps: timings.map(a => Number(a)),
   frameTimes: frameTime,
   percentileMs: {
     50: percentile(50, frameTime) / 10,
@@ -67,9 +65,7 @@ fs.writeFileSync(
       "." +
       process.env.SLEEP_INTERVAL +
       "ms." +
-      `${process.platform}-${
-        process.arch === "arm64" ? "aarch64" : process.arch
-      }` +
+      `${process.platform}-${process.arch === "arm64" ? "aarch64" : process.arch}` +
       ".json",
   ),
   JSON.stringify(report, null, 2),
@@ -99,9 +95,5 @@ console.log(
   timings.length,
   "/",
   TOTAL_FRAMES,
-  "(" +
-    Math.round(
-      Math.max(Math.min(1.0, timings.length / TOTAL_FRAMES), 0) * 100,
-    ) +
-    "%)",
+  "(" + Math.round(Math.max(Math.min(1.0, timings.length / TOTAL_FRAMES), 0) * 100) + "%)",
 );

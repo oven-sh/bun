@@ -12,7 +12,7 @@ const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 const FetchHeaders = JSC.FetchHeaders;
-const AbortSignal = JSC.AbortSignal;
+const AbortSignal = JSC.WebCore.AbortSignal;
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const SystemError = JSC.SystemError;
 const Output = @import("bun").Output;
@@ -189,7 +189,7 @@ pub const Request = struct {
             },
             .InternalBlob => return this.body.InternalBlob.contentType(),
             // .InlineBlob => return this.body.InlineBlob.contentType(),
-            .Error, .Used, .Locked, .Empty => return MimeType.other.value,
+            .Null, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }
     }
 
@@ -395,6 +395,9 @@ pub const Request = struct {
                         return null;
                     }).slice();
                     request.url_was_allocated = request.url.len > 0;
+                    request.body = .{
+                        .Null = {},
+                    };
                 } else {
                     if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
                         request.headers = req_init.headers;
@@ -408,6 +411,10 @@ pub const Request = struct {
                             request.finalizeWithoutDeinit();
                             return null;
                         }
+                    } else {
+                        request.body = .{
+                            .Null = {},
+                        };
                     }
 
                     if (urlOrObject.fastGet(globalThis, .url)) |url| {
@@ -444,6 +451,10 @@ pub const Request = struct {
                         request.finalizeWithoutDeinit();
                         return null;
                     }
+                } else {
+                    request.body = .{
+                        .Null = {},
+                    };
                 }
 
                 request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {

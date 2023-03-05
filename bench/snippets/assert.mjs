@@ -6,10 +6,7 @@ bench("deepEqual", () => {
 });
 
 bench("deepStrictEqual", () => {
-  assert.deepStrictEqual(
-    { foo: "123", beep: "boop" },
-    { foo: "123", beep: "boop" },
-  );
+  assert.deepStrictEqual({ foo: "123", beep: "boop" }, { foo: "123", beep: "boop" });
 });
 
 await run();

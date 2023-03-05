@@ -402,6 +402,7 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 
@@ -460,6 +461,7 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 
@@ -492,6 +494,7 @@ ENV CCACHE_DIR=/ccache
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/bun.js/bindings/sqlite ${BUN_DIR}/src/bun.js/bindings/sqlite
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 
@@ -519,6 +522,7 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY .prettierrc.cjs ${BUN_DIR}/.prettierrc.cjs
 
 WORKDIR $BUN_DIR
 

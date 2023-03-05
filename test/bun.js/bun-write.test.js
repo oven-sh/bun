@@ -139,6 +139,14 @@ it("Bun.file", async () => {
   await gcTick();
 });
 
+it("Bun.file empty file", async () => {
+  const file = path.join(import.meta.dir, "emptyFile");
+  await gcTick();
+  const buffer = await Bun.file(file).arrayBuffer();
+  expect(buffer.byteLength).toBe(0);
+  await gcTick();
+});
+
 it("Bun.file as a Blob", async () => {
   const filePath = path.join(import.meta.path, "../fetch.js.txt");
   const fixture = fs.readFileSync(filePath, "utf8");

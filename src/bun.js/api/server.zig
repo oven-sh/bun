@@ -635,6 +635,7 @@ pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime c
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
         const RequestContext = @This();
+        const ctxLog = Output.scoped(.RequestContext, false);
         const App = uws.NewApp(ssl_enabled);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
         pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
@@ -649,6 +650,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: *uws.Request,
+        signal: ?*JSC.WebCore.AbortSignal = null,
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
@@ -697,10 +699,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            ctxLog("onResolve", .{});
+
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
             result.ensureStillAlive();
+
+            if (ctx.request_js_object != null and ctx.signal == null) {
+                var request_js = ctx.request_js_object.?.value();
+                request_js.ensureStillAlive();
+                if (request_js.as(Request)) |request_object| {
+                    if (request_object.signal) |signal| {
+                        ctx.signal = signal;
+                        _ = signal.ref();
+                    }
+                }
+            }
 
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
@@ -738,14 +753,28 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn finalizeForAbort(this: *RequestContext) void {
+            streamLog("finalizeForAbort", .{});
             this.pending_promises_for_abort -|= 1;
             if (this.pending_promises_for_abort == 0) this.finalize();
         }
 
         pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            ctxLog("onReject", .{});
+
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
+
+            if (ctx.request_js_object != null and ctx.signal == null) {
+                var request_js = ctx.request_js_object.?.value();
+                request_js.ensureStillAlive();
+                if (request_js.as(Request)) |request_object| {
+                    if (request_object.signal) |signal| {
+                        ctx.signal = signal;
+                        _ = signal.ref();
+                    }
+                }
+            }
 
             ctx.pending_promises_for_abort -|= 1;
 
@@ -988,7 +1017,25 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             std.debug.assert(this.resp == resp);
             std.debug.assert(!this.aborted);
+            //mark request as aborted
             this.aborted = true;
+
+            // if signal is not aborted, abort the signal
+            if (this.signal) |signal| {
+                this.signal = null;
+                if (!signal.aborted()) {
+                    const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                    reason.ensureStillAlive();
+                    _ = signal.signal(reason);
+                }
+                _ = signal.unref();
+            }
+
+            //if have sink, call onAborted on sink
+            if (this.sink) |wrapper| {
+                wrapper.sink.abort();
+                return;
+            }
 
             // if we can, free the request now.
             if (this.isDeadRequest()) {
@@ -1010,14 +1057,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
-                        if (req.signal) |signal| {
-                            // if signal is not aborted, abort the signal
-                            if (!signal.aborted()) {
-                                const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                                reason.ensureStillAlive();
-                                _ = signal.signal(reason);
-                            }
-                        }
 
                         // the promise is pending
                         if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
@@ -1062,6 +1101,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // This function may be called multiple times
         // so it's important that we can safely do that
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
+            ctxLog("finalizeWithoutDeinit", .{});
             this.blob.detach();
 
             if (comptime Environment.allow_assert) {
@@ -1070,6 +1110,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (!this.response_jsvalue.isEmpty()) {
+                ctxLog("finalizeWithoutDeinit: response_jsvalue != .zero", .{});
                 if (this.response_protected) {
                     this.response_jsvalue.unprotect();
                     this.response_protected = false;
@@ -1077,7 +1118,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
+            // if signal is not aborted, abort the signal
+            if (this.signal) |signal| {
+                this.signal = null;
+                if (this.aborted and !signal.aborted()) {
+                    const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                    reason.ensureStillAlive();
+                    _ = signal.signal(reason);
+                }
+                _ = signal.unref();
+            }
+
             if (this.request_js_object != null) {
+                ctxLog("finalizeWithoutDeinit: request_js_object != null", .{});
+
                 var request_js = this.request_js_object.?.value();
                 request_js.ensureStillAlive();
 
@@ -1087,14 +1141,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
-                    if (req.signal) |signal| {
-                        // if signal is not aborted, abort the signal
-                        if (!signal.aborted()) {
-                            const reason = JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                            reason.ensureStillAlive();
-                            _ = signal.signal(reason);
-                        }
-                    }
                     // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
                         req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
@@ -1104,6 +1150,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.promise) |promise| {
+                ctxLog("finalizeWithoutDeinit: this.promise != null", .{});
                 this.promise = null;
 
                 if (promise.asAnyPromise()) |prom| {
@@ -1113,22 +1160,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.byte_stream) |stream| {
+                ctxLog("finalizeWithoutDeinit: stream != null", .{});
+
                 this.byte_stream = null;
                 stream.unpipe();
             }
 
             if (this.pathname.len > 0) {
+                ctxLog("finalizeWithoutDeinit: this.pathname.len > 0 null", .{});
                 this.allocator.free(bun.constStrToU8(this.pathname));
                 this.pathname = "";
             }
         }
         pub fn finalize(this: *RequestContext) void {
+            ctxLog("finalize", .{});
             this.finalizeWithoutDeinit();
             this.markComplete();
             this.deinit();
         }
 
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit", .{});
             if (comptime Environment.allow_assert)
                 std.debug.assert(this.finalized);
 
@@ -1577,8 +1629,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
+                            streamLog("promise still Pending", .{});
                             // TODO: should this timeout?
-                            this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
+                            this.setAbortHandler();
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
                                     .readable = stream,
@@ -1595,9 +1648,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                         },
                         .Fulfilled => {
+                            streamLog("promise Fulfilled", .{});
                             this.handleResolveStream();
                         },
                         .Rejected => {
+                            streamLog("promise Rejected", .{});
                             this.handleRejectStream(this.server.globalThis, promise.result(this.server.globalThis.vm()));
                         },
                     }
@@ -1631,7 +1686,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
+            this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             this.finalize();
             stream.value.unprotect();
@@ -1709,6 +1764,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
                     .Fulfilled => {
+                        if (ctx.signal == null) {
+                            if (request_object.signal) |signal| {
+                                ctx.signal = signal;
+                                _ = signal.ref();
+                            }
+                        }
                         const fulfilled_value = promise.result(vm.global.vm());
 
                         // if you return a Response object or a Promise<Response>
@@ -1751,6 +1812,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     },
                     .Rejected => {
+                        if (ctx.signal == null) {
+                            if (request_object.signal) |signal| {
+                                ctx.signal = signal;
+                                _ = signal.ref();
+                            }
+                        }
                         ctx.handleReject(promise.result(vm.global.vm()));
                         return;
                     },
@@ -1790,7 +1857,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleResolveStream(req: *RequestContext) void {
-            streamLog("onResolve", .{});
+            streamLog("handleResolveStream", .{});
+
             var wrote_anything = false;
             if (req.sink) |wrapper| {
                 wrapper.sink.pending_flush = null;
@@ -1810,6 +1878,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
+            streamLog("onResolve({any})", .{wrote_anything});
+
+            //aborted so call finalizeForAbort
             if (req.aborted) {
                 req.finalizeForAbort();
                 return;
@@ -1821,7 +1892,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.resp.clearAborted();
                 req.renderMissing();
                 return;
-            } else if (!responded and wrote_anything and !req.aborted) {
+            } else if (!responded and wrote_anything) {
                 req.resp.clearAborted();
                 req.resp.endStream(req.shouldCloseConnection());
             }
@@ -1830,12 +1901,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            streamLog("onResolveStream", .{});
             var args = callframe.arguments(2);
             var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
             req.handleResolveStream();
             return JSValue.jsUndefined();
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
             var err = args.ptr[0];
@@ -1844,6 +1917,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+            streamLog("handleRejectStream", .{});
             var wrote_anything = req.has_written_status;
 
             if (req.sink) |wrapper| {
@@ -1866,6 +1940,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             streamLog("onReject({any})", .{wrote_anything});
 
+            //aborted so call finalizeForAbort
             if (req.aborted) {
                 req.finalizeForAbort();
                 return;
@@ -2056,6 +2131,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRender(this: *RequestContext) void {
+            ctxLog("render", .{});
+
             if (this.aborted) {
                 this.finalizeForAbort();
                 return;
@@ -2295,6 +2372,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
+            ctxLog("render", .{});
             this.response_ptr = response;
 
             this.doRender();
@@ -4669,8 +4747,12 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             ctx.request_js_object = args[0].asObjectRef();
             const request_value = args[0];
             request_value.ensureStillAlive();
-            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
 
+            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
+            if (request_object.signal) |signal| {
+                ctx.signal = signal;
+                _ = signal.ref();
+            }
             ctx.onResponse(
                 this,
                 req,

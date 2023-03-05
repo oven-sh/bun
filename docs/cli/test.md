@@ -103,7 +103,7 @@ Alternatively, use the `done` callback to signal completion. If you include the 
 import { expect, test } from "bun:test";
 
 test("2 * 2", done => {
-  Promise.resolve(2 * 2).then(done => {
+  Promise.resolve(2 * 2).then(result => {
     expect(result).toEqual(4);
     done();
   });

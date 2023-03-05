@@ -701,8 +701,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         rc = sqlite3_prepare16_v3(db, sqlString.characters16(), sqlString.length() * 2, 0, &statement, nullptr);
     }
 
-    if (rc != SQLITE_OK || statement == nullptr) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errmsg(db))));
+    if (UNLIKELY(rc != SQLITE_OK || statement == nullptr)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, rc == SQLITE_OK ? "Query contained no valid SQL statement; likely empty query."_s : WTF::String::fromUTF8(sqlite3_errmsg(db))));
         // sqlite3 handles when the pointer is null
         sqlite3_finalize(statement);
         return JSValue::encode(JSC::jsUndefined());
@@ -731,7 +731,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         rc = sqlite3_step(statement);
     }
 
-    if (rc != SQLITE_DONE) {
+    if (UNLIKELY(rc != SQLITE_DONE && rc != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(rc))));
         // we finalize after just incase something about error messages in
         // sqlite depends on the existence of the most recent statement i don't
@@ -1241,7 +1241,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         }
     }
 
-    if (UNLIKELY(status != SQLITE_DONE)) {
+    if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
@@ -1290,7 +1290,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         }
     }
 
-    if (status == SQLITE_DONE) {
+    if (status == SQLITE_DONE || status == SQLITE_OK) {
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
@@ -1338,7 +1338,7 @@ JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChe
         }
     }
 
-    if (status == SQLITE_DONE) {
+    if (status == SQLITE_DONE || status == SQLITE_OK) {
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
@@ -1419,7 +1419,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         }
     }
 
-    if (UNLIKELY(status != SQLITE_DONE)) {
+    if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
@@ -1465,7 +1465,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         status = sqlite3_step(stmt);
     }
 
-    if (UNLIKELY(status != SQLITE_DONE)) {
+    if (UNLIKELY(status != SQLITE_DONE && status != SQLITE_OK)) {
         sqlite3_reset(stmt);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         return JSValue::encode(jsUndefined());

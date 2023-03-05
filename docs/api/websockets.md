@@ -17,13 +17,13 @@ Internally Bun's WebSocket implementation is built on [uWebSockets](https://gith
 To connect to an external socket server, create an instance of `WebSocket` with the constructor.
 
 ```ts
-const socket = new WebSocket("ws://localhost:8080");
+const socket = new WebSocket("ws://localhost:3000");
 ```
 
 Bun supports setting custom headers. This is a Bun-specific extension of the `WebSocket` standard.
 
 ```ts
-const socket = new WebSocket("ws://localhost:8080", {
+const socket = new WebSocket("ws://localhost:3000", {
   headers: {
     // custom headers
   },

@@ -515,7 +515,4 @@ const JSStringIterator_ = extern struct {
     write16: JStringIteratorWriteCallback,
 };
 
-// not official api functions
-pub extern "c" fn JSCInitialize() void;
-
 pub extern "c" fn JSObjectGetProxyTarget(JSObjectRef) JSObjectRef;

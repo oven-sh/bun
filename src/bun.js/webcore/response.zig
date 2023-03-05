@@ -331,7 +331,7 @@ pub const Response = struct {
 
                 return response.body.value.InternalBlob.contentType();
             },
-            .Used, .Locked, .Empty, .Error => return default.value,
+            .Null, .Used, .Locked, .Empty, .Error => return default.value,
         }
     }
 
@@ -608,6 +608,8 @@ pub const Fetch = struct {
     );
 
     pub const FetchTasklet = struct {
+        const log = Output.scoped(.FetchTasklet, false);
+
         http: ?*HTTPClient.AsyncHTTP = null,
         result: HTTPClient.HTTPClientResult = .{},
         javascript_vm: *VirtualMachine = undefined,
@@ -623,7 +625,7 @@ pub const Fetch = struct {
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
 
-        signal: ?*JSC.AbortSignal = null,
+        signal: ?*JSC.WebCore.AbortSignal = null,
         aborted: std.atomic.Atomic(bool) = std.atomic.Atomic(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
@@ -713,12 +715,12 @@ pub const Fetch = struct {
 
             if (this.result.isTimeout()) {
                 // Timeout without reason
-                return JSC.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
             }
 
             if (this.result.isAbort()) {
                 // Abort without reason
-                return JSC.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
             }
 
             const fetch_error = JSC.SystemError{
@@ -817,24 +819,12 @@ pub const Fetch = struct {
                 proxy = jsc_vm.bundler.env.getHttpProxy(fetch_options.url);
             }
 
-            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
-                allocator,
-                fetch_options.method,
-                fetch_options.url,
-                fetch_options.headers.entries,
-                fetch_options.headers.buf.items,
-                &fetch_tasklet.response_buffer,
-                fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
-                HTTPClient.HTTPClientResult.Callback.New(
-                    *FetchTasklet,
-                    FetchTasklet.callback,
-                ).init(
-                    fetch_tasklet,
-                ),
-                proxy,
-                if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null,
-            );
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(allocator, fetch_options.method, fetch_options.url, fetch_options.headers.entries, fetch_options.headers.buf.items, &fetch_tasklet.response_buffer, fetch_tasklet.request_body.slice(), fetch_options.timeout, HTTPClient.HTTPClientResult.Callback.New(
+                *FetchTasklet,
+                FetchTasklet.callback,
+            ).init(
+                fetch_tasklet,
+            ), proxy, if (fetch_tasklet.signal != null) &fetch_tasklet.aborted else null);
 
             if (!fetch_options.follow_redirects) {
                 fetch_tasklet.http.?.client.remaining_redirect_count = 0;
@@ -851,10 +841,15 @@ pub const Fetch = struct {
         }
 
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
+            log("abortListener", .{});
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
             this.aborted.store(true, .Monotonic);
+
+            if (this.http != null) {
+                HTTPClient.http_thread.scheduleShutdown(this.http.?);
+            }
         }
 
         const FetchOptions = struct {
@@ -869,7 +864,7 @@ pub const Fetch = struct {
             follow_redirects: bool = true,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
-            signal: ?*JSC.AbortSignal = null,
+            signal: ?*JSC.WebCore.AbortSignal = null,
             globalThis: ?*JSGlobalObject,
         };
 
@@ -933,7 +928,7 @@ pub const Fetch = struct {
         var verbose = false;
         var proxy: ?ZigURL = null;
         var follow_redirects = true;
-        var signal: ?*JSC.AbortSignal = null;
+        var signal: ?*JSC.WebCore.AbortSignal = null;
 
         var url_proxy_buffer: []const u8 = undefined;
 
@@ -1003,7 +998,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                        if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                             _ = signal_.ref();
                             signal = signal_;
                         }
@@ -1122,7 +1117,7 @@ pub const Fetch = struct {
                         verbose = verb.toBoolean();
                     }
                     if (options.get(globalThis, "signal")) |signal_arg| {
-                        if (signal_arg.as(JSC.AbortSignal)) |signal_| {
+                        if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
                             _ = signal_.ref();
                             signal = signal_;
                         }

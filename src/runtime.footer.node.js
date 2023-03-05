@@ -15,8 +15,7 @@ export var __exportDefault = BUN_RUNTIME.__exportDefault;
 export var __decorateClass = BUN_RUNTIME.__decorateClass;
 export var __decorateParam = BUN_RUNTIME.__decorateParam;
 export var $$bun_runtime_json_parse = JSON.parse;
-export var __internalIsCommonJSNamespace =
-  BUN_RUNTIME.__internalIsCommonJSNamespace;
+export var __internalIsCommonJSNamespace = BUN_RUNTIME.__internalIsCommonJSNamespace;
 var require = __$module.createRequire(import.meta.url);
 var process =
   globalThis.process ||

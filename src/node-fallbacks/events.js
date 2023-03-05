@@ -34,9 +34,7 @@ if (R && typeof R.ownKeys === "function") {
   ReflectOwnKeys = R.ownKeys;
 } else if (Object.getOwnPropertySymbols) {
   ReflectOwnKeys = function ReflectOwnKeys(target) {
-    return Object.getOwnPropertyNames(target).concat(
-      Object.getOwnPropertySymbols(target),
-    );
+    return Object.getOwnPropertyNames(target).concat(Object.getOwnPropertySymbols(target));
   };
 } else {
   ReflectOwnKeys = function ReflectOwnKeys(target) {
@@ -71,10 +69,7 @@ var defaultMaxListeners = 10;
 
 function checkListener(listener) {
   if (typeof listener !== "function") {
-    throw new TypeError(
-      'The "listener" argument must be of type Function. Received type ' +
-        typeof listener,
-    );
+    throw new TypeError('The "listener" argument must be of type Function. Received type ' + typeof listener);
   }
 }
 
@@ -86,9 +81,7 @@ Object.defineProperty(EventEmitter, "defaultMaxListeners", {
   set: function (arg) {
     if (typeof arg !== "number" || arg < 0 || NumberIsNaN(arg)) {
       throw new RangeError(
-        'The value of "defaultMaxListeners" is out of range. It must be a non-negative number. Received ' +
-          arg +
-          ".",
+        'The value of "defaultMaxListeners" is out of range. It must be a non-negative number. Received ' + arg + ".",
       );
     }
     defaultMaxListeners = arg;
@@ -96,10 +89,7 @@ Object.defineProperty(EventEmitter, "defaultMaxListeners", {
 });
 
 EventEmitter.init = function () {
-  if (
-    this._events === undefined ||
-    this._events === Object.getPrototypeOf(this)._events
-  ) {
+  if (this._events === undefined || this._events === Object.getPrototypeOf(this)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
   }
@@ -111,11 +101,7 @@ EventEmitter.init = function () {
 // that to be increased. Set to zero for unlimited.
 EventEmitter.prototype.setMaxListeners = function setMaxListeners(n) {
   if (typeof n !== "number" || n < 0 || NumberIsNaN(n)) {
-    throw new RangeError(
-      'The value of "n" is out of range. It must be a non-negative number. Received ' +
-        n +
-        ".",
-    );
+    throw new RangeError('The value of "n" is out of range. It must be a non-negative number. Received ' + n + ".");
   }
   this._maxListeners = n;
   return this;
@@ -149,9 +135,7 @@ EventEmitter.prototype.emit = function emit(type) {
       throw er; // Unhandled 'error' event
     }
     // At least give some kind of context to the user
-    var err = new Error(
-      "Unhandled error." + (er ? " (" + er.message + ")" : ""),
-    );
+    var err = new Error("Unhandled error." + (er ? " (" + er.message + ")" : ""));
     err.context = er;
     throw err; // Unhandled 'error' event
   }
@@ -186,11 +170,7 @@ function _addListener(target, type, listener, prepend) {
     // To avoid recursion in the case that type === "newListener"! Before
     // adding it to the listeners, first emit "newListener".
     if (events.newListener !== undefined) {
-      target.emit(
-        "newListener",
-        type,
-        listener.listener ? listener.listener : listener,
-      );
+      target.emit("newListener", type, listener.listener ? listener.listener : listener);
 
       // Re-assign `events` because a newListener handler could have caused the
       // this._events to be assigned to a new object
@@ -206,9 +186,7 @@ function _addListener(target, type, listener, prepend) {
   } else {
     if (typeof existing === "function") {
       // Adding the second element, need to change to array.
-      existing = events[type] = prepend
-        ? [listener, existing]
-        : [existing, listener];
+      existing = events[type] = prepend ? [listener, existing] : [existing, listener];
       // If we've already got an array, just append.
     } else if (prepend) {
       existing.unshift(listener);
@@ -248,10 +226,7 @@ EventEmitter.prototype.addListener = function addListener(type, listener) {
 
 EventEmitter.prototype.on = EventEmitter.prototype.addListener;
 
-EventEmitter.prototype.prependListener = function prependListener(
-  type,
-  listener,
-) {
+EventEmitter.prototype.prependListener = function prependListener(type, listener) {
   return _addListener(this, type, listener, true);
 };
 
@@ -284,20 +259,14 @@ EventEmitter.prototype.once = function once(type, listener) {
   return this;
 };
 
-EventEmitter.prototype.prependOnceListener = function prependOnceListener(
-  type,
-  listener,
-) {
+EventEmitter.prototype.prependOnceListener = function prependOnceListener(type, listener) {
   checkListener(listener);
   this.prependListener(type, _onceWrap(this, type, listener));
   return this;
 };
 
 // Emits a 'removeListener' event if and only if the listener was removed.
-EventEmitter.prototype.removeListener = function removeListener(
-  type,
-  listener,
-) {
+EventEmitter.prototype.removeListener = function removeListener(type, listener) {
   var list, events, position, i, originalListener;
 
   checkListener(listener);
@@ -312,8 +281,7 @@ EventEmitter.prototype.removeListener = function removeListener(
     if (--this._eventsCount === 0) this._events = Object.create(null);
     else {
       delete events[type];
-      if (events.removeListener)
-        this.emit("removeListener", type, list.listener || listener);
+      if (events.removeListener) this.emit("removeListener", type, list.listener || listener);
     }
   } else if (typeof list !== "function") {
     position = -1;
@@ -335,8 +303,7 @@ EventEmitter.prototype.removeListener = function removeListener(
 
     if (list.length === 1) events[type] = list[0];
 
-    if (events.removeListener !== undefined)
-      this.emit("removeListener", type, originalListener || listener);
+    if (events.removeListener !== undefined) this.emit("removeListener", type, originalListener || listener);
   }
 
   return this;
@@ -399,12 +366,9 @@ function _listeners(target, type, unwrap) {
   var evlistener = events[type];
   if (evlistener === undefined) return [];
 
-  if (typeof evlistener === "function")
-    return unwrap ? [evlistener.listener || evlistener] : [evlistener];
+  if (typeof evlistener === "function") return unwrap ? [evlistener.listener || evlistener] : [evlistener];
 
-  return unwrap
-    ? unwrapListeners(evlistener)
-    : arrayClone(evlistener, evlistener.length);
+  return unwrap ? unwrapListeners(evlistener) : arrayClone(evlistener, evlistener.length);
 }
 
 EventEmitter.prototype.listeners = function listeners(type) {
@@ -509,10 +473,7 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
       listener(arg);
     });
   } else {
-    throw new TypeError(
-      'The "emitter" argument must be of type EventEmitter. Received type ' +
-        typeof emitter,
-    );
+    throw new TypeError('The "emitter" argument must be of type EventEmitter. Received type ' + typeof emitter);
   }
 }
 

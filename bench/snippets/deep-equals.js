@@ -259,15 +259,13 @@ const fixture = [
         equal: false,
       },
       {
-        description:
-          "objects with different `toString` functions returning same values are equal",
+        description: "objects with different `toString` functions returning same values are equal",
         value1: { toString: () => "Hello world!" },
         value2: { toString: () => "Hello world!" },
         equal: true,
       },
       {
-        description:
-          "objects with `toString` functions returning different values are not equal",
+        description: "objects with `toString` functions returning different values are not equal",
         value1: { toString: () => "Hello world!" },
         value2: { toString: () => "Hi!" },
         equal: false,
@@ -311,13 +309,13 @@ const fixture = [
       {
         description: "equal arrays of objects",
         value1: [
-          ...Array.from({ length: 200000 }, (i) => ({
+          ...Array.from({ length: 200000 }, i => ({
             a: 1,
             b: 2,
           })),
         ],
         value2: [
-          ...Array.from({ length: 200000 }, (i) => ({
+          ...Array.from({ length: 200000 }, i => ({
             a: 1,
             b: 2,
           })),
@@ -495,9 +493,7 @@ for (let { tests, description } of fixture) {
         bench(equalsFn.name, () => {
           expected = equalsFn(value1, value2);
           if (expected !== equal) {
-            throw new Error(
-              `Expected ${expected} to be ${equal} for ${description}`,
-            );
+            throw new Error(`Expected ${expected} to be ${equal} for ${description}`);
           }
         });
       }

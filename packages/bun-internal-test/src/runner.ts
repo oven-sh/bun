@@ -1,11 +1,14 @@
-import { spawn } from "bun";
-import { readdirSync } from "node:fs";
+import { ArrayBufferSink, spawn } from "bun";
+import { readdirSync, openSync, writeSync, truncateSync } from "node:fs";
 import { resolve } from "node:path";
 import * as action from "@actions/core";
+import { StringDecoder } from "node:string_decoder";
 
 const cwd = resolve("../..");
+process.chdir(cwd);
+
 const isAction = !!process.env["GITHUB_ACTION"];
-const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/mgi;
+const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 
 function* findTests(dir: string, query?: string): Generator<string> {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
@@ -20,14 +23,18 @@ function* findTests(dir: string, query?: string): Generator<string> {
 
 async function runTest(path: string): Promise<void> {
   const name = path.replace(cwd, "").slice(1);
-  const runner = await spawn({
-    cwd,
-    cmd: ["bun", "wiptest", path],
+  const runner = spawn({
+    cmd: ["bun", "test", path],
     stdout: "pipe",
     stderr: "pipe",
+    stdin: "ignore",
+    env: {
+      ...process.env,
+      FORCE_COLOR: "1",
+    },
   });
   const exitCode = await Promise.race([
-    new Promise((resolve) => {
+    new Promise(resolve => {
       setTimeout(() => {
         runner.kill();
         resolve(124); // Timed Out
@@ -36,9 +43,7 @@ async function runTest(path: string): Promise<void> {
     runner.exited,
   ]);
   if (isAction) {
-    const prefix = exitCode === 0
-      ? "PASS"
-      : `FAIL (exit code ${exitCode})`;
+    const prefix = exitCode === 0 ? "PASS" : `FAIL (exit code ${exitCode})`;
     action.startGroup(`${prefix} - ${name}`);
   }
   for (const stdout of [runner.stdout, runner.stderr]) {
@@ -67,7 +72,7 @@ async function runTest(path: string): Promise<void> {
 let failed = false;
 
 function findErrors(data: Uint8Array): void {
-  const text = new TextDecoder().decode(data);
+  const text = new StringDecoder().write(new Buffer(data.buffer));
   for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
     failed = true;
     action.error(message, {
@@ -76,6 +81,7 @@ function findErrors(data: Uint8Array): void {
       startColumn: parseInt(col),
     });
   }
+  Bun.gc(true);
 }
 
 const tests = [];

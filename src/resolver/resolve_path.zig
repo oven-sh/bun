@@ -4,6 +4,8 @@ const strings = @import("../string_immutable.zig");
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
 const bun = @import("bun");
+const Fs = @import("../fs.zig");
+
 threadlocal var parser_join_input_buffer: [4096]u8 = undefined;
 threadlocal var parser_buffer: [1024]u8 = undefined;
 
@@ -153,9 +155,9 @@ pub fn longestCommonPathGeneric(input: []const []const u8, comptime separator: u
     // To detect /app/public is actually a folder, we do one more loop through the strings
     // and say, "do one of you have a path separator after what we thought was the end?"
     for (input) |str| {
-        if (str.len > index + 1) {
+        if (str.len > index) {
             if (@call(.always_inline, isPathSeparator, .{str[index]})) {
-                return str[0 .. index + 2];
+                return str[0 .. index + 1];
             }
         }
     }
@@ -235,12 +237,11 @@ pub fn relativeToCommonPath(
         while (i <= normalized_from.len) : (i += 1) {
             if (i == normalized_from.len or (normalized_from[i] == separator and i + 1 < normalized_from.len)) {
                 if (out_slice.len == 0) {
-                    out_slice = buf[0 .. out_slice.len + 2];
-                    out_slice[0..2].* = "..".*;
+                    buf[0..2].* = "..".*;
+                    out_slice.len = 2;
                 } else {
-                    const old_len = out_slice.len;
+                    buf[out_slice.len..][0..3].* = "/..".*;
                     out_slice.len += 3;
-                    out_slice[old_len..][0..3].* = "/..".*;
                 }
             }
         }
@@ -254,23 +255,20 @@ pub fn relativeToCommonPath(
             }
         }
 
-        const insert_leading_slash = last_common_separator > 0 and normalized_to[last_common_separator] != separator and tail[0] != separator;
-
         // avoid making non-absolute paths absolute
+        const insert_leading_slash = tail[0] != separator and out_slice.len > 0 and out_slice[out_slice.len - 1] != separator;
         if (insert_leading_slash) {
             buf[out_slice.len] = separator;
-            out_slice = buf[0 .. out_slice.len + 1];
+            out_slice.len += 1;
         }
 
         // Lastly, append the rest of the destination (`to`) path that comes after
         // the common path parts.
-        const start = out_slice.len;
-        out_slice = buf[0 .. out_slice.len + tail.len];
-
-        bun.copy(u8, out_slice[start..], tail);
+        bun.copy(u8, buf[out_slice.len..], tail);
+        out_slice.len += tail.len;
     }
 
-    return buf[0..out_slice.len];
+    return out_slice;
 }
 
 pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
@@ -314,27 +312,31 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
 }
 
 pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
-    const from_allow_above_root = (from.len > 1 and from[0] == platform.separator());
-    const to_allow_above_root = (to.len > 1 and to[0] == platform.separator());
-    var normalized_from =
-        if (!from_allow_above_root)
-        normalizeStringBuf(from, relative_from_buf[1..], false, platform, true)
-    else
-        normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
-    var normalized_to =
-        if (!to_allow_above_root)
-        normalizeStringBuf(to, relative_to_buf[1..], false, platform, true)
-    else
-        normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
-
-    if (from_allow_above_root == to_allow_above_root and from_allow_above_root) {
+    const normalized_from = if (from.len > 0 and from[0] == platform.separator()) brk: {
+        var path = normalizeStringBuf(from, relative_from_buf[1..], true, platform, true);
         relative_from_buf[0] = platform.separator();
-        normalized_from = relative_from_buf[0 .. normalized_from.len + 1];
+        break :brk relative_from_buf[0 .. path.len + 1];
+    } else joinAbsStringBuf(
+        Fs.FileSystem.instance.top_level_dir,
+        &relative_from_buf,
+        &[_][]const u8{
+            normalizeStringBuf(from, relative_from_buf[1..], false, platform, true),
+        },
+        platform,
+    );
 
+    const normalized_to = if (to.len > 0 and to[0] == platform.separator()) brk: {
+        var path = normalizeStringBuf(to, relative_to_buf[1..], true, platform, true);
         relative_to_buf[0] = platform.separator();
-        normalized_to = relative_to_buf[0 .. normalized_to.len + 1];
-    }
-    //
+        break :brk relative_to_buf[0 .. path.len + 1];
+    } else joinAbsStringBuf(
+        Fs.FileSystem.instance.top_level_dir,
+        &relative_to_buf,
+        &[_][]const u8{
+            normalizeStringBuf(to, relative_to_buf[1..], false, platform, true),
+        },
+        platform,
+    );
 
     return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
 }

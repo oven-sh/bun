@@ -274,6 +274,7 @@ it("path.relative", () => {
         ["/baz-quux", "/baz", "../baz"],
         ["/baz", "/baz-quux", "../baz-quux"],
         ["/page1/page2/foo", "/", "../../.."],
+        [process.cwd(), "foo", "foo"],
       ],
     ],
   ];

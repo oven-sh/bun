@@ -30,7 +30,10 @@ function dump(buf) {
     const wrote = writeSync(1, buf);
     offset += wrote;
     if (offset < length) {
-      fsyncSync(1);
+      try {
+        fsyncSync(1);
+      } catch (e) {}
+
       buf = buf.slice(wrote);
     }
   }

@@ -189,23 +189,16 @@ jobs:
           bun install
           bun install --cwd test/bun.js
           bun install --cwd test/bun.js/third-party/body-parser-test
-          cd packages/bun-internal-test
-          bun install
-          node src/runner.node.mjs || true
-      - id: write-failing-tests
-        name: Check for failing tests
-        # if: ${{github.event.inputs.use_bun == 'false'}}
-        run: |
-          if [ -f failing-tests.txt ]; then
-              delimiter="$(openssl rand -hex 8)"
-              echo "failing_tests<<${delimiter}" >> "${GITHUB_OUTPUT}"
-              # prefix each non-empty line with a markdown bullet point
-              cat failing-tests.txt | sed -e 's/^/- /' >> "${GITHUB_OUTPUT}"
-              echo "${delimiter}" >> "${GITHUB_OUTPUT}"
-
-              echo "failing_tests_count=$(wc -l < failing-tests.txt)" >> "${GITHUB_OUTPUT}"
+          bun install --cwd packages/bun-internal-test
+          node packages/bun-internal-test/src/runner.node.mjs || true
+          if [ -s failing-tests.txt ]; then
+            delimiter="$(openssl rand -hex 8)"
+            echo "failing_tests<<${delimiter}" >> "${GITHUB_OUTPUT}"
+            # prefix each non-empty line with a markdown bullet point
+            cat failing-tests.txt | sed -e 's/^/- /' >> "${GITHUB_OUTPUT}"
+            echo "${delimiter}" >> "${GITHUB_OUTPUT}"
+            echo "failing_tests_count=$(wc -l < failing-tests.txt)" >> "${GITHUB_OUTPUT}" 
           fi
-
       - name: Comment on PR
         if: steps.fmt.outputs.failing_tests != '' && github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v2

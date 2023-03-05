@@ -5,7 +5,7 @@ import * as action from "@actions/core";
 
 const cwd = resolve("../..");
 const isAction = !!process.env["GITHUB_ACTION"];
-const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/mgi;
+const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 
 function* findTests(dir: string, query?: string): Generator<string> {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
@@ -20,7 +20,7 @@ function* findTests(dir: string, query?: string): Generator<string> {
 
 async function runTest(path: string): Promise<void> {
   const name = path.replace(cwd, "").slice(1);
-  const runner = await spawn({
+  const runner = spawn({
     cwd,
     cmd: ["bun", "test", path],
     stdout: "pipe",
@@ -28,10 +28,10 @@ async function runTest(path: string): Promise<void> {
     env: {
       ...process.env,
       FORCE_COLOR: "1",
-    }
+    },
   });
   const exitCode = await Promise.race([
-    new Promise((resolve) => {
+    new Promise(resolve => {
       setTimeout(() => {
         runner.kill();
         resolve(124); // Timed Out
@@ -40,9 +40,7 @@ async function runTest(path: string): Promise<void> {
     runner.exited,
   ]);
   if (isAction) {
-    const prefix = exitCode === 0
-      ? "PASS"
-      : `FAIL (exit code ${exitCode})`;
+    const prefix = exitCode === 0 ? "PASS" : `FAIL (exit code ${exitCode})`;
     action.startGroup(`${prefix} - ${name}`);
   }
   for (const stdout of [runner.stdout, runner.stderr]) {

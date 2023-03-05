@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import * as action from "@actions/core";
 
 const cwd = resolve("../..");
+process.chdir(cwd);
 const isAction = !!process.env["GITHUB_ACTION"];
 const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 
@@ -21,10 +22,10 @@ function* findTests(dir: string, query?: string): Generator<string> {
 async function runTest(path: string): Promise<void> {
   const name = path.replace(cwd, "").slice(1);
   const runner = spawn({
-    cwd,
     cmd: ["bun", "test", path],
     stdout: "pipe",
     stderr: "pipe",
+    stdin: "ignore",
     env: {
       ...process.env,
       FORCE_COLOR: "1",

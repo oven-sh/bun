@@ -1,5 +1,4 @@
 name: Run Tests Manually
-env:
 
 on:
   # Allows you to run this workflow manually from the Actions tab

@@ -201,7 +201,7 @@ jobs:
 
             ${{ steps.test.outputs.failing_tests }}
 
-            **[View test output](https://github.com/repos/${{github.owner}}/${{github.repo}}/actions/runs/${{github.run_id}})**
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR

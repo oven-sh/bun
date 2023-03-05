@@ -31,4 +31,5 @@ jobs:
         name: Test
         run: |
           cd packages/bun-test
+          bun install
           bun run test

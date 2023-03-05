@@ -203,7 +203,7 @@ jobs:
               cat failing-tests.txt | sed -e 's/^/- /' >> "${GITHUB_OUTPUT}"
               echo "${delimiter}" >> "${GITHUB_OUTPUT}"
 
-              echo "failing_tests_count<<$(cat failing-tests.txt | wc -l)" >> "${GITHUB_OUTPUT}"
+              echo "failing_tests_count=$(wc -l < failing-tests.txt)" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Comment on PR
@@ -212,11 +212,11 @@ jobs:
         with:
           comment_tag: test-failures-${{matrix.tag}}
           message: |
-            ❌ @${{ github.actor }} ${{ steps.fmt.outputs.failing_tests_count }} failing tests on ${{ matrix.tag }}:
+            ❌ @${{ github.actor }} ${{ steps.fmt.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:
 
             ${{ steps.fmt.outputs.failing_tests }}
 
-            **[View test output](https://github.com/repos/${{github.owner}}/${{github.repo}}/actions/runs/${{github.run_id}}/jobs)**
+            **[View test output](https://github.com/repos/${{github.owner}}/${{github.repo}}/actions/runs/${{github.run_id}})**
 
             <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
       - name: Uncomment on PR

@@ -1,9 +1,10 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, writeSync } from "fs";
+import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { basename } from "path";
 import { fileURLToPath } from "url";
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
@@ -17,7 +18,7 @@ function* findTests(dir, query) {
     const path = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       yield* findTests(path, query);
-    } else if (entry.isFile() && entry.name.includes(".test.")) {
+    } else if (entry.name.includes(".test.")) {
       yield path;
     }
   }
@@ -47,13 +48,15 @@ function dump(buf) {
   }
 }
 
+var failingTests = [];
+
 async function runTest(path) {
   const name = path.replace(cwd, "").slice(1);
   const {
     stdout,
     stderr,
     status: exitCode,
-  } = spawnSync("bun", ["test", path], {
+  } = spawnSync("bun", ["test", basename(path)], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
     env: {
@@ -64,6 +67,10 @@ async function runTest(path) {
   if (isAction) {
     const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
     action.startGroup(`${prefix} - ${name}`);
+  }
+
+  if (+exitCode !== 0) {
+    failingTests.push(name);
   }
 
   dump(stdout);
@@ -102,4 +109,9 @@ for (const path of findTests(resolve(cwd, "test/bun.js"))) {
   tests.push(runTest(path).catch(console.error));
 }
 await Promise.allSettled(tests);
+
+rmSync("failing-tests.txt", { force: true });
+if (failingTests.length > 0) {
+  writeFileSync("failing-tests.txt", failingTests.join("\n") + "\n", "utf-8");
+}
 process.exit(failed ? 1 : 0);

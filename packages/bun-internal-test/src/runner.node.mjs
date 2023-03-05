@@ -11,9 +11,9 @@ const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
-console.log(JSON.stringify(statSync("/dev/stdout"), null, 2));
-console.log(JSON.stringify(statSync("/dev/stderr"), null, 2));
-console.log(JSON.stringify(statSync("/dev/stdin"), null, 2));
+console.log(JSON.stringify(statSync("/dev/fd/0"), null, 2));
+console.log(JSON.stringify(statSync("/dev/fd/1"), null, 2));
+console.log(JSON.stringify(statSync("/dev/fd/2"), null, 2));
 
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {

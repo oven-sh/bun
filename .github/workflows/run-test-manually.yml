@@ -32,6 +32,6 @@ jobs:
         run: |
           bun install
           bun install --cwd test/bun.js
-          bun install --cwd test/bun.js/body-parser-test
+          bun install --cwd test/bun.js/third-party/body-parser-test
           cd packages/bun-internal-test
           bun run test

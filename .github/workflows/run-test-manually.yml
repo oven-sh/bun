@@ -9,6 +9,11 @@ on:
         required: true
         default: "canary"
         type: string
+      use_bun:
+        description: "Bun or Node?"
+        required: true
+        default: true
+        type: boolean
 jobs:
   linux-test:
     name: Tests ${{matrix.tag}} ${{github.event.inputs.version}}
@@ -34,6 +39,7 @@ jobs:
           sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
       - id: test
         name: Test
+        if: ${{github.event.inputs.use_bun}}
         run: |
           bun install
           bun install --cwd test/bun.js
@@ -41,3 +47,13 @@ jobs:
           cd packages/bun-internal-test
           bun install
           bun run test
+      - id: test-node-runner
+        name: Test (node runner)
+        if: ${{!github.event.inputs.use_bun}}
+        run: |
+          bun install
+          bun install --cwd test/bun.js
+          bun install --cwd test/bun.js/third-party/body-parser-test
+          cd packages/bun-internal-test
+          bun install
+          node src/runner.node.mjs

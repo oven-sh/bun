@@ -11,9 +11,18 @@ const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
-console.log(JSON.stringify(statSync("/dev/fd/0"), null, 2));
-console.log(JSON.stringify(statSync("/dev/fd/1"), null, 2));
-console.log(JSON.stringify(statSync("/dev/fd/2"), null, 2));
+const stats = [statSync("/dev/fd/0"), statSync("/dev/fd/1"), statSync("/dev/fd/2")];
+for (const stat of stats) {
+  console.log({
+    isCharacterDevice: stat.isCharacterDevice(),
+    isFIFO: stat.isFIFO(),
+    isSocket: stat.isSocket(),
+    isBlockDevice: stat.isBlockDevice(),
+    isSymbolicLink: stat.isSymbolicLink(),
+    isDirectory: stat.isDirectory(),
+    isFile: stat.isFile(),
+  });
+}
 
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {

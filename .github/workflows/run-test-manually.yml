@@ -26,7 +26,7 @@ jobs:
         run: |
           npm install @oven/bun-${{matrix.tag}}@canary
           chmod +x node_modules/@oven/bun-${{matrix.tag}}/bin/bun
-          cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
+          sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
       - id: test
         name: Test
         run: |

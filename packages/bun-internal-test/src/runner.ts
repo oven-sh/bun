@@ -1,10 +1,12 @@
-import { spawn } from "bun";
-import { readdirSync } from "node:fs";
+import { ArrayBufferSink, spawn } from "bun";
+import { readdirSync, openSync, writeSync, truncateSync } from "node:fs";
 import { resolve } from "node:path";
 import * as action from "@actions/core";
+import { StringDecoder } from "node:string_decoder";
 
 const cwd = resolve("../..");
 process.chdir(cwd);
+
 const isAction = !!process.env["GITHUB_ACTION"];
 const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 
@@ -70,7 +72,7 @@ async function runTest(path: string): Promise<void> {
 let failed = false;
 
 function findErrors(data: Uint8Array): void {
-  const text = new TextDecoder().decode(data);
+  const text = new StringDecoder().write(new Buffer(data.buffer));
   for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
     failed = true;
     action.error(message, {
@@ -79,6 +81,7 @@ function findErrors(data: Uint8Array): void {
       startColumn: parseInt(col),
     });
   }
+  Bun.gc(true);
 }
 
 const tests = [];

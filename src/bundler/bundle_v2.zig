@@ -315,6 +315,13 @@ pub const BundleV2 = struct {
         }
         this.graph.parse_pending += 1;
         const source_index = Index.source(this.graph.input_files.len);
+        if (path.pretty.ptr == path.text.ptr) {
+            // TODO: outbase
+            const rel = bun.path.relative(this.bundler.fs.top_level_dir, path.text);
+            if (rel.len > 0 and rel[0] != '.') {
+                path.pretty = rel;
+            }
+        }
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
@@ -882,6 +889,14 @@ const ParseTask = struct {
                             import_record.path = resolve_entry.value_ptr.path;
 
                             continue;
+                        }
+
+                        if (path.pretty.ptr == path.text.ptr) {
+                            // TODO: outbase
+                            const rel = bun.path.relative(bundler.fs.top_level_dir, path.text);
+                            if (rel.len > 0 and rel[0] != '.') {
+                                path.pretty = rel;
+                            }
                         }
 
                         path.* = try path.dupeAlloc(allocator);
@@ -2240,7 +2255,7 @@ const LinkerContext = struct {
             for (reachable) |source_index_| {
                 const source_index = source_index_.get();
                 const id = source_index;
-                if (id >= max_id) {
+                if (id > max_id) {
                     continue;
                 }
 
@@ -2361,23 +2376,22 @@ const LinkerContext = struct {
                 }
 
                 var imports_to_bind = &imports_to_bind_list[id];
-                var imports_to_bind_iter = imports_to_bind.iterator();
 
                 var parts: []js_ast.Part = parts_list[id].slice();
-                while (imports_to_bind_iter.next()) |import| {
-                    const import_source_index = import.value_ptr.data.source_index.get();
+                for (imports_to_bind.keys(), imports_to_bind.values()) |*import_ref, import| {
+                    const import_source_index = import.data.source_index.get();
                     const import_id = import_source_index;
+                    const ref = import_ref.*;
 
-                    const import_ref = import.key_ptr.*;
-                    var named_import = named_imports[import_id].getPtr(import_ref) orelse continue;
-                    const parts_declaring_symbol = this.topLevelSymbolsToParts(import_id, import_ref);
+                    const named_import = named_imports[id].get(ref) orelse continue;
 
                     for (named_import.local_parts_with_uses.slice()) |part_index| {
                         var part: *js_ast.Part = &parts[part_index];
+                        const parts_declaring_symbol = this.graph.ast.items(.top_level_symbols_to_parts)[import_id].get(import.data.import_ref).?.slice();
 
                         part.dependencies.ensureUnusedCapacity(
                             this.allocator,
-                            parts_declaring_symbol.len + @as(usize, import.value_ptr.re_exports.len),
+                            parts_declaring_symbol.len + @as(usize, import.re_exports.len),
                         ) catch unreachable;
 
                         // Depend on the file containing the imported symbol
@@ -2392,11 +2406,11 @@ const LinkerContext = struct {
 
                         // Also depend on any files that re-exported this symbol in between the
                         // file containing the import and the file containing the imported symbol
-                        part.dependencies.appendSliceAssumeCapacity(import.value_ptr.re_exports.slice());
+                        part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                     }
 
                     // Merge these symbols so they will share the same name
-                    _ = this.graph.symbols.merge(import_ref, import.value_ptr.data.import_ref);
+                    import_ref.* = this.graph.symbols.merge(ref, import.data.import_ref);
                 }
 
                 // If this is an entry point, depend on all exports so they are included
@@ -2987,7 +3001,7 @@ const LinkerContext = struct {
 
                 for (other_parts) |other_part_index| {
                     var local = local_dependencies.getOrPut(@intCast(u32, other_part_index)) catch unreachable;
-                    if (!local.found_existing) {
+                    if (!local.found_existing or other_part_index != part_index) {
                         local.value_ptr.* = @intCast(u32, part_index);
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
@@ -3292,14 +3306,13 @@ const LinkerContext = struct {
         );
 
         // Mark imported symbols as exported in the chunk from which they are declared
-        for (chunks, 0..) |*chunk, chunk_index| {
+        for (chunks, chunk_metas, 0..) |*chunk, *chunk_meta, chunk_index| {
             if (chunk.content != .javascript) {
                 continue;
             }
 
             var js = &chunk.content.javascript;
 
-            var chunk_meta = &chunk_metas[chunk_index];
             // Find all uses in this chunk of symbols from other chunks
             for (chunk_meta.imports.keys()) |import_ref| {
                 const symbol = c.graph.symbols.get(import_ref).?;
@@ -5127,7 +5140,8 @@ const LinkerContext = struct {
         // TODO: defaultLazyExport
 
         // Add all other parts in this chunk
-        for (parts, 0..) |part, index| {
+        for (parts, 0..) |part, index_| {
+            const index = part_range.part_index_begin + @truncate(u32, index_);
             if (!part.is_live) {
                 // Skip the part if it's not in this chunk
 
@@ -5916,13 +5930,13 @@ const LinkerContext = struct {
                     // Depend on the statement(s) that declared this import symbol in the
                     // original file
                     {
-                        var deps = c.graph.topLevelSymbolToParts(other_id, tracker.import_ref);
+                        var deps = c.topLevelSymbolsToParts(other_id, tracker.import_ref);
                         re_exports.ensureUnusedCapacity(deps.len) catch unreachable;
                         for (deps) |dep| {
                             re_exports.appendAssumeCapacity(
                                 .{
                                     .part_index = dep,
-                                    .source_index = next_tracker.source_index,
+                                    .source_index = tracker.source_index,
                                 },
                             );
                         }
@@ -5966,10 +5980,7 @@ const LinkerContext = struct {
     }
 
     pub fn topLevelSymbolsToParts(c: *LinkerContext, id: u32, ref: Ref) []u32 {
-        return if (c.graph.ast.items(.top_level_symbols_to_parts)[id].get(ref)) |list|
-            list.slice()
-        else
-            &[_]u32{};
+        return c.graph.topLevelSymbolToParts(id, ref);
     }
 
     pub fn topLevelSymbolsToPartsForRuntime(c: *LinkerContext, ref: Ref) []u32 {
@@ -6004,8 +6015,8 @@ const LinkerContext = struct {
 
                 // generate a dummy part that depends on the "__commonJS" symbol
                 var dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch unreachable;
-                for (common_js_parts, 0..) |part, i| {
-                    dependencies[i] = .{
+                for (common_js_parts, dependencies) |part, *cjs| {
+                    cjs.* = .{
                         .part_index = part,
                         .source_index = Index.runtime,
                     };
@@ -6057,8 +6068,8 @@ const LinkerContext = struct {
 
                 // generate a dummy part that depends on the "__esm" symbol
                 var dependencies = c.allocator.alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
-                for (esm_parts, 0..) |part, i| {
-                    dependencies[i] = .{
+                for (esm_parts, dependencies) |part, *esm| {
+                    esm.* = .{
                         .part_index = part,
                         .source_index = Index.runtime,
                     };
@@ -6246,12 +6257,10 @@ const LinkerContext = struct {
             .imports = &named_imports,
         };
         named_imports.sort(sorter);
-        var iter = named_imports.iterator();
 
-        while (iter.next()) |entry| {
+        for (named_imports.keys(), named_imports.values()) |ref, named_import| {
             // Re-use memory for the cycle detector
             c.cycle_detector.clearRetainingCapacity();
-            const ref = entry.key_ptr.*;
 
             const import_ref = Ref{
                 .inner_index = ref.innerIndex(),
@@ -6311,14 +6320,14 @@ const LinkerContext = struct {
                 },
                 .cycle => {
                     const source = &c.parse_graph.input_files.items(.source)[source_index];
-                    const r = lex.rangeOfIdentifier(source, entry.value_ptr.alias_loc orelse Logger.Loc{});
+                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
                     c.log.addRangeErrorFmt(
                         source,
                         r,
                         c.allocator,
                         "Detected cycle while resolving import {s}",
                         .{
-                            entry.value_ptr.alias.?,
+                            named_import.alias.?,
                         },
                     ) catch unreachable;
                 },
@@ -6330,10 +6339,9 @@ const LinkerContext = struct {
                     ) catch unreachable;
                 },
                 .ambiguous => {
-                    var named_import = entry.value_ptr.*;
                     const source = &c.parse_graph.input_files.items(.source)[source_index];
 
-                    const r = lex.rangeOfIdentifier(source, entry.value_ptr.alias_loc orelse Logger.Loc{});
+                    const r = lex.rangeOfIdentifier(source, named_import.alias_loc orelse Logger.Loc{});
 
                     // if (result.name_loc.start != 0)
                     // TODO: better error

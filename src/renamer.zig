@@ -104,7 +104,10 @@ pub const NumberRenamer = struct {
 
         const new_len = @max(inner.len, ref.innerIndex() + 1);
         if (inner.cap < new_len) {
+            const prev_cap = inner.cap;
             inner.ensureUnusedCapacity(r.allocator, new_len) catch unreachable;
+            const to_write = inner.ptr[prev_cap..inner.cap];
+            @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
         }
         inner.len = new_len;
         inner.mut(ref.innerIndex()).* = name;
@@ -219,10 +222,17 @@ pub const NumberRenamer = struct {
 
         const resolved = renamer.symbols.follow(ref);
 
-        return renamer
-            .names
-            .at(resolved.sourceIndex())
-            .at(resolved.innerIndex()).*;
+        const renamed_list = renamer.names
+            .at(resolved.sourceIndex());
+
+        if (renamed_list.len > resolved.innerIndex()) {
+            const renamed = renamed_list.at(resolved.innerIndex()).*;
+            if (renamed.len > 0) {
+                return renamed;
+            }
+        }
+
+        return renamer.symbols.getConst(resolved).?.original_name;
     }
 
     pub const NumberScope = struct {

@@ -39,7 +39,7 @@ jobs:
           sudo cp node_modules/@oven/bun-${{matrix.tag}}/bin/bun /usr/bin/bun
       - id: test
         name: Test
-        if: ${{github.event.inputs.use_bun}}
+        if: ${{github.event.inputs.use_bun == 'true'}}
         run: |
           bun install
           bun install --cwd test/bun.js
@@ -49,7 +49,7 @@ jobs:
           bun run test
       - id: test-node-runner
         name: Test (node runner)
-        if: ${{github.event.inputs.use_bun == false}}
+        if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           bun install
           bun install --cwd test/bun.js

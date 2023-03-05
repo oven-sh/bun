@@ -27,14 +27,22 @@ function dump(buf) {
   var offset = 0,
     length = buf.byteLength;
   while (offset < length) {
-    const wrote = writeSync(1, buf);
-    offset += wrote;
-    if (offset < length) {
-      try {
-        fsyncSync(1);
-      } catch (e) {}
+    try {
+      const wrote = writeSync(1, buf);
+      offset += wrote;
+      if (offset < length) {
+        try {
+          fsyncSync(1);
+        } catch (e) {}
 
-      buf = buf.slice(wrote);
+        buf = buf.slice(wrote);
+      }
+    } catch (e) {
+      if (e.code === "EAGAIN") {
+        continue;
+      }
+
+      throw e;
     }
   }
 }

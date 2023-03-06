@@ -497,7 +497,7 @@ pub const Jest = struct {
         pub var snapshot_count: usize = 0;
         pub var update_snapshots: bool = false;
         pub var initialized: bool = false;
-        pub var file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n\n";
+        pub var file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";
 
         pub var snapshot_dir: std.fs.Dir = undefined;
         pub var snapshot_dir_path: []const u8 = undefined;
@@ -572,11 +572,11 @@ pub const Jest = struct {
             var pretty_value = try MutableString.init(default_allocator, 0);
             try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
 
-            try file_buf.appendSlice("exports[`");
+            try file_buf.appendSlice("\nexports[`");
             try file_buf.appendSlice(name_with_counter);
             try file_buf.appendSlice("`] = `");
             try file_buf.appendSlice(pretty_value.list.items);
-            try file_buf.appendSlice("`;\n\n");
+            try file_buf.appendSlice("`;\n");
             try values.put(name_hash, pretty_value.toOwnedSlice());
             return null;
         }
@@ -2325,7 +2325,7 @@ pub const Expect = struct {
     pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalObject);
         const thisValue = callFrame.this();
-        const _arguments = callFrame.arguments(1);
+        const _arguments = callFrame.arguments(2);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
         if (this.scope.tests.items.len <= this.test_id) {
@@ -2335,18 +2335,67 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
 
-        // first argument is hint if it is string
-        var hint_string: ZigString = ZigString.Empty;
-        if (arguments.len != 0 and arguments[0].isString()) {
-            arguments[0].toZigString(&hint_string, globalObject);
+        const not = this.op.contains(.not);
+        if (not) {
+            const signature = comptime getSignature("toMatchSnapshot", "", true);
+            const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            return .zero;
         }
-        var hint = hint_string.toSlice(default_allocator);
+
+        var hint_string: ZigString = ZigString.Empty;
+        var property_matchers: ?JSObject = null;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    arguments[0].toZigString(&hint_string, globalObject);
+                } else if (arguments[0].isObject()) {
+                    property_matchers = arguments[0].asObject();
+                }
+            },
+            else => {
+                if (!arguments[0].isObject()) {
+                    const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+                    const fmt = signature ++ "\n\nMatcher error: Expected <green>properties<r> must be an object\n";
+                    if (Output.enable_ansi_colors) {
+                        globalObject.throw(Output.prettyFmt(fmt, true), .{});
+                        return .zero;
+                    }
+                    globalObject.throw(Output.prettyFmt(fmt, false), .{});
+                    return .zero;
+                }
+
+                property_matchers = arguments[0].asObject();
+
+                if (arguments[1].isString()) {
+                    arguments[1].toZigString(&hint_string, globalObject);
+                }
+            },
+        }
+
+        var hint = hint_string.withEncoding().toSlice(default_allocator);
         defer hint.deinit();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
             globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
             return .zero;
         };
+
+        if (!value.isObject() and property_matchers != null) {
+            const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+            const fmt = signature ++ "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            return .zero;
+        }
 
         const result = Jest.Snapshots.getOrPut(this, value, hint.slice(), globalObject) catch {
             // handle parsing and other errors

@@ -8,7 +8,7 @@ false
 null
 undefined
 Symbol(Symbol Description)
-2022-02-27T05:11:48.999Z
+2000-06-27T02:24:34.304Z
 [ 123, 456, 789 ]
 {
   name: "foo"

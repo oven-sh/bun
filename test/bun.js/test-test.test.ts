@@ -156,10 +156,19 @@ test("toThrow", () => {
     throw err;
   }).toThrow(err);
 
-  var err = new Error("good");
   expect(() => {
-    throw err;
+    throw new Error("good");
   }).toThrow();
+
+  expect(() => {
+    throw new Error("foo");
+  }).toThrow(/oo/);
+
+  expect(() =>
+    expect(() => {
+      throw new Error("bar");
+    }).toThrow(/baz/),
+  ).toThrow("/baz/");
 
   expect(() => {
     return true;

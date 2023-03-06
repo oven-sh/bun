@@ -170,7 +170,7 @@ jobs:
           submodules: false
       - id: download
         name: Download
-        uses: actions/download-artifact@v2
+        uses: actions/download-artifact@v3
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release

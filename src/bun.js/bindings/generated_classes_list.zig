@@ -24,7 +24,7 @@ pub const Classes = struct {
     pub const MatchedRoute = JSC.API.MatchedRoute;
     pub const Dirent = JSC.Node.Dirent;
     pub const NodeJSFS = JSC.Node.NodeJSFS;
-    pub const Transpiler = JSC.API.Transpiler;
+    pub const Bundler = JSC.API.Bundler;
     pub const Stats = JSC.Node.Stats;
     pub const Timeout = JSC.API.Bun.Timer.TimerObject;
 };

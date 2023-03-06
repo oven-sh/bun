@@ -4,6 +4,12 @@ JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(t
   JSC::LazyClassStructure m_JSBlob;
   bool hasJSBlobSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSBlobSetterValue;
+JSC::Structure* JSBundlerStructure() { return m_JSBundler.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBundlerConstructor() { return m_JSBundler.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBundlerPrototype() { return m_JSBundler.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBundler;
+  bool hasJSBundlerSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBundlerSetterValue;
 JSC::Structure* JSCryptoHasherStructure() { return m_JSCryptoHasher.getInitializedOnMainThread(this); }
         JSC::JSObject* JSCryptoHasherConstructor() { return m_JSCryptoHasher.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSCryptoHasherPrototype() { return m_JSCryptoHasher.prototypeInitializedOnMainThread(this); }
@@ -148,9 +154,3 @@ JSC::Structure* JSTimeoutStructure() { return m_JSTimeout.getInitializedOnMainTh
   JSC::LazyClassStructure m_JSTimeout;
   bool hasJSTimeoutSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSTimeoutSetterValue;
-JSC::Structure* JSTranspilerStructure() { return m_JSTranspiler.getInitializedOnMainThread(this); }
-        JSC::JSObject* JSTranspilerConstructor() { return m_JSTranspiler.constructorInitializedOnMainThread(this); }
-        JSC::JSValue JSTranspilerPrototype() { return m_JSTranspiler.prototypeInitializedOnMainThread(this); }
-  JSC::LazyClassStructure m_JSTranspiler;
-  bool hasJSTranspilerSetterValue { false };
-  mutable JSC::WriteBarrier<JSC::Unknown> m_JSTranspilerSetterValue;

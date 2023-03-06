@@ -1,5 +1,6 @@
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundler;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasherConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirent;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirentConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
@@ -23,5 +24,3 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTCPSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTLSSocket;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTimeout;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspiler;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTranspilerConstructor;

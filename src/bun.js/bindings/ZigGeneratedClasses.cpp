@@ -455,6 +455,329 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
 
     return JSValue::encode(instance);
 }
+class JSBundlerPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSBundlerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSBundlerPrototype* ptr = new (NotNull, JSC::allocateCell<JSBundlerPrototype>(vm)) JSBundlerPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSBundlerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+class JSBundlerConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSBundlerConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBundlerPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBundlerConstructor, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBundlerConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBundlerConstructor = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBundlerConstructor.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBundlerConstructor = std::forward<decltype(space)>(space); });
+    }
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSBundlerPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+
+    DECLARE_EXPORT_INFO;
+
+private:
+    JSBundlerConstructor(JSC::VM& vm, JSC::Structure* structure);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBundlerPrototype* prototype);
+};
+
+extern "C" void* BundlerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsBundlerConstructor);
+extern "C" void BundlerClass__finalize(void*);
+
+extern "C" EncodedJSValue BundlerPrototype__scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BundlerPrototype__scanCallback);
+
+extern "C" EncodedJSValue BundlerPrototype__scanImports(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BundlerPrototype__scanImportsCallback);
+
+extern "C" EncodedJSValue BundlerPrototype__transform(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BundlerPrototype__transformCallback);
+
+extern "C" EncodedJSValue BundlerPrototype__transformSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(BundlerPrototype__transformSyncCallback);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBundlerPrototype, JSBundlerPrototype::Base);
+
+static const HashTableValue JSBundlerPrototypeTableValues[] = {
+    { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BundlerPrototype__scanCallback, 2 } },
+    { "scanImports"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BundlerPrototype__scanImportsCallback, 2 } },
+    { "transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BundlerPrototype__transformCallback, 2 } },
+    { "transformSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BundlerPrototype__transformSyncCallback, 2 } }
+};
+
+const ClassInfo JSBundlerPrototype::s_info = { "Bundler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerPrototype) };
+
+JSC_DEFINE_CUSTOM_GETTER(jsBundlerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* prototype = jsDynamicCast<JSBundlerPrototype*>(JSValue::decode(thisValue));
+
+    if (UNLIKELY(!prototype))
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    return JSValue::encode(globalObject->JSBundlerConstructor());
+}
+
+JSC_DEFINE_HOST_FUNCTION(BundlerPrototype__scanCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBundler* thisObject = jsDynamicCast<JSBundler*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BundlerPrototype__scan(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BundlerPrototype__scanImportsCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBundler* thisObject = jsDynamicCast<JSBundler*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BundlerPrototype__scanImports(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BundlerPrototype__transformCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBundler* thisObject = jsDynamicCast<JSBundler*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BundlerPrototype__transform(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(BundlerPrototype__transformSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBundler* thisObject = jsDynamicCast<JSBundler*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+
+    return BundlerPrototype__transformSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+void JSBundlerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+    reifyStaticProperties(vm, JSBundler::info(), JSBundlerPrototypeTableValues, *this);
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+void JSBundlerConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBundlerPrototype* prototype)
+{
+    Base::finishCreation(vm, 0, "Bundler"_s, PropertyAdditionMode::WithoutStructureTransition);
+
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSBundlerConstructor::JSBundlerConstructor(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure, construct, construct)
+{
+}
+
+JSBundlerConstructor* JSBundlerConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBundlerPrototype* prototype)
+{
+    JSBundlerConstructor* ptr = new (NotNull, JSC::allocateCell<JSBundlerConstructor>(vm)) JSBundlerConstructor(vm, structure);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBundlerConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    JSC::VM& vm = globalObject->vm();
+    JSObject* newTarget = asObject(callFrame->newTarget());
+    auto* constructor = globalObject->JSBundlerConstructor();
+    Structure* structure = globalObject->JSBundlerStructure();
+    if (constructor != newTarget) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
+            // ShadowRealm functions belong to a different global object.
+            getFunctionRealm(globalObject, newTarget));
+        RETURN_IF_EXCEPTION(scope, {});
+        structure = InternalFunction::createSubclassStructure(
+            globalObject,
+            newTarget,
+            functionGlobalObject->JSBundlerStructure());
+    }
+
+    void* ptr = BundlerClass__construct(globalObject, callFrame);
+
+    if (UNLIKELY(!ptr)) {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSBundler* instance = JSBundler::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+void JSBundlerConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBundlerPrototype* prototype)
+{
+}
+
+const ClassInfo JSBundlerConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundlerConstructor) };
+
+extern "C" EncodedJSValue Bundler__getConstructor(Zig::GlobalObject* globalObject)
+{
+    return JSValue::encode(globalObject->JSBundlerConstructor());
+}
+
+#include "JSBundler+BunPlugin-impl.h";
+
+JSBundler::~JSBundler()
+{
+    if (m_ctx) {
+        BundlerClass__finalize(m_ctx);
+    }
+}
+void JSBundler::destroy(JSCell* cell)
+{
+    static_cast<JSBundler*>(cell)->JSBundler::~JSBundler();
+}
+
+const ClassInfo JSBundler::s_info = { "Bundler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBundler) };
+
+void JSBundler::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSBundler* JSBundler::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSBundler* ptr = new (NotNull, JSC::allocateCell<JSBundler>(vm)) JSBundler(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* Bundler__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSBundler* object = JSC::jsDynamicCast<JSBundler*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool Bundler__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSBundler* object = JSC::jsDynamicCast<JSBundler*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t Bundler__ptrOffset = JSBundler::offsetOfWrapped();
+
+void JSBundler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSBundler*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSBundler::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return WebCore::JSBundlerConstructor::create(vm, globalObject, WebCore::JSBundlerConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSBundlerPrototype*>(prototype));
+}
+
+JSObject* JSBundler::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSBundlerPrototype::create(vm, globalObject, JSBundlerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue Bundler__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSBundlerStructure();
+    JSBundler* instance = JSBundler::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
 class JSCryptoHasherPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -12865,329 +13188,6 @@ extern "C" EncodedJSValue Timeout__create(Zig::GlobalObject* globalObject, void*
     auto& vm = globalObject->vm();
     JSC::Structure* structure = globalObject->JSTimeoutStructure();
     JSTimeout* instance = JSTimeout::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-class JSTranspilerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-
-    static JSTranspilerPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSTranspilerPrototype* ptr = new (NotNull, JSC::allocateCell<JSTranspilerPrototype>(vm)) JSTranspilerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSTranspilerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSTranspilerConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSTranspilerConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTranspilerPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSTranspilerConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTranspilerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspilerConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTranspilerConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspilerConstructor = std::forward<decltype(space)>(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTranspilerPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSTranspilerConstructor(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSTranspilerPrototype* prototype);
-};
-
-extern "C" void* TranspilerClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsTranspilerConstructor);
-extern "C" void TranspilerClass__finalize(void*);
-
-extern "C" EncodedJSValue TranspilerPrototype__scan(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TranspilerPrototype__scanCallback);
-
-extern "C" EncodedJSValue TranspilerPrototype__scanImports(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TranspilerPrototype__scanImportsCallback);
-
-extern "C" EncodedJSValue TranspilerPrototype__transform(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TranspilerPrototype__transformCallback);
-
-extern "C" EncodedJSValue TranspilerPrototype__transformSync(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(TranspilerPrototype__transformSyncCallback);
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTranspilerPrototype, JSTranspilerPrototype::Base);
-
-static const HashTableValue JSTranspilerPrototypeTableValues[] = {
-    { "scan"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__scanCallback, 2 } },
-    { "scanImports"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__scanImportsCallback, 2 } },
-    { "transform"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__transformCallback, 2 } },
-    { "transformSync"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TranspilerPrototype__transformSyncCallback, 2 } }
-};
-
-const ClassInfo JSTranspilerPrototype::s_info = { "Transpiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTranspilerPrototype) };
-
-JSC_DEFINE_CUSTOM_GETTER(jsTranspilerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSTranspilerPrototype*>(JSValue::decode(thisValue));
-
-    if (UNLIKELY(!prototype))
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSTranspilerConstructor());
-}
-
-JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__scanCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTranspiler* thisObject = jsDynamicCast<JSTranspiler*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return TranspilerPrototype__scan(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__scanImportsCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTranspiler* thisObject = jsDynamicCast<JSTranspiler*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return TranspilerPrototype__scanImports(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__transformCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTranspiler* thisObject = jsDynamicCast<JSTranspiler*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return TranspilerPrototype__transform(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-JSC_DEFINE_HOST_FUNCTION(TranspilerPrototype__transformSyncCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    JSTranspiler* thisObject = jsDynamicCast<JSTranspiler*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-
-    return TranspilerPrototype__transformSync(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-void JSTranspilerPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSTranspiler::info(), JSTranspilerPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-}
-
-void JSTranspilerConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSTranspilerPrototype* prototype)
-{
-    Base::finishCreation(vm, 0, "Transpiler"_s, PropertyAdditionMode::WithoutStructureTransition);
-
-    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    ASSERT(inherits(info()));
-}
-
-JSTranspilerConstructor::JSTranspilerConstructor(JSC::VM& vm, JSC::Structure* structure)
-    : Base(vm, structure, construct, construct)
-{
-}
-
-JSTranspilerConstructor* JSTranspilerConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTranspilerPrototype* prototype)
-{
-    JSTranspilerConstructor* ptr = new (NotNull, JSC::allocateCell<JSTranspilerConstructor>(vm)) JSTranspilerConstructor(vm, structure);
-    ptr->finishCreation(vm, globalObject, prototype);
-    return ptr;
-}
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTranspilerConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
-{
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSTranspilerConstructor();
-    Structure* structure = globalObject->JSTranspilerStructure();
-    if (constructor != newTarget) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        auto* functionGlobalObject = reinterpret_cast<Zig::GlobalObject*>(
-            // ShadowRealm functions belong to a different global object.
-            getFunctionRealm(globalObject, newTarget));
-        RETURN_IF_EXCEPTION(scope, {});
-        structure = InternalFunction::createSubclassStructure(
-            globalObject,
-            newTarget,
-            functionGlobalObject->JSTranspilerStructure());
-    }
-
-    void* ptr = TranspilerClass__construct(globalObject, callFrame);
-
-    if (UNLIKELY(!ptr)) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-
-    JSTranspiler* instance = JSTranspiler::create(vm, globalObject, structure, ptr);
-
-    return JSValue::encode(instance);
-}
-
-void JSTranspilerConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSTranspilerPrototype* prototype)
-{
-}
-
-const ClassInfo JSTranspilerConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTranspilerConstructor) };
-
-extern "C" EncodedJSValue Transpiler__getConstructor(Zig::GlobalObject* globalObject)
-{
-    return JSValue::encode(globalObject->JSTranspilerConstructor());
-}
-
-#include "JSTranspiler+BunPlugin-impl.h";
-
-JSTranspiler::~JSTranspiler()
-{
-    if (m_ctx) {
-        TranspilerClass__finalize(m_ctx);
-    }
-}
-void JSTranspiler::destroy(JSCell* cell)
-{
-    static_cast<JSTranspiler*>(cell)->JSTranspiler::~JSTranspiler();
-}
-
-const ClassInfo JSTranspiler::s_info = { "Transpiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTranspiler) };
-
-void JSTranspiler::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-JSTranspiler* JSTranspiler::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
-{
-    JSTranspiler* ptr = new (NotNull, JSC::allocateCell<JSTranspiler>(vm)) JSTranspiler(vm, structure, ctx);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
-extern "C" void* Transpiler__fromJS(JSC::EncodedJSValue value)
-{
-    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
-    if (decodedValue.isEmpty() || !decodedValue.isCell())
-        return nullptr;
-
-    JSC::JSCell* cell = decodedValue.asCell();
-    JSTranspiler* object = JSC::jsDynamicCast<JSTranspiler*>(cell);
-
-    if (!object)
-        return nullptr;
-
-    return object->wrapped();
-}
-
-extern "C" bool Transpiler__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
-{
-    JSTranspiler* object = JSC::jsDynamicCast<JSTranspiler*>(JSValue::decode(value));
-    if (!object)
-        return false;
-
-    object->m_ctx = ptr;
-    return true;
-}
-
-extern "C" const size_t Transpiler__ptrOffset = JSTranspiler::offsetOfWrapped();
-
-void JSTranspiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = jsCast<JSTranspiler*>(cell);
-    if (void* wrapped = thisObject->wrapped()) {
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
-    }
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSObject* JSTranspiler::createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-{
-    return WebCore::JSTranspilerConstructor::create(vm, globalObject, WebCore::JSTranspilerConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<WebCore::JSTranspilerPrototype*>(prototype));
-}
-
-JSObject* JSTranspiler::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
-{
-    return JSTranspilerPrototype::create(vm, globalObject, JSTranspilerPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-
-extern "C" EncodedJSValue Transpiler__create(Zig::GlobalObject* globalObject, void* ptr)
-{
-    auto& vm = globalObject->vm();
-    JSC::Structure* structure = globalObject->JSTranspilerStructure();
-    JSTranspiler* instance = JSTranspiler::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }

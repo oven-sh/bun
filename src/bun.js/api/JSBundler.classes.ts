@@ -2,7 +2,7 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
-    name: "Transpiler",
+    name: "Bundler",
     construct: true,
     finalize: true,
     hasPendingActivity: false,
@@ -30,7 +30,7 @@ export default [
     custom: {
       onLoadPlugins: {
         extraHeaderIncludes: ["BunPlugin.h"],
-        impl: "JSTranspiler+BunPlugin-impl.h",
+        impl: "JSBundler+BunPlugin-impl.h",
         type: `WTF::Vector<std::unique_ptr<BunPlugin::OnLoad>>`,
       },
       onResolvePlugins: {

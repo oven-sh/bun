@@ -79,7 +79,6 @@ const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("./config.zig");
 const URL = @import("../url.zig").URL;
-const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;

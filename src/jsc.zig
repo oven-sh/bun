@@ -25,7 +25,7 @@ pub const Cloudflare = struct {
 };
 pub const Jest = @import("./bun.js/test/jest.zig");
 pub const API = struct {
-    pub const Transpiler = @import("./bun.js/api/transpiler.zig");
+    pub const Bundler = @import("./bun.js/api/JSBundler.zig");
     pub const Server = @import("./bun.js/api/server.zig").Server;
     pub const ServerConfig = @import("./bun.js/api/server.zig").ServerConfig;
     pub const ServerWebSocket = @import("./bun.js/api/server.zig").ServerWebSocket;

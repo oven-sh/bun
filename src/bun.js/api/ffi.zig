@@ -71,7 +71,6 @@ const VM = @import("bun").JSC.VM;
 const JSFunction = @import("bun").JSC.JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
-const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 const ComptimeStringMap = @import("../../comptime_string_map.zig").ComptimeStringMap;

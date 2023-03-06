@@ -66,6 +66,59 @@ public:
     void finishCreation(JSC::VM&);
 };
 
+class JSBundler final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static JSBundler* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+
+    DECLARE_EXPORT_INFO;
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSBundler, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForBundler.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBundler = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForBundler.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForBundler = std::forward<decltype(space)>(space); });
+    }
+
+    static void destroy(JSC::JSCell*);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    }
+
+    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
+
+    ~JSBundler();
+
+    void* wrapped() const { return m_ctx; }
+
+    void detach()
+    {
+        m_ctx = nullptr;
+    }
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSBundler, m_ctx); }
+
+    void* m_ctx { nullptr };
+
+    JSBundler(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        : Base(vm, structure)
+    {
+        m_ctx = sinkPtr;
+    }
+
+    void finishCreation(JSC::VM&);
+
+    WTF::Vector<std::unique_ptr<BunPlugin::OnLoad>> onLoadPlugins;
+    WTF::Vector<std::unique_ptr<BunPlugin::OnResolve>> onResolvePlugins;
+};
+
 class JSCryptoHasher final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -1453,59 +1506,6 @@ public:
     }
 
     void finishCreation(JSC::VM&);
-};
-
-class JSTranspiler final : public JSC::JSDestructibleObject {
-public:
-    using Base = JSC::JSDestructibleObject;
-    static JSTranspiler* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
-
-    DECLARE_EXPORT_INFO;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSTranspiler, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTranspiler.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTranspiler = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTranspiler.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTranspiler = std::forward<decltype(space)>(space); });
-    }
-
-    static void destroy(JSC::JSCell*);
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
-    }
-
-    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-    static JSObject* createConstructor(VM& vm, JSGlobalObject* globalObject, JSValue prototype);
-
-    ~JSTranspiler();
-
-    void* wrapped() const { return m_ctx; }
-
-    void detach()
-    {
-        m_ctx = nullptr;
-    }
-
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSTranspiler, m_ctx); }
-
-    void* m_ctx { nullptr };
-
-    JSTranspiler(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-        : Base(vm, structure)
-    {
-        m_ctx = sinkPtr;
-    }
-
-    void finishCreation(JSC::VM&);
-
-    WTF::Vector<std::unique_ptr<BunPlugin::OnLoad>> onLoadPlugins;
-    WTF::Vector<std::unique_ptr<BunPlugin::OnResolve>> onResolvePlugins;
 };
 
 }

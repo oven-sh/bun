@@ -836,7 +836,7 @@ declare module "bun" {
    *
    */
 
-  export class Transpiler {
+  export class Bundler {
     constructor(options?: TranspilerOptions);
 
     /**
@@ -906,6 +906,13 @@ declare module "bun" {
      */
     scanImports(code: StringOrBuffer): Import[];
   }
+
+  /**
+   * Bun.Transpiler was renamed to Bun.Bundler in Bun v0.6
+   *
+   * See {@link Bun.Bundler}
+   */
+  export const Transpiler: typeof Bundler;
 
   export interface Import {
     path: string;
@@ -2676,7 +2683,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<typeof options["setup"]>;
+    }): ReturnType<(typeof options)["setup"]>;
 
     /**
      * Deactivate all plugins

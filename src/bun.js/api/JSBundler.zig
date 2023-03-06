@@ -43,7 +43,7 @@ const Runtime = @import("../../runtime.zig").Runtime;
 const JSLexer = bun.js_lexer;
 const Expr = JSAst.Expr;
 
-pub usingnamespace JSC.Codegen.JSTranspiler;
+pub usingnamespace JSC.Codegen.JSBundler;
 
 bundler: Bundler.Bundler,
 arena: std.heap.ArenaAllocator,

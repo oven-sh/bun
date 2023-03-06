@@ -1889,7 +1889,11 @@ pub const ZigConsoleClient = struct {
                     this.addForNewLine(str.len);
 
                     if (this.snapshot_format and (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject)) {
-                        if (this.indent == 0) {
+                        if (str.len == 0) {
+                            writer.writeAll("String {}");
+                            return;
+                        }
+                        if (this.indent == 0 and str.len > 0) {
                             writer.writeAll("\n");
                         }
                         writer.writeAll("String {\n");
@@ -1903,7 +1907,7 @@ pub const ZigConsoleClient = struct {
                             if (i != length - 1) this.writeIndent(Writer, writer_) catch unreachable;
                         }
                         this.resetLine();
-                        writer.writeAll("}");
+                        writer.writeAll("}\n");
                         return;
                     }
 
@@ -1922,6 +1926,39 @@ pub const ZigConsoleClient = struct {
 
                         if (str.is16Bit()) {
                             this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                            return;
+                        }
+
+                        if (this.snapshot_format) {
+                            var has_newline = false;
+                            if (strings.indexOfAny(str.slice(), "\n\r")) |_| {
+                                has_newline = true;
+                                writer.writeAll("\n");
+                            }
+
+                            writer.writeAll("\"");
+                            var remaining = str.slice();
+                            while (strings.indexOfAny(remaining, "\\\r")) |i| {
+                                switch (remaining[i]) {
+                                    '\\' => {
+                                        writer.print("{s}\\", .{remaining[0 .. i + 1]});
+                                        remaining = remaining[i + 1 ..];
+                                    },
+                                    '\r' => {
+                                        if (i + 1 < remaining.len and remaining[i + 1] == '\n') {
+                                            writer.print("{s}", .{remaining[0..i]});
+                                        } else {
+                                            writer.print("{s}\n", .{remaining[0..i]});
+                                        }
+                                        remaining = remaining[i + 1 ..];
+                                    },
+                                    else => unreachable,
+                                }
+                            }
+
+                            writer.writeAll(remaining);
+                            writer.writeAll("\"");
+                            if (has_newline) writer.writeAll("\n");
                             return;
                         }
 
@@ -2160,6 +2197,9 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
                         writer.writeAll("]");
+                        if (this.snapshot_format and this.indent == 0) {
+                            writer.writeAll("\n");
+                        }
                         this.resetLine();
                         this.addForNewLine(1);
                     } else {
@@ -2786,7 +2826,7 @@ pub const ZigConsoleClient = struct {
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("}");
 
-                            if (slice.len == 0 and this.indent == 0) {
+                            if (this.indent == 0) {
                                 writer.writeAll("\n");
                             }
 
@@ -2897,6 +2937,9 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("]");
+                            if (this.indent == 0) {
+                                writer.writeAll("\n");
+                            }
                         } else {
                             writer.writeAll("]");
                         }

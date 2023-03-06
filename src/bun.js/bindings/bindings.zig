@@ -3161,11 +3161,11 @@ pub const JSValue = enum(JSValueReprInt) {
         var writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
-        const array_newlines = this.isIterable(globalObject) and this.getLengthOfArray(globalObject) > 0;
+        // const array_newlines = this.isIterable(globalObject) and this.getLengthOfArray(globalObject) > 0 and !this.isObject();
 
         const fmt_options = JSC.ZigConsoleClient.FormatOptions{
             .enable_colors = false,
-            .add_newline = array_newlines,
+            .add_newline = false,
             .flush = false,
             .ordered_properties = true,
             .quote_strings = true,

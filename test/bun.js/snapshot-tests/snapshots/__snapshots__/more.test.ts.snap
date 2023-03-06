@@ -4,34 +4,105 @@ exports[`d0 d1 t1 1`] = `"hello\`snapshot\\"`;
 
 exports[`d0 d1 t2 1`] = `"hey"`;
 
-exports[`d0 hello snapshot 1`] = `1`;
+exports[`d0 snapshot name edgecases 1`] = `1`;
 
-exports[`d0 hello snapshot 2`] = `
+exports[`d0 snapshot name edgecases 2`] = `
+"12
+3
+4"
+`;
+
+exports[`d0 snapshot name edgecases 3`] = `
 "
-export with test name noooooooo
+"
+`;
+
+exports[`d0 snapshot name edgecases 4`] = `
+"12
+3
+
+
+
+
+
+
+
+
+
+
+
+456	7\\
+
+
+
+r
+r
+"
+`;
+
+exports[`d0 snapshot name edgecases 5`] = `
+"12
+3
+456	7\\"
+`;
+
+exports[`d0 snapshot name edgecases 6`] = `
+"
+"
+`;
+
+exports[`d0 snapshot name edgecases 7`] = `
+"
+"
+`;
+
+exports[`d0 snapshot name edgecases 8`] = `"\\"`;
+
+exports[`d0 snapshot name edgecases 9`] = `""`;
+
+exports[`d0 snapshot name edgecases 10`] = `""`;
+
+exports[`d0 snapshot name edgecases 11`] = `"	"`;
+
+exports[`d0 snapshot name edgecases 12`] = `""`;
+
+exports[`d0 snapshot name edgecases 13`] = `"	"`;
+
+exports[`d0 snapshot name edgecases 14`] = `
+"hello sn
+    apshot"
+`;
+
+exports[`d0 snapshot name edgecases 15`] = `String {}`;
+
+exports[`d0 snapshot name edgecases 16`] = `String {}`;
+
+exports[`d0 snapshot name edgecases 17`] = `
+"\\
+export with test name
 
 "
 `;
 
-exports[`d0 hello snapshot 3`] = `1`;
+exports[`d0 snapshot name edgecases 18`] = `1`;
 
-exports[`d0 hello snapshot 4`] = `2`;
+exports[`d0 snapshot name edgecases 19`] = `2`;
 
-exports[`d0 hello snapshot 5`] = `"one two three"`;
+exports[`d0 snapshot name edgecases 20`] = `"one two three"`;
 
-exports[`d0 hello snapshot 6`] = `
+exports[`d0 snapshot name edgecases 21`] = `
 "
 export[\\\`hello snap'shot 2\`] = \`"
 `;
 
-exports[`d0 hello snapshot 7`] = `
+exports[`d0 snapshot name edgecases 22`] = `
 "
 export[\`hello snapshot 2\`] = \`"
 `;
 
-exports[`d0 hello snapshot: one 1`] = `1`;
+exports[`d0 snapshot name edgecases: one 1`] = `1`;
 
-exports[`d0 hello snapshot: one 2`] = `3`;
+exports[`d0 snapshot name edgecases: one 2`] = `3`;
 
 exports[`d0 t3 1`] = `"hello snapshot"`;
 

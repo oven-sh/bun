@@ -1,40 +1,56 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`debug 1`] = `1`;
+exports[`test snapshots with Boolean and Number 1`] = `1`;
 
-exports[`debug 2`] = `NaN`;
+exports[`test snapshots with Boolean and Number 2`] = `NaN`;
 
-exports[`debug 3`] = `Infinity`;
+exports[`test snapshots with Boolean and Number 3`] = `Infinity`;
 
-exports[`debug 4`] = `-Infinity`;
+exports[`test snapshots with Boolean and Number 4`] = `-Infinity`;
 
-exports[`debug 5`] = `Number {}`;
+exports[`test snapshots with Boolean and Number 5`] = `0`;
 
-exports[`debug 6`] = `Number2 {}`;
+exports[`test snapshots with Boolean and Number 6`] = `-0`;
 
-exports[`debug 7`] = `Number3 {}`;
+exports[`test snapshots with Boolean and Number 7`] = `1.1`;
 
-exports[`debug 8`] = `123348923.2341281`;
+exports[`test snapshots with Boolean and Number 8`] = `-1.1`;
 
-exports[`debug 9`] = `false`;
+exports[`test snapshots with Boolean and Number 9`] = `undefined`;
 
-exports[`debug 10`] = `true`;
+exports[`test snapshots with Boolean and Number 10`] = `null`;
 
-exports[`debug 11`] = `Boolean {}`;
+exports[`test snapshots with Boolean and Number 11`] = `"hello"`;
 
-exports[`debug 12`] = `Boolean {}`;
+exports[`test snapshots with Boolean and Number 12`] = `""`;
 
-exports[`debug 13`] = `Boolean2 {}`;
+exports[`test snapshots with Boolean and Number 13`] = `Number {}`;
 
-exports[`debug 14`] = `Boolean2 {}`;
+exports[`test snapshots with Boolean and Number 14`] = `Number2 {}`;
 
-exports[`debug 15`] = `
+exports[`test snapshots with Boolean and Number 15`] = `Number3 {}`;
+
+exports[`test snapshots with Boolean and Number 16`] = `123348923.2341281`;
+
+exports[`test snapshots with Boolean and Number 17`] = `false`;
+
+exports[`test snapshots with Boolean and Number 18`] = `true`;
+
+exports[`test snapshots with Boolean and Number 19`] = `Boolean {}`;
+
+exports[`test snapshots with Boolean and Number 20`] = `Boolean {}`;
+
+exports[`test snapshots with Boolean and Number 21`] = `Boolean2 {}`;
+
+exports[`test snapshots with Boolean and Number 22`] = `Boolean2 {}`;
+
+exports[`test snapshots with Boolean and Number 23`] = `
 Boolean3 {
   "false": true,
 }
 `;
 
-exports[`debug 16`] = `
+exports[`test snapshots with Boolean and Number 24`] = `
 Boolean3 {
   "false": true,
 }

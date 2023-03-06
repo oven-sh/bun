@@ -1,7 +1,27 @@
 describe("d0", () => {
-  test("hello snapshot", () => {
+  test("snapshot name edgecases", () => {
     expect(1).toMatchSnapshot();
-    expect("\nexport with test name noooooooo\n\n").toMatchSnapshot();
+    expect("1\b2\n3\r4").toMatchSnapshot();
+    expect("\r\n").toMatchSnapshot();
+    expect("1\b2\n3\r\r\r\r\r\r\r\r\r\r\r\r4\v5\f6\t7\\\n\r\n\n\nr\nr\n").toMatchSnapshot();
+    expect("1\b2\n3\r4\v5\f6\t7\\").toMatchSnapshot();
+    expect("\r").toMatchSnapshot();
+    expect("\n").toMatchSnapshot();
+    expect("\\").toMatchSnapshot();
+    expect("\v").toMatchSnapshot();
+    expect("\f").toMatchSnapshot();
+    expect("\t").toMatchSnapshot();
+    expect("\b").toMatchSnapshot();
+    expect("\b\t").toMatchSnapshot();
+
+    expect(`hello sn
+    apshot`).toMatchSnapshot();
+    expect(new String()).toMatchSnapshot();
+    expect(new String("")).toMatchSnapshot();
+
+    expect({ a: { b: 1 } }).toEqual({ a: { b: 1 } });
+    expect("\\\nexport with test name\n\n").toMatchSnapshot();
+
     expect(1).toMatchSnapshot();
     expect(1).toMatchSnapshot("one");
     expect(2).toMatchSnapshot();

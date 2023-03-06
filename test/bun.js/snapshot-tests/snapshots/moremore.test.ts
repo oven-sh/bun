@@ -27,11 +27,20 @@ class Boolean3 extends Boolean2 {
   }
 }
 
-test("debug", () => {
+test("test snapshots with Boolean and Number", () => {
   expect(1).toMatchSnapshot();
   expect(NaN).toMatchSnapshot();
   expect(Infinity).toMatchSnapshot();
   expect(-Infinity).toMatchSnapshot();
+  expect(0).toMatchSnapshot();
+  expect(-0).toMatchSnapshot();
+  expect(1.1).toMatchSnapshot();
+  expect(-1.1).toMatchSnapshot();
+  expect(undefined).toMatchSnapshot();
+  expect(null).toMatchSnapshot();
+  expect("hello").toMatchSnapshot();
+  expect("").toMatchSnapshot();
+
   expect(new Number(1)).toMatchSnapshot();
   expect(new Number2(1)).toMatchSnapshot();
   expect(new Number3(1)).toMatchSnapshot();

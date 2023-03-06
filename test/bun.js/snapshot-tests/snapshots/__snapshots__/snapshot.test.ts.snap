@@ -181,12 +181,24 @@ exports[`most types: Object with Int8Array 1`] = `
 }
 `;
 
+exports[`most types: Object with String with property 1`] = `
+{
+  "a": String {},
+}
+`;
+
 exports[`most types: Object with empty Buffer 1`] = `
 {
   "a": {
     "data": [],
     "type": "Buffer",
   },
+}
+`;
+
+exports[`most types: Object with empty String 1`] = `
+{
+  "a": String {},
 }
 `;
 
@@ -232,6 +244,8 @@ String {
   "4": "o",
 }
 `;
+
+exports[`most types: String with property 1`] = `String {}`;
 
 exports[`most types: Uint8Array 1`] = `Uint8Array []`;
 

@@ -13,14 +13,11 @@ test("most types", () => {
   expect(2).toMatchSnapshot();
   expect(9).toMatchSnapshot("testing 7");
   expect(8).toMatchSnapshot("testing 7");
-
   expect(undefined).toMatchSnapshot("undefined");
   expect("hello string").toMatchSnapshot("string");
-
   expect([[]]).toMatchSnapshot("Array with empty array");
   expect([[], [], [], []]).toMatchSnapshot("Array with multiple empty arrays");
   expect([1, 2, [3, 4], [4, [5, 6]], 8]).toMatchSnapshot("Array with nested arrays");
-
   let buf = new Buffer("hello");
   buf.x = "yyyyyyyyyy";
   expect(buf).toMatchSnapshot("Buffer with property");
@@ -31,7 +28,6 @@ test("most types", () => {
   expect({ a: { b: new Buffer("") } }).toMatchSnapshot("nested object with empty Buffer");
   expect({ a: new Buffer("") }).toMatchSnapshot("Object with empty Buffer");
   expect(new Buffer("")).toMatchSnapshot("Buffer");
-
   expect(new Date(0)).toMatchSnapshot("Date");
   expect(new Error("hello")).toMatchSnapshot("Error");
   expect(new Map()).toMatchSnapshot("empty map");
@@ -47,7 +43,14 @@ test("most types", () => {
   expect(new WeakSet()).toMatchSnapshot("WeakSet");
   expect(new Promise(() => {})).toMatchSnapshot("Promise");
   expect(new RegExp("hello")).toMatchSnapshot("RegExp");
+
+  let s = new String("");
+
+  expect(s).toMatchSnapshot("String with property");
+  expect({ a: s }).toMatchSnapshot("Object with String with property");
+  expect({ a: new String() }).toMatchSnapshot("Object with empty String");
   expect(new String("hello")).toMatchSnapshot("String");
+
   expect(new Number(7)).toMatchSnapshot("Number");
   expect({ a: {} }).toMatchSnapshot("Object with empty object");
   expect(new Boolean(true)).toMatchSnapshot("Boolean");
@@ -73,23 +76,18 @@ test("most types", () => {
   class A {
     a = 1;
     b = 2;
-
     constructor() {
       this.c = 3;
     }
-
     d() {
       return 4;
     }
-
     get e() {
       return 5;
     }
-
     set e(value) {
       this.f = value;
     }
   }
-
   expect(new A()).toMatchSnapshot("Class");
 });

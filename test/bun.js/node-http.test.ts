@@ -6,12 +6,13 @@ describe("node:http", () => {
   describe("createServer", async () => {
     it("hello world", async () => {
       const server = createServer((req, res) => {
+        expect(req.url).toBe("/hello?world");
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
       });
       server.listen(8123);
 
-      const res = await fetch("http://localhost:8123");
+      const res = await fetch("http://localhost:8123/hello?world");
       expect(await res.text()).toBe("Hello World");
       server.close();
     });
@@ -82,10 +83,10 @@ describe("node:http", () => {
   describe("request", () => {
     let server;
     let serverPort;
-    let timer = null;
+    let timer: Timer | null = null;
     beforeAll(() => {
       server = createServer((req, res) => {
-        const reqUrl = new URL(req.url, `http://${req.headers.host}`);
+        const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
@@ -98,6 +99,11 @@ describe("node:http", () => {
           if (reqUrl.pathname === "/redirected") {
             res.writeHead(404, { "Content-Type": "text/plain" });
             res.end("Not Found");
+            return;
+          }
+          if (reqUrl.pathname === "/lowerCaseHeaders") {
+            res.writeHead(200, { "content-type": "text/plain", "X-Custom-Header": "custom_value" });
+            res.end("Hello World");
             return;
           }
           if (reqUrl.pathname.includes("timeout")) {
@@ -145,6 +151,20 @@ describe("node:http", () => {
     afterAll(() => {
       server.close();
       if (timer) clearTimeout(timer);
+    });
+
+    it("check for expected fields", done => {
+      const req = request({ host: "localhost", port: serverPort, method: "GET" }, res => {
+        res.on("end", () => {
+          done();
+        });
+        res.on("error", err => done(err));
+      });
+      expect(req.path).toEqual("/");
+      expect(req.method).toEqual("GET");
+      expect(req.host).toEqual("localhost");
+      expect(req.protocol).toEqual("http:");
+      req.end();
     });
 
     it("should make a standard GET request when passed string as first arg", done => {
@@ -411,6 +431,16 @@ describe("node:http", () => {
         req.end();
       }
     });
+
+    it("should return response with lowercase headers", done => {
+      const req = request(`http://localhost:${serverPort}/lowerCaseHeaders`, res => {
+        console.log(res.headers);
+        expect(res.headers["content-type"]).toBe("text/plain");
+        expect(res.headers["x-custom-header"]).toBe("custom_value");
+        done();
+      });
+      req.end();
+    });
   });
 
   describe("signal", () => {
@@ -509,7 +539,9 @@ describe("node:http", () => {
 
     it("should noop keepSocketAlive", () => {
       const agent = new Agent({ keepAlive: true });
+      // @ts-ignore
       expect(agent.keepAlive).toBe(true);
+
       agent.keepSocketAlive(dummyReq.socket);
     });
 

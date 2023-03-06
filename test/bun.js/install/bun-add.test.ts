@@ -173,7 +173,7 @@ it("should handle semver-like names", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "1.2.3", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "1.2.3"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -216,7 +216,7 @@ it("should handle @scoped names", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "@bar/baz", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "@bar/baz"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -250,7 +250,7 @@ it("should add dependency with capital letters", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "BaR", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "BaR"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -307,7 +307,7 @@ it("should add dependency with specified semver", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz@~0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "baz@~0.0.2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -379,7 +379,7 @@ it("should add dependency alongside workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "baz", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "baz"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -445,7 +445,7 @@ it("should add aliased dependency (npm)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "bar@npm:baz@~0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "bar@npm:baz@~0.0.2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -500,7 +500,7 @@ it("should add aliased dependency (GitHub)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "uglify@mishoo/UglifyJS#v3.14.1", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "uglify@mishoo/UglifyJS#v3.14.1"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -579,7 +579,7 @@ it("should let you add the same package twice", async () => {
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "add", "baz@0.0.3", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "baz@0.0.3"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -624,7 +624,7 @@ it("should let you add the same package twice", async () => {
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "add", "baz", "-d", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "baz", "-d"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -680,7 +680,7 @@ it("should install version tagged with `latest` by default", async () => {
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "add", "baz", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "baz"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -726,7 +726,7 @@ it("should install version tagged with `latest` by default", async () => {
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -779,7 +779,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "add", "bun@github.com:mishoo/UglifyJS.git", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "bun@github.com:mishoo/UglifyJS.git"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -839,7 +839,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -877,7 +877,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "bar@0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -937,7 +937,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "add", "bar@0.0.2", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "add", "bar@0.0.2"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

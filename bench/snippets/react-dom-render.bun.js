@@ -1,6 +1,6 @@
 import { bench, group, run } from "mitata";
-import { renderToReadableStream } from "react-dom/cjs/react-dom-server.browser.production.min";
-import { renderToReadableStream as renderToReadableStreamBun } from "../test/bun.js/react-dom-server.bun";
+import { renderToReadableStream } from "react-dom/server.browser";
+import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 
 const App = () => (
   <div>

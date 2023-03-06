@@ -1,6 +1,6 @@
 import { file } from "bun";
 import { expect } from "bun:test";
-import { mkdtemp, readdir, realpath, rm } from "fs/promises";
+import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 
@@ -65,9 +65,9 @@ export function dummyBeforeAll() {
       requested++;
       return await handler(request);
     },
-    port: 54321,
+    port: 0,
   });
-  root_url = "http://localhost:54321";
+  root_url = `http://localhost:${server.port}`;
 }
 
 export function dummyAfterAll() {
@@ -78,6 +78,14 @@ export async function dummyBeforeEach() {
   resetHanlder();
   requested = 0;
   package_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-install.test"));
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+`,
+  );
 }
 
 export async function dummyAfterEach() {

@@ -437,7 +437,7 @@ pub const NpmPackage = extern struct {
 };
 
 pub const PackageManifest = struct {
-    pkg: NpmPackage = NpmPackage{},
+    pkg: NpmPackage = .{},
 
     string_buf: []const u8 = &[_]u8{},
     versions: []const Semver.Version = &[_]Semver.Version{},
@@ -707,7 +707,7 @@ pub const PackageManifest = struct {
         const values = list.values.get(this.package_versions);
         const keys = list.keys.get(this.versions);
         const index = list.findKeyIndex(this.versions, version) orelse return null;
-        return FindResult{
+        return .{
             // Be sure to use the struct from the list in the NpmPackage
             // That is the one we can correctly recover the original version string for
             .version = keys[index],
@@ -743,9 +743,11 @@ pub const PackageManifest = struct {
                 const packages = this.pkg.prereleases.values.get(this.package_versions);
 
                 if (group.satisfies(version)) {
-                    return FindResult{ .version = version, .package = &packages[i - 1] };
+                    return .{ .version = version, .package = &packages[i - 1] };
                 }
             }
+        } else if (this.findByDistTag("latest")) |result| {
+            if (group.satisfies(result.version)) return result;
         }
 
         {
@@ -756,7 +758,7 @@ pub const PackageManifest = struct {
                 const packages = this.pkg.releases.values.get(this.package_versions);
 
                 if (group.satisfies(version)) {
-                    return FindResult{ .version = version, .package = &packages[i - 1] };
+                    return .{ .version = version, .package = &packages[i - 1] };
                 }
             }
         }

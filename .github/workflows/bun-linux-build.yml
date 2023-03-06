@@ -146,3 +146,78 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag: "canary"
           artifacts: "${{runner.temp}}/release/bun-${{matrix.tag}}.zip,${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip"
+
+  linux-test:
+    name: Tests ${{matrix.tag}}
+    runs-on: ubuntu-latest
+    needs: [linux]
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 10
+    outputs:
+      failing_tests: ${{ steps.test.outputs.failing_tests }}
+      failing_tests_count: ${{ steps.test.outputs.failing_tests_count }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: linux-x64
+          - tag: linux-x64-baseline
+    steps:
+      - id: checkout
+        name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: false
+      - id: download
+        name: Download
+        uses: actions/download-artifact@v2
+        with:
+          name: bun-${{matrix.tag}}
+          path: ${{runner.temp}}/release
+      - id: install
+        name: Install
+        run: |
+          cd ${{runner.temp}}/release
+          unzip bun-${{matrix.tag}}.zip
+          cd bun-${{matrix.tag}}
+          chmod +x bun
+          sudo mv bun /usr/local/bin/bun
+          bun --version
+      - id: test
+        name: Test (node runner)
+        # if: ${{github.event.inputs.use_bun == 'false'}}
+        run: |
+          bun install
+          bun install --cwd test/bun.js
+          bun install --cwd test/bun.js/third-party/body-parser-test
+          bun install --cwd test/bun.js/third-party/napi_create_external
+          bun install --cwd packages/bun-internal-test
+          node packages/bun-internal-test/src/runner.node.mjs || true
+      - name: Comment on PR
+        if: steps.test.outputs.failing_tests != '' && github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          comment_tag: test-failures-${{matrix.tag}}
+          message: |
+            ❌ @${{ github.actor }} ${{ steps.test.outputs.failing_tests_count }} files with test failures on ${{ matrix.tag }}:
+
+            ${{ steps.test.outputs.failing_tests }}
+
+            **[View test output](https://github.com/oven-sh/bun/actions/runs/${{github.run_id}})**
+
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
+      - name: Uncomment on PR
+        if: steps.test.outputs.failing_tests == '' && github.event_name == 'pull_request'
+        uses: thollander/actions-comment-pull-request@v2
+        with:
+          comment_tag: test-failures-${{matrix.tag}}
+          mode: upsert
+          create_if_not_exists: false
+          message: |
+            ✅ test failures on ${{ matrix.tag }} have been resolved.
+
+            <sup>[#${{github.sha}}](https://github.com/oven-sh/bun/commits/${{github.sha}})</sup>
+      - id: fail
+        name: Fail the build
+        if: steps.test.outputs.failing_tests != ''
+        run: exit 1

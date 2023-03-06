@@ -12,13 +12,17 @@ To install TypeScript definitions for Bun's built-in APIs, first install `bun-ty
 $ bun add -d bun-types # dev dependency
 ```
 
-Then include `"bun-types"` in the `compilerOptions.types` in your `tsconfig.json`:
+Then create a file in your project, `env.d.ts`, with a reference to this package using a [triple-slash directive](https://www.typescriptlang.org/docs/handbook/triple-slash-directives.html).
+
+```ts
+/// <reference types="bun-types" />
+```
+
+Lastly, in order for your TypeScript files to recognize the types referenced in the file created above, add this file to the `include` array.
 
 ```json-diff
   {
-    "compilerOptions": {
-+     "types": ["bun-types"]
-    }
++   "include": ["./env.d.ts"]
   }
 ```
 

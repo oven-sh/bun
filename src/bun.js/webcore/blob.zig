@@ -1188,11 +1188,11 @@ pub const Blob = struct {
                                 else
                                     this.file_blob.store.?.data.file.pathlike.path;
 
-                                this.system_error = .{
-                                    .syscall = ZigString.init("open"),
-                                    .code = ZigString.init(bun.asByteSlice(@errorName(this.errno.?))),
-                                    .path = ZigString.init(path_string.slice()),
-                                };
+                                this.system_error = (JSC.Node.Syscall.Error{
+                                    .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                                    .path = path_string.slice(),
+                                    .syscall = .open,
+                                }).toSystemError();
 
                                 // assert we never end up reusing the memory
                                 std.debug.assert(@ptrToInt(this.system_error.?.path.slice().ptr) != @ptrToInt(path_buffer));

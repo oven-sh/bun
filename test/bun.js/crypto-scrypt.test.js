@@ -3,35 +3,6 @@
 import { expect, it } from "bun:test";
 const crypto = require("crypto");
 
-const assert = {
-  strictEqual: (a, b) => {
-    expect(a).toEqual(b);
-  },
-  deepStrictEqual: (a, b) => {
-    expect(a).toEqual(b);
-  },
-  throws: (fn, err) => {
-    try {
-      fn();
-      throw "Fail";
-    } catch (e) {
-      if (err.name) {
-        expect(e?.name).toEqual(err.name);
-      }
-
-      // if (err.message) {
-      //   expect(err.message.test(e?.message)).toBeTruthy();
-      // }
-      if (err.code) {
-        expect(e?.code).toEqual(err.code);
-      }
-
-      expect(e).not.toEqual("Fail");
-      return;
-    }
-  },
-};
-
 const good = [
   // Zero-length key is legal, functions as a parameter validation check.
   {
@@ -157,7 +128,23 @@ const badargs = [
     args: ["", "", null],
     expected: { code: "ERR_INVALID_ARG_TYPE" /*message: /"keylen"/ */ },
   },
+  {
+    args: ["", "", 42, null],
+    expected: { code: "ERR_INVALID_ARG_TYPE" },
+  },
   // TODO: throw on these
+  // {
+  //   args: ["", "", 42, {}],
+  //   expected: { code: "ERR_INVALID_ARG_TYPE" },
+  // },
+  // {
+  //   args: ["", "", 42, {}, {}],
+  //   expected: { code: "ERR_INVALID_ARG_TYPE" },
+  // },
+  // {
+  //   args: ["", "", 42, {}, null],
+  //   expected: { code: "ERR_INVALID_ARG_TYPE" },
+  // },
   // {
   //   args: ["", "", 0.42],
   //   expected: { code: "ERR_OUT_OF_RANGE" /*message: /"keylen"/ */ },
@@ -170,41 +157,37 @@ const badargs = [
   //   args: ["", "", 2147485780],
   //   expected: { code: "ERR_OUT_OF_RANGE" /*message: /"keylen"/ */ },
   // },
+  // {
+  //   args: ["", "", 0, { maxmem: 2 ** 53 }],
+  //   expected: { code: "ERR_OUT_OF_RANGE" /*message: /"keylen"/ */ },
+  // },
 ];
 
 it("scrypt good", () => {
   for (const options of good) {
     const { pass, salt, keylen, expected } = options;
     const actual = crypto.scryptSync(pass, salt, keylen, options);
-    assert.strictEqual(actual.toString("hex"), expected);
+    expect(actual.toString("hex")).toBe(expected);
   }
 });
 
 it("scrypt bad", () => {
   for (const options of bad) {
-    const expected = {
-      message: /Invalid scrypt param/,
-    };
-    assert.throws(() => crypto.scryptSync("pass", "salt", 1, options), expected);
+    expect(() => crypto.scryptSync("pass", "salt", 1, options)).toThrow(/Invalid scrypt param/);
   }
 });
 
 it("scrypt toobig", () => {
   for (const options of toobig) {
-    const expected = {
-      message: /Invalid scrypt param/,
-    };
-    assert.throws(() => crypto.scryptSync("pass", "salt", 1, options), expected);
+    expect(() => crypto.scryptSync("pass", "salt", 1, options)).toThrow(/Invalid scrypt param/);
   }
 });
 
 it("scrypt defaults eql", () => {
-  {
-    const defaults = { N: 16384, p: 1, r: 8 };
-    const expected = crypto.scryptSync("pass", "salt", 1, defaults);
-    const actual = crypto.scryptSync("pass", "salt", 1);
-    assert.deepStrictEqual(actual.toString("hex"), expected.toString("hex"));
-  }
+  const defaults = { N: 16384, p: 1, r: 8 };
+  const expected = crypto.scryptSync("pass", "salt", 1, defaults);
+  const actual = crypto.scryptSync("pass", "salt", 1);
+  expect(actual.toString("hex")).toBe(expected.toString("hex"));
 });
 
 // TODO: DEFAULT_ENCODING is read-only
@@ -217,25 +200,21 @@ it("scrypt defaults eql", () => {
 //     const testEncoding = "latin1";
 //     crypto.DEFAULT_ENCODING = testEncoding;
 //     const actual = crypto.scryptSync("pass", "salt", 1);
-//     assert.deepStrictEqual(actual, expected.toString(testEncoding));
+//     expect(actual).toBe(expected.toString(testEncoding));
 
 //     crypto.DEFAULT_ENCODING = defaultEncoding;
 //   }
 // });
 
 it("scrypt badargs", () => {
-  {
-    for (const { args, expected } of badargs) {
-      assert.throws(() => crypto.scryptSync(...args), expected);
+  for (const { args, expected } of badargs) {
+    try {
+      crypto.scryptSync(...args);
+      expect(() => {}).toThrow();
+    } catch (e) {
+      if (!("code" in e)) throw e;
+      expect(e.code).toBe(expected.code);
     }
-  }
-
-  {
-    const expected = { code: "ERR_INVALID_ARG_TYPE" };
-    assert.throws(() => crypto.scryptSync("", "", 42, null), expected);
-    // assert.throws(() => crypto.scryptSync("", "", 42, {}, null), expected);
-    // assert.throws(() => crypto.scryptSync("", "", 42, {}), expected);
-    // assert.throws(() => crypto.scryptSync("", "", 42, {}, {}), expected);
   }
 
   // {
@@ -247,13 +226,7 @@ it("scrypt badargs", () => {
   //     4,
   //     { maxmem: 2 ** 52 },
   //     common.mustSucceed((actual) => {
-  //       assert.strictEqual(actual.toString("hex"), "d72c87d0");
+  //       expect(actual.toString("hex")).toBe("d72c87d0");
   //     }),
   //   );
-
-  //   // Values that exceed Number.isSafeInteger should not be allowed.
-  //   assert.throws(() => crypto.scryptSync("", "", 0, { maxmem: 2 ** 53 }), {
-  //     code: "ERR_OUT_OF_RANGE",
-  //   });
-  // }
 });

@@ -2081,7 +2081,7 @@ pub const Expect = struct {
             if (expected_value.isString()) {
                 const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
 
-                // partial match (regex not supported)
+                // partial match
                 {
                     var expected_string = ZigString.Empty;
                     var received_string = ZigString.Empty;
@@ -2097,6 +2097,29 @@ pub const Expect = struct {
                 }
 
                 const fmt = signature ++ "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n";
+                if (Output.enable_ansi_colors) {
+                    globalObject.throw(Output.prettyFmt(fmt, true), .{
+                        expected_value.toFmt(globalObject, &formatter),
+                        received_message.toFmt(globalObject, &formatter),
+                    });
+                    return .zero;
+                }
+                globalObject.throw(Output.prettyFmt(fmt, false), .{
+                    expected_value.toFmt(globalObject, &formatter),
+                    received_message.toFmt(globalObject, &formatter),
+                });
+                return .zero;
+            }
+
+            if (expected_value.isRegExp()) {
+                const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
+
+                if (expected_value.get(globalObject, "test")) |test_fn| {
+                    const matches = test_fn.callWithThis(globalObject, expected_value, &.{received_message});
+                    if (!matches.toBooleanSlow(globalObject)) return thisValue;
+                }
+
+                const fmt = signature ++ "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n";
                 if (Output.enable_ansi_colors) {
                     globalObject.throw(Output.prettyFmt(fmt, true), .{
                         expected_value.toFmt(globalObject, &formatter),
@@ -2148,7 +2171,7 @@ pub const Expect = struct {
 
             if (expected_value.isString()) {
                 if (_received_message) |received_message| {
-                    // partial match (regex not supported)
+                    // partial match
                     var expected_string = ZigString.Empty;
                     var received_string = ZigString.Empty;
                     expected_value.toZigString(&expected_string, globalObject);
@@ -2181,6 +2204,42 @@ pub const Expect = struct {
                 const expected_fmt = expected_value.toFmt(globalObject, &formatter);
                 const received_fmt = result.toFmt(globalObject, &formatter);
                 const fmt = signature ++ "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>";
+                if (Output.enable_ansi_colors) {
+                    globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
+                    return .zero;
+                }
+
+                globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt });
+                return .zero;
+            }
+
+            if (expected_value.isRegExp()) {
+                if (_received_message) |received_message| {
+                    if (expected_value.get(globalObject, "test")) |test_fn| {
+                        const matches = test_fn.callWithThis(globalObject, expected_value, &.{received_message});
+                        if (matches.toBooleanSlow(globalObject)) return thisValue;
+                    }
+                }
+
+                // error: message from received error does not match expected pattern
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+
+                if (_received_message) |received_message| {
+                    const expected_value_fmt = expected_value.toFmt(globalObject, &formatter);
+                    const received_message_fmt = received_message.toFmt(globalObject, &formatter);
+                    const fmt = signature ++ "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n";
+                    if (Output.enable_ansi_colors) {
+                        globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_value_fmt, received_message_fmt });
+                        return .zero;
+                    }
+
+                    globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_value_fmt, received_message_fmt });
+                    return .zero;
+                }
+
+                const expected_fmt = expected_value.toFmt(globalObject, &formatter);
+                const received_fmt = result.toFmt(globalObject, &formatter);
+                const fmt = signature ++ "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>";
                 if (Output.enable_ansi_colors) {
                     globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
                     return .zero;
@@ -2288,6 +2347,18 @@ pub const Expect = struct {
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
+            const fmt = signature ++ expected_fmt;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+
+            globalObject.throw(Output.prettyFmt(fmt, false), .{expected_value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        if (expected_value.isRegExp()) {
+            const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
             const fmt = signature ++ expected_fmt;
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{expected_value.toFmt(globalObject, &formatter)});
@@ -2700,7 +2771,7 @@ pub const TestScope = struct {
                 task,
             );
             task.done_callback_state = .pending;
-            initial_value = JSValue.fromRef(callback.?).call(vm.global, &.{callback_func});
+            initial_value = JSValue.fromRef(callback).call(vm.global, &.{callback_func});
         } else {
             initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
         }

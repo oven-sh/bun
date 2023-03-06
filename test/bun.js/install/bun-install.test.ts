@@ -1,4 +1,4 @@
-import { file, spawn } from "bun";
+import { file, listen, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe } from "bunExe";
 import { bunEnv as env } from "bunEnv";
@@ -22,6 +22,59 @@ afterAll(dummyAfterAll);
 beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
+it("should report connection errors", async () => {
+  function end(socket) {
+    socket.end();
+  }
+  const server = listen({
+    socket: {
+      data: end,
+      drain: end,
+      open: end,
+    },
+    hostname: "localhost",
+    port: 0,
+  });
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "http://localhost:${server.port}/"
+`,
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain("error: ConnectionRefused downloading package manifest bar");
+  expect(stdout).toBeDefined();
+  expect(await new Response(stdout).text()).toBe("");
+  expect(await exited).toBe(1);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
 it("should handle missing package", async () => {
   const urls: string[] = [];
   setHandler(async request => {
@@ -35,7 +88,7 @@ it("should handle missing package", async () => {
     return new Response("bar", { status: 404 });
   });
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "foo", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install", "foo"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -78,8 +131,16 @@ it("should handle @scoped authentication", async () => {
     urls.push(request.url);
     return new Response("Feeling lucky?", { status: 555 });
   });
+  // workaround against `writeFile(..., { flag: "a" })`
+  await writeFile(
+    join(package_dir, "bunfig.toml"),
+    `${await file(join(package_dir, "bunfig.toml")).text()}
+[install.scopes]
+foo = { token = "bar" }
+`,
+  );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "@foo/bar", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install", "@foo/bar"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -117,7 +178,7 @@ it("should handle empty string in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -164,7 +225,7 @@ it("should handle workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -206,7 +267,7 @@ it("should handle workspaces with packages array", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -264,7 +325,7 @@ it("should handle inter-dependency between workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -322,7 +383,7 @@ it("should handle inter-dependency between workspaces (devDependencies)", async 
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -380,7 +441,7 @@ it("should handle inter-dependency between workspaces (optionalDependencies)", a
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -430,7 +491,7 @@ it("should ignore peerDependencies within workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -480,7 +541,7 @@ it("should handle life-cycle scripts within workspaces", async () => {
   );
   await writeFile(join(package_dir, "bar", "index.js"), 'console.log("[scripts:run] Bar");');
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -525,7 +586,7 @@ it("should ignore workspaces within workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -563,7 +624,7 @@ it("should handle ^0 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -606,7 +667,7 @@ it("should handle ^1 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -643,7 +704,7 @@ it("should handle ^0.0 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -686,7 +747,7 @@ it("should handle ^0.1 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -723,7 +784,7 @@ it("should handle ^0.0.0 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -760,7 +821,7 @@ it("should handle ^0.0.2 in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -803,7 +864,7 @@ it("should handle ^0.0.2-rc in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -846,7 +907,7 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -875,6 +936,68 @@ it("should handle ^0.0.2-alpha.3+b4d in dependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should prefer latest-tagged dependency", async () => {
+  const urls: string[] = [];
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": {
+        bin: {
+          "baz-run": "index.js",
+        },
+      },
+      "0.0.5": {
+        bin: {
+          "baz-exec": "index.js",
+        },
+      },
+      latest: "0.0.3",
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        baz: "~0.0.2",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(stderr).toBeDefined();
+  const err = await new Response(stderr).text();
+  expect(err).toContain("Saved lockfile");
+  expect(stdout).toBeDefined();
+  const out = await new Response(stdout).text();
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + baz@0.0.3",
+    "",
+    " 1 packages installed",
+  ]);
+  expect(await exited).toBe(0);
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
+  expect(requested).toBe(2);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", ".bin"))).toEqual(["baz-run"]);
+  expect(await readlink(join(package_dir, "node_modules", ".bin", "baz-run"))).toBe(join("..", "baz", "index.js"));
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+    name: "baz",
+    version: "0.0.3",
+    bin: {
+      "baz-run": "index.js",
+    },
+  });
+  await access(join(package_dir, "bun.lockb"));
+});
+
 it("should handle dependency aliasing", async () => {
   const urls = [];
   setHandler(
@@ -897,7 +1020,7 @@ it("should handle dependency aliasing", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -953,7 +1076,7 @@ it("should handle dependency aliasing (versioned)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1009,7 +1132,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1069,7 +1192,7 @@ it("should not reinstall aliased dependencies", async () => {
     stderr: stderr1,
     exited: exited1,
   } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1108,7 +1231,7 @@ it("should not reinstall aliased dependencies", async () => {
     stderr: stderr2,
     exited: exited2,
   } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1175,7 +1298,7 @@ it("should handle aliased & direct dependency references", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1256,7 +1379,7 @@ it("should not hoist if name collides with alias", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1319,7 +1442,7 @@ it("should handle unscoped alias on scoped dependency", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1370,7 +1493,7 @@ it("should handle scoped alias on unscoped dependency", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1420,7 +1543,7 @@ it("should handle GitHub URL in dependencies (user/repo)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1473,7 +1596,7 @@ it("should handle GitHub URL in dependencies (user/repo#commit-id)", async () =>
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1539,7 +1662,7 @@ it("should handle GitHub URL in dependencies (user/repo#tag)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1605,7 +1728,7 @@ it("should handle GitHub URL in dependencies (github:user/repo#tag)", async () =
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1674,7 +1797,7 @@ it("should handle GitHub URL in dependencies (https://github.com/user/repo.git)"
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1727,7 +1850,7 @@ it("should handle GitHub URL in dependencies (git://github.com/user/repo.git#com
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1796,7 +1919,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1885,7 +2008,7 @@ it("should consider peerDependencies during hoisting", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml", "--peer"],
+    cmd: [bunExe(), "install", "--peer"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1953,7 +2076,7 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -1985,7 +2108,7 @@ it("should not regard peerDependencies declarations as duplicates", async () => 
 it("should report error on invalid format for package.json", async () => {
   await writeFile(join(package_dir, "package.json"), "foo");
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2021,7 +2144,7 @@ it("should report error on invalid format for dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2059,7 +2182,7 @@ it("should report error on invalid format for optionalDependencies", async () =>
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2099,7 +2222,7 @@ it("should report error on invalid format for workspaces", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2153,7 +2276,7 @@ it("should report error on duplicated workspace packages", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2192,7 +2315,7 @@ it("should handle Git URL in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2253,7 +2376,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2314,7 +2437,7 @@ it("should handle Git URL with committish in dependencies", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2377,7 +2500,7 @@ it("should fail on invalid Git URL", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2415,7 +2538,7 @@ it("should fail on Git URL with invalid committish", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2456,7 +2579,7 @@ it("should de-duplicate committish in Git URLs", async () => {
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2550,7 +2673,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",
@@ -2603,7 +2726,7 @@ it("should prefer dependencies over peerDependencies of the same name", async ()
     }),
   );
   const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install", "--config", import.meta.dir + "/basic.toml"],
+    cmd: [bunExe(), "install"],
     cwd: package_dir,
     stdout: null,
     stdin: "pipe",

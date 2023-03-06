@@ -8,7 +8,7 @@ console.log(false);
 console.log(null);
 console.log(undefined);
 console.log(Symbol("Symbol Description"));
-console.log(new Date(2021, 12, 30, 666, 777, 888, 999));
+console.log(new Date(Math.pow(2, 34) * 56));
 console.log([123, 456, 789]);
 console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });

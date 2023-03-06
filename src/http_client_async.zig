@@ -1335,14 +1335,15 @@ pub const AsyncHTTP = struct {
         std.debug.assert(active_requests > 0);
 
         var completion = this.completion_callback;
-        this.response = result.response;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (!result.isSuccess()) {
             this.err = result.fail;
+            this.response = null;
             this.state.store(State.fail, .Monotonic);
         } else {
             this.err = null;
+            this.response = result.response;
             this.state.store(.success, .Monotonic);
         }
         this.client.deinit();

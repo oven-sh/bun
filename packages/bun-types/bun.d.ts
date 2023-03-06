@@ -2986,6 +2986,10 @@ declare module "bun" {
        *
        */
       env?: Record<string, string | number>;
+      /**
+      * An AbortSignal to set spawn's signal.
+      */
+      signal?: AbortSignal | null;
 
       /**
        * The standard file descriptors of the process

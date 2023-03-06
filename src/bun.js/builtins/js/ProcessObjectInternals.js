@@ -191,6 +191,8 @@ function getStdioWriteStream(fd_, rawRequire) {
     return normalied === "utf8" || normalied === "utf-8" || normalied === "buffer" || normalied === "binary";
   }
 
+  var readline;
+
   var FastStdioWriteStream = class StdioWriteStream extends EventEmitter {
     #fd;
     #innerStream;
@@ -241,6 +243,27 @@ function getStdioWriteStream(fd_, rawRequire) {
     get isTTY() {
       return (this.#isTTY ??= require("node:tty").isatty(this.#fd));
     }
+
+    cursorTo(x, y, callback) {
+      return (readline ??= require("readline")).cursorTo(this, x, y, callback);
+    }
+
+    moveCursor(dx, dy, callback) {
+      return (readline ??= require("readline")).moveCursor(this, dx, dy, callback);
+    }
+
+    clearLine(dir, callback) {
+      return (readline ??= require("readline")).clearLine(this, dir, callback);
+    }
+
+    clearScreenDown(callback) {
+      return (readline ??= require("readline")).clearScreenDown(this, callback);
+    }
+
+    // TODO: once implemented this.columns and this.rows should be uncommented
+    // getWindowSize() {
+    //   return [this.columns, this.rows];
+    // }
 
     ref() {
       this.#getWriter().ref();

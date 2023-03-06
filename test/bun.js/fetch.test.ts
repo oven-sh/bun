@@ -1,36 +1,38 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, test, beforeEach } from "bun:test";
-import fs, { chmodSync, unlinkSync } from "fs";
+import { serve, sleep } from "bun";
+import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
+import { tmpdir } from "os";
+import { join } from "path";
 import { gc, withoutAggressiveGC } from "./gc";
 
-const sleep = countdown => {
-  return Bun.sleep(countdown);
-};
+const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
-const exampleFixture = fs.readFileSync(
-  import.meta.path.substring(0, import.meta.path.lastIndexOf("/")) + "/fetch.js.txt",
-  "utf8",
-);
+const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8");
 
-var cachedServer;
-function getServer({ port, ...rest }) {
-  return (cachedServer = Bun.serve({
-    ...rest,
+let server;
+function startServer({ fetch, ...options }) {
+  server = serve({
+    ...options,
+    fetch,
     port: 0,
-  }));
+  });
 }
 
 afterEach(() => {
-  cachedServer?.stop?.(true);
+  server?.stop?.(true);
+});
+
+afterAll(() => {
+  rmSync(tmp_dir, { force: true, recursive: true });
 });
 
 const payload = new Uint8Array(1024 * 1024 * 2);
 crypto.getRandomValues(payload);
 
 describe("AbortSignal", () => {
-  var server;
   beforeEach(() => {
-    server = getServer({
+    startServer({
       async fetch(request) {
         if (request.url.endsWith("/nodelay")) {
           return new Response("Hello");
@@ -61,12 +63,15 @@ describe("AbortSignal", () => {
       },
     });
   });
-  it("AbortError", async () => {
-    let name;
-    try {
-      var controller = new AbortController();
-      const signal = controller.signal;
+  afterEach(() => {
+    server?.stop?.(true);
+  });
 
+  it("AbortError", async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    expect(async () => {
       async function manualAbort() {
         await sleep(1);
         controller.abort();
@@ -75,56 +80,47 @@ describe("AbortSignal", () => {
         fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
         manualAbort(),
       ]);
-    } catch (error) {
-      name = error.name;
-    }
-    expect(name).toBe("AbortError");
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("AbortAfterFinish", async () => {
-    let error = undefined;
-    try {
-      var controller = new AbortController();
-      const signal = controller.signal;
+    const controller = new AbortController();
+    const signal = controller.signal;
 
-      await fetch(`http://127.0.0.1:${server.port}/nodelay`, { signal: signal }).then(res => res.text());
-      controller.abort();
-    } catch (ex) {
-      error = ex;
-    }
-    expect(error).toBeUndefined();
+    await fetch(`http://127.0.0.1:${server.port}/nodelay`, { signal: signal }).then(async res =>
+      expect(await res.text()).toBe("Hello"),
+    );
+    controller.abort();
   });
 
   it("AbortErrorWithReason", async () => {
-    let reason;
-    try {
-      var controller = new AbortController();
-      const signal = controller.signal;
+    const controller = new AbortController();
+    const signal = controller.signal;
 
+    expect(async () => {
       async function manualAbort() {
         await sleep(10);
-        controller.abort("My Reason");
+        controller.abort(new Error("My Reason"));
       }
       await Promise.all([
         fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
         manualAbort(),
       ]);
-    } catch (error) {
-      reason = error;
-    }
-    expect(reason).toBe("My Reason");
+    }).toThrow("My Reason");
   });
 
   it("AbortErrorEventListener", async () => {
-    let name;
-    try {
-      var controller = new AbortController();
-      const signal = controller.signal;
-      var eventSignal = undefined;
-      signal.addEventListener("abort", ev => {
-        eventSignal = ev.currentTarget;
-      });
+    const controller = new AbortController();
+    const signal = controller.signal;
+    signal.addEventListener("abort", ev => {
+      const target = ev.currentTarget;
+      expect(target).toBeDefined();
+      expect(target.aborted).toBe(true);
+      expect(target.reason).toBeDefined();
+      expect(target.reason.name).toBe("AbortError");
+    });
 
+    expect(async () => {
       async function manualAbort() {
         await sleep(10);
         controller.abort();
@@ -133,69 +129,59 @@ describe("AbortSignal", () => {
         fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text()),
         manualAbort(),
       ]);
-    } catch (error) {
-      name = error.name;
-    }
-    expect(eventSignal).toBeDefined();
-    expect(eventSignal.reason.name).toBe(name);
-    expect(eventSignal.aborted).toBe(true);
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("AbortErrorWhileUploading", async () => {
-    const abortController = new AbortController();
-    let error;
-    try {
+    const controller = new AbortController();
+
+    expect(async () => {
       await fetch(`http://localhost:${server.port}`, {
         method: "POST",
         body: new ReadableStream({
-          pull(controller) {
-            controller.enqueue(new Uint8Array([1, 2, 3, 4]));
+          pull(event_controller) {
+            event_controller.enqueue(new Uint8Array([1, 2, 3, 4]));
             //this will abort immediately should abort before connected
-            abortController.abort();
+            controller.abort();
           },
         }),
-        signal: abortController.signal,
+        signal: controller.signal,
       });
-    } catch (ex) {
-      error = ex;
-    }
-
-    expect(error.name).toBe("AbortError");
-    expect(error.message).toBe("The operation was aborted.");
-    expect(error instanceof DOMException).toBeTruthy();
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("TimeoutError", async () => {
-    let name;
+    const signal = AbortSignal.timeout(10);
+
     try {
-      const signal = AbortSignal.timeout(10);
       await fetch(`http://127.0.0.1:${server.port}`, { signal: signal }).then(res => res.text());
-    } catch (error) {
-      name = error.name;
+      expect(() => {}).toThrow();
+    } catch (ex: any) {
+      expect(ex.name).toBe("TimeoutError");
     }
-    expect(name).toBe("TimeoutError");
   });
+
   it("Request", async () => {
-    let name;
-    try {
-      var controller = new AbortController();
-      const signal = controller.signal;
-      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
-      async function manualAbort() {
-        await sleep(10);
-        controller.abort();
-      }
-      await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
-    } catch (error) {
-      name = error.name;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    async function manualAbort() {
+      await sleep(10);
+      controller.abort();
     }
-    expect(name).toBe("AbortError");
+
+    try {
+      const request = new Request(`http://127.0.0.1:${server.port}`, { signal });
+      await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
+      expect(() => {}).toThrow();
+    } catch (ex: any) {
+      expect(ex.name).toBe("AbortError");
+    }
   });
 });
 
 describe("Headers", () => {
   it(".toJSON", () => {
-    var headers = new Headers({
+    const headers = new Headers({
       "content-length": "123",
       "content-type": "text/plain",
       "x-another-custom-header": "Hello World",
@@ -207,7 +193,7 @@ describe("Headers", () => {
   });
 
   it(".getSetCookie() with object", () => {
-    var headers = new Headers({
+    const headers = new Headers({
       "content-length": "123",
       "content-type": "text/plain",
       "x-another-custom-header": "Hello World",
@@ -219,7 +205,7 @@ describe("Headers", () => {
   });
 
   it(".getSetCookie() with array", () => {
-    var headers = new Headers([
+    const headers = new Headers([
       ["content-length", "123"],
       ["content-type", "text/plain"],
       ["x-another-custom-header", "Hello World"],
@@ -298,13 +284,15 @@ describe("fetch", () => {
   ];
   for (let url of urls) {
     gc();
-    let name = url;
-    if (name instanceof URL) {
-      name = "URL: " + name;
-    } else if (name instanceof Request) {
-      name = "Request: " + name.url;
-    } else if (name.hasOwnProperty("toString")) {
-      name = "Object: " + name.toString();
+    let name;
+    if (url instanceof URL) {
+      name = "URL: " + url;
+    } else if (url instanceof Request) {
+      name = "Request: " + url.url;
+    } else if (url.hasOwnProperty("toString")) {
+      name = "Object: " + url.toString();
+    } else {
+      name = url;
     }
     it(name, async () => {
       gc();
@@ -312,12 +300,12 @@ describe("fetch", () => {
       gc();
       const text = await response.text();
       gc();
-      expect(exampleFixture).toBe(text);
+      expect(fixture).toBe(text);
     });
   }
 
-  it(`"redirect: "manual"`, async () => {
-    const server = getServer({
+  it('redirect: "manual"', async () => {
+    startServer({
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -335,8 +323,8 @@ describe("fetch", () => {
     expect(response.redirected).toBe(true);
   });
 
-  it(`"redirect: "follow"`, async () => {
-    const server = getServer({
+  it('redirect: "follow"', async () => {
+    startServer({
       fetch(req) {
         return new Response(null, {
           status: 302,
@@ -355,10 +343,11 @@ describe("fetch", () => {
   });
 
   it("provide body", async () => {
-    const server = getServer({
+    startServer({
       fetch(req) {
         return new Response(req.body);
       },
+      host: "localhost",
     });
 
     // POST with body
@@ -366,15 +355,16 @@ describe("fetch", () => {
     const response = await fetch(url, { method: "POST", body: "buntastic" });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("buntastic");
-
-    // GET cannot have body
-    try {
-      await fetch(url, { body: "buntastic" });
-      expect(false).toBe(true);
-    } catch (exception) {
-      expect(exception.name).toBe("TypeError");
-    }
   });
+
+  ["GET", "HEAD", "OPTIONS"].forEach(method =>
+    it(`fail on ${method} with body`, async () => {
+      const url = `http://${server.hostname}:${server.port}`;
+      expect(async () => {
+        await fetch(url, { body: "buntastic" });
+      }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
+    }),
+  );
 });
 
 it("simultaneous HTTPS fetch", async () => {
@@ -388,7 +378,7 @@ it("simultaneous HTTPS fetch", async () => {
     expect(result.length).toBe(20);
     for (let i = 0; i < 20; i++) {
       expect(result[i].status).toBe(200);
-      expect(await result[i].text()).toBe(exampleFixture);
+      expect(await result[i].text()).toBe(fixture);
     }
   }
 });
@@ -398,7 +388,7 @@ it("website with tlsextname", async () => {
   await fetch("https://bun.sh", { method: "HEAD" });
 });
 
-function testBlobInterface(blobbyConstructor, hasBlobFn) {
+function testBlobInterface(blobbyConstructor, hasBlobFn?) {
   for (let withGC of [false, true]) {
     for (let jsonObject of [
       { hello: true },
@@ -548,65 +538,59 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
 }
 
 describe("Bun.file", () => {
-  const tempdir = require("os").tmpdir();
-  const { join } = require("path");
-  var callCount = 0;
+  let count = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer());
-    const path = join(tempdir, "tmp-" + callCount++ + ".bytes");
-    require("fs").writeFileSync(path, buffer);
+    const path = join(tmp_dir, `tmp-${count++}.bytes`);
+    writeFileSync(path, buffer);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);
     return file;
   });
 
   it("size is Infinity on a fifo", () => {
-    try {
-      unlinkSync("/tmp/test-fifo");
-    } catch (e) {}
-    mkfifo("/tmp/test-fifo");
-
-    const { size } = Bun.file("/tmp/test-fifo");
+    const path = join(tmp_dir, "test-fifo");
+    mkfifo(path);
+    const { size } = Bun.file(path);
     expect(size).toBe(Infinity);
   });
 
-  function forEachMethod(fn) {
+  function forEachMethod(fn, skip?) {
     const method = ["arrayBuffer", "text", "json"];
     for (const m of method) {
-      test(m, fn(m));
+      (skip ? it.skip : it)(m, fn(m));
     }
   }
 
   describe("bad permissions throws", () => {
+    const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
-      try {
-        unlinkSync("/tmp/my-new-file");
-      } catch {}
-      await Bun.write("/tmp/my-new-file", "hey");
-      chmodSync("/tmp/my-new-file", 0o000);
-    });
-    afterAll(() => {
-      try {
-        unlinkSync("/tmp/my-new-file");
-      } catch {}
+      await Bun.write(path, "hey");
+      chmodSync(path, 0o000);
     });
 
-    forEachMethod(m => () => {
-      const file = Bun.file("/tmp/my-new-file");
-      expect(async () => await file[m]()).toThrow("Permission denied");
-    });
+    forEachMethod(
+      m => () => {
+        const file = Bun.file(path);
+        expect(async () => await file[m]()).toThrow("Permission denied");
+      },
+      () => {
+        try {
+          readFileSync(path);
+        } catch {
+          return false;
+        }
+        return true;
+      },
+    );
   });
 
   describe("non-existent file throws", () => {
-    beforeAll(() => {
-      try {
-        unlinkSync("/tmp/does-not-exist");
-      } catch {}
-    });
+    const path = join(tmp_dir, "does-not-exist");
 
     forEachMethod(m => async () => {
-      const file = Bun.file("/tmp/does-not-exist");
+      const file = Bun.file(path);
       expect(async () => await file[m]()).toThrow("No such file or directory");
     });
   });

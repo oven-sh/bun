@@ -447,6 +447,7 @@ interface Headers {
   entries(): IterableIterator<[string, string]>;
   keys(): IterableIterator<string>;
   values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any,
@@ -533,7 +534,7 @@ interface FormData {
   has(name: string): boolean;
   set(name: string, value: string | Blob, fileName?: string): void;
   keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
+  values(): IterableIterator<FormDataEntryValue>;
   entries(): IterableIterator<[string, FormDataEntryValue]>;
   [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
   forEach(
@@ -1494,7 +1495,7 @@ interface AbortController {
   /**
    * Invoking this method will set this object's AbortSignal's aborted flag and signal to any observers that the associated activity is to be aborted.
    */
-  abort(): void;
+  abort(reason?: any): void;
 }
 
 /** EventTarget is a DOM interface implemented by objects that can receive events and may have listeners for them. */

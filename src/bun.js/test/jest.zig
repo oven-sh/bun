@@ -582,17 +582,19 @@ pub const Jest = struct {
         }
 
         pub fn parseFile() !void {
-            // parse file. use the allocated bytes for keys and values
             var i: usize = 0;
             outer: while (i < file_buf.items.len) {
                 const key_start: usize = brk: {
-                    while (strings.indexOf(file_buf.items[i..], "exports[`")) |j| {
+                    if (strings.indexOf(file_buf.items[i..], "exports[`")) |j| {
                         i += j + "exports[`".len;
                         break :brk i;
                     }
 
                     break :outer;
                 };
+
+                if (i >= file_buf.items.len) break :outer;
+
                 const key_end: usize = brk: {
                     while (strings.indexOf(file_buf.items[i..], "`]")) |j| {
                         i += j + "`]".len;
@@ -607,6 +609,8 @@ pub const Jest = struct {
                 i += " = `".len;
 
                 const value_start = i;
+                if (value_start >= file_buf.items.len - 1) break :outer;
+
                 const value_end: usize = brk: {
                     while (strings.indexOf(file_buf.items[i..], "`;")) |j| {
                         i += j + "`;".len;
@@ -618,14 +622,14 @@ pub const Jest = struct {
                     break :outer;
                 };
 
+                if (value_end > file_buf.items.len) break :outer;
+
                 const key = file_buf.items[key_start..key_end];
                 const pretty_value = try default_allocator.alloc(u8, value_end - value_start);
                 bun.copy(u8, pretty_value, file_buf.items[value_start..value_end]);
                 const name_hash = std.hash.Wyhash.hash(0, key);
                 try values.put(name_hash, pretty_value);
             }
-
-            return;
         }
 
         pub fn cleanup() !void {

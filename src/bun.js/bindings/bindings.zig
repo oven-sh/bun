@@ -2414,6 +2414,19 @@ pub const JSGlobalObject = extern struct {
         return err;
     }
 
+    pub fn createError(
+        this: *JSGlobalObject,
+        comptime code: JSC.Node.ErrorCode,
+        comptime error_name: string,
+        comptime message: string,
+        args: anytype,
+    ) JSValue {
+        const err = createErrorInstance(this, message, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        err.put(this, ZigString.static("name"), ZigString.init(error_name).toValue(this));
+        return err;
+    }
+
     pub fn throw(
         this: *JSGlobalObject,
         comptime fmt: string,

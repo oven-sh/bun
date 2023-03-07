@@ -129,7 +129,7 @@ function findErrors(data) {
 }
 var tests = [];
 var testFileNames = [];
-for (const path of findTests(resolve(cwd, "test/bun.js"))) {
+for (const path of findTests(resolve(cwd, "test"))) {
   testFileNames.push(path);
   tests.push(runTest(path).catch(console.error));
 }

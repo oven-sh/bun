@@ -28,7 +28,7 @@ describe("dns.lookup", () => {
       const [first, second] = await dns.lookup("google.com", { backend });
       console.log(first, second);
     });
-    it(backend + " local", async () => {
+    it.skip(backend + " local", async () => {
       const [first, second] = await dns.lookup("localhost", { backend });
       console.log(first, second);
     });

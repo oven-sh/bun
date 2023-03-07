@@ -188,9 +188,7 @@ jobs:
         # if: ${{github.event.inputs.use_bun == 'false'}}
         run: |
           bun install
-          bun install --cwd test/bun.js
-          bun install --cwd test/bun.js/third-party/body-parser-test
-          #bun install --cwd test/bun.js/third-party/napi_create_external
+          bun install --cwd test
           bun install --cwd packages/bun-internal-test
           node packages/bun-internal-test/src/runner.node.mjs || true
       - name: Comment on PR

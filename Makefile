@@ -590,8 +590,7 @@ release-types:
 
 .PHONY: format
 format: ## to format the code
-	-$(PRETTIER) --write 'test/bun.js/*.{js,jsx,ts,tsx}'
-	-$(PRETTIER) --write 'test/bun.js/solid-dom-fixtures/**/*.{js,jsx,ts,tsx}'
+	-$(PRETTIER) --write 'test/**/*.{js,jsx,ts,tsx}'
 
 
 .PHONY: lolhtml
@@ -619,7 +618,7 @@ boringssl-debug: boringssl-build-debug boringssl-copy
 
 .PHONY: compile-ffi-test
 compile-ffi-test:
-	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
+	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/js/bun/ffi/ffi-test.c
 
 sqlite:
 
@@ -1095,45 +1094,8 @@ dev: mkdir-dev dev-obj bun-link-lld-debug
 mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
 
-test-install:
-	cd test/scripts && $(NPM_CLIENT) install
-
-.PHONY: test-bun-dev
-test-bun-dev:
-	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev.sh
-	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev-index-html.sh
-
-.PHONY: test-dev-bun-dev
-test-dev-bun-dev:
-	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev.sh
-	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev-index-html.sh
-
-.PHONY: test-bun-snapshot
-test-bun-snapshot:
-	rm -rf test/bun.js/snapshots.js
-	touch test/bun.js/snapshots.js
-	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.js; echo "// $i" >> test/bun.js/snapshots.js; $(RELEASE_BUN) build $i --platform=bun >> test/bun.js/snapshots.js;)
-
-.PHONY: test-dev-bun-snapshot
-test-dev-bun-snapshot:
-	rm -rf test/bun.js/snapshots.debug.js
-	touch test/bun.js/snapshots.debug.js
-	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
-
-.PHONY: test-bun-init
-test-bun-init:
-	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-init-check.sh
-
-.PHONY: test-dev-bun-init
-test-dev-bun-init:
-	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-init-check.sh
-
-.PHONY: test-bun-wiptest
-test-bun-wiptest: test/wiptest/run
-	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
-
-.PHONY: test-all
-test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev test-bun-init
+test-all:
+	$(RELEASE_BUN) test
 
 .PHONY: copy-test-node-modules
 copy-test-node-modules:
@@ -1143,73 +1105,6 @@ copy-test-node-modules:
 .PHONY: kill-bun
 kill-bun:
 	-killall -9 bun bun-debug
-
-.PHONY: test-dev-create-next
-test-dev-create-next:
-	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-next.sh
-
-.PHONY: test-dev-create-react
-test-dev-create-react:
-	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-react.sh
-
-.PHONY: test-create-next
-test-create-next:
-	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-next.sh
-
-.PHONY: test-bun-run
-test-bun-run:
-	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
-
-.PHONY: test-bun-install
-test-bun-install: test-bun-install-git-status
-	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
-	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-install-utf8.sh
-
-.PHONY: test-bun-install-git-status
-test-bun-install-git-status:
-	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
-
-.PHONY: test-dev-bun-install
-test-dev-bun-install: test-dev-bun-install-git-status
-	cd test/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
-	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-utf8.sh
-
-.PHONY: test-dev-bun-install-git-status
-test-dev-bun-install-git-status:
-	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh
-
-.PHONY: test-create-react
-test-create-react:
-	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-react.sh
-
-.PHONY: test-with-hmr
-test-with-hmr: kill-bun copy-test-node-modules
-	BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
-
-.PHONY: test-no-hmr
-test-no-hmr: kill-bun copy-test-node-modules
-	-killall bun -9;
-	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
-
-.PHONY: test-dev-with-hmr
-test-dev-with-hmr: copy-test-node-modules
-	-killall bun-debug -9;
-	BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
-
-.PHONY: test-dev-no-hmr
-test-dev-no-hmr: copy-test-node-modules
-	-killall bun-debug -9;
-	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
-
-.PHONY: test-dev-bun-hmr
-test-dev-bun-run:
-	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
-
-.PHONY: test-dev-all
-test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev test-dev-bun-init
-test-dev-bunjs:
-
-test-dev: test-dev-with-hmr
 
 jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/heap/WeakHandleOwner.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/WeakHandleOwner.h

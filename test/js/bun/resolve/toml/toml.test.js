@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { gc } from "./gc";
+import { gc } from "harness";
 
 it("syntax", async () => {
   gc();

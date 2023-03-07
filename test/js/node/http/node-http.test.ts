@@ -12,7 +12,7 @@ function listen(server: any): Promise<URL> {
       }
     });
     setTimeout(() => reject("Timed out"), 5000);
-  })
+  });
 }
 
 describe("node:http", () => {

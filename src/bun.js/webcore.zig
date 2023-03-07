@@ -8,6 +8,7 @@ pub usingnamespace @import("./webcore/body.zig");
 const JSC = @import("bun").JSC;
 const std = @import("std");
 const bun = @import("bun");
+const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 
 pub const Lifetime = enum {
@@ -388,88 +389,6 @@ pub const Crypto = struct {
         .{},
     );
 
-    pub fn scryptSyncValidate(
-        globalThis: *JSC.JSGlobalObject,
-        options: ?JSC.JSValue,
-    ) JSC.JSValue {
-        var blockSize: usize = 8;
-        var cost: usize = 16384;
-        var parallelization: usize = 1;
-        var maxmem: usize = 32 * 1024 * 1024;
-
-        if (options) |options_value| outer: {
-            if (options_value.isUndefined() or options_value == .zero)
-                break :outer;
-
-            if (!options_value.isObject()) {
-                return globalThis.createInvalidArgs("options must be an object", .{});
-            }
-
-            if (options_value.getTruthy(globalThis, "cost") orelse options_value.get(globalThis, "N")) |N_value| {
-                const N_int = N_value.to(i64);
-                if (N_int < 0 or !N_value.isNumber()) {
-                    return globalThis.createRangeError("N must be a positive integer", .{});
-                } else if (N_int != 0) {
-                    cost = @intCast(usize, N_int);
-                }
-            }
-
-            if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.get(globalThis, "r")) |r_value| {
-                const r_int = r_value.to(i64);
-                if (r_int < 0 or !r_value.isNumber()) {
-                    return globalThis.createRangeError("r must be a positive integer", .{});
-                } else if (r_int != 0) {
-                    blockSize = @intCast(usize, r_int);
-                }
-            }
-
-            if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.get(globalThis, "p")) |p_value| {
-                const p_int = p_value.to(i64);
-                if (p_int < 0 or !p_value.isNumber()) {
-                    return globalThis.createRangeError("p must be a positive integer", .{});
-                } else if (p_int != 0) {
-                    parallelization = @intCast(usize, p_int);
-                }
-            }
-
-            if (options_value.getTruthy(globalThis, "maxmem")) |value| {
-                const p_int = value.to(i64);
-                if (p_int < 0 or !value.isNumber()) {
-                    return globalThis.createInvalidArgs("maxmem must be a positive integer", .{});
-                } else if (p_int != 0) {
-                    maxmem = @intCast(usize, p_int);
-                }
-            }
-        }
-
-        if (cost < 2 or cost > 0x3fffffff) {
-            return globalThis.createRangeError("N must be greater than 1 and less than 2^30", .{});
-        }
-
-        if (cost == 0 or (cost & (cost - 1)) != 0) {
-            return globalThis.createRangeError("N must be a power of 2 greater than 1", .{});
-        }
-
-        if ((BoringSSL.EVP_PBE_scrypt(
-            null,
-            0,
-            null,
-            0,
-            cost,
-            blockSize,
-            parallelization,
-            maxmem,
-            null,
-            0,
-        ) != 1)) {
-            BoringSSL.ERR_clear_error();
-            return globalThis.createErrorInstance("scrypt parameters are invalid", .{});
-        }
-        var slice: []u8 = undefined;
-        slice.len = 0;
-        return JSC.ArrayBuffer.create(globalThis, slice, .ArrayBuffer);
-    }
-
     pub fn scryptSync(
         globalThis: *JSC.JSGlobalObject,
         password: JSC.Node.StringOrBuffer,
@@ -480,22 +399,24 @@ pub const Crypto = struct {
         const password_string = password.slice();
         const salt_string = salt.slice();
 
-        if (keylen_value.isEmptyOrUndefinedOrNull()) {
-            return globalThis.createInvalidArgs("keylen must be a number", .{});
+        if (keylen_value.isEmptyOrUndefinedOrNull() or !keylen_value.isAnyInt()) {
+            const err = globalThis.createInvalidArgs("keylen must be an integer", .{});
+            globalThis.throwValue(err);
+            return .zero;
         }
 
         const keylen_int = keylen_value.to(i64);
         if (keylen_int < 0) {
-            return globalThis.createRangeError("keylen must be a positive integer", .{});
-        } else if (keylen_int == 0) {
-            return scryptSyncValidate(globalThis, options);
+            globalThis.throwValue(globalThis.createRangeError("keylen must be a positive integer", .{}));
+            return .zero;
         } else if (keylen_int > 0x7fffffff) {
-            return globalThis.createRangeError("keylen must be less than 2^31", .{});
+            globalThis.throwValue(globalThis.createRangeError("keylen must be less than 2^31", .{}));
+            return .zero;
         }
 
-        var blockSize: usize = 8;
-        var cost: usize = 16384;
-        var parallelization: usize = 1;
+        var blockSize: ?usize = null;
+        var cost: ?usize = null;
+        var parallelization: ?usize = null;
         var maxmem: usize = 32 * 1024 * 1024;
         const keylen = @intCast(u32, @truncate(i33, keylen_int));
 
@@ -504,31 +425,50 @@ pub const Crypto = struct {
                 break :outer;
 
             if (!options_value.isObject()) {
-                return globalThis.createInvalidArgs("options must be an object", .{});
+                globalThis.throwValue(globalThis.createInvalidArgs("options must be an object", .{}));
+                return .zero;
             }
 
             if (options_value.getTruthy(globalThis, "cost") orelse options_value.get(globalThis, "N")) |N_value| {
+                if (cost != null) return throwInvalidParameter(globalThis);
                 const N_int = N_value.to(i64);
                 if (N_int < 0 or !N_value.isNumber()) {
-                    return globalThis.createRangeError("N must be a positive integer", .{});
+                    return throwInvalidParams(
+                        globalThis,
+                        "RangeError",
+                        "Invalid scrypt params\n\n N must be a positive integer\n",
+                        .{},
+                    );
                 } else if (N_int != 0) {
                     cost = @intCast(usize, N_int);
                 }
             }
 
             if (options_value.getTruthy(globalThis, "blockSize") orelse options_value.get(globalThis, "r")) |r_value| {
+                if (blockSize != null) return throwInvalidParameter(globalThis);
                 const r_int = r_value.to(i64);
                 if (r_int < 0 or !r_value.isNumber()) {
-                    return globalThis.createRangeError("r must be a positive integer", .{});
+                    return throwInvalidParams(
+                        globalThis,
+                        "RangeError",
+                        "Invalid scrypt params\n\n r must be a positive integer\n",
+                        .{},
+                    );
                 } else if (r_int != 0) {
                     blockSize = @intCast(usize, r_int);
                 }
             }
 
             if (options_value.getTruthy(globalThis, "parallelization") orelse options_value.get(globalThis, "p")) |p_value| {
+                if (parallelization != null) return throwInvalidParameter(globalThis);
                 const p_int = p_value.to(i64);
                 if (p_int < 0 or !p_value.isNumber()) {
-                    return globalThis.createRangeError("p must be a positive integer", .{});
+                    return throwInvalidParams(
+                        globalThis,
+                        "RangeError",
+                        "Invalid scrypt params\n\n p must be a positive integer\n",
+                        .{},
+                    );
                 } else if (p_int != 0) {
                     parallelization = @intCast(usize, p_int);
                 }
@@ -537,19 +477,57 @@ pub const Crypto = struct {
             if (options_value.getTruthy(globalThis, "maxmem")) |value| {
                 const p_int = value.to(i64);
                 if (p_int < 0 or !value.isNumber()) {
-                    return globalThis.createInvalidArgs("maxmem must be a positive integer", .{});
+                    return throwInvalidParams(
+                        globalThis,
+                        "RangeError",
+                        "Invalid scrypt params\n\n N must be a positive integer\n",
+                        .{},
+                    );
                 } else if (p_int != 0) {
                     maxmem = @intCast(usize, p_int);
                 }
             }
         }
 
-        if (cost < 2 or cost > 0x3fffffff) {
-            return globalThis.createRangeError("N must be greater than 1 and less than 2^30", .{});
+        if (blockSize == null) blockSize = 8;
+        if (cost == null) cost = 16384;
+        if (parallelization == null) parallelization = 1;
+
+        if (cost.? < 2 or cost.? > 0x3fffffff) {
+            return throwInvalidParams(
+                globalThis,
+                "RangeError",
+                "Invalid scrypt params\n\n N must be greater than 1 and less than 2^30\n",
+                .{},
+            );
         }
 
-        if (cost == 0 or (cost & (cost - 1)) != 0) {
-            return globalThis.createRangeError("N must be a power of 2 greater than 1", .{});
+        if (cost.? == 0 or (cost.? & (cost.? - 1)) != 0) {
+            return throwInvalidParams(
+                globalThis,
+                "RangeError",
+                "Invalid scrypt params\n\n N must be a power of 2 greater than 1\n",
+                .{},
+            );
+        }
+
+        if (keylen == 0) {
+            if ((BoringSSL.EVP_PBE_scrypt(
+                null,
+                0,
+                null,
+                0,
+                cost.?,
+                blockSize.?,
+                parallelization.?,
+                maxmem,
+                null,
+                0,
+            ) != 1)) {
+                return throwInvalidParams(globalThis, "RangeError", "Invalid scrypt params\n", .{});
+            }
+
+            return JSC.ArrayBuffer.createEmpty(globalThis, .ArrayBuffer);
         }
 
         var stackbuf: [1024]u8 = undefined;
@@ -572,18 +550,39 @@ pub const Crypto = struct {
             password_string.len,
             salt_string.ptr,
             salt_string.len,
-            cost,
-            blockSize,
-            parallelization,
+            cost.?,
+            blockSize.?,
+            parallelization.?,
             maxmem,
             buf.ptr,
             keylen,
         ) != 1) {
-            BoringSSL.ERR_clear_error();
-            return globalThis.createErrorInstance("Failed to derive key", .{});
+            return throwInvalidParams(globalThis, "RangeError", "Invalid scrypt params\n", .{});
         }
 
         return JSC.ArrayBuffer.create(globalThis, buf, .ArrayBuffer);
+    }
+
+    fn throwInvalidParameter(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const err = globalThis.createError(
+            .ERR_CRYPTO_SCRYPT_INVALID_PARAMETER,
+            "Error",
+            "Invalid scrypt parameters",
+            .{},
+        );
+        globalThis.throwValue(err);
+        return .zero;
+    }
+
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_name: string, comptime message: string, fmt: anytype) JSC.JSValue {
+        const err = globalThis.createError(
+            .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
+            error_name,
+            message,
+            fmt,
+        );
+        globalThis.throwValue(err);
+        return .zero;
     }
 
     pub fn timingSafeEqual(

@@ -444,3 +444,49 @@ it("should call abort with signal", done => {
       controller.abort();
     });
 });
+
+
+it("should echo data", done => {
+  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  let timeout;
+
+  const server = createServer(socket => {
+    socket.pipe(socket);
+  });
+
+  const closeAndFail = mustNotCall("no data received (timeout)", () => {
+    clearTimeout(timeout);
+    server.close();
+  });
+
+  server.on("error", mustNotCall("no data received"));
+
+  //should be faster than 100ms
+  timeout = setTimeout(() => {
+    closeAndFail();
+  }, 100);
+
+  server.listen(
+    mustCall(() => {
+      const address = server.address();
+      Bun.connect({
+        hostname: address.address,
+        port: address.port,
+        socket: {
+          data(socket, data) {
+            clearTimeout(timeout);
+            server.close();
+            socket.end();
+            expect(data.byteLength).toBe(5);
+            expect(data.toString("utf8")).toBe("Hello");
+            done();
+          },
+          open(socket) {
+            socket.write("Hello");
+          },
+          connectError: closeAndFail, // connection failed
+        },
+      }).catch(closeAndFail);
+    }),
+  );
+});

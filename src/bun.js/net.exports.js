@@ -539,11 +539,8 @@ class Server extends EventEmitter {
               self.emit("drop", data);
               return;
             }
-            // the duplex implementation may start paused or resumed
-            // this make it independent of it
-            if (pauseOnConnect) {
-              _socket.pause();
-            } else {
+            // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+            if (!pauseOnConnect) {
               _socket.resume();
             }
 

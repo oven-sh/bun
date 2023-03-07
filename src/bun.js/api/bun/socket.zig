@@ -513,7 +513,7 @@ pub const Listener = struct {
             );
         }
 
-        const connection: Listener.UnixOrHost = if (port) |port_| .{
+        var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
@@ -524,7 +524,8 @@ pub const Listener = struct {
                 .host => |c| {
                     var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen(
+
+                    const socket = uws.us_socket_context_listen(
                         @boolToInt(ssl_enabled),
                         socket_context,
                         normalizeHost(@as([:0]const u8, host)),
@@ -532,6 +533,11 @@ pub const Listener = struct {
                         socket_flags,
                         8,
                     );
+                    // should return the assigned port
+                    if (socket) |s| {
+                        connection.host.port = @intCast(u16, s.getLocalPort(ssl_enabled));
+                    }
+                    break :brk socket;
                 },
                 .unix => |u| {
                     var host = bun.default_allocator.dupeZ(u8, u) catch unreachable;

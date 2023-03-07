@@ -527,9 +527,7 @@ pub const Crypto = struct {
                 return throwInvalidParams(globalThis, "RangeError", "Invalid scrypt params\n", .{});
             }
 
-            var slice: []u8 = undefined;
-            slice.len = 0;
-            return JSC.ArrayBuffer.create(globalThis, slice, .ArrayBuffer);
+            return JSC.ArrayBuffer.createEmpty(globalThis, .ArrayBuffer);
         }
 
         var stackbuf: [1024]u8 = undefined;

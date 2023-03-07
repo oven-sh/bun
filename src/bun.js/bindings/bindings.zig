@@ -2416,7 +2416,7 @@ pub const JSGlobalObject = extern struct {
 
     pub fn createError(
         this: *JSGlobalObject,
-        comptime code: JSC.Node.ErrorCode,
+        code: JSC.Node.ErrorCode,
         comptime error_name: string,
         comptime message: string,
         args: anytype,

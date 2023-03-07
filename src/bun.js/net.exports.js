@@ -133,8 +133,6 @@ export const Socket = (function (InternalSocket) {
         if (self.push(null)) return;
       }
       queue.push(null);
-      //if its paused resume to close
-      self.resume();
     }
 
     static #Drain(socket) {

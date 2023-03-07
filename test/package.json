@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "name": "test",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "canary"
+  },
+  "dependencies": {
+    "esbuild": "^0.17.11",
+    "undici": "^5.20.0"
+  }
+}

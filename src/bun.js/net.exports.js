@@ -133,6 +133,7 @@ export const Socket = (function (InternalSocket) {
         if (self.push(null)) return;
       }
       queue.push(null);
+      //if its paused resume to close
       self.resume();
     }
 
@@ -540,9 +541,14 @@ class Server extends EventEmitter {
               self.emit("drop", data);
               return;
             }
+            // the duplex implementation may start paused or resumed
+            // this make it independent of it
             if (pauseOnConnect) {
               _socket.pause();
+            } else {
+              _socket.resume();
             }
+            
             self.#connections++;
             if (typeof connectionListener == "function") {
               connectionListener(_socket);

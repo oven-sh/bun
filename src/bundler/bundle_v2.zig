@@ -339,7 +339,7 @@ pub const BundleV2 = struct {
         task.* = ParseTask.init(&result, source_index);
         task.loader = loader;
         task.task.node.next = null;
-        task.tree_shaking = this.bundler.options.tree_shaking;
+        task.tree_shaking = this.linker.options.tree_shaking;
         batch.push(ThreadPoolLib.Batch.from(&task.task));
         return source_index.get();
     }
@@ -437,7 +437,7 @@ pub const BundleV2 = struct {
             try this.graph.input_files.append(allocator, Graph.InputFile{
                 .source = ParseTask.runtime_source,
                 .loader = .js,
-                .side_effects = _resolver.SideEffects.no_side_effects__package_json,
+                .side_effects = _resolver.SideEffects.no_side_effects__pure_data,
             });
 
             // try this.graph.entry_points.append(allocator, Index.runtime);
@@ -446,6 +446,7 @@ pub const BundleV2 = struct {
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = ParseTask.runtime;
             runtime_parse_task.task.node.next = null;
+            runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.graph.parse_pending += 1;
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
@@ -527,6 +528,12 @@ pub const BundleV2 = struct {
         this.linker.allocator = this.bundler.allocator;
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
+        var ast = this.linker.graph.ast.slice();
+        for (ast.items(.module_scope)) |*new_module_scope| {
+            for (new_module_scope.children.slice()) |new_child| {
+                new_child.parent = new_module_scope;
+            }
+        }
 
         var chunks = try this.linker.link(
             this,
@@ -1326,7 +1333,7 @@ const LinkerGraph = struct {
             },
         ) catch unreachable;
 
-        this.ast.items(.module_scope)[source_index].?.generated.push(this.allocator, ref) catch unreachable;
+        this.ast.items(.module_scope)[source_index].generated.push(this.allocator, ref) catch unreachable;
         return ref;
     }
 
@@ -1337,7 +1344,9 @@ const LinkerGraph = struct {
         name: []const u8,
         count: u32,
     ) !void {
-        const ref = graph.ast.items(.module_scope)[Index.runtime.get()].?.members.get(name).?.ref;
+        if (count > 0) debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
+
+        const ref = graph.ast.items(.module_scope)[Index.runtime.get()].members.get(name).?.ref;
         try graph.generateSymbolImportAndUse(
             source_index,
             entry_point_part_index.get(),
@@ -1428,6 +1437,9 @@ const LinkerGraph = struct {
             g.ast.items(.uses_module_ref)[id] = true;
         }
 
+        // null ref shouldn't be there.
+        std.debug.assert(!ref.isEmpty());
+
         // Track that this specific symbol was imported
         if (source_index_to_import_from.get() != id) {
             try g.meta.items(.imports_to_bind)[id].put(g.allocator, ref, .{
@@ -1440,7 +1452,7 @@ const LinkerGraph = struct {
 
         // Pull in all parts that declare this symbol
         var dependencies = &part.dependencies;
-        const part_ids = g.topLevelSymbolToParts(id, ref);
+        const part_ids = g.topLevelSymbolToParts(source_index_to_import_from.get(), ref);
         try dependencies.ensureUnusedCapacity(g.allocator, part_ids.len);
         const old_len = dependencies.len;
         dependencies.len += @truncate(u32, part_ids.len);
@@ -2225,11 +2237,14 @@ const LinkerContext = struct {
                         flags[id].needs_exports_variable = true;
                     }
 
+                    const wrapped_ref = this.graph.ast.items(.wrapper_ref)[id] orelse continue;
+                    if (wrapped_ref.isNull()) continue;
+
                     // Create the wrapper part for wrapped files. This is needed by a later step.
                     this.createWrapperForFile(
                         flags[id].wrap,
                         // if this one is null, the AST does not need to be wrapped.
-                        this.graph.ast.items(.wrapper_ref)[id] orelse continue,
+                        wrapped_ref,
                         &wrapper_part_indices[id],
                         source_index,
                         id,
@@ -2370,7 +2385,7 @@ const LinkerContext = struct {
                 // parallel and can't safely mutate the "importsToBind" map of another file.
                 if (flag.needs_exports_variable) {
                     if (!runtime_export_symbol_ref.isValid()) {
-                        runtime_export_symbol_ref = this.graph.ast.items(.module_scope)[Index.runtime.get()].?.members.get("__export").?.ref;
+                        runtime_export_symbol_ref = this.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
                     }
 
                     std.debug.assert(runtime_export_symbol_ref.isValid());
@@ -2500,7 +2515,7 @@ const LinkerContext = struct {
                 }
 
                 // Encode import-specific constraints in the dependency graph
-                var import_records = import_records_list[id].slice();
+                var import_records: []ImportRecord = import_records_list[id].slice();
                 debug("Binding {d} imports for file {s} (#{d})", .{ import_records.len, source.path.text, id });
 
                 for (parts, 0..) |*part, part_index| {
@@ -2553,45 +2568,68 @@ const LinkerContext = struct {
                         const other_source_index = record.source_index.get();
                         const other_id = other_source_index;
                         std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
-
+                        const other_flags = flags[other_id];
                         const other_export_kind = exports_kind[other_id];
 
-                        switch (wrap) {
-                            else => {
+                        if (other_flags.wrap != .none) {
+                            // Depend on the automatically-generated require wrapper symbol
+                            const wrapper_ref = wrapper_refs[other_id].?;
+                            this.graph.generateSymbolImportAndUse(
+                                source_index,
+                                @intCast(u32, part_index),
+                                wrapper_ref,
+                                1,
+                                Index.source(other_source_index),
+                            ) catch unreachable;
 
-                                // Depend on the automatically-generated require wrapper symbol
-                                const wrapper_ref = wrapper_refs[other_id].?;
+                            // This is an ES6 import of a CommonJS module, so it needs the
+                            // "__toESM" wrapper as long as it's not a bare "require()"
+                            if (kind != .require and other_export_kind == .cjs) {
+                                record.wrap_with_to_esm = true;
+                                to_esm_uses += 1;
+                            }
+
+                            // If this is an ESM wrapper, also depend on the exports object
+                            // since the final code will contain an inline reference to it.
+                            // This must be done for "require()" and "import()" expressions
+                            // but does not need to be done for "import" statements since
+                            // those just cause us to reference the exports directly.
+                            if (other_flags.wrap == .esm and record.kind != .stmt) {
                                 this.graph.generateSymbolImportAndUse(
                                     source_index,
                                     @intCast(u32, part_index),
-                                    wrapper_ref,
+                                    this.graph.ast.items(.exports_ref)[other_id],
                                     1,
                                     Index.source(other_source_index),
                                 ) catch unreachable;
 
-                                // This is an ES6 import of a CommonJS module, so it needs the
-                                // "__toESM" wrapper as long as it's not a bare "require()"
-                                if (kind != .require and other_export_kind == .cjs) {
-                                    record.wrap_with_to_esm = true;
-                                    to_esm_uses += 1;
+                                // If this is a "require()" call, then we should add the
+                                // "__esModule" marker to behave as if the module was converted
+                                // from ESM to CommonJS. This is done via a wrapper instead of
+                                // by modifying the exports object itself because the same ES
+                                // module may be simultaneously imported and required, and the
+                                // importing code should not see "__esModule" while the requiring
+                                // code should see "__esModule". This is an extremely complex
+                                // and subtle set of bundler interop issues. See for example
+                                // https://github.com/evanw/esbuild/issues/1591.
+                                if (record.kind == .require) {
+                                    record.wrap_with_to_commonjs = true;
+                                    to_common_js_uses += 1;
                                 }
-                            },
-                            .none => {
-                                if (kind == .stmt and other_export_kind == .esm_with_dynamic_fallback) {
-                                    // This is an import of a module that has a dynamic export fallback
-                                    // object. In that case we need to depend on that object in case
-                                    // something ends up needing to use it later. This could potentially
-                                    // be omitted in some cases with more advanced analysis if this
-                                    // dynamic export fallback object doesn't end up being needed.
-                                    this.graph.generateSymbolImportAndUse(
-                                        source_index,
-                                        @intCast(u32, part_index),
-                                        this.graph.ast.items(.exports_ref)[other_id],
-                                        1,
-                                        Index.source(other_source_index),
-                                    ) catch unreachable;
-                                }
-                            },
+                            }
+                        } else if (kind == .stmt and other_export_kind == .esm_with_dynamic_fallback) {
+                            // This is an import of a module that has a dynamic export fallback
+                            // object. In that case we need to depend on that object in case
+                            // something ends up needing to use it later. This could potentially
+                            // be omitted in some cases with more advanced analysis if this
+                            // dynamic export fallback object doesn't end up being needed.
+                            this.graph.generateSymbolImportAndUse(
+                                source_index,
+                                @intCast(u32, part_index),
+                                this.graph.ast.items(.exports_ref)[other_id],
+                                1,
+                                Index.source(other_source_index),
+                            ) catch unreachable;
                         }
                     }
 
@@ -2698,6 +2736,10 @@ const LinkerContext = struct {
         // WARNING: This method is run in parallel over all files. Do not mutate data
         // for other files within this method or you will create a data race.
         ////////////////////////////////////////////////////////////////////////////////
+        Stmt.Disabler.disable();
+        defer Stmt.Disabler.enable();
+        Expr.Disabler.disable();
+        defer Expr.Disabler.enable();
 
         // 1 property per export
         var properties = std.ArrayList(js_ast.G.Property)
@@ -2710,7 +2752,7 @@ const LinkerContext = struct {
 
         const stmts_count =
             // 3 statements for every export
-            export_aliases.len * 3 +
+            export_aliases.len * 2 +
             // + 1 if there are non-zero exports
             @as(usize, @boolToInt(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
@@ -2759,9 +2801,10 @@ const LinkerContext = struct {
             }
 
             var block = stmts.eat1(
-                js_ast.Stmt.alloc(js_ast.S.Block, .{
+                js_ast.Stmt.allocate(allocator_, js_ast.S.Block, .{
                     .stmts = stmts.eat1(
-                        js_ast.Stmt.alloc(
+                        js_ast.Stmt.allocate(
+                            allocator_,
                             js_ast.S.Return,
                             .{ .value = value },
                             loc,
@@ -2775,7 +2818,8 @@ const LinkerContext = struct {
             };
             properties.appendAssumeCapacity(
                 .{
-                    .key = js_ast.Expr.init(
+                    .key = js_ast.Expr.allocate(
+                        allocator_,
                         js_ast.E.String,
                         .{
                             // TODO: test emoji work as expected
@@ -2784,7 +2828,8 @@ const LinkerContext = struct {
                         },
                         loc,
                     ),
-                    .value = js_ast.Expr.init(
+                    .value = js_ast.Expr.allocate(
+                        allocator_,
                         js_ast.E.Arrow,
                         .{ .prefer_expr = true, .body = fn_body },
                         loc,
@@ -2812,9 +2857,8 @@ const LinkerContext = struct {
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
-        var export_stmts: []js_ast.Stmt = stmts.head;
-        // std.debug.assert(stmts.head.len <= 3); // assert we allocated exactly the right amount
-        stmts.head.len = 0;
+        var export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @boolToInt(needs_exports_variable)) + @as(usize, @boolToInt(properties.items.len > 0))];
+        stmts.head = stmts.head[export_stmts.len..];
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if (needs_exports_variable) {
@@ -2827,9 +2871,10 @@ const LinkerContext = struct {
                     },
                     loc,
                 ),
-                .value = js_ast.Expr.init(js_ast.E.Object, .{}, loc),
+                .value = js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{}, loc),
             };
-            export_stmts[0] = js_ast.Stmt.alloc(
+            export_stmts[0] = js_ast.Stmt.allocate(
+                allocator_,
                 js_ast.S.Local,
                 .{
                     .decls = decls,
@@ -2842,17 +2887,19 @@ const LinkerContext = struct {
         // "__export(exports, { foo: () => foo })"
         var export_ref = Ref.None;
         if (properties.items.len > 0) {
-            export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].?.members.get("__export").?.ref;
+            export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
             var args = allocator_.alloc(js_ast.Expr, 2) catch unreachable;
             args[0..2].* = [_]js_ast.Expr{
                 js_ast.Expr.initIdentifier(exports_ref, loc),
-                js_ast.Expr.init(js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
+                js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
             };
             // the end incase we somehow get into a state where needs_export_variable is false but properties.len > 0
-            export_stmts[export_stmts.len - 1] = js_ast.Stmt.alloc(
+            export_stmts[export_stmts.len - 1] = js_ast.Stmt.allocate(
+                allocator_,
                 js_ast.S.SExpr,
                 .{
-                    .value = js_ast.Expr.init(
+                    .value = js_ast.Expr.allocate(
+                        allocator_,
                         js_ast.E.Call,
                         .{
                             .target = js_ast.Expr.initIdentifier(export_ref, loc),
@@ -3537,7 +3584,7 @@ const LinkerContext = struct {
                 var reserved_names = try renamer.computeInitialReservedNames(allocator);
 
                 for (files_in_order) |source_index| {
-                    renamer.computeReservedNamesForScope(&all_module_scopes[source_index].?, &c.graph.symbols, &reserved_names, allocator);
+                    renamer.computeReservedNamesForScope(&all_module_scopes[source_index], &c.graph.symbols, &reserved_names, allocator);
                 }
 
                 break :brk reserved_names;
@@ -3653,7 +3700,7 @@ const LinkerContext = struct {
                             }
                         }
                     }
-                    r.assignNamesRecursiveWithNumberScope(child_number_scope, &all_module_scopes[source_index].?, source_index, sorted);
+                    r.assignNamesRecursiveWithNumberScope(child_number_scope, &all_module_scopes[source_index], source_index, sorted);
                     continue;
                 },
 
@@ -3701,7 +3748,7 @@ const LinkerContext = struct {
 
         var repr = &chunk.content.javascript;
 
-        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()].?;
+        var runtime_scope: *Scope = &c.graph.ast.items(.module_scope)[c.graph.files.items(.input_file)[Index.runtime.value].get()];
         var runtime_members = &runtime_scope.members;
         const toCommonJSRef = c.graph.symbols.follow(runtime_members.get("__toCommonJS").?.ref);
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
@@ -4974,8 +5021,7 @@ const LinkerContext = struct {
 
                     if (shouldStripExports) {
                         switch (s.value) {
-                            .stmt => {
-                                var stmt2 = s.value.stmt;
+                            .stmt => |stmt2| {
                                 switch (stmt2.data) {
                                     .s_expr => |s2| {
                                         // "export default foo;" => "var default = foo;"
@@ -5035,8 +5081,11 @@ const LinkerContext = struct {
                                     },
 
                                     else => bun.unreachablePanic(
-                                        "Unexpected type {any}",
-                                        .{stmt2.data},
+                                        "Unexpected type {any} in source file {s}",
+                                        .{
+                                            stmt2.data,
+                                            c.parse_graph.input_files.get(c.graph.files.get(source_index).input_file.get()).source.path.text,
+                                        },
                                     ),
                                 }
                             },
@@ -5077,7 +5126,7 @@ const LinkerContext = struct {
     }
 
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
-        return c.graph.ast.items(.module_scope)[Index.runtime.value].?.members.get(name).?.ref;
+        return c.graph.ast.items(.module_scope)[Index.runtime.value].members.get(name).?.ref;
     }
 
     fn generateCodeForFileInChunkJS(

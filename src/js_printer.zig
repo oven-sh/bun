@@ -2341,6 +2341,17 @@ fn NewPrinter(
                         p.print("(");
                     }
 
+                    if (comptime Environment.allow_assert) {
+                        // This is UB
+                        if (name.len > 65432 or e.ref.isNull() or name.len == 0) {
+                            Output.panic("Invalid identifier at {d} in {s}\ndump:\n{s}", .{
+                                expr.loc.start,
+                                (p.options.source_path orelse bun.fs.Path.initWithPretty("", "<empty>")).pretty,
+                                p.writer.ctx.getWritten(),
+                            });
+                        }
+                    }
+
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
                     p.printIdentifier(name);
@@ -5511,7 +5522,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         undefined,
     );
-
+    defer _writer.* = printer.writer.*;
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }

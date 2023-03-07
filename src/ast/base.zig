@@ -197,6 +197,10 @@ pub const Ref = packed struct(u64) {
     source_index: Int = 0,
     inner_index: Int = 0,
 
+    pub inline fn isEmpty(this: Ref) bool {
+        return @bitCast(u64, this) == 0;
+    }
+
     pub const ArrayHashCtx = RefHashCtx;
 
     pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);

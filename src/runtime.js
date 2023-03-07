@@ -1,4 +1,3 @@
-var $$mod$ = Symbol.for;
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
@@ -9,12 +8,24 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 
+export var __reExport = (target, mod, copyDefault, desc) => {
+  if ((mod && typeof mod === "object") || typeof mod === "function")
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== "default"))
+        __defProp(target, key, {
+          get: () => mod[key],
+          configurable: true,
+          enumerable: !(desc = __getOwnPropDesc(mod, key)) || desc.enumerable,
+        });
+  return target;
+};
+
 // lazy require to prevent loading one icon from a design system
-export var $$lzy = (target, module, props) => {
+export var $$lzy = (target, mod, props) => {
   for (let key in props) {
     if (!__hasOwnProp.call(target, key))
       __defProp(target, key, {
-        get: () => module()[props[key]],
+        get: () => mod()[props[key]],
         enumerable: true,
         configurable: true,
       });
@@ -22,18 +33,18 @@ export var $$lzy = (target, module, props) => {
   return target;
 };
 
-export var __toModule = module => {
+export var __toModule = mod => {
   return __reExport(
     __markAsModule(
       __defProp(
-        module != null ? __create(__getProtoOf(module)) : {},
+        mod != null ? __create(__getProtoOf(mod)) : {},
         "default",
-        module && module.__esModule && "default" in module
-          ? { get: () => module.default, enumerable: true, configurable: true }
-          : { value: module, enumerable: true, configurable: true },
+        mod && mod.__esModule && "default" in mod
+          ? { get: () => mod.default, enumerable: true, configurable: true }
+          : { value: mod, enumerable: true, configurable: true },
       ),
     ),
-    module,
+    mod,
   );
 };
 
@@ -178,18 +189,6 @@ export var __exportDefault = (target, value) => {
   });
 };
 
-export var __reExport = (target, module, copyDefault, desc) => {
-  if ((module && typeof module === "object") || typeof module === "function")
-    for (let key of __getOwnPropNames(module))
-      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== "default"))
-        __defProp(target, key, {
-          get: () => module[key],
-          configurable: true,
-          enumerable: !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
-        });
-  return target;
-};
-
 function hasAnyProps(obj) {
   for (let key in obj) return true;
   return false;
@@ -224,11 +223,11 @@ export var __decorateClass = (decorators, target, key, kind) => {
 export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
 
 // Converts the module from CommonJS to ESM
-export var __toESM = (module, isNodeMode) => {
+export var __toESM = (mod, isNodeMode) => {
   return __reExport(
     __markAsModule(
       __defProp(
-        module != null ? __create(__getProtoOf(module)) : {},
+        mod != null ? __create(__getProtoOf(mod)) : {},
         "default",
 
         // If the importer is not in node compatibility mode and this is an ESM
@@ -236,21 +235,21 @@ export var __toESM = (module, isNodeMode) => {
         // compatible transform (i.e. "__esModule" has been set), then forward
         // "default" to the export named "default". Otherwise set "default" to
         // "module.exports" for node compatibility.
-        !isNodeMode && module && module.__esModule
-          ? { get: () => module.default, enumerable: true }
-          : { value: module, enumerable: true },
+        !isNodeMode && mod && mod.__esModule
+          ? { get: () => mod.default, enumerable: true }
+          : { value: mod, enumerable: true },
       ),
     ),
-    module,
+    mod,
   );
 };
 
 // Converts the module from ESM to CommonJS
 export var __toCommonJS = /* @__PURE__ */ (cache => {
-  return (module, temp) => {
+  return (mod, temp) => {
     return (
-      (cache && cache.get(module)) ||
-      ((temp = __reExport(__markAsModule({}), module, /* copyDefault */ 1)), cache && cache.set(module, temp), temp)
+      (cache && cache.get(mod)) ||
+      ((temp = __reExport(__markAsModule({}), mod, /* copyDefault */ 1)), cache && cache.set(mod, temp), temp)
     );
   };
 })(typeof WeakMap !== "undefined" ? new WeakMap() : 0);

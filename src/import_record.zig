@@ -160,6 +160,7 @@ pub const ImportRecord = struct {
     print_namespace_in_path: bool = false,
 
     wrap_with_to_esm: bool = false,
+    wrap_with_to_commonjs: bool = false,
 
     pub const List = bun.BabyList(ImportRecord);
 

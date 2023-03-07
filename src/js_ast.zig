@@ -179,7 +179,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
             _self = undefined;
         }
 
-        pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
+        pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
+            Disabler.assert();
             return _self._append(ValueType, value);
         }
 
@@ -2077,6 +2078,7 @@ pub const Stmt = struct {
     pub var icount: usize = 0;
     pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
         icount += 1;
+
         return switch (comptime StatementType) {
             S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
             S.Block => Stmt.comptime_init("s_block", S.Block, origData, loc),
@@ -2117,6 +2119,13 @@ pub const Stmt = struct {
     }
     inline fn comptime_alloc(comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
         return Stmt{ .loc = loc, .data = @unionInit(Data, tag_name, Data.Store.append(typename, origData)) };
+    }
+
+    fn allocateData(allocator: std.mem.Allocator, comptime tag_name: string, comptime typename: type, origData: anytype, loc: logger.Loc) Stmt {
+        var value = allocator.create(@TypeOf(origData)) catch unreachable;
+        value.* = origData;
+
+        return comptime_init(tag_name, *typename, value, loc);
     }
 
     inline fn comptime_init(comptime tag_name: string, comptime TypeName: type, origData: TypeName, loc: logger.Loc) Stmt {
@@ -2161,6 +2170,53 @@ pub const Stmt = struct {
             S.TypeScript => Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } },
             S.While => Stmt.comptime_alloc("s_while", S.While, origData, loc),
             S.With => Stmt.comptime_alloc("s_with", S.With, origData, loc),
+            else => @compileError("Invalid type in Stmt.init"),
+        };
+    }
+
+    pub const Disabler = bun.DebugOnlyDisabler(@This());
+
+    /// When the lifetime of an Stmt.Data's pointer must exist longer than reset() is called, use this function.
+    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Also, prefer Stmt.init or Stmt.alloc when possible. This will be slower.
+    pub fn allocate(allocator: std.mem.Allocator, comptime StatementData: type, origData: StatementData, loc: logger.Loc) Stmt {
+        Stmt.Data.Store.assert();
+
+        icount += 1;
+        return switch (StatementData) {
+            S.Block => Stmt.allocateData(allocator, "s_block", S.Block, origData, loc),
+            S.Break => Stmt.allocateData(allocator, "s_break", S.Break, origData, loc),
+            S.Class => Stmt.allocateData(allocator, "s_class", S.Class, origData, loc),
+            S.Comment => Stmt.allocateData(allocator, "s_comment", S.Comment, origData, loc),
+            S.Continue => Stmt.allocateData(allocator, "s_continue", S.Continue, origData, loc),
+            S.Debugger => Stmt{ .loc = loc, .data = .{ .s_debugger = origData } },
+            S.Directive => Stmt.allocateData(allocator, "s_directive", S.Directive, origData, loc),
+            S.DoWhile => Stmt.allocateData(allocator, "s_do_while", S.DoWhile, origData, loc),
+            S.Empty => Stmt{ .loc = loc, .data = Data{ .s_empty = S.Empty{} } },
+            S.Enum => Stmt.allocateData(allocator, "s_enum", S.Enum, origData, loc),
+            S.ExportClause => Stmt.allocateData(allocator, "s_export_clause", S.ExportClause, origData, loc),
+            S.ExportDefault => Stmt.allocateData(allocator, "s_export_default", S.ExportDefault, origData, loc),
+            S.ExportEquals => Stmt.allocateData(allocator, "s_export_equals", S.ExportEquals, origData, loc),
+            S.ExportFrom => Stmt.allocateData(allocator, "s_export_from", S.ExportFrom, origData, loc),
+            S.ExportStar => Stmt.allocateData(allocator, "s_export_star", S.ExportStar, origData, loc),
+            S.SExpr => Stmt.allocateData(allocator, "s_expr", S.SExpr, origData, loc),
+            S.ForIn => Stmt.allocateData(allocator, "s_for_in", S.ForIn, origData, loc),
+            S.ForOf => Stmt.allocateData(allocator, "s_for_of", S.ForOf, origData, loc),
+            S.For => Stmt.allocateData(allocator, "s_for", S.For, origData, loc),
+            S.Function => Stmt.allocateData(allocator, "s_function", S.Function, origData, loc),
+            S.If => Stmt.allocateData(allocator, "s_if", S.If, origData, loc),
+            S.Import => Stmt.allocateData(allocator, "s_import", S.Import, origData, loc),
+            S.Label => Stmt.allocateData(allocator, "s_label", S.Label, origData, loc),
+            S.LazyExport => Stmt.allocateData(allocator, "s_lazy_export", S.LazyExport, origData, loc),
+            S.Local => Stmt.allocateData(allocator, "s_local", S.Local, origData, loc),
+            S.Namespace => Stmt.allocateData(allocator, "s_namespace", S.Namespace, origData, loc),
+            S.Return => Stmt.allocateData(allocator, "s_return", S.Return, origData, loc),
+            S.Switch => Stmt.allocateData(allocator, "s_switch", S.Switch, origData, loc),
+            S.Throw => Stmt.allocateData(allocator, "s_throw", S.Throw, origData, loc),
+            S.Try => Stmt.allocateData(allocator, "s_try", S.Try, origData, loc),
+            S.TypeScript => Stmt{ .loc = loc, .data = Data{ .s_type_script = S.TypeScript{} } },
+            S.While => Stmt.allocateData(allocator, "s_while", S.While, origData, loc),
+            S.With => Stmt.allocateData(allocator, "s_with", S.With, origData, loc),
             else => @compileError("Invalid type in Stmt.init"),
         };
     }
@@ -2314,7 +2370,7 @@ pub const Stmt = struct {
             }
 
             pub fn append(comptime ValueType: type, value: anytype) *ValueType {
-                return All.append(ValueType, value);
+                return All.append(Disabler, ValueType, value);
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
@@ -2703,7 +2759,10 @@ pub const Expr = struct {
     var false_bool = E.Boolean{ .value = false };
     var bool_values = [_]*E.Boolean{ &false_bool, &true_bool };
 
-    pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
+    /// When the lifetime of an Expr.Data's pointer must exist longer than reset() is called, use this function.
+    /// Be careful to free the memory (or use an allocator that does it for you)
+    /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
+    pub fn allocate(allocator: std.mem.Allocator, comptime Type: type, st: Type, loc: logger.Loc) Expr {
         icount += 1;
         Data.Store.assert();
 
@@ -2712,7 +2771,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_array = Data.Store.All.append(Type, st),
+                        .e_array = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2720,7 +2783,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_class = Data.Store.All.append(Type, st),
+                        .e_class = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2728,7 +2795,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_unary = Data.Store.All.append(Type, st),
+                        .e_unary = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2736,7 +2807,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_binary = Data.Store.All.append(Type, st),
+                        .e_binary = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2784,7 +2859,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_new = Data.Store.All.append(Type, st),
+                        .e_new = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2800,7 +2879,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_function = Data.Store.All.append(Type, st),
+                        .e_function = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2816,7 +2899,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_call = Data.Store.All.append(Type, st),
+                        .e_call = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2824,7 +2911,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_dot = Data.Store.All.append(Type, st),
+                        .e_dot = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2832,7 +2923,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_index = Data.Store.All.append(Type, st),
+                        .e_index = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2840,7 +2935,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_arrow = Data.Store.All.append(Type, st),
+                        .e_arrow = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2880,7 +2979,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_jsx_element = Data.Store.All.append(Type, st),
+                        .e_jsx_element = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2899,7 +3002,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_big_int = Data.Store.All.append(Type, st),
+                        .e_big_int = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2907,7 +3014,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_object = Data.Store.All.append(Type, st),
+                        .e_object = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2915,7 +3026,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_spread = Data.Store.All.append(Type, st),
+                        .e_spread = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2930,7 +3045,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(Type, st),
+                        .e_string = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2938,7 +3057,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template_part = Data.Store.All.append(Type, st),
+                        .e_template_part = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2946,7 +3069,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_template = Data.Store.All.append(Type, st),
+                        .e_template = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2954,7 +3081,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_reg_exp = Data.Store.All.append(Type, st),
+                        .e_reg_exp = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2962,7 +3093,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_await = Data.Store.All.append(Type, st),
+                        .e_await = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2970,7 +3105,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_yield = Data.Store.All.append(Type, st),
+                        .e_yield = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2978,7 +3117,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_if = Data.Store.All.append(Type, st),
+                        .e_if = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -2994,7 +3137,11 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_import = Data.Store.All.append(Type, st),
+                        .e_import = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st;
+                            break :brk item;
+                        },
                     },
                 };
             },
@@ -3010,7 +3157,331 @@ pub const Expr = struct {
                 return Expr{
                     .loc = loc,
                     .data = Data{
-                        .e_string = Data.Store.All.append(@TypeOf(st.*), st.*),
+                        .e_string = brk: {
+                            var item = allocator.create(Type) catch unreachable;
+                            item.* = st.*;
+                            break :brk item;
+                        },
+                    },
+                };
+            },
+
+            else => {
+                @compileError("Invalid type passed to Expr.init: " ++ @typeName(Type));
+            },
+        }
+    }
+
+    pub const Disabler = bun.DebugOnlyDisabler(@This());
+
+    pub fn init(comptime Type: type, st: Type, loc: logger.Loc) Expr {
+        icount += 1;
+        Data.Store.assert();
+
+        switch (Type) {
+            E.Array => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_array = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Class => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_class = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Unary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_unary = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Binary => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_binary = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.This => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_this = st,
+                    },
+                };
+            },
+            E.Boolean => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_boolean = st,
+                    },
+                };
+            },
+            E.Super => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_super = st,
+                    },
+                };
+            },
+            E.Null => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_null = st,
+                    },
+                };
+            },
+            E.Undefined => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_undefined = st,
+                    },
+                };
+            },
+            E.New => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_new = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.NewTarget => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_new_target = st,
+                    },
+                };
+            },
+            E.Function => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_function = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.ImportMeta => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import_meta = st,
+                    },
+                };
+            },
+            E.Call => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_call = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Dot => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_dot = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Index => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_index = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Arrow => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_arrow = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Identifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_identifier = E.Identifier{
+                            .ref = st.ref,
+                            .must_keep_due_to_with_stmt = st.must_keep_due_to_with_stmt,
+                            .can_be_removed_if_unused = st.can_be_removed_if_unused,
+                            .call_can_be_unwrapped_if_unused = st.call_can_be_unwrapped_if_unused,
+                        },
+                    },
+                };
+            },
+            E.ImportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import_identifier = .{
+                            .ref = st.ref,
+                            .was_originally_identifier = st.was_originally_identifier,
+                        },
+                    },
+                };
+            },
+            E.PrivateIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_private_identifier = st,
+                    },
+                };
+            },
+            E.JSXElement => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_jsx_element = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Missing => {
+                return Expr{ .loc = loc, .data = Data{ .e_missing = E.Missing{} } };
+            },
+            E.Number => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_number = st,
+                    },
+                };
+            },
+            E.BigInt => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_big_int = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Object => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_object = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Spread => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_spread = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.String => {
+                if (comptime Environment.isDebug) {
+                    // Sanity check: assert string is not a null ptr
+                    if (st.data.len > 0 and st.isUTF8()) {
+                        std.debug.assert(@ptrToInt(st.data.ptr) > 0);
+                        std.debug.assert(st.data[0] > 0);
+                    }
+                }
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_string = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.TemplatePart => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_template_part = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Template => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_template = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.RegExp => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_reg_exp = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Await => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_await = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Yield => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_yield = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.If => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_if = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.RequireOrRequireResolve => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_require_or_require_resolve = st,
+                    },
+                };
+            },
+            E.Import => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_import = Data.Store.All.append(Disabler, Type, st),
+                    },
+                };
+            },
+            E.Require => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_require = st,
+                    },
+                };
+            },
+            *E.String => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_string = Data.Store.All.append(Disabler, @TypeOf(st.*), st.*),
                     },
                 };
             },
@@ -4677,7 +5148,7 @@ pub const Ast = struct {
     parts: Part.List = Part.List{},
     // This list may be mutated later, so we should store the capacity
     symbols: Symbol.List = Symbol.List{},
-    module_scope: ?Scope = null,
+    module_scope: Scope = Scope{},
     // char_freq:    *CharFreq,
     exports_ref: Ref = Ref.None,
     module_ref: ?Ref = null,
@@ -5002,7 +5473,7 @@ pub const Scope = struct {
 
     id: usize = 0,
     kind: Kind = Kind.block,
-    parent: ?*Scope,
+    parent: ?*Scope = null,
     children: BabyList(*Scope) = .{},
     members: MemberHashMap = .{},
     generated: BabyList(Ref) = .{},

@@ -1024,7 +1024,6 @@ const StaticSymbolName = struct {
         pub const __require = NewStaticSymbol("require");
         pub const __cJS2eSM = NewStaticSymbol("__cJS2eSM");
         pub const __export = NewStaticSymbol("__export");
-        pub const __reExport = NewStaticSymbol("__reExport");
         pub const __load = NewStaticSymbol("__load");
         pub const @"$$lzy" = NewStaticSymbol("$$lzy");
         pub const __HMRModule = NewStaticSymbol("HMR");
@@ -3488,7 +3487,6 @@ pub const Prefill = struct {
         pub var JSXFilename = "__jsxFilename";
         pub var MarkAsModule = "__markAsModule";
         pub var CommonJS = "__commonJS";
-        pub var ReExport = "__reExport";
         pub var ToModule = "__toModule";
         const JSXShortname = "jsx";
     };
@@ -5206,7 +5204,6 @@ fn NewParser_(
             }
 
             if (p.options.enable_bundling) {
-                p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");
                 p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
 
                 p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
@@ -5303,17 +5300,19 @@ fn NewParser_(
         }
 
         pub fn resolveCommonJSSymbols(p: *P) void {
+            if (!p.options.features.allow_runtime)
+                return;
+
             if (p.runtime_imports.__require) |*require| {
                 p.resolveGeneratedSymbol(require);
             }
-            if (p.options.features.allow_runtime)
-                p.ensureRequireSymbol();
+
+            p.ensureRequireSymbol();
         }
 
         pub fn resolveBundlingSymbols(p: *P) void {
             p.recordUsage(p.runtime_imports.@"$$m".?.ref);
 
-            p.resolveGeneratedSymbol(&p.runtime_imports.__reExport.?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$m".?);
             p.resolveGeneratedSymbol(&p.runtime_imports.@"$$lzy".?);
             p.resolveGeneratedSymbol(&p.runtime_imports.__export.?);
@@ -18331,6 +18330,7 @@ fn NewParser_(
                 p.treeShake(&parts, false);
             }
 
+            const bundling = p.options.bundle;
             var parts_end: usize = 0;
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
@@ -18352,7 +18352,7 @@ fn NewParser_(
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
 
                     part.stmts = result.stmts;
-                    if (part.stmts.len > 0 or (i == js_ast.namespace_export_part_index and p.options.bundle)) {
+                    if (part.stmts.len > 0 or (i == js_ast.namespace_export_part_index and bundling)) {
                         if (p.module_scope.contains_direct_eval and part.declared_symbols.len() > 0) {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
@@ -18895,6 +18895,23 @@ fn NewParser_(
                 part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
             } else if (p.options.features.hot_module_reloading) {}
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
+            const wrapper_ref = brk: {
+                if (p.options.bundle) {
+                    break :brk p.newSymbol(
+                        .other,
+                        std.fmt.allocPrint(
+                            p.allocator,
+                            "require_{any}",
+                            .{
+                                p.source.fmtIdentifier(),
+                            },
+                        ) catch unreachable,
+                    ) catch unreachable;
+                }
+
+                break :brk @as(?Ref, null);
+            };
+
             if (p.options.bundle) {
 
                 // Each part tracks the other parts it depends on within this file
@@ -18951,7 +18968,7 @@ fn NewParser_(
                 .module_scope = p.module_scope.*,
                 .symbols = js_ast.Symbol.List.init(p.symbols.items),
                 .exports_ref = p.exports_ref,
-                .wrapper_ref = Ref.None,
+                .wrapper_ref = wrapper_ref,
                 .module_ref = p.module_ref,
                 .import_records = ImportRecord.List.init(p.import_records.items),
                 .export_star_import_records = p.export_star_import_records.items,

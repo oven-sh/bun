@@ -1052,3 +1052,26 @@ comptime {
         _ = @import("./cli/upgrade_command.zig").Version;
     }
 }
+
+pub fn DebugOnlyDisabler(comptime Type: type) type {
+    return struct {
+        const T = Type;
+        threadlocal var disable_create_in_debug: if (Environment.allow_assert) usize else u0 = 0;
+        pub inline fn disable() void {
+            if (comptime !Environment.allow_assert) return;
+            disable_create_in_debug += 1;
+        }
+
+        pub inline fn enable() void {
+            if (comptime !Environment.allow_assert) return;
+            disable_create_in_debug -= 1;
+        }
+
+        pub inline fn assert() void {
+            if (comptime !Environment.allow_assert) return;
+            if (disable_create_in_debug > 0) {
+                Output.panic(comptime "[" ++ @typeName(T) ++ "] called while disabled (did you forget to call enable?)", .{});
+            }
+        }
+    };
+}

@@ -256,15 +256,12 @@ pub fn Batcher(comptime Type: type) type {
         }
 
         pub inline fn eat(this: *@This(), value: Type) *Type {
-            this.head[0] = value;
-            var prev = &this.head[0];
-            this.head = this.head[1..];
-            return prev;
+            return @ptrCast(*Type, &this.head.eat1(value).ptr);
         }
 
         pub inline fn eat1(this: *@This(), value: Type) []Type {
-            this.head[0] = value;
             var prev = this.head[0..1];
+            prev[0] = value;
             this.head = this.head[1..];
             return prev;
         }

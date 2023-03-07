@@ -272,4 +272,32 @@ describe("HTMLRewriter", () => {
       "<div><h1><span>1</span></h1><span>new</span><b>3</b></div>",
     );
   });
+
+  it("supports deleting innerContent", async () => {
+    expect(
+      await new HTMLRewriter()
+        .on("div", {
+          element(elem) {
+            // https://github.com/oven-sh/bun/issues/2323
+            elem.setInnerContent("");
+          },
+        })
+        .transform(new Response("<div>content</div>"))
+        .text(),
+    ).toEqual("<div></div>");
+  });
+
+  it("supports deleting innerHTML", async () => {
+    expect(
+      await new HTMLRewriter()
+        .on("div", {
+          element(elem) {
+            // https://github.com/oven-sh/bun/issues/2323
+            elem.setInnerContent("", { html: true });
+          },
+        })
+        .transform(new Response("<div><span>content</span></div>"))
+        .text(),
+    ).toEqual("<div></div>");
+  });
 });

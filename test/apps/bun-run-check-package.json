@@ -1,7 +1,0 @@
-{
-  "name": "check",
-  "scripts": {
-    "this-should-work": "echo \"✅ bun run test passed!\"",
-    "argv": "node -e 'console.log(process.argv)'"
-  }
-}

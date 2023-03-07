@@ -112,3 +112,5 @@ src/deps/c-ares/build
 src/bun.js/debug-bindings-obj
 
 failing-tests.txt
+test.txt
+myscript.sh

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { gcTick } from "../gc";
+import { gcTick } from "harness";
 
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {

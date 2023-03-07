@@ -56,7 +56,7 @@ For more fine-grained control, you can use the `Bun.serve` API directly and hand
 import type {Serve} from "bun";
 
 globalThis.count = globalThis.count ?? 0;
-globalThis.reloadCount++;
+globalThis.count++;
 
 // define server parameters
 const serverOptions: Serve = {

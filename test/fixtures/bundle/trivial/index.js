@@ -1,3 +1,5 @@
-import { fn } from "./fn";
+const Handler = import("./fn");
 
-console.log(fn(42));
+Handler.then(({ fn }) => {
+  console.log(fn(42));
+});

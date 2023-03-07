@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { close } from "fs";
 import { createServer } from "net";
-import { createCallCheckCtx } from "node-test-helpers";
+import { createCallCheckCtx } from "node-harness";
 
 describe("net.creeateServer listen", () => {
   it("should listen on IPv6 by default", done => {
@@ -226,7 +225,6 @@ it("should call end", done => {
   server.listen(
     mustCall(() => {
       const address = server.address();
-      console.log("address", address);
       Bun.connect({
         hostname: address.address,
         port: address.port,
@@ -448,3 +446,4 @@ it("should call abort with signal", done => {
       controller.abort();
     });
 });
+

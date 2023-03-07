@@ -992,7 +992,7 @@ pub const ListenSocket = opaque {
         us_listen_socket_close(@boolToInt(ssl), this);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
-        return us_socket_local_port(@boolToInt(ssl), this);
+        return us_socket_local_port(@boolToInt(ssl), @ptrCast(*uws.Socket, this));
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;

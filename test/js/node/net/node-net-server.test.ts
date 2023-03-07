@@ -209,6 +209,7 @@ it("should call end", done => {
 
   const server = createServer(socket => {
     socket.on("end", onEnd);
+    socket.end();
   });
 
   const closeAndFail = mustNotCall("end not called (timeout)", () => {
@@ -230,10 +231,7 @@ it("should call end", done => {
         port: address.port,
         socket: {
           data(socket) {},
-          open(socket) {
-            socket.write("Hello");
-            socket.end();
-          },
+          open(socket) {},
           connectError: closeAndFail, // connection failed
         },
       }).catch(closeAndFail);

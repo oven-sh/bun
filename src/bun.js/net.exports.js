@@ -133,6 +133,7 @@ export const Socket = (function (InternalSocket) {
         if (self.push(null)) return;
       }
       queue.push(null);
+      self.resume();
     }
 
     static #Drain(socket) {

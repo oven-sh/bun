@@ -548,7 +548,7 @@ class Server extends EventEmitter {
             } else {
               _socket.resume();
             }
-            
+
             self.#connections++;
             if (typeof connectionListener == "function") {
               connectionListener(_socket);

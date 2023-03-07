@@ -654,7 +654,7 @@ pub const ImportScanner = struct {
                     }
 
                     const namespace_ref = st.namespace_ref;
-                    const convert_star_to_clause = !p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0;
+                    const convert_star_to_clause = !p.options.bundle or (!p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                     if (convert_star_to_clause and !keep_unused_imports) {
                         st.star_name_loc = null;
@@ -665,35 +665,84 @@ pub const ImportScanner = struct {
                     const existing_items: ImportItemForNamespaceMap = p.import_items_for_namespace.get(namespace_ref) orelse
                         ImportItemForNamespaceMap.init(allocator);
 
-                    // ESM requires live bindings
-                    // CommonJS does not require live bindings
-                    // We load ESM in browsers & in Bun.js
-                    // We have to simulate live bindings for cases where the code is bundled
-                    // We do not know at this stage whether or not the import statement is bundled
-                    // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
-                    for (st.items) |item| {
-                        const is_default = strings.eqlComptime(item.alias, "default");
-                        record.contains_default_alias = record.contains_default_alias or is_default;
+                    if (p.options.bundle) {
+                        if (st.star_name_loc != null and existing_items.count() > 0) {
+                            var sorted = try allocator.alloc(string, existing_items.count());
+                            defer allocator.free(sorted);
+                            for (sorted, existing_items.keys()) |*result, alias| {
+                                result.* = alias;
+                            }
+                            strings.sortDesc(sorted);
 
-                        const name: LocRef = item.name;
-                        const name_ref = name.ref.?;
+                            // Create named imports for these property accesses. This will
+                            // cause missing imports to generate useful warnings.
+                            //
+                            // It will also improve bundling efficiency for internal imports
+                            // by still converting property accesses off the namespace into
+                            // bare identifiers even if the namespace is still needed.
+                            for (sorted) |alias| {
+                                const item = existing_items.get(alias).?;
+                                p.named_imports.put(
+                                    item.ref.?,
+                                    js_ast.NamedImport{
+                                        .alias = alias,
+                                        .alias_loc = item.loc,
+                                        .namespace_ref = namespace_ref,
+                                        .import_record_index = st.import_record_index,
+                                    },
+                                ) catch unreachable;
 
-                        try p.named_imports.put(name_ref, js_ast.NamedImport{
-                            .alias = item.alias,
-                            .alias_loc = name.loc,
-                            .namespace_ref = namespace_ref,
-                            .import_record_index = st.import_record_index,
-                        });
+                                const name: LocRef = item;
+                                const name_ref = name.ref.?;
 
-                        // Make sure the printer prints this as a property access
-                        var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
+                                // Make sure the printer prints this as a property access
+                                var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
 
-                        symbol.namespace_alias = G.NamespaceAlias{
-                            .namespace_ref = namespace_ref,
-                            .alias = item.alias,
-                            .import_record_index = st.import_record_index,
-                            .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
-                        };
+                                symbol.namespace_alias = G.NamespaceAlias{
+                                    .namespace_ref = namespace_ref,
+                                    .alias = alias,
+                                    .import_record_index = st.import_record_index,
+                                    .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
+                                };
+
+                                // Also record these automatically-generated top-level namespace alias symbols
+                                p.declared_symbols.append(p.allocator, .{
+                                    .ref = name_ref,
+                                    .is_top_level = true,
+                                }) catch unreachable;
+                            }
+                        }
+                    } else {
+                        // ESM requires live bindings
+                        // CommonJS does not require live bindings
+                        // We load ESM in browsers & in Bun.js
+                        // We have to simulate live bindings for cases where the code is bundled
+                        // We do not know at this stage whether or not the import statement is bundled
+                        // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
+                        for (st.items) |item| {
+                            const is_default = strings.eqlComptime(item.alias, "default");
+                            record.contains_default_alias = record.contains_default_alias or is_default;
+
+                            const name: LocRef = item.name;
+                            const name_ref = name.ref.?;
+
+                            try p.named_imports.put(name_ref, js_ast.NamedImport{
+                                .alias = item.alias,
+                                .alias_loc = name.loc,
+                                .namespace_ref = namespace_ref,
+                                .import_record_index = st.import_record_index,
+                            });
+
+                            // Make sure the printer prints this as a property access
+                            var symbol: *Symbol = &p.symbols.items[name_ref.innerIndex()];
+
+                            symbol.namespace_alias = G.NamespaceAlias{
+                                .namespace_ref = namespace_ref,
+                                .alias = item.alias,
+                                .import_record_index = st.import_record_index,
+                                .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
+                            };
+                        }
                     }
 
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
@@ -1779,10 +1828,11 @@ const AsyncPrefixExpression = enum(u2) {
     }
 };
 
-const IdentifierOpts = struct {
+const IdentifierOpts = packed struct {
     assign_target: js_ast.AssignTarget = js_ast.AssignTarget.none,
     is_delete_target: bool = false,
     was_originally_identifier: bool = false,
+    is_call_target: bool = false,
 };
 
 fn statementCaresAboutScope(stmt: Stmt) bool {
@@ -4532,6 +4582,11 @@ fn NewParser_(
                     p.symbols.items[ref.innerIndex()].original_name,
                 }) catch unreachable;
             }
+
+            // TODO: TypeScript namespace
+            // if (opts.assign_target == .none and !opts.is_delete_target and p.options.bundle) {
+
+            // }
 
             // Substitute an EImportIdentifier now if this is an import item
             if (p.is_import_item.contains(ref)) {
@@ -12400,7 +12455,12 @@ fn NewParser_(
                     value,
                     part,
                     loc,
-                    false,
+                    .{
+                        .is_call_target = false,
+                        .assign_target = .none,
+                        // .is_template_tag = false,
+                        .is_delete_target = false,
+                    },
                 )) |rewrote| {
                     value = rewrote;
                 } else {
@@ -14189,7 +14249,12 @@ fn NewParser_(
                             e_.target,
                             literal,
                             e_.index.loc,
-                            is_call_target,
+                            .{
+                                .is_call_target = is_call_target,
+                                // .is_template_tag = is_template_tag,
+                                .is_delete_target = is_delete_target,
+                                .assign_target = in.assign_target,
+                            },
                         )) |val| {
                             return val;
                         }
@@ -14393,7 +14458,10 @@ fn NewParser_(
                             e_.target,
                             e_.name,
                             e_.name_loc,
-                            is_call_target,
+                            .{
+                                .is_call_target = is_call_target,
+                                // .is_template_tag = p.template_tag != null,
+                            },
                         )) |_expr| {
                             return _expr;
                         }
@@ -15521,14 +15589,64 @@ fn NewParser_(
             target: js_ast.Expr,
             name: string,
             name_loc: logger.Loc,
-            is_call_target: bool,
+            identifier_opts: IdentifierOpts,
         ) ?Expr {
             switch (target.data) {
                 .e_identifier => |id| {
+
+                    // Rewrite property accesses on explicit namespace imports as an identifier.
+                    // This lets us replace them easily in the printer to rebind them to
+                    // something else without paying the cost of a whole-tree traversal during
+                    // module linking just to rewrite these EDot expressions.
+                    if (p.options.bundle) {
+                        if (p.import_items_for_namespace.getPtr(id.ref)) |import_items| {
+                            const ref = (import_items.get(name) orelse brk: {
+                                // Generate a new import item symbol in the module scope
+                                const new_item = LocRef{
+                                    .loc = name_loc,
+                                    .ref = p.newSymbol(.import, name) catch unreachable,
+                                };
+                                p.module_scope.generated.push(p.allocator, new_item.ref.?) catch unreachable;
+
+                                import_items.put(name, new_item) catch unreachable;
+                                p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
+
+                                var symbol = p.symbols.items[new_item.ref.?.innerIndex()];
+
+                                // Mark this as generated in case it's missing. We don't want to
+                                // generate errors for missing import items that are automatically
+                                // generated.
+                                symbol.import_item_status = .generated;
+
+                                break :brk new_item;
+                            }).ref.?;
+
+                            // Undo the usage count for the namespace itself. This is used later
+                            // to detect whether the namespace symbol has ever been "captured"
+                            // or whether it has just been used to read properties off of.
+                            //
+                            // The benefit of doing this is that if both this module and the
+                            // imported module end up in the same module group and the namespace
+                            // symbol has never been captured, then we don't need to generate
+                            // any code for the namespace at all.
+                            p.ignoreUsage(id.ref);
+
+                            // Track how many times we've referenced this symbol
+                            p.recordUsage(ref);
+
+                            return p.handleIdentifier(
+                                name_loc,
+                                E.Identifier{ .ref = ref },
+                                name,
+                                identifier_opts,
+                            );
+                        }
+                    }
+
                     // Rewrite "module.require()" to "require()" for Webpack compatibility.
                     // See https://github.com/webpack/webpack/pull/7750 for more info.
                     // This also makes correctness a little easier.
-                    if (is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
+                    if (identifier_opts.is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
                         p.ignoreUsage(p.module_ref);
                         p.recordUsage(p.require_ref);
                         return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);

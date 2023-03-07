@@ -1062,10 +1062,10 @@ const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCt
 const ResolvedExports = bun.StringArrayHashMapUnmanaged(ExportData);
 const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
 
-pub const WrapKind = enum {
-    none,
-    cjs,
-    esm,
+pub const WrapKind = enum(u2) {
+    none = 0,
+    cjs = 1,
+    esm = 2,
 };
 
 pub const ImportData = struct {
@@ -1189,8 +1189,6 @@ pub const JSMeta = struct {
     flags: Flags = .{},
 
     pub const Flags = packed struct {
-        wrap: WrapKind = WrapKind.none,
-
         /// This is true if this file is affected by top-level await, either by having
         /// a top-level await inside this file or by having an import/export statement
         /// that transitively imports such a file. It is forbidden to call "require()"
@@ -1218,6 +1216,8 @@ pub const JSMeta = struct {
         /// flag is used during the traversal that enforces this invariant, and is used
         /// to detect when the fixed point has been reached.
         did_wrap_dependencies: bool = false,
+
+        wrap: WrapKind = WrapKind.none,
     };
 };
 
@@ -2010,7 +2010,6 @@ const LinkerContext = struct {
                     // other file is empty
                     if (other_file >= exports_kind.len) continue;
                     const other_kind = exports_kind[other_file];
-                    const other_wrap = flags[other_file].wrap;
 
                     switch (record.kind) {
                         ImportKind.stmt => {
@@ -2036,7 +2035,7 @@ const LinkerContext = struct {
                             // the namespace object must be created.
                             if ((record.contains_import_star or record.contains_default_alias) and
                                 // TODO: hasLazyExport
-                                (other_wrap == .none))
+                                exports_kind[other_file] == .none)
                             {
                                 exports_kind[other_file] = .cjs;
                                 flags[other_file].wrap = .cjs;
@@ -2076,6 +2075,7 @@ const LinkerContext = struct {
                 // for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
+                    std.debug.assert(kind == .cjs);
                 }
             }
 
@@ -2220,21 +2220,22 @@ const LinkerContext = struct {
                         );
                     }
                     const export_kind = exports_kind[id];
-
+                    var flag = flags[id];
                     // If we're exporting as CommonJS and this file was originally CommonJS,
                     // then we'll be using the actual CommonJS "exports" and/or "module"
                     // symbols. In that case make sure to mark them as such so they don't
                     // get minified.
                     if ((output_format == .cjs or output_format == .preserve) and
                         entry_point_kinds[source_index].isEntryPoint() and
-                        export_kind == .cjs and flags[id].wrap == .none)
+                        export_kind == .cjs and flag.wrap == .none)
                     {
                         const exports_ref = symbols.follow(exports_refs[id]);
                         const module_ref = symbols.follow(module_refs[id].?);
                         symbols.get(exports_ref).?.kind = .unbound;
                         symbols.get(module_ref).?.kind = .unbound;
-                    } else if (flags[id].force_include_exports_for_entry_point or export_kind != .cjs) {
-                        flags[id].needs_exports_variable = true;
+                    } else if (flag.force_include_exports_for_entry_point or export_kind != .cjs) {
+                        flag.needs_exports_variable = true;
+                        flags[id] = flag;
                     }
 
                     const wrapped_ref = this.graph.ast.items(.wrapper_ref)[id] orelse continue;
@@ -2242,7 +2243,7 @@ const LinkerContext = struct {
 
                     // Create the wrapper part for wrapped files. This is needed by a later step.
                     this.createWrapperForFile(
-                        flags[id].wrap,
+                        flag.wrap,
                         // if this one is null, the AST does not need to be wrapped.
                         wrapped_ref,
                         &wrapper_part_indices[id],

@@ -100,7 +100,11 @@ pub const NumberRenamer = struct {
 
         // TODO: MustStartWithCapitalLetterForJSX
 
-        const name = scope.findUnusedName(r.allocator, symbol.original_name);
+        var name = scope.findUnusedName(r.allocator, symbol.original_name);
+
+        if (strings.eqlLong(name, symbol.original_name, true)) {
+            return;
+        }
 
         const new_len = @max(inner.len, ref.innerIndex() + 1);
         if (inner.cap < new_len) {

@@ -446,4 +446,3 @@ it("should call abort with signal", done => {
       controller.abort();
     });
 });
-

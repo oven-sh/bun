@@ -81,12 +81,10 @@ export const Socket = (function (InternalSocket) {
 })(
   class Socket extends Duplex {
     static _Handlers = {
-      close({ data: self }) {
-        Socket.#Close(self);
-        self.emit("close");
-      },
+      close: Socket.#Close,
       connectError(socket, error) {
         const self = socket.data;
+
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
@@ -99,10 +97,7 @@ export const Socket = (function (InternalSocket) {
         queue.push(buffer);
       },
       drain: Socket.#Drain,
-      end({ data: self }) {
-        Socket.#Close(self);
-        self.emit("end");
-      },
+      end: Socket.#Close,
       error(socket, error) {
         const self = socket.data;
         const callback = self.#writeCallback;
@@ -129,9 +124,9 @@ export const Socket = (function (InternalSocket) {
       binaryType: "buffer",
     };
 
-    static #Close(self) {
+    static #Close(socket) {
+      const self = socket.data;
       if (self.#closed) return;
-      self.unref();
       self.#closed = true;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
@@ -322,16 +317,6 @@ export const Socket = (function (InternalSocket) {
 
     resetAndDestroy() {
       this.#socket?.end();
-    }
-
-    pause() {
-      //TODO
-      return this;
-    }
-
-    resume() {
-      //TODO
-      return this;
     }
 
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -529,10 +514,7 @@ class Server extends EventEmitter {
         hostname,
         tls: false,
         socket: {
-          data({ data: self }, buffer) {
-            self.bytesRead += buffer.length;
-            self.emit("data", buffer);
-          },
+          data: SocketClass._Handlers.data,
           close(socket) {
             SocketClass._Handlers.close(socket);
             self.#connections--;

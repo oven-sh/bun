@@ -438,8 +438,10 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope arg2 = callFrame->uncheckedArgument(2);
-                encoding = parseEncoding(lexicalGlobalObject, scope, arg2.value());
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+                if (!arg2.value().isUndefined()) {
+                    encoding = parseEncoding(lexicalGlobalObject, scope, arg2.value());
+                    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+                }
             }
             auto startPtr = uint8Array->typedVector() + start;
             auto str_ = value.toWTFString(lexicalGlobalObject);
@@ -449,7 +451,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
                 throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
                 return JSC::JSValue::encode(jsUndefined());
             }
-        } else if (auto* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(value)) {
+        } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
             if (UNLIKELY(view->isDetached())) {
                 throwVMTypeError(lexicalGlobalObject, scope, "Uint8Array is detached"_s);
                 return JSValue::encode(jsUndefined());
@@ -464,7 +466,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
             auto* start = uint8Array->typedVector();
             auto* head = start;
             size_t remain = uint8Array->byteLength();
-            memcpy(head, view->typedVector(), length);
+            memmove(head, view->vector(), length);
             remain -= length;
             head += length;
             while (remain >= length) {
@@ -1071,7 +1073,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
             return JSC::JSValue::encode(jsUndefined());
         }
-    } else if (auto* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(value)) {
+    } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
         auto* startPtr = castedThis->typedVector() + start;
         auto* head = startPtr;
         size_t remain = end - start;
@@ -1087,7 +1089,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             return JSC::JSValue::encode(jsUndefined());
         }
 
-        memcpy(head, view->typedVector(), length);
+        memmove(head, view->vector(), length);
         remain -= length;
         head += length;
         while (remain >= length) {
@@ -1186,8 +1188,10 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
 
             if (callFrame->argumentCount() > 2) {
                 EnsureStillAliveScope encodingValue = callFrame->uncheckedArgument(2);
-                encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue.value());
-                RETURN_IF_EXCEPTION(scope, -1);
+                if (!encodingValue.value().isUndefined()) {
+                    encoding = parseEncoding(lexicalGlobalObject, scope, encodingValue.value());
+                    RETURN_IF_EXCEPTION(scope, -1);
+                }
             }
         }
     }
@@ -1439,9 +1443,10 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     case 3:
     case 1: {
         EnsureStillAliveScope arg1 = callFrame->uncheckedArgument(0);
-        encoding = parseEncoding(lexicalGlobalObject, scope, arg1.value());
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
-
+        if (!arg1.value().isUndefined()) {
+            encoding = parseEncoding(lexicalGlobalObject, scope, arg1.value());
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(jsUndefined()));
+        }
         if (callFrame->argumentCount() == 1)
             break;
     }

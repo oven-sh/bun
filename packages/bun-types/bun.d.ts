@@ -2491,7 +2491,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx";
+    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
   }
 
   interface OnLoadResultObject {

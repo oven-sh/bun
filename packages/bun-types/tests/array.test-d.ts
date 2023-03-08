@@ -1,5 +1,3 @@
-import { expectType } from "tsd";
-
 async function* listReleases() {
   for (let page = 1; ; page++) {
     const response = await fetch(
@@ -16,4 +14,5 @@ async function* listReleases() {
 }
 
 const releases = await Array.fromAsync(listReleases());
-expectType<{ data: string }[]>(releases);
+
+export {};

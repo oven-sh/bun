@@ -1,6 +1,5 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/blob_test.ts
-
 import { assert, assertEquals, assertStringIncludes } from "deno:harness";
 import { concat } from "deno:harness";
 Deno.test(function blobString() {

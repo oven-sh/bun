@@ -1,6 +1,5 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/body_test.ts
-
 import { assert, assertEquals } from "deno:harness";
 function buildBody(body: any, headers?: Headers): Body {
     const stub = new Request("http://foo/", {

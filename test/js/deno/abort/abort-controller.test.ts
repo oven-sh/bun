@@ -1,6 +1,5 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/abort_controller_test.ts
-
 import { assert, assertEquals } from "deno:harness";
 Deno.test(function basicAbortController() {
     const controller = new AbortController();

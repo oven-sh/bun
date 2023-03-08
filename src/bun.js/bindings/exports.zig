@@ -2080,6 +2080,20 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Error => {
+                    if (this.snapshot_format) {
+                        var classname = ZigString.Empty;
+                        value.getClassName(this.globalThis, &classname);
+                        var message_string = ZigString.Empty;
+                        if (value.get(this.globalThis, "message")) |message_prop| {
+                            message_prop.toZigString(&message_string, this.globalThis);
+                        }
+                        if (message_string.len == 0) {
+                            writer.print("[{s}]", .{classname});
+                            return;
+                        }
+                        writer.print("[{s}: {s}]", .{ classname, message_string });
+                        return;
+                    }
                     JS.VirtualMachine.get().printErrorlikeObject(
                         value,
                         null,
@@ -2087,7 +2101,6 @@ pub const ZigConsoleClient = struct {
                         Writer,
                         writer_,
                         enable_ansi_colors,
-                        this.snapshot_format,
                     );
                 },
                 .Class => {

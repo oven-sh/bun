@@ -13,6 +13,4 @@ async function* listReleases() {
   }
 }
 
-const releases = await Array.fromAsync(listReleases());
-
-export {};
+export const releases = await Array.fromAsync(listReleases());

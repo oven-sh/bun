@@ -2391,7 +2391,7 @@ pub const Blob = struct {
         callframe: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
         var allocator = globalThis.allocator();
-        var arguments_ = callframe.arguments(2);
+        var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
 
         if (this.size == 0) {
@@ -2410,51 +2410,84 @@ pub const Blob = struct {
         // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
         var relativeEnd: i64 = @intCast(i64, this.size);
 
+        if (args.ptr[0].isString()) {
+            args.ptr[2] = args.ptr[0];
+            args.ptr[1] = .zero;
+            args.ptr[0] = .zero;
+            args.len = 3;
+        } else if (args.ptr[1].isString()) {
+            args.ptr[2] = args.ptr[1];
+            args.ptr[1] = .zero;
+            args.len = 3;
+        }
+
         var args_iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args);
         if (args_iter.nextEat()) |start_| {
-            const start = start_.toInt64();
-            if (start < 0) {
-                // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeStart = @intCast(i64, @max(start + @intCast(i64, this.size), 0));
-            } else {
-                // Otherwise, let relativeStart be start.
-                relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
+            if (start_.isNumber()) {
+                const start = start_.toInt64();
+                if (start < 0) {
+                    // If the optional start parameter is negative, let relativeStart be start + size.
+                    relativeStart = @intCast(i64, @max(start +% @intCast(i64, this.size), 0));
+                } else {
+                    // Otherwise, let relativeStart be start.
+                    relativeStart = @min(@intCast(i64, start), @intCast(i64, this.size));
+                }
             }
         }
 
         if (args_iter.nextEat()) |end_| {
-            const end = end_.toInt64();
-            // If end is negative, let relativeEnd be max((size + end), 0).
-            if (end < 0) {
-                // If the optional start parameter is negative, let relativeStart be start + size.
-                relativeEnd = @intCast(i64, @max(end + @intCast(i64, this.size), 0));
-            } else {
-                // Otherwise, let relativeStart be start.
-                relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
+            if (end_.isNumber()) {
+                const end = end_.toInt64();
+                // If end is negative, let relativeEnd be max((size + end), 0).
+                if (end < 0) {
+                    // If the optional start parameter is negative, let relativeStart be start + size.
+                    relativeEnd = @intCast(i64, @max(end +% @intCast(i64, this.size), 0));
+                } else {
+                    // Otherwise, let relativeStart be start.
+                    relativeEnd = @min(@intCast(i64, end), @intCast(i64, this.size));
+                }
             }
         }
 
         var content_type: string = "";
+        var content_type_was_allocated = false;
         if (args_iter.nextEat()) |content_type_| {
-            if (content_type_.isString()) {
-                var zig_str = content_type_.getZigString(globalThis);
-                var slicer = zig_str.toSlice(bun.default_allocator);
-                defer slicer.deinit();
-                var slice = slicer.slice();
-                var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
-                content_type = strings.copyLowercase(slice, content_type_buf);
+            inner: {
+                if (content_type_.isString()) {
+                    var zig_str = content_type_.getZigString(globalThis);
+                    var slicer = zig_str.toSlice(bun.default_allocator);
+                    defer slicer.deinit();
+                    var slice = slicer.slice();
+                    if (!strings.isAllASCII(slice)) {
+                        break :inner;
+                    }
+
+                    if (globalThis.bunVM().mimeType(slice)) |mime| {
+                        content_type = mime.value;
+                        break :inner;
+                    }
+
+                    content_type_was_allocated = slice.len > 0;
+                    var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                    content_type = strings.copyLowercase(slice, content_type_buf);
+                }
             }
         }
 
-        const len = @intCast(SizeType, @max(relativeEnd - relativeStart, 0));
+        const len = @intCast(SizeType, @max(relativeEnd -| relativeStart, 0));
 
         // This copies over the is_all_ascii flag
         // which is okay because this will only be a <= slice
         var blob = this.dupe();
         blob.offset = @intCast(SizeType, relativeStart);
         blob.size = len;
+
+        // infer the content type if it was not specified
+        if (content_type.len == 0 and this.content_type.len > 0 and !this.content_type_allocated)
+            content_type = this.content_type;
+
         blob.content_type = content_type;
-        blob.content_type_allocated = content_type.len > 0;
+        blob.content_type_allocated = content_type_was_allocated;
 
         var blob_ = allocator.create(Blob) catch unreachable;
         blob_.* = blob;
@@ -2474,19 +2507,35 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         value: JSC.JSValue,
     ) callconv(.C) bool {
-        var zig_str = value.getZigString(globalThis);
-        if (zig_str.is16Bit())
-            return false;
+        var zig_str = if (value.isString())
+            value.getZigString(globalThis)
+        else
+            ZigString.Empty;
 
-        var slice = zig_str.trimmedSlice();
-        if (strings.eql(slice, this.content_type))
+        if (!zig_str.isAllASCII()) {
+            zig_str = ZigString.Empty;
+        }
+
+        if (zig_str.eql(ZigString.init(this.content_type))) {
             return true;
+        }
 
         const prev_content_type = this.content_type;
         {
-            defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
-            var content_type_buf = globalThis.allocator().alloc(u8, slice.len) catch unreachable;
-            this.content_type = strings.copyLowercase(slice, content_type_buf);
+            var slicer = zig_str.toSlice(bun.default_allocator);
+            defer slicer.deinit();
+            const allocated = this.content_type_allocated;
+            defer if (allocated) bun.default_allocator.free(prev_content_type);
+            if (globalThis.bunVM().mimeType(slicer.slice())) |mime| {
+                this.content_type = mime.value;
+                this.content_type_allocated = false;
+                return true;
+            }
+            var content_type_buf = globalThis.allocator().alloc(u8, slicer.len) catch {
+                globalThis.throwOutOfMemory();
+                return false;
+            };
+            this.content_type = strings.copyLowercase(slicer.slice(), content_type_buf);
         }
 
         this.content_type_allocated = true;
@@ -2602,13 +2651,22 @@ pub const Blob = struct {
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
                         if (options.get(globalThis, "type")) |content_type| {
-                            if (content_type.isString()) {
-                                var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
-                                defer content_type_str.deinit();
-                                var slice = content_type_str.slice();
-                                var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
-                                blob.content_type = strings.copyLowercase(slice, content_type_buf);
-                                blob.content_type_allocated = true;
+                            inner: {
+                                if (content_type.isString()) {
+                                    var content_type_str = content_type.toSlice(globalThis, bun.default_allocator);
+                                    defer content_type_str.deinit();
+                                    var slice = content_type_str.slice();
+                                    if (!strings.isAllASCII(slice)) {
+                                        break :inner;
+                                    }
+                                    if (globalThis.bunVM().mimeType(slice)) |mime| {
+                                        blob.content_type = mime.value;
+                                        break :inner;
+                                    }
+                                    var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
+                                    blob.content_type = strings.copyLowercase(slice, content_type_buf);
+                                    blob.content_type_allocated = true;
+                                }
                             }
                         }
                     }

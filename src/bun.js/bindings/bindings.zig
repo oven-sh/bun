@@ -159,6 +159,9 @@ pub const ZigString = extern struct {
     }
 
     pub fn eql(this: ZigString, other: ZigString) bool {
+        if (this.len == 0 or other.len == 0)
+            return this.len == other.len;
+
         const left_utf16 = this.is16Bit();
         const right_utf16 = other.is16Bit();
 
@@ -2276,6 +2279,10 @@ pub const JSGlobalObject = extern struct {
         return this.bunVM().allocator;
     }
 
+    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -3454,8 +3461,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return res;
     }
 
-    pub fn isString(this: JSValue) bool {
-        return cppFn("isString", .{this});
+    pub inline fn isString(this: JSValue) bool {
+        if (!this.isCell())
+            return false;
+
+        return jsType(this).isStringLike();
     }
     pub fn isBigInt(this: JSValue) bool {
         return cppFn("isBigInt", .{this});
@@ -3968,7 +3978,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "isObject",
         "isPrimitive",
         "isSameValue",
-        "isString",
         "isSymbol",
         "isTerminationException",
         "isUInt32AsAnyInt",

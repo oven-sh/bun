@@ -198,6 +198,7 @@ pub const Arguments = struct {
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
+        clap.parseParam("--updateSnapshot                  Update snapshot files") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 

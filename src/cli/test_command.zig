@@ -355,7 +355,7 @@ pub const TestCommand = struct {
         Output.flush();
 
         const args = try std.process.argsAlloc(ctx.allocator);
-        jest.Jest.Snapshots.update_snapshots = strings.leftHasAnyInRight(args, &.{ "-u", "--update" });
+        jest.Jest.Snapshots.update_snapshots = strings.leftHasAnyInRight(args, &.{"--updateSnapshot"});
         std.process.argsFree(ctx.allocator, args);
 
         var env_loader = brk: {

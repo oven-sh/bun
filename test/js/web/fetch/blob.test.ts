@@ -12,6 +12,20 @@ test("Blob.slice", () => {
   expect(b3.size).toBe(0);
   const b4 = blob.slice(0, 10);
   expect(b4.size).toBe(blob.size);
+
+  expect(blob.slice().size).toBe(blob.size);
+  expect(blob.slice(0).size).toBe(blob.size);
+  expect(blob.slice(NaN).size).toBe(blob.size);
+  expect(blob.slice(0, Infinity).size).toBe(blob.size);
+  expect(blob.slice(-Infinity).size).toBe(blob.size);
+  expect(blob.slice(0, NaN).size).toBe(0);
+  // @ts-expect-error
+  expect(blob.slice(Symbol(), "-123").size).toBe(6);
+  expect(blob.slice(Object.create(null), "-123").size).toBe(6);
+  // @ts-expect-error
+  expect(blob.slice(null, "-123").size).toBe(6);
+  expect(blob.slice(0, 10).size).toBe(blob.size);
+  expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
 });
 
 test("new Blob", () => {

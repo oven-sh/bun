@@ -2507,19 +2507,31 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         value: JSC.JSValue,
     ) callconv(.C) bool {
-        var zig_str = value.getZigString(globalThis);
-        if (zig_str.is16Bit())
-            return false;
+        const zig_str = if (value.isString())
+            value.getZigString(globalThis)
+        else
+            ZigString.Empty;
 
-        var slice = zig_str.trimmedSlice();
-        if (strings.eql(slice, this.content_type))
+        if (zig_str.eql(ZigString.init(this.content_type))) {
             return true;
+        }
 
         const prev_content_type = this.content_type;
         {
-            defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
-            var content_type_buf = globalThis.allocator().alloc(u8, slice.len) catch unreachable;
-            this.content_type = strings.copyLowercase(slice, content_type_buf);
+            var slicer = zig_str.toSlice(bun.default_allocator);
+            defer slicer.deinit();
+            const allocated = this.content_type_allocated;
+            defer if (allocated) bun.default_allocator.free(prev_content_type);
+            if (globalThis.bunVM().mimeType(slicer.slice())) |mime| {
+                this.content_type = mime.value;
+                this.content_type_allocated = false;
+                return true;
+            }
+            var content_type_buf = globalThis.allocator().alloc(u8, slicer.len) catch {
+                globalThis.throwOutOfMemory();
+                return false;
+            };
+            this.content_type = strings.copyLowercase(slicer.slice(), content_type_buf);
         }
 
         this.content_type_allocated = true;

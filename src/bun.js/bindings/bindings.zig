@@ -2276,6 +2276,10 @@ pub const JSGlobalObject = extern struct {
         return this.bunVM().allocator;
     }
 
+    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,

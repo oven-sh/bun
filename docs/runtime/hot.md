@@ -10,14 +10,20 @@ $ bun --hot server.ts
 Starting from the entrypoint (`server.ts` in the example above), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a change is detected, Bun performs a "soft reload". All files are re-evaluated, but all global state (notably, the `globalThis` object) is persisted.
 
 ```ts#server.ts
+// make TypeScript happy
+declare global {
+  var count: number;
+}
+
 globalThis.count = globalThis.count ?? 0;
 console.log(`Reloaded ${globalThis.count} times`);
 globalThis.count++;
 
+// prevent `bun run` from exiting
 setInterval(function () {}, 1000000);
 ```
 
-If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file. The call to `setInterval` is there to prevent the process from exiting.
+If you run this file with `bun --hot server.ts`, you'll see the reload count increment every time you save the file.
 
 ```bash
 $ bun --hot index.ts
@@ -53,7 +59,13 @@ Unlike an explicit call to `Bun.serve`, the object-based syntax works out of the
 For more fine-grained control, you can use the `Bun.serve` API directly and handle the server reloading manually.
 
 ```ts#server.ts
-import type {Serve} from "bun";
+import type {Serve, Server} from "bun";
+
+// make TypeScript happy
+declare global {
+  var count: number;
+  var server: Server;
+}
 
 globalThis.count = globalThis.count ?? 0;
 globalThis.count++;

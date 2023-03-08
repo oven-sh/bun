@@ -68,10 +68,6 @@
     "remotePath": "cli/tests/unit/text_encoding_test.ts"
   },
   {
-    "path": "websocket/websocket.test.ts",
-    "remotePath": "cli/tests/unit/websocket_test.ts"
-  },
-  {
     "path": "v8/error.test.ts",
     "remotePath": "cli/tests/unit/error_stack_test.ts"
   }

@@ -44,4 +44,16 @@ describe("toMatchSnapshot errors", () => {
       expect({ a: "oops" }).toMatchSnapshot({ a: "oops" }, "right spot");
     }).not.toThrow();
   });
+
+  it("should throw if expect.any() doesn't received a constructor", () => {
+    expect(() => {
+      expect({ a: 4 }).toMatchSnapshot({ a: expect.any() });
+    }).toThrow();
+    expect(() => {
+      expect({ a: 5 }).toMatchSnapshot({ a: expect.any(5) });
+    }).toThrow();
+    expect(() => {
+      expect({ a: 4 }).toMatchSnapshot({ a: expect.any("not a constructor") });
+    }).toThrow();
+  });
 });

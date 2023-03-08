@@ -757,11 +757,7 @@ pub const ExpectAny = struct {
         constructor.ensureStillAlive();
         if (!constructor.isConstructor()) {
             const fmt = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
@@ -2462,12 +2458,7 @@ pub const Expect = struct {
         if (not) {
             const signature = comptime getSignature("toMatchSnapshot", "", true);
             const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{});
-            return .zero;
+            globalObject.throwPretty(fmt, .{});
         }
 
         var hint_string: ZigString = ZigString.Empty;
@@ -2485,11 +2476,7 @@ pub const Expect = struct {
                 if (!arguments[0].isObject()) {
                     const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
                     const fmt = signature ++ "\n\nMatcher error: Expected <green>properties<r> must be an object\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                        return .zero;
-                    }
-                    globalObject.throw(Output.prettyFmt(fmt, false), .{});
+                    globalObject.throwPretty(fmt, .{});
                     return .zero;
                 }
 
@@ -2512,11 +2499,7 @@ pub const Expect = struct {
         if (!value.isObject() and property_matchers != null) {
             const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
             const fmt = signature ++ "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            globalObject.throwPretty(fmt, .{});
             return .zero;
         }
 
@@ -2537,11 +2520,7 @@ pub const Expect = struct {
                     "\n\nReceived: {any}\n";
 
                 var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{value.toFmt(globalObject, &formatter)});
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{value.toFmt(globalObject, &formatter)});
+                globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
                 return .zero;
             }
         }
@@ -2572,11 +2551,7 @@ pub const Expect = struct {
                 .globalObject = globalObject,
             };
 
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{diff_format});
-                return .zero;
-            }
-            globalObject.throw(Output.prettyFmt(fmt, false), .{diff_format});
+            globalObject.throwPretty(fmt, .{diff_format});
             return .zero;
         }
 

@@ -2443,6 +2443,18 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, this.createErrorInstance(fmt, args));
     }
 
+    pub fn throwPretty(
+        this: *JSGlobalObject,
+        comptime fmt: string,
+        args: anytype,
+    ) void {
+        if (Output.enable_ansi_colors) {
+            this.vm().throwError(this, this.createErrorInstance(Output.prettyFmt(fmt, true), args));
+        } else {
+            this.vm().throwError(this, this.createErrorInstance(Output.prettyFmt(fmt, false), args));
+        }
+    }
+
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,

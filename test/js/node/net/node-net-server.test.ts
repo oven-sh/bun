@@ -2,7 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { createServer } from "net";
 import { createCallCheckCtx } from "node-harness";
 
+import { realpathSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
+
 describe("net.createServer listen", () => {
+
   it("should listen on IPv6 by default", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -143,6 +150,25 @@ describe("net.createServer listen", () => {
         expect(address.address).toStrictEqual("127.0.0.1");
         expect(address.port).toStrictEqual(65534);
         expect(address.family).toStrictEqual("IPv4");
+        server.close();
+      }),
+    );
+    done();
+  });
+
+
+  it("should listen on unix domain socket", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server = createServer();
+
+    server.on("error", mustNotCall());
+
+    server.listen(
+      socket_domain,
+      mustCall(() => {
+        const address = server.address();
+        expect(address).toStrictEqual(socket_domain);
         server.close();
       }),
     );

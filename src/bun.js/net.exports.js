@@ -260,9 +260,14 @@ export const Socket = (function (InternalSocket) {
     connect(port, host, connectListener) {
       // TODO support IPC sockets
       var path;
-      if (arguments.length === 1 && typeof port === "string") {
+      if (typeof port === "string") {
         path = port;
         port = undefined;
+
+        if (typeof host === "function") {
+          connectListener = host;
+          host = undefined;
+        }
       } else if (typeof host == "function") {
         if (typeof port === "string") {
           path = port;
@@ -438,6 +443,7 @@ export const connect = createConnection;
 class Server extends EventEmitter {
   #server;
   #listening;
+  #path;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
@@ -496,6 +502,10 @@ class Server extends EventEmitter {
 
   address() {
     if (this.#server) {
+      if(this.#path) {
+        return this.#path;
+      }
+      
       //TODO: fix adress when host is passed
       let address = this.#server.hostname;
       const type = isIP(address);
@@ -507,7 +517,6 @@ class Server extends EventEmitter {
           family: type ? `IPv${type}` : undefined,
         };
       }
-
       if (type) {
         return {
           address,
@@ -531,36 +540,59 @@ class Server extends EventEmitter {
   }
 
   listen(port, hostname, onListen) {
-    if (typeof hostname === "function") {
-      onListen = hostname;
-      hostname = undefined;
+    let backlog;
+    //port is actually path
+    if (typeof port === "string") {
+      if (Number.isSafeInteger(hostname)) {
+        if (hostname > 0) {
+          //hostname is backlog
+          backlog = hostname;
+        }
+      } else if (typeof hostname === "function") {
+        //hostname is callback
+        onListen = hostname;
+      }
+
+      hostname = port;
+      this.#path = hostname;
+      port = undefined;
+    } else {
+      if (typeof hostname === "function") {
+        onListen = hostname;
+        hostname = undefined;
+      }
+
+      if (typeof port === "function") {
+        onListen = port;
+        port = 0;
+      } else if (typeof port === "object") {
+        port?.signal?.addEventListener("abort", () => this.close());
+
+        hostname = port?.host;
+
+        port = port?.port;
+        const path = port?.path;
+        if (!port && path) {
+          hostname = path;
+          port = undefined;
+        } else if (!Number.isSafeInteger(port) || port < 0) {
+          port = 0;
+        }
+        // port <number>
+        // host <string>
+        // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
+        // backlog <number> Common parameter of server.listen() functions.
+        // exclusive <boolean> Default: false
+        // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
+        // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
+        // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
+        // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
+
+        if (typeof port?.callback === "function") onListen = port?.callback;
+      } else if (!Number.isSafeInteger(port) || port < 0) {
+        port = 0;
+      }
     }
-
-    if (typeof port === "function") {
-      onListen = port;
-      port = 0;
-    } else if (typeof port === "object") {
-      port?.signal?.addEventListener("abort", () => this.close());
-
-      hostname = port?.host;
-      port = port?.port || 0;
-
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
-
-      if (typeof port?.callback === "function") onListen = port?.callback;
-    }
-    if (typeof port !== "number") {
-      port = 0;
-    }
-
     hostname = hostname || "::";
 
     try {

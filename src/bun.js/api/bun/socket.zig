@@ -283,13 +283,15 @@ pub const SocketConfig = struct {
                     }
                 }
 
-                if (port_value.isEmptyOrUndefinedOrNull() or !port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
+                if (port_value.isEmptyOrUndefinedOrNull()) {
+                    port = null;
+                } else if (!port_value.isNumber() or port_value.toInt64() > std.math.maxInt(u16) or port_value.toInt64() < 0) {
                     exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
                     return null;
+                } else {
+                    port = port_value.toU16();
                 }
-
-                port = port_value.toU16();
-
+                
                 if (hostname_or_unix.len == 0) {
                     exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
                     return null;

@@ -109,9 +109,6 @@ Deno.test(function blobConstructorNameIsBlob() {
 
 Deno.test(function blobCustomInspectFunction() {
   const blob = new Blob();
-  assertEquals(
-    Deno.inspect(blob),
-    `Blob { size: 0, type: "" }`,
-  );
+  assertEquals(Deno.inspect(blob), `Blob { size: 0, type: "" }`);
   assertStringIncludes(Deno.inspect(Blob.prototype), "Blob");
 });

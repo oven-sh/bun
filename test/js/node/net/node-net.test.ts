@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
-import { realpathSync } from "fs";
+import { realpathSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const socket_domain = join(realpathSync(tmpdir()), "node-net");
+const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -187,6 +187,10 @@ describe("net.Socket read", () => {
             .on("connect", () => {
               expect(socket).toBeDefined();
               expect(socket.connecting).toBe(false);
+            })
+            .setEncoding("utf8")
+            .on("data", chunk => {
+              data += chunk;
             })
             .on("end", () => {
               try {

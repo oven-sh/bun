@@ -27,6 +27,18 @@ file_polls_: ?*JSC.FilePoll.HiveArray = null,
 
 global_dns_data: ?*JSC.DNS.GlobalData = null,
 
+mime_types: ?bun.HTTP.MimeType.Map = null,
+
+pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []const u8) ?bun.HTTP.MimeType {
+    if (this.mime_types == null) {
+        this.mime_types = bun.HTTP.MimeType.createHashTable(
+            allocator,
+        ) catch @panic("Out of memory");
+    }
+
+    return this.mime_types.?.get(str);
+}
+
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *JSC.FilePoll.HiveArray {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(JSC.FilePoll.HiveArray) catch unreachable;

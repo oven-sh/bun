@@ -5,34 +5,28 @@ pub const DecodeResult = struct {
     fail: bool = false,
 };
 
+const mixed_decoder = brk: {
+    var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
+        std.ascii.control_code.vt,
+        std.ascii.control_code.ff,
+    });
+
+    for (zig_base64.url_safe_alphabet_chars[62..], 62..) |c, i| {
+        decoder.decoder.char_to_index[c] = @intCast(u8, i);
+    }
+
+    break :brk decoder;
+};
+
 pub fn decode(destination: []u8, source: []const u8) DecodeResult {
     var wrote: usize = 0;
-    const result = zig_base64.standard.decoderWithIgnore(&[_]u8{
-        ' ',
-        '\n',
-        '\r',
-        '\t',
-        std.ascii.control_code.vt,
-    }).decode(destination, source, &wrote) catch {
+    mixed_decoder.decode(destination, source, &wrote) catch {
         return .{
             .written = wrote,
             .fail = true,
         };
     };
-
-    return .{ .written = result, .fail = false };
-}
-
-pub fn decodeURLSafe(destination: []u8, source: []const u8) DecodeResult {
-    var wrote: usize = 0;
-    const result = urlsafe.decode(destination, source, &wrote) catch {
-        return .{
-            .written = wrote,
-            .fail = true,
-        };
-    };
-
-    return .{ .written = result, .fail = false };
+    return .{ .written = wrote, .fail = false };
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
@@ -57,14 +51,6 @@ pub fn decodeLen(source: anytype) usize {
 pub fn encodeLen(source: anytype) usize {
     return zig_base64.standard.Encoder.calcSize(source.len);
 }
-
-pub const urlsafe = zig_base64.Base64DecoderWithIgnore.init(
-    zig_base64.url_safe_alphabet_chars,
-    null,
-    "= \t\r\n" ++ [_]u8{ std.ascii.control_code.vt, std.ascii.control_code.ff },
-);
-
-pub const urlsafeEncoder = zig_base64.url_safe_no_pad.Encoder;
 
 // This is just std.base64 copy-pasted
 // with support for returning how many bytes were decoded
@@ -118,7 +104,7 @@ const zig_base64 = struct {
 
     pub const url_safe_alphabet_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".*;
     fn urlSafeBase64DecoderWithIgnore(ignore: []const u8) Base64DecoderWithIgnore {
-        return Base64DecoderWithIgnore.init(url_safe_alphabet_chars, null, ignore);
+        return Base64DecoderWithIgnore.init(url_safe_alphabet_chars, '=', ignore);
     }
 
     /// URL-safe Base64 codecs, with padding
@@ -316,7 +302,7 @@ const zig_base64 = struct {
 
         /// Return the maximum possible decoded size for a given input length - The actual length may be less if the input includes padding
         /// `InvalidPadding` is returned if the input length is not valid.
-        pub fn calcSizeUpperBound(decoder_with_ignore: *const Base64DecoderWithIgnore, source_len: usize) Error!usize {
+        pub fn calcSizeUpperBound(decoder_with_ignore: *const Base64DecoderWithIgnore, source_len: usize) usize {
             var result = source_len / 4 * 3;
             if (decoder_with_ignore.decoder.pad_char == null) {
                 const leftover = source_len % 4;
@@ -329,7 +315,7 @@ const zig_base64 = struct {
         /// Invalid padding results in error.InvalidPadding.
         /// Decoding more data than can fit in dest results in error.NoSpaceLeft. See also ::calcSizeUpperBound.
         /// Returns the number of bytes written to dest.
-        pub fn decode(decoder_with_ignore: *const Base64DecoderWithIgnore, dest: []u8, source: []const u8, wrote: *usize) Error!usize {
+        pub fn decode(decoder_with_ignore: *const Base64DecoderWithIgnore, dest: []u8, source: []const u8, wrote: *usize) Error!void {
             const decoder = &decoder_with_ignore.decoder;
             var acc: u12 = 0;
             var acc_len: u4 = 0;
@@ -337,16 +323,21 @@ const zig_base64 = struct {
             var leftover_idx: ?usize = null;
 
             defer {
-                wrote.* = leftover_idx orelse dest_idx;
+                wrote.* = dest_idx;
             }
 
             for (source, 0..) |c, src_idx| {
                 if (decoder_with_ignore.char_is_ignored[c]) continue;
                 const d = decoder.char_to_index[c];
                 if (d == Base64Decoder.invalid_char) {
-                    if (decoder.pad_char == null or c != decoder.pad_char.?) return error.InvalidCharacter;
-                    leftover_idx = src_idx;
-                    break;
+                    if (decoder.pad_char) |pad_char| {
+                        if (c == pad_char) {
+                            leftover_idx = src_idx;
+                            break;
+                        }
+                    }
+                    if (decoder_with_ignore.char_is_ignored[Base64Decoder.invalid_char]) continue;
+                    return error.InvalidCharacter;
                 }
                 acc = (acc << 6) + d;
                 acc_len += 6;
@@ -357,27 +348,26 @@ const zig_base64 = struct {
                     dest_idx += 1;
                 }
             }
-            if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) {
-                return error.InvalidPadding;
-            }
-            const padding_len = acc_len / 2;
-            if (leftover_idx == null) {
-                if (decoder.pad_char != null and padding_len != 0) return error.InvalidPadding;
-                return dest_idx;
-            }
-            var leftover = source[leftover_idx.?..];
+            if (acc_len > 4 or (acc & (@as(u12, 1) << acc_len) - 1) != 0) return error.InvalidPadding;
+
             if (decoder.pad_char) |pad_char| {
-                var padding_chars: usize = 0;
-                for (leftover) |c| {
-                    if (decoder_with_ignore.char_is_ignored[c]) continue;
-                    if (c != pad_char) {
-                        return if (c == Base64Decoder.invalid_char) error.InvalidCharacter else error.InvalidPadding;
+                const padding_len = acc_len / 2;
+
+                if (leftover_idx) |idx| {
+                    var leftover = source[idx..];
+                    var padding_chars: usize = 0;
+                    for (leftover) |c| {
+                        if (decoder_with_ignore.char_is_ignored[c]) continue;
+                        if (c != pad_char) {
+                            return if (c == Base64Decoder.invalid_char) error.InvalidCharacter else error.InvalidPadding;
+                        }
+                        padding_chars += 1;
                     }
-                    padding_chars += 1;
+                    if (padding_chars != padding_len) return error.InvalidPadding;
+                } else if (padding_len > 0) {
+                    return error.InvalidPadding;
                 }
-                if (padding_chars != padding_len) return error.InvalidPadding;
             }
-            return dest_idx;
         }
     };
 

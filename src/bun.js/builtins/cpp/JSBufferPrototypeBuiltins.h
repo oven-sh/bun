@@ -102,6 +102,26 @@ extern const int s_jsBufferPrototypeReadUInt32BECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32BECodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32BECodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32BECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeReadIntLECode;
+extern const int s_jsBufferPrototypeReadIntLECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeReadIntLECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeReadIntLECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntLECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeReadIntBECode;
+extern const int s_jsBufferPrototypeReadIntBECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeReadIntBECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeReadIntBECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntBECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeReadUIntLECode;
+extern const int s_jsBufferPrototypeReadUIntLECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeReadUIntLECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeReadUIntLECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntLECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeReadUIntBECode;
+extern const int s_jsBufferPrototypeReadUIntBECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeReadUIntBECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeReadUIntBECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntBECodeImplementationVisibility;
 extern const char* const s_jsBufferPrototypeReadFloatLECode;
 extern const int s_jsBufferPrototypeReadFloatLECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeReadFloatLECodeConstructAbility;
@@ -192,6 +212,26 @@ extern const int s_jsBufferPrototypeWriteUInt32BECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32BECodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32BECodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32BECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeWriteIntLECode;
+extern const int s_jsBufferPrototypeWriteIntLECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeWriteIntLECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeWriteIntLECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntLECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeWriteIntBECode;
+extern const int s_jsBufferPrototypeWriteIntBECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeWriteIntBECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeWriteIntBECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntBECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeWriteUIntLECode;
+extern const int s_jsBufferPrototypeWriteUIntLECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntLECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntLECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntLECodeImplementationVisibility;
+extern const char* const s_jsBufferPrototypeWriteUIntBECode;
+extern const int s_jsBufferPrototypeWriteUIntBECodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntBECodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntBECodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntBECodeImplementationVisibility;
 extern const char* const s_jsBufferPrototypeWriteFloatLECode;
 extern const int s_jsBufferPrototypeWriteFloatLECodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatLECodeConstructAbility;
@@ -332,11 +372,6 @@ extern const int s_jsBufferPrototypeOffsetCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility;
-extern const char* const s_jsBufferPrototypeInitializeBunBufferCode;
-extern const int s_jsBufferPrototypeInitializeBunBufferCodeLength;
-extern const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBufferCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_DATA(macro) \
     macro(setBigUint64, jsBufferPrototypeSetBigUint64, 3) \
@@ -350,6 +385,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(readInt32BE, jsBufferPrototypeReadInt32BE, 1) \
     macro(readUInt32LE, jsBufferPrototypeReadUInt32LE, 1) \
     macro(readUInt32BE, jsBufferPrototypeReadUInt32BE, 1) \
+    macro(readIntLE, jsBufferPrototypeReadIntLE, 2) \
+    macro(readIntBE, jsBufferPrototypeReadIntBE, 2) \
+    macro(readUIntLE, jsBufferPrototypeReadUIntLE, 2) \
+    macro(readUIntBE, jsBufferPrototypeReadUIntBE, 2) \
     macro(readFloatLE, jsBufferPrototypeReadFloatLE, 1) \
     macro(readFloatBE, jsBufferPrototypeReadFloatBE, 1) \
     macro(readDoubleLE, jsBufferPrototypeReadDoubleLE, 1) \
@@ -368,6 +407,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(writeInt32BE, jsBufferPrototypeWriteInt32BE, 2) \
     macro(writeUInt32LE, jsBufferPrototypeWriteUInt32LE, 2) \
     macro(writeUInt32BE, jsBufferPrototypeWriteUInt32BE, 2) \
+    macro(writeIntLE, jsBufferPrototypeWriteIntLE, 3) \
+    macro(writeIntBE, jsBufferPrototypeWriteIntBE, 3) \
+    macro(writeUIntLE, jsBufferPrototypeWriteUIntLE, 3) \
+    macro(writeUIntBE, jsBufferPrototypeWriteUIntBE, 3) \
     macro(writeFloatLE, jsBufferPrototypeWriteFloatLE, 2) \
     macro(writeFloatBE, jsBufferPrototypeWriteFloatBE, 2) \
     macro(writeDoubleLE, jsBufferPrototypeWriteDoubleLE, 2) \
@@ -396,7 +439,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(slice, jsBufferPrototypeSlice, 2) \
     macro(parent, jsBufferPrototypeParent, 0) \
     macro(offset, jsBufferPrototypeOffset, 0) \
-    macro(initializeBunBuffer, jsBufferPrototypeInitializeBunBuffer, 1) \
 
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINT8 1
@@ -409,6 +451,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINT32BE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINT32LE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINT32BE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINTLE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINTBE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINTLE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINTBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READFLOATLE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READFLOATBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READDOUBLELE 1
@@ -427,6 +473,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEINT32BE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEUINT32LE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEUINT32BE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEINTLE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEINTBE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEUINTLE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEUINTBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEFLOATLE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEFLOATBE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEDOUBLELE 1
@@ -455,7 +505,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_PARENT 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_OFFSET 1
-#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
     macro(jsBufferPrototypeSetBigUint64Code, setBigUint64, ASCIILiteral(), s_jsBufferPrototypeSetBigUint64CodeLength) \
@@ -469,6 +518,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(jsBufferPrototypeReadInt32BECode, readInt32BE, ASCIILiteral(), s_jsBufferPrototypeReadInt32BECodeLength) \
     macro(jsBufferPrototypeReadUInt32LECode, readUInt32LE, ASCIILiteral(), s_jsBufferPrototypeReadUInt32LECodeLength) \
     macro(jsBufferPrototypeReadUInt32BECode, readUInt32BE, ASCIILiteral(), s_jsBufferPrototypeReadUInt32BECodeLength) \
+    macro(jsBufferPrototypeReadIntLECode, readIntLE, ASCIILiteral(), s_jsBufferPrototypeReadIntLECodeLength) \
+    macro(jsBufferPrototypeReadIntBECode, readIntBE, ASCIILiteral(), s_jsBufferPrototypeReadIntBECodeLength) \
+    macro(jsBufferPrototypeReadUIntLECode, readUIntLE, ASCIILiteral(), s_jsBufferPrototypeReadUIntLECodeLength) \
+    macro(jsBufferPrototypeReadUIntBECode, readUIntBE, ASCIILiteral(), s_jsBufferPrototypeReadUIntBECodeLength) \
     macro(jsBufferPrototypeReadFloatLECode, readFloatLE, ASCIILiteral(), s_jsBufferPrototypeReadFloatLECodeLength) \
     macro(jsBufferPrototypeReadFloatBECode, readFloatBE, ASCIILiteral(), s_jsBufferPrototypeReadFloatBECodeLength) \
     macro(jsBufferPrototypeReadDoubleLECode, readDoubleLE, ASCIILiteral(), s_jsBufferPrototypeReadDoubleLECodeLength) \
@@ -487,6 +540,10 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(jsBufferPrototypeWriteInt32BECode, writeInt32BE, ASCIILiteral(), s_jsBufferPrototypeWriteInt32BECodeLength) \
     macro(jsBufferPrototypeWriteUInt32LECode, writeUInt32LE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt32LECodeLength) \
     macro(jsBufferPrototypeWriteUInt32BECode, writeUInt32BE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt32BECodeLength) \
+    macro(jsBufferPrototypeWriteIntLECode, writeIntLE, ASCIILiteral(), s_jsBufferPrototypeWriteIntLECodeLength) \
+    macro(jsBufferPrototypeWriteIntBECode, writeIntBE, ASCIILiteral(), s_jsBufferPrototypeWriteIntBECodeLength) \
+    macro(jsBufferPrototypeWriteUIntLECode, writeUIntLE, ASCIILiteral(), s_jsBufferPrototypeWriteUIntLECodeLength) \
+    macro(jsBufferPrototypeWriteUIntBECode, writeUIntBE, ASCIILiteral(), s_jsBufferPrototypeWriteUIntBECodeLength) \
     macro(jsBufferPrototypeWriteFloatLECode, writeFloatLE, ASCIILiteral(), s_jsBufferPrototypeWriteFloatLECodeLength) \
     macro(jsBufferPrototypeWriteFloatBECode, writeFloatBE, ASCIILiteral(), s_jsBufferPrototypeWriteFloatBECodeLength) \
     macro(jsBufferPrototypeWriteDoubleLECode, writeDoubleLE, ASCIILiteral(), s_jsBufferPrototypeWriteDoubleLECodeLength) \
@@ -515,7 +572,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(jsBufferPrototypeSliceCode, slice, ASCIILiteral(), s_jsBufferPrototypeSliceCodeLength) \
     macro(jsBufferPrototypeParentCode, parent, "get parent"_s, s_jsBufferPrototypeParentCodeLength) \
     macro(jsBufferPrototypeOffsetCode, offset, "get offset"_s, s_jsBufferPrototypeOffsetCodeLength) \
-    macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, ASCIILiteral(), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
     macro(asciiSlice) \
@@ -526,7 +582,6 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(base64urlWrite) \
     macro(hexSlice) \
     macro(hexWrite) \
-    macro(initializeBunBuffer) \
     macro(latin1Slice) \
     macro(latin1Write) \
     macro(offset) \
@@ -544,11 +599,15 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(readInt32BE) \
     macro(readInt32LE) \
     macro(readInt8) \
+    macro(readIntBE) \
+    macro(readIntLE) \
     macro(readUInt16BE) \
     macro(readUInt16LE) \
     macro(readUInt32BE) \
     macro(readUInt32LE) \
     macro(readUInt8) \
+    macro(readUIntBE) \
+    macro(readUIntLE) \
     macro(setBigUint64) \
     macro(slice) \
     macro(toJSON) \
@@ -571,11 +630,15 @@ extern const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBuffe
     macro(writeInt32BE) \
     macro(writeInt32LE) \
     macro(writeInt8) \
+    macro(writeIntBE) \
+    macro(writeIntLE) \
     macro(writeUInt16BE) \
     macro(writeUInt16LE) \
     macro(writeUInt32BE) \
     macro(writeUInt32LE) \
     macro(writeUInt8) \
+    macro(writeUIntBE) \
+    macro(writeUIntLE) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

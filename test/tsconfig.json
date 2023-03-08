@@ -12,12 +12,14 @@
     "allowSyntheticDefaultImports": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
+    "resolveJsonModule": true,
     "types": ["bun-types"],
     "baseUrl": ".",
     "paths": {
       "harness": ["harness.ts"],
       "mkfifo": ["mkfifo.ts"],
-      "node-harness": ["js/node/harness.ts"]
+      "node-harness": ["js/node/harness.ts"],
+      "deno:harness": ["js/deno/harness.ts"]
     }
   }
 }

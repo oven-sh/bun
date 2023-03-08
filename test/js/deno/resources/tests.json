@@ -1,0 +1,10 @@
+[
+  {
+    "path": "abort/abort-controller.test.ts",
+    "remotePath": "unit/abort_controller_test.ts"
+  },
+  {
+    "path": "html/blob.test.ts",
+    "remotePath": "unit/blob_test.ts" 
+  }
+]

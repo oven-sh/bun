@@ -3454,8 +3454,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return res;
     }
 
-    pub fn isString(this: JSValue) bool {
-        return cppFn("isString", .{this});
+    pub inline fn isString(this: JSValue) bool {
+        if (!this.isCell())
+            return false;
+
+        return jsType(this).isStringLike();
     }
     pub fn isBigInt(this: JSValue) bool {
         return cppFn("isBigInt", .{this});
@@ -3968,7 +3971,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "isObject",
         "isPrimitive",
         "isSameValue",
-        "isString",
         "isSymbol",
         "isTerminationException",
         "isUInt32AsAnyInt",

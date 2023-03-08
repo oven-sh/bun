@@ -402,6 +402,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-x64-baseline
+            runner: macos-11
     steps:
       - id: checkout
         name: Checkout

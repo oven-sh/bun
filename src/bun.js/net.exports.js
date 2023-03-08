@@ -59,6 +59,10 @@ const { Duplex } = import.meta.require("node:stream");
 const { EventEmitter } = import.meta.require("node:events");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
+const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
+const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
+const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
+
 var SocketClass;
 export const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -80,7 +84,7 @@ export const Socket = (function (InternalSocket) {
   );
 })(
   class Socket extends Duplex {
-    static _Handlers = {
+    static #Handlers = {
       close: Socket.#Close,
       connectError(socket, error) {
         const self = socket.data;
@@ -153,6 +157,57 @@ export const Socket = (function (InternalSocket) {
       }
     }
 
+    static [bunSocketServerHandlers] = {
+      data: Socket.#Handlers.data,
+      close(socket) {
+        Socket.#Handlers.close(socket);
+        this.data[bunSocketServerConnections]--;
+      },
+      end(socket) {
+        Socket.#Handlers.end(socket);
+        this.data[bunSocketServerConnections]--;
+      },
+      open(socket) {
+        const self = this.data;
+        const options = self[bunSocketServerOptions];
+        const { pauseOnConnect, connectionListener } = options;
+        const _socket = new Socket(options);
+        _socket.#attach(this.localPort, socket);
+        if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
+          const data = {
+            localAddress: _socket.localAddress,
+            localPort: _socket.localPort,
+            localFamily: _socket.localFamily,
+            remoteAddress: _socket.remoteAddress,
+            remotePort: _socket.remotePort,
+            remoteFamily: _socket.remoteFamily || "IPv4",
+          };
+          socket.end();
+
+          self.emit("drop", data);
+          return;
+        }
+        // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
+        if (!pauseOnConnect) {
+          _socket.resume();
+        }
+
+        self[bunSocketServerConnections]++;
+        if (typeof connectionListener == "function") {
+          connectionListener(_socket);
+        }
+        self.emit("connection", _socket);
+      },
+      error(socket, error) {
+        Socket.#Handlers.error(socket, error);
+        this.data.emit("error", error);
+      },
+      timeout: Socket.#Handlers.timeout,
+      connectError: Socket.#Handlers.connectError,
+      drain: Socket.#Handlers.drain,
+      binaryType: "buffer",
+    };
+
     bytesRead = 0;
     bytesWritten = 0;
     #closed = false;
@@ -191,7 +246,7 @@ export const Socket = (function (InternalSocket) {
       return this.writableLength;
     }
 
-    _attach(port, socket) {
+    #attach(port, socket) {
       this.remotePort = port;
       socket.data = this;
       socket.timeout(this.timeout);
@@ -245,14 +300,14 @@ export const Socket = (function (InternalSocket) {
           ? {
               data: this,
               unix: path,
-              socket: Socket._Handlers,
+              socket: Socket.#Handlers,
               tls,
             }
           : {
               data: this,
               hostname: host || "localhost",
               port: port,
-              socket: Socket._Handlers,
+              socket: Socket.#Handlers,
               tls,
             },
       );
@@ -381,15 +436,14 @@ export function createConnection(port, host, connectListener) {
 export const connect = createConnection;
 
 class Server extends EventEmitter {
-  #connectionListener;
-  #options;
   #server;
   #listening;
-  #connections;
+  [bunSocketServerConnections] = 0;
+  [bunSocketServerOptions];
+  maxConnections = 0;
 
   constructor(options, connectionListener) {
     super();
-    this.maxConnections = 0;
 
     if (typeof options === "function") {
       connectionListener = options;
@@ -400,14 +454,12 @@ class Server extends EventEmitter {
       throw new Error("bun-net-polyfill: invalid arguments");
     }
 
-    if (typeof options.maxConnections === "number" && options.maxConnections > 0) {
-      this.maxConnections = options.maxConnections;
-    }
+    const { maxConnections } = options;
+    this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
 
     this.#listening = false;
-    this.#connections = 0;
-    this.#connectionListener = connectionListener;
-    this.#options = options;
+    options.connectionListener = connectionListener;
+    this[bunSocketServerOptions] = options;
   }
 
   ref() {
@@ -425,7 +477,7 @@ class Server extends EventEmitter {
       this.#server.stop(true);
       this.#server = null;
       this.#listening = false;
-      this.#connections = 0;
+      this[bunSocketServerConnections] = 0;
       this.emit("close");
       if (typeof callback === "function") {
         callback();
@@ -435,7 +487,9 @@ class Server extends EventEmitter {
     }
 
     if (typeof callback === "function") {
-      callback(new Error("Server is not open"));
+      const error = new Error("Server is not running");
+      error.code = "ERR_SERVER_NOT_RUNNING";
+      callback(error);
     }
     return this;
   }
@@ -468,7 +522,10 @@ class Server extends EventEmitter {
 
   getConnections(callback) {
     if (typeof callback === "function") {
-      callback(this.#server ? null : new Error("Server is not open"), this.#connections);
+      //in Bun case we will never error on getConnections
+      //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
+      //if disconnected will only pass null as well and 0 connected
+      callback(null, this.#server ? this[bunSocketServerConnections] : 0);
     }
     return this;
   }
@@ -505,69 +562,25 @@ class Server extends EventEmitter {
     }
 
     hostname = hostname || "::";
-    const connectionListener = this.#connectionListener;
-    const { pauseOnConnect } = this.#options;
-    const self = this;
+
     try {
       this.#server = Bun.listen({
         port,
         hostname,
         tls: false,
-        socket: {
-          data: SocketClass._Handlers.data,
-          close(socket) {
-            SocketClass._Handlers.close(socket);
-            self.#connections--;
-          },
-          end(socket) {
-            SocketClass._Handlers.end(socket);
-            self.#connections--;
-          },
-          open(socket) {
-            const _socket = new SocketClass(self.#options);
-            _socket._attach(self.#server?.port, socket);
-            if (self.maxConnections && self.#connections >= self.maxConnections) {
-              const data = {
-                localAddress: _socket.localAddress,
-                localPort: _socket.localPort,
-                localFamily: _socket.localFamily,
-                remoteAddress: _socket.remoteAddress,
-                remotePort: _socket.remotePort,
-                remoteFamily: _socket.remoteFamily,
-              };
-              socket.end();
-              self.emit("drop", data);
-              return;
-            }
-            // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-            if (!pauseOnConnect) {
-              _socket.resume();
-            }
-
-            self.#connections++;
-            if (typeof connectionListener == "function") {
-              connectionListener(_socket);
-            }
-            self.emit("connection", _socket);
-          },
-          error(socket, error) {
-            SocketClass._Handlers.error(socket, error);
-            self.emit("error", error);
-          },
-          timeout: SocketClass._Handlers.timeout,
-          connectError: SocketClass._Handlers.connectError,
-          drain: SocketClass._Handlers.drain,
-          binaryType: "buffer",
-        },
+        socket: SocketClass[bunSocketServerHandlers],
       });
+      //make this instance available on handlers
+      this.#server.data = this;
+
       if (typeof onListen === "function") {
         onListen();
       }
       this.#listening = true;
-      self.emit("listening");
+      this.emit("listening");
     } catch (err) {
       this.#listening = false;
-      self.emit("error", err);
+      this.emit("error", err);
     }
     return this;
   }

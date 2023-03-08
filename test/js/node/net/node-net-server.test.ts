@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createServer } from "net";
 import { createCallCheckCtx } from "node-harness";
 
-describe("net.creeateServer listen", () => {
+describe("net.createServer listen", () => {
   it("should listen on IPv6 by default", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 

@@ -1,5 +1,5 @@
-const Handler = import("./fn");
+const NS = import("./fn.js");
 
-Handler.then(({ fn }) => {
+NS.then(({ fn }) => {
   console.log(fn(42));
 });

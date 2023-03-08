@@ -1624,6 +1624,7 @@ const LinkerContext = struct {
         ignore_dce_annotations: bool = false,
         tree_shaking: bool = true,
         minify_whitespace: bool = false,
+        minify_syntax: bool = false,
 
         mode: Mode = Mode.bundle,
 
@@ -5207,7 +5208,7 @@ const LinkerContext = struct {
                 continue;
             }
 
-            if (index == wrapper_part_index.value) {
+            if (index == wrapper_part_index.get()) {
                 // Skip the wrapper part because we already handled it above
                 needs_wrapper = true;
                 continue;
@@ -5238,6 +5239,8 @@ const LinkerContext = struct {
         stmts.all_stmts.ensureUnusedCapacity(stmts.outside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
+        stmts.inside_wrapper_prefix.items.len = 0;
+        stmts.inside_wrapper_suffix.items.len = 0;
 
         var out_stmts: []js_ast.Stmt = stmts.all_stmts.items;
         // Optionally wrap all statements in a closure
@@ -5338,45 +5341,44 @@ const LinkerContext = struct {
                     // isn't async because then calling "require()" on that module would
                     // swallow any exceptions thrown during module initialization.
                     const is_async = flags.is_async_or_has_async_dependency;
+                    const Hoisty = struct {
+                        decls: std.ArrayList(G.Decl),
+                        allocator: std.mem.Allocator,
 
+                        pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
+                            w.decls.append(
+                                G.Decl{
+                                    .binding = Binding.alloc(
+                                        w.allocator,
+                                        B.Identifier{
+                                            .ref = ref,
+                                        },
+                                        loc,
+                                    ),
+                                    .value = Expr.init(
+                                        E.Identifier,
+                                        E.Identifier{
+                                            .ref = ref,
+                                        },
+                                        loc,
+                                    ),
+                                },
+                            ) catch unreachable;
+                            return Expr.init(
+                                E.Identifier,
+                                E.Identifier{
+                                    .ref = ref,
+                                },
+                                loc,
+                            );
+                        }
+                    };
+                    var hoisty = Hoisty{
+                        .decls = std.ArrayList(G.Decl).init(temp_allocator),
+                        .allocator = temp_allocator,
+                    };
                     // Hoist all top-level "var" and "function" declarations out of the closure
                     {
-                        const Hoisty = struct {
-                            decls: std.ArrayList(G.Decl),
-                            allocator: std.mem.Allocator,
-
-                            pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
-                                w.decls.append(
-                                    G.Decl{
-                                        .binding = Binding.alloc(
-                                            w.allocator,
-                                            B.Identifier{
-                                                .ref = ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = Expr.init(
-                                            E.Identifier,
-                                            E.Identifier{
-                                                .ref = ref,
-                                            },
-                                            loc,
-                                        ),
-                                    },
-                                ) catch unreachable;
-                                return Expr.init(
-                                    E.Identifier,
-                                    E.Identifier{
-                                        .ref = ref,
-                                    },
-                                    loc,
-                                );
-                            }
-                        };
-                        var hoisty = Hoisty{
-                            .decls = std.ArrayList(G.Decl).init(temp_allocator),
-                            .allocator = temp_allocator,
-                        };
                         var end: usize = 0;
                         for (stmts.all_stmts.items) |stmt_| {
                             var stmt: Stmt = stmt_;
@@ -5419,7 +5421,18 @@ const LinkerContext = struct {
                         stmts.all_stmts.items.len = end;
                     }
 
-                    // TODO: variants of the runtime functions
+                    if (!c.options.minify_syntax and hoisty.decls.items.len > 0) {
+                        stmts.outside_wrapper_prefix.append(
+                            Stmt.alloc(
+                                S.Local,
+                                S.Local{
+                                    .decls = hoisty.decls.items,
+                                },
+                                Logger.Loc.Empty,
+                            ),
+                        ) catch unreachable;
+                        hoisty.decls.items.len = 0;
+                    }
 
                     // "__esm(() => { ... })"
                     var esm_args = temp_allocator.alloc(Expr, 1) catch unreachable;
@@ -6097,6 +6110,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
+                std.debug.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     source_index,
@@ -6145,6 +6159,7 @@ const LinkerContext = struct {
                         .dependencies = Dependency.List.init(dependencies),
                     },
                 ) catch unreachable;
+                std.debug.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
                 c.graph.generateSymbolImportAndUse(
                     source_index,

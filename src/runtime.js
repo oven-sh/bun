@@ -1,3 +1,5 @@
+const tagSymbol = Symbol.for("CommonJSTransformed");
+const cjsRequireSymbol = Symbol.for("CommonJS");
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
@@ -48,8 +50,6 @@ export var __toModule = mod => {
   );
 };
 
-var tagSymbol = Symbol.for("CommonJSTransformed");
-var cjsRequireSymbol = Symbol.for("CommonJS");
 export var __commonJS = (cb, name) => {
   var mod;
   var origExports;
@@ -135,13 +135,6 @@ export var __require = namespace => {
     return namespace.default();
   }
 
-  return namespace;
-};
-
-// require().default
-// this currently does nothing
-// get rid of this wrapper once we're more confident we do not need special handling for default
-__require.d = namespace => {
   return namespace;
 };
 

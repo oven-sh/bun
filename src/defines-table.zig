@@ -187,6 +187,9 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{"setTimeout"},
     &[_]string{"unescape"},
 
+    &[_]string{ "Symbol", "for" },
+    &[_]string{ "Symbol", "keyFor" },
+
     // Reflect: Static methods
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
     &[_]string{ "Reflect", "apply" },

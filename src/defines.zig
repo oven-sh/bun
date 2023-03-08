@@ -260,8 +260,8 @@ pub const Define = struct {
         define.allocator = allocator;
         define.identifiers = bun.StringHashMap(IdentifierDefine).init(allocator);
         define.dots = bun.StringHashMap([]DotDefine).init(allocator);
-        try define.identifiers.ensureTotalCapacity(641 + 2 + 1);
-        try define.dots.ensureTotalCapacity(64);
+        try define.identifiers.ensureTotalCapacity(641 + 2 + 1 + 2);
+        try define.dots.ensureTotalCapacity(124);
 
         var val = js_ast.Expr.Data{
             .e_undefined = .{},

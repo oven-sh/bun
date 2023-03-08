@@ -98,7 +98,7 @@ pub const TextEncoder = struct {
 
         // max utf16 -> utf8 length
         if (slice.len <= buf.len / 4) {
-            const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
+            const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice, true);
             if (result.read == 0 or result.written == 0) {
                 const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3);
                 const array_buffer = uint8array.asArrayBuffer(globalThis).?;
@@ -221,7 +221,7 @@ pub const TextEncoder = struct {
     ) u64 {
         var output = buf_ptr[0..buf_len];
         const input = input_ptr[0..input_len];
-        const result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input);
+        const result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, true);
         if (result.read == 0 or result.written == 0) {
             const replacement_char = [_]u8{ 239, 191, 189 };
             @memcpy(buf_ptr, &replacement_char, replacement_char.len);
@@ -683,7 +683,7 @@ pub const TextDecoder = struct {
 };
 
 pub const Encoder = struct {
-    export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) i64 {
+    export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
             .utf8 => writeU8(input, len, to, to_len, .utf8),
             .latin1 => writeU8(input, len, to, to_len, .ascii),
@@ -694,9 +694,9 @@ pub const Encoder = struct {
             .base64url => writeU8(input, len, to, to_len, .base64url),
             .hex => writeU8(input, len, to, to_len, .hex),
             else => unreachable,
-        };
+        } catch 0;
     }
-    export fn Bun__encoding__writeUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, encoding: u8) i64 {
+    export fn Bun__encoding__writeUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, encoding: u8) usize {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
             .utf8 => writeU16(input, len, to, to_len, .utf8, false),
             .latin1 => writeU16(input, len, to, to_len, .ascii, false),
@@ -707,7 +707,7 @@ pub const Encoder = struct {
             .base64url => writeU16(input, len, to, to_len, .base64url, false),
             .hex => writeU16(input, len, to, to_len, .hex, false),
             else => unreachable,
-        };
+        } catch 0;
     }
     export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
@@ -783,7 +783,7 @@ pub const Encoder = struct {
     }
 
     // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
-    //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len]).written);
+    //     return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, utf16[0..len], true).written);
     // }
 
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
@@ -839,7 +839,7 @@ pub const Encoder = struct {
                 return ZigString.toExternalU16(output.ptr, output.len, global);
             },
 
-            JSC.Node.Encoding.hex => {
+            .hex => {
                 var output = allocator.alloc(u8, input.len * 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 const wrote = strings.encodeBytesToHex(output, input);
                 std.debug.assert(wrote == output.len);
@@ -848,11 +848,11 @@ pub const Encoder = struct {
                 return val.toExternalValue(global);
             },
 
-            JSC.Node.Encoding.base64url => {
+            .base64url => {
                 return JSC.WTF.toBase64URLStringValue(input, global);
             },
 
-            JSC.Node.Encoding.base64 => {
+            .base64 => {
                 const to_len = bun.base64.encodeLen(input);
                 var to = allocator.alloc(u8, to_len) catch return ZigString.init("Out of memory").toErrorInstance(global);
                 const wrote = bun.base64.encode(to, input);
@@ -861,7 +861,7 @@ pub const Encoder = struct {
         }
     }
 
-    pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
+    pub fn writeU8(input: [*]const u8, len: usize, to_ptr: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) !usize {
         if (len == 0 or to_len == 0)
             return 0;
 
@@ -873,11 +873,11 @@ pub const Encoder = struct {
         // if (comptime encoding.isBinaryToText()) {}
 
         switch (comptime encoding) {
-            JSC.Node.Encoding.buffer => {
+            .buffer => {
                 const written = @min(len, to_len);
                 @memcpy(to_ptr, input, written);
 
-                return @intCast(i64, written);
+                return written;
             },
             .latin1, .ascii => {
                 const written = @min(len, to_len);
@@ -891,14 +891,14 @@ pub const Encoder = struct {
                     strings.copyLatin1IntoASCII(to, remain);
                 }
 
-                return @intCast(i64, written);
+                return written;
             },
             .utf8 => {
                 // need to encode
-                return @intCast(i64, strings.copyLatin1IntoUTF8(to_ptr[0..to_len], []const u8, input[0..len]).written);
+                return strings.copyLatin1IntoUTF8(to_ptr[0..to_len], []const u8, input[0..len]).written;
             },
             // encode latin1 into UTF16
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+            .ucs2, .utf16le => {
                 if (to_len < 2)
                     return 0;
 
@@ -917,29 +917,13 @@ pub const Encoder = struct {
                 }
             },
 
-            JSC.Node.Encoding.hex => {
-                return @intCast(i64, strings.decodeHexToBytes(to_ptr[0..to_len], u8, input[0..len]));
+            .hex => {
+                return strings.decodeHexToBytes(to_ptr[0..to_len], u8, input[0..len]);
             },
 
-            JSC.Node.Encoding.base64url => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
-                if (slice.len == 0)
-                    return 0;
-
-                if (strings.endsWithComptime(slice, "==")) {
-                    slice = slice[0 .. slice.len - 2];
-                } else if (slice[slice.len - 1] == '=') {
-                    slice = slice[0 .. slice.len - 1];
-                }
-
-                const wrote = bun.base64.decodeURLSafe(to_ptr[0..to_len], slice).written;
-                return @intCast(i64, wrote);
+            .base64, .base64url => {
+                return bun.base64.decode(to_ptr[0..to_len], input[0..len]).written;
             },
-
-            JSC.Node.Encoding.base64 => {
-                return @intCast(i64, bun.base64.decode(to_ptr[0..to_len], input[0..len]).written);
-            },
-            // else => return 0,
         }
     }
 
@@ -952,46 +936,46 @@ pub const Encoder = struct {
                 return strings.elementLengthLatin1IntoUTF8([]const u8, input[0..len]);
             },
 
-            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
+            .latin1, .ascii, .buffer => {
                 return len;
             },
 
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+            .ucs2, .utf16le => {
                 return strings.elementLengthUTF8IntoUTF16([]const u8, input[0..len]) * 2;
             },
 
-            JSC.Node.Encoding.hex => {
+            .hex => {
                 return len / 2;
             },
 
-            JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
+            .base64, .base64url => {
                 return bun.base64.decodeLen(input[0..len]);
             },
             // else => return &[_]u8{};
         }
     }
 
-    pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding, comptime allow_partial_write: bool) i64 {
+    pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding, comptime allow_partial_write: bool) !usize {
         if (len == 0)
             return 0;
 
         switch (comptime encoding) {
             .utf8 => {
-                return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written);
+                return strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len], allow_partial_write).written;
             },
-            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
+            .latin1, .ascii, .buffer => {
                 const out = @min(len, to_len);
                 strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..out]);
-                return @intCast(i64, out);
+                return out;
             },
             // string is already encoded, just need to copy the data
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+            .ucs2, .utf16le => {
                 if (allow_partial_write) {
                     const bytes_input_len = len * 2;
                     const written = @min(bytes_input_len, to_len);
                     const input_u8 = @ptrCast([*]const u8, input);
                     strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..written]);
-                    return @intCast(i64, written);
+                    return written;
                 } else {
                     const bytes_input_len = len * 2;
                     const written = @min(bytes_input_len, to_len);
@@ -1000,15 +984,15 @@ pub const Encoder = struct {
                     const fixed_len = (written / 2) * 2;
                     const input_u8 = @ptrCast([*]const u8, input);
                     strings.copyU16IntoU8(to[0..written], []const u8, input_u8[0..fixed_len]);
-                    return @intCast(i64, fixed_len);
+                    return fixed_len;
                 }
             },
 
-            JSC.Node.Encoding.hex => {
-                return @intCast(i64, strings.decodeHexToBytes(to[0..to_len], u16, input[0..len]));
+            .hex => {
+                return strings.decodeHexToBytes(to[0..to_len], u16, input[0..len]);
             },
 
-            JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
+            .base64, .base64url => {
                 if (to_len < 2 or len == 0)
                     return 0;
 
@@ -1033,15 +1017,15 @@ pub const Encoder = struct {
             .ascii, .latin1, .utf8 => {
                 return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
             },
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
+            .ucs2, .buffer, .utf16le => {
                 return len * 2;
             },
 
-            JSC.Node.Encoding.hex => {
+            .hex => {
                 return len / 2;
             },
 
-            JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
+            .base64, .base64url => {
                 return bun.base64.decodeLenUpperBound(len);
             },
             // else => return &[_]u8{};
@@ -1057,13 +1041,12 @@ pub const Encoder = struct {
     }
 
     pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
-        if (len == 0)
-            return &[_]u8{};
+        if (len == 0) return &[_]u8{};
 
         const allocator = VirtualMachine.get().allocator;
 
         switch (comptime encoding) {
-            JSC.Node.Encoding.buffer => {
+            .buffer => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
                 @memcpy(to.ptr, input, len);
 
@@ -1082,52 +1065,35 @@ pub const Encoder = struct {
             },
             // encode latin1 into UTF16
             // return as bytes
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+            .ucs2, .utf16le => {
                 var to = allocator.alloc(u16, len) catch return &[_]u8{};
                 _ = strings.copyLatin1IntoUTF16([]u16, to, []const u8, input[0..len]);
                 return std.mem.sliceAsBytes(to[0..len]);
             },
 
-            JSC.Node.Encoding.hex => {
+            .hex => {
                 if (len < 2)
                     return &[_]u8{};
 
                 var to = allocator.alloc(u8, len / 2) catch return &[_]u8{};
-                return to[0..strings.decodeHexToBytes(to, u8, input[0..len])];
+                return to[0..strings.decodeHexToBytesTruncate(to, u8, input[0..len])];
             },
 
-            JSC.Node.Encoding.base64url => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
-                if (slice.len == 0)
-                    return &[_]u8{};
+            .base64, .base64url => {
+                const slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
+                if (slice.len == 0) return &[_]u8{};
 
-                if (strings.endsWithComptime(slice, "==")) {
-                    slice = slice[0 .. slice.len - 2];
-                } else if (slice[slice.len - 1] == '=') {
-                    slice = slice[0 .. slice.len - 1];
-                }
+                const outlen = bun.base64.decodeLen(slice);
+                const to = allocator.alloc(u8, outlen) catch return &[_]u8{};
 
-                const to_len = bun.base64.urlsafe.decoder.calcSizeForSlice(slice) catch unreachable;
-                var to = allocator.alloc(u8, to_len) catch return &[_]u8{};
-                const wrote = bun.base64.decodeURLSafe(to[0..to_len], slice).written;
+                const wrote = bun.base64.decode(to[0..outlen], slice).written;
                 return to[0..wrote];
             },
-
-            JSC.Node.Encoding.base64 => {
-                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
-                var outlen = bun.base64.decodeLen(slice);
-
-                var to = allocator.alloc(u8, outlen) catch return &[_]u8{};
-                const written = bun.base64.decode(to[0..outlen], slice).written;
-                return to[0..@min(written, outlen)];
-            },
-            // else => return 0,
         }
     }
 
     pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
-        if (len == 0)
-            return &[_]u8{};
+        if (len == 0) return &[_]u8{};
 
         const allocator = VirtualMachine.get().allocator;
 
@@ -1135,7 +1101,7 @@ pub const Encoder = struct {
             .utf8 => {
                 return strings.toUTF8AllocWithType(allocator, []const u16, input[0..len]) catch return &[_]u8{};
             },
-            JSC.Node.Encoding.latin1, JSC.Node.Encoding.buffer, JSC.Node.Encoding.ascii => {
+            .latin1, .buffer, .ascii => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
                 var input_bytes = std.mem.sliceAsBytes(input[0..len]);
                 @memcpy(to.ptr, input_bytes.ptr, input_bytes.len);
@@ -1146,34 +1112,24 @@ pub const Encoder = struct {
                 return to;
             },
             // string is already encoded, just need to copy the data
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+            .ucs2, .utf16le => {
                 var to = std.mem.sliceAsBytes(allocator.alloc(u16, len * 2) catch return &[_]u8{});
                 @memcpy(to.ptr, std.mem.sliceAsBytes(input[0..len]).ptr, std.mem.sliceAsBytes(input[0..len]).len);
                 return to;
             },
 
-            JSC.Node.Encoding.hex => {
+            .hex => {
                 var to = allocator.alloc(u8, len * 2) catch return &[_]u8{};
-                return to[0..strings.decodeHexToBytes(to, u16, input[0..len])];
+                return to[0..strings.decodeHexToBytesTruncate(to, u16, input[0..len])];
             },
 
-            JSC.Node.Encoding.base64 => {
+            .base64, .base64url => {
                 // very very slow case!
                 // shouldn't really happen though
                 var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
                 defer allocator.free(transcoded);
-                return constructFromU8(transcoded.ptr, transcoded.len, .base64);
+                return constructFromU8(transcoded.ptr, transcoded.len, encoding);
             },
-
-            JSC.Node.Encoding.base64url => {
-
-                // very very slow case!
-                // shouldn't really happen though
-                var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
-                defer allocator.free(transcoded);
-                return constructFromU8(transcoded.ptr, transcoded.len, .base64url);
-            },
-            // else => return 0,
         }
     }
 

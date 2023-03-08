@@ -384,11 +384,8 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1, false);
-        if (wrote < 0) {
-            return genericFailure();
-        }
-        maybeAppendNull(&buf[@intCast(usize, wrote)], bufsize == 0);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .latin1, false) catch return genericFailure();
+        maybeAppendNull(&buf[wrote], bufsize == 0);
         // if zero terminated, report the length of the string without the null
         result.* = @intCast(@TypeOf(result.*), wrote);
         return .ok;
@@ -448,11 +445,8 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
 
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8, false);
-        if (wrote < 0) {
-            return genericFailure();
-        }
-        buf[@intCast(usize, wrote)] = 0;
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, buf_.len, .utf8, false) catch return genericFailure();
+        buf[wrote] = 0;
         if (result_ptr) |result| {
             result.* = @intCast(@TypeOf(result.*), wrote);
         }

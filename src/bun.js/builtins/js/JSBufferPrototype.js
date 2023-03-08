@@ -73,6 +73,116 @@ function readUInt32BE(offset) {
   "use strict";
   return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getUint32(offset, false);
 }
+
+function readIntLE(offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      return view.getInt8(offset);
+    }
+    case 2: {
+      return view.getInt16(offset, true);
+    }
+    case 3: {
+      const val = view.getUint16(offset, true) + view.getUint8(offset + 2) * 2 ** 16;
+      return val | (val & 2 ** 23) * 0x1fe;
+    }
+    case 4: {
+      return view.getInt32(offset, true);
+    }
+    case 5: {
+      const last = view.getUint8(offset + 4);
+      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset, true);
+    }
+    case 6: {
+      const last = view.getUint16(offset + 4, true);
+      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset, true);
+    }
+  }
+  @throwRangeError("byteLength must be >= 1 and <= 6");
+}
+function readIntBE(offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      return view.getInt8(offset);
+    }
+    case 2: {
+      return view.getInt16(offset, false);
+    }
+    case 3: {
+      const val = view.getUint16(offset + 1, false) + view.getUint8(offset) * 2 ** 16;
+      return val | (val & 2 ** 23) * 0x1fe;
+    }
+    case 4: {
+      return view.getInt32(offset, false);
+    }
+    case 5: {
+      const last = view.getUint8(offset);
+      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset + 1, false);
+    }
+    case 6: {
+      const last = view.getUint16(offset, false);
+      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset + 2, false);
+    }
+  }
+  @throwRangeError("byteLength must be >= 1 and <= 6");
+}
+function readUIntLE(offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      return view.getUint8(offset);
+    }
+    case 2: {
+      return view.getUint16(offset, true);
+    }
+    case 3: {
+      return view.getUint16(offset, true) + view.getUint8(offset + 2) * 2 ** 16;
+    }
+    case 4: {
+      return view.getUint32(offset, true);
+    }
+    case 5: {
+      return view.getUint8(offset + 4) * 2 ** 32 + view.getUint32(offset, true);
+    }
+    case 6: {
+      return view.getUint16(offset + 4, true) * 2 ** 32 + view.getUint32(offset, true);
+    }
+  }
+  @throwRangeError("byteLength must be >= 1 and <= 6");
+}
+function readUIntBE(offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      return view.getUint8(offset);
+    }
+    case 2: {
+      return view.getUint16(offset, false);
+    }
+    case 3: {
+      return view.getUint16(offset + 1, false) + view.getUint8(offset) * 2 ** 16;
+    }
+    case 4: {
+      return view.getUint32(offset, false);
+    }
+    case 5: {
+      const last = view.getUint8(offset);
+      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset + 1, false);
+    }
+    case 6: {
+      const last = view.getUint16(offset, false);
+      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset + 2, false);
+    }
+  }
+  @throwRangeError("byteLength must be >= 1 and <= 6");
+}
+
 function readFloatLE(offset) {
   "use strict";
   return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getFloat32(offset, true);
@@ -105,6 +215,7 @@ function readBigUInt64BE(offset) {
   "use strict";
   return (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);
 }
+
 function writeInt8(value, offset) {
   "use strict";
   (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setInt8(offset, value);
@@ -154,6 +265,155 @@ function writeUInt32BE(value, offset) {
   "use strict";
   (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);
   return offset + 4;
+}
+
+function writeIntLE(value, offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      view.setInt8(offset, value);
+      break;
+    }
+    case 2: {
+      view.setInt16(offset, value, true);
+      break;
+    }
+    case 3: {
+      view.setUint16(offset, value & 0xFFFF, true);
+      view.setInt8(offset + 2, Math.floor(value * 2 ** -16));
+      break;
+    }
+    case 4: {
+      view.setInt32(offset, value, true);
+      break;
+    }
+    case 5: {
+      view.setUint32(offset, value | 0, true);
+      view.setInt8(offset + 4, Math.floor(value * 2 ** -32));
+      break;
+    }
+    case 6: {
+      view.setUint32(offset, value | 0, true);
+      view.setInt16(offset + 4, Math.floor(value * 2 ** -32), true);
+      break;
+    }
+    default: {
+      @throwRangeError("byteLength must be >= 1 and <= 6");
+    }
+  }
+  return offset + byteLength;
+}
+function writeIntBE(value, offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      view.setInt8(offset, value);
+      break;
+    }
+    case 2: {
+      view.setInt16(offset, value, false);
+      break;
+    }
+    case 3: {
+      view.setUint16(offset + 1, value & 0xFFFF, false);
+      view.setInt8(offset, Math.floor(value * 2 ** -16));
+      break;
+    }
+    case 4: {
+      view.setInt32(offset, value, false);
+      break;
+    }
+    case 5: {
+      view.setUint32(offset + 1, value | 0, false);
+      view.setInt8(offset, Math.floor(value * 2 ** -32));
+      break;
+    }
+    case 6: {
+      view.setUint32(offset + 2, value | 0, false);
+      view.setInt16(offset, Math.floor(value * 2 ** -32), false);
+      break;
+    }
+    default: {
+      @throwRangeError("byteLength must be >= 1 and <= 6");
+    }
+  }
+  return offset + byteLength;
+}
+function writeUIntLE(value, offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      view.setUint8(offset, value);
+      break;
+    }
+    case 2: {
+      view.setUint16(offset, value, true);
+      break;
+    }
+    case 3: {
+      view.setUint16(offset, value & 0xFFFF, true);
+      view.setUint8(offset + 2, Math.floor(value * 2 ** -16));
+      break;
+    }
+    case 4: {
+      view.setUint32(offset, value, true);
+      break;
+    }
+    case 5: {
+      view.setUint32(offset, value | 0, true);
+      view.setUint8(offset + 4, Math.floor(value * 2 ** -32));
+      break;
+    }
+    case 6: {
+      view.setUint32(offset, value | 0, true);
+      view.setUint16(offset + 4, Math.floor(value * 2 ** -32), true);
+      break;
+    }
+    default: {
+      @throwRangeError("byteLength must be >= 1 and <= 6");
+    }
+  }
+  return offset + byteLength;
+}
+function writeUIntBE(value, offset, byteLength) {
+  "use strict";
+  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);
+  switch (byteLength) {
+    case 1: {
+      view.setUint8(offset, value);
+      break;
+    }
+    case 2: {
+      view.setUint16(offset, value, false);
+      break;
+    }
+    case 3: {
+      view.setUint16(offset + 1, value & 0xFFFF, false);
+      view.setUint8(offset, Math.floor(value * 2 ** -16));
+      break;
+    }
+    case 4: {
+      view.setUint32(offset, value, false);
+      break;
+    }
+    case 5: {
+      view.setUint32(offset + 1, value | 0, false);
+      view.setUint8(offset, Math.floor(value * 2 ** -32));
+      break;
+    }
+    case 6: {
+      view.setUint32(offset + 2, value | 0, false);
+      view.setUint16(offset, Math.floor(value * 2 ** -32), false);
+      break;
+    }
+    default: {
+      @throwRangeError("byteLength must be >= 1 and <= 6");
+    }
+  }
+  return offset + byteLength;
 }
 
 function writeFloatLE(value, offset) {
@@ -296,24 +556,18 @@ function slice(start, end) {
   }
 
   var start_ = adjustOffset(start, byteLength);
-  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;
+  var end_ = end !== @undefined ? adjustOffset(end, byteLength) : byteLength;
   return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);
 }
 
 @getter
 function parent() {
   "use strict";
-  return this?.buffer;
+  return @isObject(this) && this instanceof @Buffer ? this.buffer : @undefined;
 }
 
 @getter
 function offset() {
   "use strict";
-  return this?.byteOffset;
-}
-
-function initializeBunBuffer(parameters)
-{
-  "use strict";
-
+  return @isObject(this) && this instanceof @Buffer ? this.byteOffset : @undefined;
 }

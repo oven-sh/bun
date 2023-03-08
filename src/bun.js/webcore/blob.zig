@@ -2507,10 +2507,14 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         value: JSC.JSValue,
     ) callconv(.C) bool {
-        const zig_str = if (value.isString())
+        var zig_str = if (value.isString())
             value.getZigString(globalThis)
         else
             ZigString.Empty;
+
+        if (!zig_str.isAllASCII()) {
+            zig_str = ZigString.Empty;
+        }
 
         if (zig_str.eql(ZigString.init(this.content_type))) {
             return true;

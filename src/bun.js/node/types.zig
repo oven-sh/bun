@@ -374,7 +374,7 @@ pub const SliceOrBuffer = union(Tag) {
         }
 
         const encoding: Encoding = brk: {
-            if (encoding_value.isEmpty())
+            if (encoding_value.isEmptyOrUndefinedOrNull())
                 break :brk .utf8;
             var encoding_str = encoding_value.toSlice(global, allocator);
             if (encoding_str.len == 0)
@@ -442,7 +442,10 @@ pub const Encoding = enum(u8) {
                 Eight.case("utf-8"), Eight.case("utf8") => Encoding.utf8,
                 Eight.case("ucs-2"), Eight.case("ucs2") => Encoding.ucs2,
                 Eight.case("utf16-le"), Eight.case("utf16le") => Encoding.utf16le,
-                Eight.case("latin1") => Encoding.latin1,
+
+                // "binary" is an alias for "latin1"
+                Eight.case("binary"), Eight.case("latin1") => Encoding.latin1,
+
                 Eight.case("ascii") => Encoding.ascii,
                 Eight.case("base64") => Encoding.base64,
                 Eight.case("hex") => Encoding.hex,

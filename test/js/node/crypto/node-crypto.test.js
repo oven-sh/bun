@@ -27,3 +27,9 @@ it("web crypto", async () => {
   crypto.getRandomValues(bytes);
   await crypto.subtle.digest("SHA-256", bytes);
 });
+
+// https://github.com/oven-sh/bun/issues/2110
+it("hash regression #2110", () => {
+  var s = "6fbf7e2948e0c2f29eaacac1733546a4af5ca482";
+  expect(crypto.createHash("sha1").update(s, "binary").digest("hex")).toBe("e7c8b3c6f114c523d07ee355c534ee9bef3c044b");
+});

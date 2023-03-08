@@ -342,6 +342,7 @@ pub const MutableString = struct {
                     this.remain()[0 .. bytes.len * 2],
                     []const u16,
                     bytes,
+                    true,
                 );
                 this.context.list.items.len += @as(usize, decoded.written);
                 return pending.len;
@@ -355,6 +356,7 @@ pub const MutableString = struct {
                     this.remain()[0 .. bytes.len * 2],
                     []const u16,
                     bytes,
+                    true,
                 );
                 this.pos += @as(usize, decoded.written);
             }

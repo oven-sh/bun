@@ -983,7 +983,7 @@ pub const Sink = struct {
 
             if (stack_size >= str.len * 2) {
                 var buf: [stack_size]u8 = undefined;
-                const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str);
+                const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
                 std.debug.assert(copied.written <= stack_size);
                 std.debug.assert(copied.read <= stack_size);
                 if (input.isDone()) {

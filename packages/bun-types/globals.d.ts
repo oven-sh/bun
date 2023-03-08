@@ -565,7 +565,29 @@ declare class Blob implements BlobInterface {
    * @param end The index that sets the end of the view.
    *
    */
-  slice(begin?: number, end?: number): Blob;
+  slice(begin?: number, end?: number, contentType?: string): Blob;
+
+  /**
+   * Create a new view **without 🚫 copying** the underlying data.
+   *
+   * Similar to [`BufferSource.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BufferSource/subarray)
+   *
+   * @param begin The index that sets the beginning of the view.
+   * @param end The index that sets the end of the view.
+   *
+   */
+  slice(begin?: number, contentType?: string): Blob;
+
+  /**
+   * Create a new view **without 🚫 copying** the underlying data.
+   *
+   * Similar to [`BufferSource.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BufferSource/subarray)
+   *
+   * @param begin The index that sets the beginning of the view.
+   * @param end The index that sets the end of the view.
+   *
+   */
+  slice(contentType?: string): Blob;
 
   /**
    * Read the data from the blob as a string. It will be decoded from UTF-8.

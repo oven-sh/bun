@@ -376,7 +376,9 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
+                if (max_request_body_size.isNumber()) {
+                    args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
+                }
             }
 
             if (arg.getTruthy(global, "error")) |onError| {

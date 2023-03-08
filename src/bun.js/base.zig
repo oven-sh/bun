@@ -1773,6 +1773,8 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn createEmpty(globalThis: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType) JSValue {
+        JSC.markBinding(@src());
+
         return switch (comptime kind) {
             .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, null, 0, false),
             .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, null, 0),

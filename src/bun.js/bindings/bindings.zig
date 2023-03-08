@@ -3541,6 +3541,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isClass", .{ this, global });
     }
 
+    pub fn isConstructor(this: JSValue) bool {
+        if (!this.isCell()) return false;
+        return cppFn("isConstructor", .{this});
+    }
+
     pub fn getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void {
         if (this.isEmptyOrUndefinedOrNull()) {
             return;
@@ -4061,6 +4066,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "isConstructor",
     };
 };
 

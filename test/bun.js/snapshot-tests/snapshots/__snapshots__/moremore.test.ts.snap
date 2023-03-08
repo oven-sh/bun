@@ -55,3 +55,42 @@ Boolean3 {
   "false": true,
 }
 `;
+
+exports[`test snapshots with Boolean and Number 25`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": {
+          "e": {
+            "bigint": Any<BigInt>,
+            "f": {
+              "g": {
+                "compare": "compare",
+                "h": {
+                  "bool": Any<Boolean>,
+                  "i": Any<Number3>,
+                },
+              },
+            },
+            "ignore1": 234,
+            "ignore2": {
+              "ignore3": 23421,
+              "ignore4": {
+                "ignore5": {
+                  "ignore6": "hello",
+                  "ignore7": "done",
+                },
+              },
+            },
+          },
+        },
+        "num": Any<Number>,
+        "string": Any<String>,
+      },
+    },
+    "j": Any<Date>,
+  },
+  "first": Any<Boolean2>,
+}
+`;

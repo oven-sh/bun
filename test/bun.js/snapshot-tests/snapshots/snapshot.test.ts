@@ -90,4 +90,67 @@ test("most types", () => {
     }
   }
   expect(new A()).toMatchSnapshot("Class");
+
+  expect({ a: 1, b: 2, c: 3, d: new A(), e: 5, f: 6 }).toMatchSnapshot({ d: expect.any(A) });
+  expect({
+    first: new Date(),
+    a: {
+      j: new Date(),
+      b: {
+        c: {
+          num: 1,
+          d: {
+            e: {
+              bigint: 123n,
+              f: {
+                g: {
+                  h: {
+                    i: new Date(),
+                    bool: true,
+                  },
+                  compare: "compare",
+                },
+              },
+              ignore1: 234,
+              ignore2: {
+                ignore3: 23421,
+                ignore4: {
+                  ignore5: {
+                    ignore6: "hello",
+                    ignore7: "done",
+                  },
+                },
+              },
+            },
+          },
+          string: "hello",
+        },
+      },
+    },
+  }).toMatchSnapshot({
+    first: expect.any(Date),
+    a: {
+      j: expect.any(Date),
+      b: {
+        c: {
+          num: expect.any(Number),
+          string: expect.any(String),
+          d: {
+            e: {
+              bigint: expect.any(BigInt),
+              f: {
+                g: {
+                  compare: "compare",
+                  h: {
+                    i: expect.any(Date),
+                    bool: expect.any(Boolean),
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
 });

@@ -735,6 +735,58 @@ pub const Jest = struct {
     }
 };
 
+pub const ExpectAny = struct {
+    pub usingnamespace JSC.Codegen.JSExpectAny;
+
+    pub fn finalize(
+        this: *ExpectAny,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len == 0) {
+            globalObject.throw("any() expects to be passed a constructor function.", .{});
+            return .zero;
+        }
+
+        const constructor = arguments[0];
+        constructor.ensureStillAlive();
+        if (!constructor.isConstructor()) {
+            const fmt = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{});
+                return .zero;
+            }
+            globalObject.throw(Output.prettyFmt(fmt, false), .{});
+            return .zero;
+        }
+
+        var any = globalObject.bunVM().allocator.create(ExpectAny) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.any() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        any.* = .{};
+        const any_js_value = any.toJS(globalObject);
+        any_js_value.ensureStillAlive();
+        JSC.Jest.ExpectAny.constructorValueSetCached(any_js_value, globalObject, constructor);
+        any_js_value.ensureStillAlive();
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+
+        return any_js_value;
+    }
+};
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
@@ -2419,14 +2471,14 @@ pub const Expect = struct {
         }
 
         var hint_string: ZigString = ZigString.Empty;
-        var property_matchers: ?JSObject = null;
+        var property_matchers: ?JSValue = null;
         switch (arguments.len) {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
                     arguments[0].toZigString(&hint_string, globalObject);
                 } else if (arguments[0].isObject()) {
-                    property_matchers = arguments[0].asObject();
+                    property_matchers = arguments[0];
                 }
             },
             else => {
@@ -2441,7 +2493,7 @@ pub const Expect = struct {
                     return .zero;
                 }
 
-                property_matchers = arguments[0].asObject();
+                property_matchers = arguments[0];
 
                 if (arguments[1].isString()) {
                     arguments[1].toZigString(&hint_string, globalObject);
@@ -2468,9 +2520,35 @@ pub const Expect = struct {
             return .zero;
         }
 
+        if (property_matchers) |_prop_matchers| {
+            var prop_matchers = _prop_matchers;
+
+            var itr = PropertyMatcherIterator{
+                .received_object = value,
+                .failed = false,
+            };
+
+            prop_matchers.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
+
+            if (itr.failed) {
+                // TODO: print diff with properties from propertyMatchers
+                const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
+                const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
+                    "\n\nReceived: {any}\n";
+
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                if (Output.enable_ansi_colors) {
+                    globalObject.throw(Output.prettyFmt(fmt, true), .{value.toFmt(globalObject, &formatter)});
+                    return .zero;
+                }
+                globalObject.throw(Output.prettyFmt(fmt, false), .{value.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+        }
+
         const result = Jest.Snapshots.getOrPut(this, value, hint.slice(), globalObject) catch {
-            // handle parsing and other errors
-            globalObject.throw("Failed to parse snapshot file!", .{});
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            globalObject.throw("Failed to snapshot value: {any}", .{value.toFmt(globalObject, &formatter)});
             return .zero;
         };
 
@@ -2504,6 +2582,87 @@ pub const Expect = struct {
 
         return thisValue;
     }
+
+    pub const PropertyMatcherIterator = struct {
+        received_object: JSValue,
+        failed: bool,
+        i: usize = 0,
+
+        pub fn forEach(
+            globalObject: *JSGlobalObject,
+            ctx_ptr: ?*anyopaque,
+            key_: [*c]ZigString,
+            value: JSValue,
+            _: bool,
+        ) callconv(.C) void {
+            const key: ZigString = key_.?[0];
+            if (key.eqlComptime("constructor")) return;
+            if (key.eqlComptime("call")) return;
+
+            var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
+            defer ctx.i += 1;
+            var received_object: JSValue = ctx.received_object;
+
+            if (received_object.get(globalObject, key.slice())) |received_value| {
+                if (JSC.Jest.ExpectAny.fromJS(value)) |_| {
+                    var constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse {
+                        globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
+                        ctx.failed = true;
+                        return;
+                    };
+
+                    if (received_value.isCell() and received_value.isInstanceOf(globalObject, constructor_value)) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+
+                    // check primitives
+                    var constructor_name = ZigString.Empty;
+                    constructor_value.getNameProperty(globalObject, &constructor_name);
+                    if (received_value.isNumber() and constructor_name.eqlComptime("Number")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isBoolean() and constructor_name.eqlComptime("Boolean")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isString() and constructor_name.eqlComptime("String")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isBigInt() and constructor_name.eqlComptime("BigInt")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+
+                    ctx.failed = true;
+                    return;
+                }
+
+                if (value.isObject()) {
+                    if (received_object.get(globalObject, key.slice())) |new_object| {
+                        var itr = PropertyMatcherIterator{
+                            .received_object = new_object,
+                            .failed = false,
+                        };
+                        value.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
+                        if (itr.failed) {
+                            ctx.failed = true;
+                        }
+                    } else {
+                        ctx.failed = true;
+                    }
+
+                    return;
+                }
+
+                if (value.isSameValue(received_value, globalObject)) return;
+            }
+
+            ctx.failed = true;
+        }
+    };
 
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
@@ -2540,9 +2699,12 @@ pub const Expect = struct {
     pub const getResolves = notImplementedJSCProp;
     pub const getRejects = notImplementedJSCProp;
 
+    pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectAny.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
     pub const anything = notImplementedStaticFn;
-    pub const any = notImplementedStaticFn;
     pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;

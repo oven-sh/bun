@@ -1603,11 +1603,11 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @min(this.indent, 8);
-            var buf = [_]u8{' '} ** 32;
+            const indent = @min(this.indent, 32);
+            var buf = [_]u8{' '} ** 64;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @min(16, total_remain);
+                const written = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -2757,9 +2757,18 @@ pub const ZigConsoleClient = struct {
                         else {
                             var object_name = ZigString.Empty;
                             value.getClassName(this.globalThis, &object_name);
+
                             if (!strings.eqlComptime(object_name.slice(), "Object")) {
-                                writer.print("{s} {{}}", .{object_name});
+                                if (value.as(JSC.Jest.ExpectAny)) |_| {
+                                    var constructor = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse unreachable;
+                                    var constructor_name = ZigString.Empty;
+                                    constructor.getNameProperty(this.globalThis, &constructor_name);
+                                    writer.print("Any<{s}>", .{constructor_name});
+                                } else {
+                                    writer.print("{s} {{}}", .{object_name});
+                                }
                             } else {
+                                // don't write "Object"
                                 writer.writeAll("{}");
                             }
                         }

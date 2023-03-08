@@ -13,4 +13,6 @@ test("snapshots in different directory", () => {
   expect("\b").toMatchSnapshot();
   expect("\b'\b\r\r\n\r\n\n\r\n\n\r\r\r").toMatchSnapshot();
   expect("\n\\\n");
+
+  expect({ a: { b: { c: new Date() } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Date) } } });
 });

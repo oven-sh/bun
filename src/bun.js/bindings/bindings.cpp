@@ -3796,6 +3796,12 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
     }
 }
 
+bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0)
+{
+    JSValue value = JSValue::decode(JSValue0);
+    return value.isConstructor();
+}
+
 extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
     return JSValue::encode(JSC::jsString(globalObject, JSC::JSValue::decode(JSValue0).toString(globalObject), JSC::JSValue::decode(JSValue1).toString(globalObject)));

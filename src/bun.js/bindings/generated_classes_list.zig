@@ -20,6 +20,7 @@ pub const Classes = struct {
     pub const TLSSocket = JSC.API.TLSSocket;
     pub const Listener = JSC.API.Listener;
     pub const Expect = JSC.Jest.Expect;
+    pub const ExpectAny = JSC.Jest.ExpectAny;
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const MatchedRoute = JSC.API.MatchedRoute;
     pub const Dirent = JSC.Node.Dirent;

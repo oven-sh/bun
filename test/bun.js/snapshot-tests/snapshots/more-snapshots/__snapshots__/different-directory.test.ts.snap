@@ -62,3 +62,15 @@ exports[`snapshots in different directory 13`] = `
 
 "
 `;
+
+exports[`snapshots in different directory 14`] = `
+{
+  "a": {
+    "b": {
+      "c": Any<Date>,
+    },
+  },
+  "c": 2,
+  "jkfje": 99238,
+}
+`;

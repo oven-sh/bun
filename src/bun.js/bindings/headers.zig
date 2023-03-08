@@ -245,7 +245,6 @@ pub extern fn JSC__JSValue__isNumber(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isObject(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isPrimitive(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isSameValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
-pub extern fn JSC__JSValue__isString(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isSymbol(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isTerminationException(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
 pub extern fn JSC__JSValue__isUInt32AsAnyInt(JSValue0: JSC__JSValue) bool;

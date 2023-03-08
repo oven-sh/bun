@@ -451,6 +451,10 @@ pub const VirtualMachine = struct {
         return VMHolder.vm.?;
     }
 
+    pub fn mimeType(this: *VirtualMachine, str: []const u8) ?bun.HTTP.MimeType {
+        return this.rareData().mimeTypeFromString(this.allocator, str);
+    }
+
     pub const GCLevel = enum(u3) {
         none = 0,
         mild = 1,

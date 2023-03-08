@@ -399,7 +399,8 @@ pub const StreamStart = union(Tag) {
         }
 
         if (value.get(globalThis, "chunkSize")) |chunkSize| {
-            return .{ .chunk_size = @intCast(Blob.SizeType, @truncate(i52, chunkSize.toInt64())) };
+            if (chunkSize.isNumber())
+                return .{ .chunk_size = @intCast(Blob.SizeType, @truncate(i52, chunkSize.toInt64())) };
         }
 
         return .{ .empty = {} };
@@ -432,8 +433,10 @@ pub const StreamStart = union(Tag) {
                 }
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
-                    empty = false;
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
+                    if (chunkSize.isNumber()) {
+                        empty = false;
+                        chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
+                    }
                 }
 
                 if (!empty) {
@@ -450,7 +453,8 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 0;
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
+                    if (chunkSize.isNumber())
+                        chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(0, @truncate(i51, chunkSize.toInt64())));
                 }
 
                 if (value.get(globalThis, "path")) |path| {
@@ -485,8 +489,10 @@ pub const StreamStart = union(Tag) {
                 var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
 
                 if (value.get(globalThis, "highWaterMark")) |chunkSize| {
-                    empty = false;
-                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(256, @truncate(i51, chunkSize.toInt64())));
+                    if (chunkSize.isNumber()) {
+                        empty = false;
+                        chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @max(256, @truncate(i51, chunkSize.toInt64())));
+                    }
                 }
 
                 if (!empty) {
@@ -983,7 +989,7 @@ pub const Sink = struct {
 
             if (stack_size >= str.len * 2) {
                 var buf: [stack_size]u8 = undefined;
-                const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str);
+                const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str, true);
                 std.debug.assert(copied.written <= stack_size);
                 std.debug.assert(copied.read <= stack_size);
                 if (input.isDone()) {

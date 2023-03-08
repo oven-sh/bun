@@ -477,6 +477,7 @@ pub const Body = struct {
                 //             blob.bytes[0..blob.bytes.len],
                 //             []const u16,
                 //             str.utf16SliceAligned(),
+                //             true,
                 //         );
                 //         blob.len = @intCast(InlineBlob.IntSize, result.written);
                 //         std.debug.assert(@as(usize, result.read) == str.len);

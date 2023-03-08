@@ -22,8 +22,8 @@ $ brew install bun
 ```
 
 ```bash#Docker
-$ docker pull oven/bun:edge
-$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun:edge
+$ docker pull oven/bun
+$ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
 {% /codetabs %}

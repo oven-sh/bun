@@ -160,6 +160,9 @@ pub const ZigString = extern struct {
     }
 
     pub fn eql(this: ZigString, other: ZigString) bool {
+        if (this.len == 0 or other.len == 0)
+            return this.len == other.len;
+
         const left_utf16 = this.is16Bit();
         const right_utf16 = other.is16Bit();
 
@@ -2277,6 +2280,10 @@ pub const JSGlobalObject = extern struct {
         return this.bunVM().allocator;
     }
 
+    pub fn throwOutOfMemory(this: *JSGlobalObject) void {
+        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -2412,6 +2419,19 @@ pub const JSGlobalObject = extern struct {
     pub fn createInvalidArgs(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
         err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE)).toValue(this));
+        return err;
+    }
+
+    pub fn createError(
+        this: *JSGlobalObject,
+        code: JSC.Node.ErrorCode,
+        error_name: string,
+        comptime message: string,
+        args: anytype,
+    ) JSValue {
+        const err = createErrorInstance(this, message, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        err.put(this, ZigString.static("name"), ZigString.init(error_name).toValue(this));
         return err;
     }
 
@@ -3509,8 +3529,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return res;
     }
 
-    pub fn isString(this: JSValue) bool {
-        return cppFn("isString", .{this});
+    pub inline fn isString(this: JSValue) bool {
+        if (!this.isCell())
+            return false;
+
+        return jsType(this).isStringLike();
     }
     pub fn isBigInt(this: JSValue) bool {
         return cppFn("isBigInt", .{this});
@@ -4028,7 +4051,6 @@ pub const JSValue = enum(JSValueReprInt) {
         "isObject",
         "isPrimitive",
         "isSameValue",
-        "isString",
         "isSymbol",
         "isTerminationException",
         "isUInt32AsAnyInt",

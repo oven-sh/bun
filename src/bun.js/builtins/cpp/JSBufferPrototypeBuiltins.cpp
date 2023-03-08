@@ -180,6 +180,146 @@ const char* const s_jsBufferPrototypeReadUInt32BECode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_jsBufferPrototypeReadIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeReadIntLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeReadIntLECodeLength = 882;
+static const JSC::Intrinsic s_jsBufferPrototypeReadIntLECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeReadIntLECode =
+    "(function (offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      return view.getInt8(offset);\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      return view.getInt16(offset, true);\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      const val = view.getUint16(offset, true) + view.getUint8(offset + 2) * 2 ** 16;\n" \
+    "      return val | (val & 2 ** 23) * 0x1fe;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      return view.getInt32(offset, true);\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      const last = view.getUint8(offset + 4);\n" \
+    "      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset, true);\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      const last = view.getUint16(offset + 4, true);\n" \
+    "      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset, true);\n" \
+    "    }\n" \
+    "  }\n" \
+    "  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeReadIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeReadIntBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeReadIntBECodeLength = 888;
+static const JSC::Intrinsic s_jsBufferPrototypeReadIntBECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeReadIntBECode =
+    "(function (offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      return view.getInt8(offset);\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      return view.getInt16(offset, false);\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      const val = view.getUint16(offset + 1, false) + view.getUint8(offset) * 2 ** 16;\n" \
+    "      return val | (val & 2 ** 23) * 0x1fe;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      return view.getInt32(offset, false);\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      const last = view.getUint8(offset);\n" \
+    "      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset + 1, false);\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      const last = view.getUint16(offset, false);\n" \
+    "      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset + 2, false);\n" \
+    "    }\n" \
+    "  }\n" \
+    "  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeReadUIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeReadUIntLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeReadUIntLECodeLength = 723;
+static const JSC::Intrinsic s_jsBufferPrototypeReadUIntLECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeReadUIntLECode =
+    "(function (offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      return view.getUint8(offset);\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      return view.getUint16(offset, true);\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      return view.getUint16(offset, true) + view.getUint8(offset + 2) * 2 ** 16;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      return view.getUint32(offset, true);\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      return view.getUint8(offset + 4) * 2 ** 32 + view.getUint32(offset, true);\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      return view.getUint16(offset + 4, true) * 2 ** 32 + view.getUint32(offset, true);\n" \
+    "    }\n" \
+    "  }\n" \
+    "  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeReadUIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeReadUIntBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeReadUIntBECodeLength = 842;
+static const JSC::Intrinsic s_jsBufferPrototypeReadUIntBECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeReadUIntBECode =
+    "(function (offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      return view.getUint8(offset);\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      return view.getUint16(offset, false);\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      return view.getUint16(offset + 1, false) + view.getUint8(offset) * 2 ** 16;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      return view.getUint32(offset, false);\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      const last = view.getUint8(offset);\n" \
+    "      return (last | (last & 2 ** 7) * 0x1fffffe) * 2 ** 32 + view.getUint32(offset + 1, false);\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      const last = view.getUint16(offset, false);\n" \
+    "      return (last | (last & 2 ** 15) * 0x1fffe) * 2 ** 32 + view.getUint32(offset + 2, false);\n" \
+    "    }\n" \
+    "  }\n" \
+    "  @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatLECodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
@@ -403,6 +543,186 @@ const char* const s_jsBufferPrototypeWriteUInt32BECode =
     "  \"use strict\";\n" \
     "  (this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setUint32(offset, value, false);\n" \
     "  return offset + 4;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeWriteIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeWriteIntLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeWriteIntLECodeLength = 949;
+static const JSC::Intrinsic s_jsBufferPrototypeWriteIntLECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeWriteIntLECode =
+    "(function (value, offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      view.setInt8(offset, value);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      view.setInt16(offset, value, true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      view.setUint16(offset, value & 0xFFFF, true);\n" \
+    "      view.setInt8(offset + 2, Math.floor(value * 2 ** -16));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      view.setInt32(offset, value, true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      view.setUint32(offset, value | 0, true);\n" \
+    "      view.setInt8(offset + 4, Math.floor(value * 2 ** -32));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      view.setUint32(offset, value | 0, true);\n" \
+    "      view.setInt16(offset + 4, Math.floor(value * 2 ** -32), true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    default: {\n" \
+    "      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "    }\n" \
+    "  }\n" \
+    "  return offset + byteLength;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeWriteIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeWriteIntBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeWriteIntBECodeLength = 955;
+static const JSC::Intrinsic s_jsBufferPrototypeWriteIntBECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeWriteIntBECode =
+    "(function (value, offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      view.setInt8(offset, value);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      view.setInt16(offset, value, false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      view.setUint16(offset + 1, value & 0xFFFF, false);\n" \
+    "      view.setInt8(offset, Math.floor(value * 2 ** -16));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      view.setInt32(offset, value, false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      view.setUint32(offset + 1, value | 0, false);\n" \
+    "      view.setInt8(offset, Math.floor(value * 2 ** -32));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      view.setUint32(offset + 2, value | 0, false);\n" \
+    "      view.setInt16(offset, Math.floor(value * 2 ** -32), false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    default: {\n" \
+    "      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "    }\n" \
+    "  }\n" \
+    "  return offset + byteLength;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeWriteUIntLECodeLength = 955;
+static const JSC::Intrinsic s_jsBufferPrototypeWriteUIntLECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeWriteUIntLECode =
+    "(function (value, offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      view.setUint8(offset, value);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      view.setUint16(offset, value, true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      view.setUint16(offset, value & 0xFFFF, true);\n" \
+    "      view.setUint8(offset + 2, Math.floor(value * 2 ** -16));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      view.setUint32(offset, value, true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      view.setUint32(offset, value | 0, true);\n" \
+    "      view.setUint8(offset + 4, Math.floor(value * 2 ** -32));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      view.setUint32(offset, value | 0, true);\n" \
+    "      view.setUint16(offset + 4, Math.floor(value * 2 ** -32), true);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    default: {\n" \
+    "      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "    }\n" \
+    "  }\n" \
+    "  return offset + byteLength;\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeWriteUIntBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeWriteUIntBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUIntBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeWriteUIntBECodeLength = 961;
+static const JSC::Intrinsic s_jsBufferPrototypeWriteUIntBECodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeWriteUIntBECode =
+    "(function (value, offset, byteLength) {\n" \
+    "  \"use strict\";\n" \
+    "  const view = this.@dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength);\n" \
+    "  switch (byteLength) {\n" \
+    "    case 1: {\n" \
+    "      view.setUint8(offset, value);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 2: {\n" \
+    "      view.setUint16(offset, value, false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 3: {\n" \
+    "      view.setUint16(offset + 1, value & 0xFFFF, false);\n" \
+    "      view.setUint8(offset, Math.floor(value * 2 ** -16));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 4: {\n" \
+    "      view.setUint32(offset, value, false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 5: {\n" \
+    "      view.setUint32(offset + 1, value | 0, false);\n" \
+    "      view.setUint8(offset, Math.floor(value * 2 ** -32));\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    case 6: {\n" \
+    "      view.setUint32(offset + 2, value | 0, false);\n" \
+    "      view.setUint16(offset, Math.floor(value * 2 ** -32), false);\n" \
+    "      break;\n" \
+    "    }\n" \
+    "    default: {\n" \
+    "      @throwRangeError(\"byteLength must be >= 1 and <= 6\");\n" \
+    "    }\n" \
+    "  }\n" \
+    "  return offset + byteLength;\n" \
     "})\n" \
 ;
 
@@ -719,7 +1039,7 @@ const char* const s_jsBufferPrototypeToJSONCode =
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 612;
+const int s_jsBufferPrototypeSliceCodeLength = 613;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
     "(function (start, end) {\n" \
@@ -741,7 +1061,7 @@ const char* const s_jsBufferPrototypeSliceCode =
     "  }\n" \
     "\n" \
     "  var start_ = adjustOffset(start, byteLength);\n" \
-    "  var end_ = end !== undefined ? adjustOffset(end, byteLength) : byteLength;\n" \
+    "  var end_ = end !== @undefined ? adjustOffset(end, byteLength) : byteLength;\n" \
     "  return new Buffer(buffer, byteOffset + start_, end_ > start_ ? (end_ - start_) : 0);\n" \
     "})\n" \
 ;
@@ -749,37 +1069,24 @@ const char* const s_jsBufferPrototypeSliceCode =
 const JSC::ConstructAbility s_jsBufferPrototypeParentCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeParentCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeParentCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeParentCodeLength = 57;
+const int s_jsBufferPrototypeParentCodeLength = 114;
 static const JSC::Intrinsic s_jsBufferPrototypeParentCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeParentCode =
     "(function () {\n" \
     "  \"use strict\";\n" \
-    "  return this?.buffer;\n" \
+    "  return @isObject(this) && this instanceof @Buffer ? this.buffer : @undefined;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_jsBufferPrototypeOffsetCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeOffsetCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeOffsetCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeOffsetCodeLength = 61;
+const int s_jsBufferPrototypeOffsetCodeLength = 118;
 static const JSC::Intrinsic s_jsBufferPrototypeOffsetCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeOffsetCode =
     "(function () {\n" \
     "  \"use strict\";\n" \
-    "  return this?.byteOffset;\n" \
-    "})\n" \
-;
-
-const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeInitializeBunBufferCodeLength = 45;
-static const JSC::Intrinsic s_jsBufferPrototypeInitializeBunBufferCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeInitializeBunBufferCode =
-    "(function (parameters)\n" \
-    "{\n" \
-    "  \"use strict\";\n" \
-    "\n" \
+    "  return @isObject(this) && this instanceof @Buffer ? this.byteOffset : @undefined;\n" \
     "})\n" \
 ;
 

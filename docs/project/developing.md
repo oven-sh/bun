@@ -13,7 +13,7 @@ To develop on Linux/Windows, [Docker](https://www.docker.com) is required. If us
 
 If you're using VSCode, you'll need to have the [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension installed.
 
-To get started, open VS Code in the `bun` repository. The first time you try to open the dev container, the extension will automatically build it for you, based on [`Dockerfile.devcontainer`](Dockerfile.devcontainer).
+To get started, open VS Code in the `bun` repository. The first time you try to open the dev container, the extension will automatically build it for you, based on [`Dockerfile.devcontainer`](https://github.com/oven-sh/bun/blob/main/Dockerfile.devcontainer).
 
 To open the dev container, open the command palette (`Ctrl` + `Shift` + `P`) and run: `Dev Containers: Reopen in Container`. To later rebuild it (only needed when the devcontainer itself changes, not the Bun code), run: `Dev Containers: Rebuild and Reopen in Container`.
 
@@ -180,9 +180,9 @@ This ensures that the types for Zig and the types for C++ match up correctly, by
 
 TypeScript files that end with `*.classes.ts` are another code generation script. They generate C++ boilerplate for classes implemented in Zig. The generated code lives in:
 
-- [src/bun.js/bindings/ZigGeneratedClasses.cpp](src/bun.js/bindings/ZigGeneratedClasses.cpp)
-- [src/bun.js/bindings/ZigGeneratedClasses.h](src/bun.js/bindings/ZigGeneratedClasses.h)
-- [src/bun.js/bindings/generated_classes.zig](src/bun.js/bindings/generated_classes.zig)
+- [src/bun.js/bindings/ZigGeneratedClasses.cpp](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/ZigGeneratedClasses.cpp)
+- [src/bun.js/bindings/ZigGeneratedClasses.h](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/ZigGeneratedClasses.h)
+- [src/bun.js/bindings/generated_classes.zig](https://github.com/oven-sh/bun/tree/main/src/bun.js/bindings/generated_classes.zig)
   To generate the code, run:
 
 ```bash

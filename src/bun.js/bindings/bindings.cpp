@@ -2455,10 +2455,6 @@ bool JSC__JSValue__isPrimitive(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isPrimitive();
 }
-bool JSC__JSValue__isString(JSC__JSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).isString();
-}
 bool JSC__JSValue__isSymbol(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isSymbol();

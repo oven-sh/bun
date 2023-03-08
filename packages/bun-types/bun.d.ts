@@ -2484,7 +2484,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx";
+    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
   }
 
   interface OnLoadResultObject {
@@ -2676,7 +2676,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<typeof options["setup"]>;
+    }): ReturnType<(typeof options)["setup"]>;
 
     /**
      * Deactivate all plugins

@@ -154,3 +154,7 @@ test("most types", () => {
     },
   });
 });
+
+it("should work with expect.anything()", () => {
+  expect({ a: 0 }).toMatchSnapshot({ a: expect.anything() });
+});

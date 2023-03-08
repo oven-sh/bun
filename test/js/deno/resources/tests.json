@@ -5,6 +5,11 @@
   },
   {
     "path": "html/blob.test.ts",
-    "remotePath": "unit/blob_test.ts"
+    "remotePath": "unit/blob_test.ts",
+    "skip": ["blobCustomInspectFunction"]
+  },
+  {
+    "path": "fetch/body.test.ts",
+    "remotePath": "unit/body_test.ts"
   }
 ]

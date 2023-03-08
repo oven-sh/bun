@@ -2458,9 +2458,6 @@ pub const Blob = struct {
                     var slicer = zig_str.toSlice(bun.default_allocator);
                     defer slicer.deinit();
                     var slice = slicer.slice();
-                    if (!strings.isAllASCII(slice)) {
-                        break :inner;
-                    }
 
                     if (globalThis.bunVM().mimeType(slice)) |mime| {
                         content_type = mime.value;

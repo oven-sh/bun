@@ -159,6 +159,9 @@ pub const ZigString = extern struct {
     }
 
     pub fn eql(this: ZigString, other: ZigString) bool {
+        if (this.len == 0 or other.len == 0)
+            return this.len == other.len;
+
         const left_utf16 = this.is16Bit();
         const right_utf16 = other.is16Bit();
 

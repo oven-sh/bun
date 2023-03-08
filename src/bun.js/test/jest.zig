@@ -670,7 +670,7 @@ pub const Jest = struct {
             bun.copy(u8, snapshot_filename_buf[test_filename.len..], ".snap");
             const snapshot_filename = snapshot_filename_buf[0 .. test_filename.len + ".snap".len];
 
-            if (!strings.eql(dir_path, snapshot_dir_path)) {
+            if (!strings.eqlLong(dir_path, snapshot_dir_path, true)) {
                 snapshot_dir = try getSnapshotDir(dir_path);
             }
 
@@ -2560,7 +2560,7 @@ pub const Expect = struct {
             };
             defer pretty_value.deinit();
 
-            if (strings.eql(pretty_value.toOwnedSliceLeaky(), saved_value)) {
+            if (strings.eqlLong(pretty_value.toOwnedSliceLeaky(), saved_value, true)) {
                 return thisValue;
             }
 

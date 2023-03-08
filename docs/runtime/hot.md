@@ -39,6 +39,8 @@ Traditional file watchers like `nodemon` restart the entire process, so HTTP ser
 Bun provides the following simplified API for implementing HTTP servers. Refer to [API > HTTP](/docs/api/http) for full details.
 
 ```ts#server.ts
+import {type Serve} from "bun";
+
 globalThis.count = globalThis.count ?? 0;
 globalThis.count++;
 
@@ -47,7 +49,7 @@ export default {
     return new Response(`Reloaded ${globalThis.count} times`);
   },
   port: 3000,
-};
+} satisfies Serve;
 ```
 
 The file above is simply exporting an object with a `fetch` handler defined. When this file is executed, Bun interprets this as an HTTP server and passes the exported object into `Bun.serve`.

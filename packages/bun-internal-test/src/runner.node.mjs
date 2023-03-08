@@ -55,7 +55,7 @@ async function runTest(path) {
     stdout,
     stderr,
     status: exitCode,
-  } = spawnSync("bun", ["test", basename(path)], {
+  } = spawnSync("bun", ["test", path], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
     env: {

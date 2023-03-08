@@ -258,7 +258,6 @@ export const Socket = (function (InternalSocket) {
     }
 
     connect(port, host, connectListener) {
-      // TODO support IPC sockets
       var path;
       if (typeof port === "string") {
         path = port;
@@ -300,6 +299,7 @@ export const Socket = (function (InternalSocket) {
       if (typeof bunTLS === "function") {
         tls = bunTLS.call(this, port, host);
       }
+
       bunConnect(
         path
           ? {
@@ -442,8 +442,7 @@ export const connect = createConnection;
 
 class Server extends EventEmitter {
   #server;
-  #listening;
-  #path;
+  #listening = false;
   [bunSocketServerConnections] = 0;
   [bunSocketServerOptions];
   maxConnections = 0;
@@ -463,7 +462,6 @@ class Server extends EventEmitter {
     const { maxConnections } = options;
     this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
 
-    this.#listening = false;
     options.connectionListener = connectionListener;
     this[bunSocketServerOptions] = options;
   }
@@ -501,15 +499,17 @@ class Server extends EventEmitter {
   }
 
   address() {
-    if (this.#server) {
-      if(this.#path) {
-        return this.#path;
+    const server = this.#server;
+    if (server) {
+      const unix = server.unix;
+      if (unix) {
+        return unix;
       }
-      
+
       //TODO: fix adress when host is passed
-      let address = this.#server.hostname;
+      let address = server.hostname;
       const type = isIP(address);
-      const port = this.#server.port;
+      const port = server.port;
       if (typeof port === "number") {
         return {
           port,
@@ -541,6 +541,7 @@ class Server extends EventEmitter {
 
   listen(port, hostname, onListen) {
     let backlog;
+    let path;
     //port is actually path
     if (typeof port === "string") {
       if (Number.isSafeInteger(hostname)) {
@@ -553,8 +554,8 @@ class Server extends EventEmitter {
         onListen = hostname;
       }
 
-      hostname = port;
-      this.#path = hostname;
+      path = port;
+      hostname = undefined;
       port = undefined;
     } else {
       if (typeof hostname === "function") {
@@ -592,16 +593,25 @@ class Server extends EventEmitter {
       } else if (!Number.isSafeInteger(port) || port < 0) {
         port = 0;
       }
+      hostname = hostname || "::";
     }
-    hostname = hostname || "::";
 
     try {
-      this.#server = Bun.listen({
-        port,
-        hostname,
-        tls: false,
-        socket: SocketClass[bunSocketServerHandlers],
-      });
+      this.#server = Bun.listen(
+        path
+          ? {
+              unix: path,
+              tls: false,
+              socket: SocketClass[bunSocketServerHandlers],
+            }
+          : {
+              port,
+              hostname,
+              tls: false,
+              socket: SocketClass[bunSocketServerHandlers],
+            },
+      );
+
       //make this instance available on handlers
       this.#server.data = this;
 

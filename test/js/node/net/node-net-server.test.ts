@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createServer } from "net";
 import { createCallCheckCtx } from "node-harness";
-
 import { realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -9,7 +8,6 @@ import { join } from "path";
 const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
 
 describe("net.createServer listen", () => {
-
   it("should listen on IPv6 by default", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -155,7 +153,6 @@ describe("net.createServer listen", () => {
     );
     done();
   });
-
 
   it("should listen on unix domain socket", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);

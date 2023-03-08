@@ -1,5 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
+import { realpathSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+const socket_domain = join(realpathSync(tmpdir()), "node-net");
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -27,12 +32,13 @@ it("should support net.isIPv6()", () => {
 
 describe("net.Socket read", () => {
   var port = 12345;
+  var unix_servers = 0;
   for (let [message, label] of [
     // ["Hello World!".repeat(1024), "long message"],
     ["Hello!", "short message"],
   ]) {
     describe(label, () => {
-      function runWithServer(cb) {
+      function runWithServer(cb, unix_domain_path) {
         return done => {
           function drain(socket) {
             const message = socket.data.message;
@@ -44,23 +50,42 @@ describe("net.Socket read", () => {
             }
           }
 
-          var server = Bun.listen({
-            hostname: "localhost",
-            port: port++,
-            socket: {
-              open(socket) {
-                socket.data.message = message;
-                drain(socket);
-              },
-              drain,
-              error(socket, err) {
-                done(err);
-              },
-            },
-            data: {
-              message: "",
-            },
-          });
+          var server = Bun.listen(
+            unix_domain_path
+              ? {
+                  unix: join(unix_domain_path, `${unix_servers++}.sock`),
+                  socket: {
+                    open(socket) {
+                      socket.data.message = message;
+                      drain(socket);
+                    },
+                    drain,
+                    error(socket, err) {
+                      done(err);
+                    },
+                  },
+                  data: {
+                    message: "",
+                  },
+                }
+              : {
+                  hostname: "localhost",
+                  port: port++,
+                  socket: {
+                    open(socket) {
+                      socket.data.message = message;
+                      drain(socket);
+                    },
+                    drain,
+                    error(socket, err) {
+                      done(err);
+                    },
+                  },
+                  data: {
+                    message: "",
+                  },
+                },
+          );
 
           function onDone(err) {
             server.stop();
@@ -151,6 +176,54 @@ describe("net.Socket read", () => {
             })
             .on("error", done);
         }),
+      );
+
+      it(
+        "should work with .connect(path)",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const socket = new Socket()
+            .connect(server.unix)
+            .on("connect", () => {
+              expect(socket).toBeDefined();
+              expect(socket.connecting).toBe(false);
+            })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                server.stop();
+                done(e);
+              }
+            })
+            .on("error", done);
+        }, socket_domain),
+      );
+
+      it(
+        "should work with .connect(path, listener)",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const socket = new Socket()
+            .connect(server.unix, () => {
+              expect(socket).toBeDefined();
+              expect(socket.connecting).toBe(false);
+            })
+            .setEncoding("utf8")
+            .on("data", chunk => {
+              data += chunk;
+            })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                done(e);
+              }
+            })
+            .on("error", done);
+        }, socket_domain),
       );
     });
   }

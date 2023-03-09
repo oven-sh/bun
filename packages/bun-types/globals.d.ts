@@ -494,7 +494,7 @@ declare var Headers: {
   new (init?: HeadersInit): Headers;
 };
 
-type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
+type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
 type ResponseType =
   | "basic"
   | "cors"

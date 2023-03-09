@@ -2592,6 +2592,7 @@ pub const Expect = struct {
                     }
 
                     // check primitives
+                    // TODO: check the constructor for primitives by reading it from JSGlobalObject through a binding.
                     var constructor_name = ZigString.Empty;
                     constructor_value.getNameProperty(globalObject, &constructor_name);
                     if (received_value.isNumber() and constructor_name.eqlComptime("Number")) {

@@ -11,7 +11,7 @@ function createSecureContext(options) {
   return new SecureContext();
 }
 
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket } = import.meta.require("net");
+const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net");
 
 const buntls = Symbol.for("::buntls::");
 
@@ -103,6 +103,26 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
   },
 );
+
+class Server extends NetServer {
+  #key;
+  #cert;
+  #requestCert;
+  #ca;
+
+  constructor(options, secureConnectionListener) {
+    const { key, cert, requestCert, ca } = options;
+    super(options, secureConnectionListener);
+
+
+  }
+
+  [buntls](port, host) {
+    return {
+      keyFile: #
+    }
+  }
+}
 export const CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600,
   DEFAULT_ECDH_CURVE = "auto",

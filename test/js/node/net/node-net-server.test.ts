@@ -364,9 +364,7 @@ it("should call connection", done => {
         hostname: address.address,
         socket: {
           data(socket) {},
-          open(socket) {
-            socket.end();
-          },
+          open(socket) {},
         },
       });
     });

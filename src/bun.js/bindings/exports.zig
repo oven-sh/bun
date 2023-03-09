@@ -2173,7 +2173,7 @@ pub const ZigConsoleClient = struct {
                                 }
                             }
 
-                            if (len == 1) {
+                            if (len == 1 and this.snapshot_format) {
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             }
                         }
@@ -2199,7 +2199,7 @@ pub const ZigConsoleClient = struct {
                                 }
                             }
 
-                            if (i == len - 1) {
+                            if (i == len - 1 and this.snapshot_format) {
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             }
                         }
@@ -2867,91 +2867,182 @@ pub const ZigConsoleClient = struct {
                     }
 
                     if (slice.len > 0) {
-                        switch (jsType) {
-                            .Int8Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                i8,
-                                @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Int16Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                i16,
-                                @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Uint16Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                u16,
-                                @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Int32Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                i32,
-                                @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Uint32Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                u32,
-                                @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Float32Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                f32,
-                                @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .Float64Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                f64,
-                                @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .BigInt64Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                i64,
-                                @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
-                                enable_ansi_colors,
-                            ),
-                            .BigUint64Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                Writer,
-                                writer_,
-                                u64,
-                                @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
-                                enable_ansi_colors,
-                            ),
+                        if (this.snapshot_format) {
+                            switch (jsType) {
+                                .Int8Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Int16Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Uint16Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Int32Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Uint32Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Float32Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .Float64Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .BigInt64Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                                .BigUint64Array => {
+                                    const slice_with_type = @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
 
-                            // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                            else => this.writeTypedArray(*@TypeOf(writer), &writer, Writer, writer_, u8, slice, enable_ansi_colors),
+                                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                                else => {
+                                    var slice_with_type = @alignCast(std.meta.alignment([]u8), std.mem.bytesAsSlice(u8, slice));
+                                    this.indent += 1;
+                                    defer this.indent -|= 1;
+                                    for (slice_with_type) |el| {
+                                        writer.writeAll("\n");
+                                        this.writeIndent(Writer, writer_) catch {};
+                                        writer.print("{d},", .{el});
+                                    }
+                                },
+                            }
+                        } else {
+                            switch (jsType) {
+                                .Int8Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    i8,
+                                    @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Int16Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    i16,
+                                    @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Uint16Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    u16,
+                                    @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Int32Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    i32,
+                                    @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Uint32Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    u32,
+                                    @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Float32Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    f32,
+                                    @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .Float64Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    f64,
+                                    @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .BigInt64Array => this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    i64,
+                                    @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
+                                    enable_ansi_colors,
+                                ),
+                                .BigUint64Array => {
+                                    this.writeTypedArray(
+                                        *@TypeOf(writer),
+                                        &writer,
+                                        u64,
+                                        @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
+                                        enable_ansi_colors,
+                                    );
+                                },
+
+                                // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                                else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
+                            }
                         }
                     }
 
@@ -2974,18 +3065,7 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Writer: type, writer_: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
-            if (this.snapshot_format) {
-                this.indent += 1;
-                defer this.indent -|= 1;
-                for (slice) |el| {
-                    writer.writeAll("\n");
-                    this.writeIndent(Writer, writer_) catch {};
-                    writer.print("{d},", .{el});
-                }
-                return;
-            }
-
+        fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
             const fmt_ = if (Number == i64 or Number == u64)
                 "<r><yellow>{d}n<r>"
             else

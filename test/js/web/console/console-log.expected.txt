@@ -30,7 +30,7 @@ Symbol(Symbol Description)
 Promise { <pending> }
 [Function]
 [Function: Foo]
-Foo {}
+{}
 [Function: foooo]
 /FooRegex/
 Is it a bug or a feature that formatting numbers like 123 is colored
@@ -42,5 +42,5 @@ String 123 should be 2nd word, 456 == 456 and percent s %s == What okay
   "bar": [Circular],
 } am
 [
-  {}, {}, {}, {},
+  {}, {}, {}, {}
 ]

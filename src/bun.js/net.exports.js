@@ -615,17 +615,29 @@ class Server extends EventEmitter {
       //make this instance available on handlers
       this.#server.data = this;
 
-      if (typeof onListen === "function") {
-        onListen();
-      }
       this.#listening = true;
-      this.emit("listening");
+      process.nextTick(emitListeningNextTick, this, onListen);
     } catch (err) {
       this.#listening = false;
-      this.emit("error", err);
+      process.nextTick(emitErrorNextTick, this, err);
     }
     return this;
   }
+}
+
+function emitErrorNextTick(self, error) {
+  self.emit("error", error);
+}
+
+function emitListeningNextTick(self, onListen) {
+  if (typeof onListen === "function") {
+    try {
+      onListen();
+    } catch (err) {
+      self.emit("error", err);
+    }
+  }
+  self.emit("listening");
 }
 
 function createServer(options, connectionListener) {

@@ -121,11 +121,11 @@ describe("net.createServer listen", () => {
     server.on("error", mustNotCall());
 
     server.listen(
-      65535,
+      49027,
       mustCall(() => {
         const address = server.address();
         expect(address.address).toStrictEqual("::");
-        expect(address.port).toStrictEqual(65535);
+        expect(address.port).toStrictEqual(49027);
         expect(address.family).toStrictEqual("IPv6");
         server.close();
       }),
@@ -141,12 +141,12 @@ describe("net.createServer listen", () => {
     server.on("error", mustNotCall());
 
     server.listen(
-      65534,
+      49026,
       "127.0.0.1",
       mustCall(() => {
         const address = server.address();
         expect(address.address).toStrictEqual("127.0.0.1");
-        expect(address.port).toStrictEqual(65534);
+        expect(address.port).toStrictEqual(49026);
         expect(address.family).toStrictEqual("IPv4");
         server.close();
       }),
@@ -356,7 +356,7 @@ it("should call connection", done => {
         done();
       }),
     )
-    .listen(() => {
+    .listen(49025, "127.0.0.1", () => {
       const address = server.address();
 
       Bun.connect({

@@ -2015,7 +2015,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    if (value.isObject()) {
+                    if (value.isCell()) {
                         var number_name = ZigString.Empty;
                         value.getClassName(this.globalThis, &number_name);
 
@@ -2316,7 +2316,7 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
                 },
                 .Boolean => {
-                    if (value.isObject()) {
+                    if (value.isCell()) {
                         var bool_name = ZigString.Empty;
                         value.getClassName(this.globalThis, &bool_name);
                         if (this.snapshot_format) {
@@ -2787,7 +2787,7 @@ pub const ZigConsoleClient = struct {
                         else
                             writer.writeAll("{}");
                     } else {
-                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                        if (this.snapshot_format) this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
 
                         if (iter.always_newline or this.snapshot_format) {
                             this.indent -|= 1;

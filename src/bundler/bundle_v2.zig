@@ -1644,6 +1644,22 @@ const LinkerContext = struct {
         return format != .cjs;
     }
 
+    pub fn shouldIncludePart(c: *LinkerContext, source_index: Index.Int, part: js_ast.Part) bool {
+        // As an optimization, ignore parts containing a single import statement to
+        // an internal non-wrapped file. These will be ignored anyway and it's a
+        // performance hit to spin up a goroutine only to discover this later.
+        if (part.stmts.len == 1) {
+            if (part.stmts[0].data == .s_import) {
+                const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
+                if (record.source_index.isValid() and c.graph.meta.items(.flags)[record.source_index.get()].wrap == .none) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     fn load(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index, reachable: []Index) !void {
         this.parse_graph = &bundle.graph;
 
@@ -1915,13 +1931,17 @@ const LinkerContext = struct {
                     if (is_part_in_this_chunk) {
                         is_file_in_chunk = true;
 
-                        // if (can_be_split and part_index != js_ast.namespace_export_part_index and v.c.shouldIncludePart())
-                        var js_parts = if (source_index == Index.runtime.value)
-                            &v.parts_prefix
-                        else
-                            &v.part_ranges;
+                        if (can_be_split and
+                            part_index != js_ast.namespace_export_part_index and
+                            v.c.shouldIncludePart(source_index, part))
+                        {
+                            var js_parts = if (source_index == Index.runtime.value)
+                                &v.parts_prefix
+                            else
+                                &v.part_ranges;
 
-                        appendOrExtendRange(js_parts, source_index, part_index);
+                            appendOrExtendRange(js_parts, source_index, part_index);
+                        }
                     }
                 }
 
@@ -2846,21 +2866,22 @@ const LinkerContext = struct {
             var ptr = ns_export_dependencies.items.ptr + ns_export_dependencies.items.len;
             ns_export_dependencies.items.len += parts.len;
 
-            for (parts) |part_id| {
+            for (parts, ptr[0..parts.len]) |part_id, *dependency| {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
-                ptr[0] = .{
+                dependency.* = .{
                     .source_index = export_.data.source_index,
                     .part_index = part_id,
                 };
-                ptr += 1;
             }
         }
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
-        var export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @boolToInt(needs_exports_variable)) + @as(usize, @boolToInt(properties.items.len > 0))];
-        stmts.head = stmts.head[export_stmts.len..];
+        var all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @boolToInt(needs_exports_variable)) + @as(usize, @boolToInt(properties.items.len > 0))];
+        stmts.head = stmts.head[all_export_stmts.len..];
+        var remaining_stmts = all_export_stmts;
+        defer std.debug.assert(remaining_stmts.len == 0); // all must be used
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if (needs_exports_variable) {
@@ -2875,14 +2896,15 @@ const LinkerContext = struct {
                 ),
                 .value = js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{}, loc),
             };
-            export_stmts[0] = js_ast.Stmt.allocate(
+            remaining_stmts[0] = js_ast.Stmt.allocate(
                 allocator_,
                 js_ast.S.Local,
                 .{
                     .decls = decls,
                 },
-                export_stmts[0].loc,
+                loc,
             );
+            remaining_stmts = remaining_stmts[1..];
             declared_symbols.append(allocator_, .{ .ref = exports_ref, .is_top_level = true }) catch unreachable;
         }
 
@@ -2896,7 +2918,7 @@ const LinkerContext = struct {
                 js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
             };
             // the end incase we somehow get into a state where needs_export_variable is false but properties.len > 0
-            export_stmts[export_stmts.len - 1] = js_ast.Stmt.allocate(
+            remaining_stmts[0] = js_ast.Stmt.allocate(
                 allocator_,
                 js_ast.S.SExpr,
                 .{
@@ -2912,7 +2934,7 @@ const LinkerContext = struct {
                 },
                 loc,
             );
-
+            remaining_stmts = remaining_stmts[1..];
             // Make sure this file depends on the "__export" symbol
             const parts = c.topLevelSymbolsToPartsForRuntime(export_ref);
             ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
@@ -2927,14 +2949,14 @@ const LinkerContext = struct {
         }
 
         // No need to generate a part if it'll be empty
-        if (export_stmts.len > 0) {
+        if (all_export_stmts.len > 0) {
             // - we must already have preallocated the parts array
             // - if the parts list is completely empty, we shouldn't have gotten here in the first place
 
             // Initialize the part that was allocated for us earlier. The information
             // here will be used after this during tree shaking.
             c.graph.ast.items(.parts)[id].slice()[js_ast.namespace_export_part_index] = .{
-                .stmts = export_stmts,
+                .stmts = all_export_stmts,
                 .symbol_uses = ns_export_symbol_uses,
                 .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
                 .declared_symbols = declared_symbols,
@@ -4438,13 +4460,13 @@ const LinkerContext = struct {
             };
         }
 
-        _ = toCommonJSRef;
         const print_options = js_printer.Options{
             // TODO: IIFE
             .indent = 0,
 
             .allocator = allocator,
-            .to_module_ref = toESMRef,
+            .to_esm_ref = toESMRef,
+            .to_commonjs_ref = toCommonJSRef,
             // .require_ref = toCommonJSRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
@@ -5377,6 +5399,7 @@ const LinkerContext = struct {
                         .decls = std.ArrayList(G.Decl).init(temp_allocator),
                         .allocator = temp_allocator,
                     };
+                    var inner_stmts = stmts.all_stmts.items;
                     // Hoist all top-level "var" and "function" declarations out of the closure
                     {
                         var end: usize = 0;
@@ -5415,10 +5438,10 @@ const LinkerContext = struct {
                                 },
                                 else => {},
                             }
-                            stmts.all_stmts.items[end] = stmt;
+                            inner_stmts[end] = stmt;
                             end += 1;
                         }
-                        stmts.all_stmts.items.len = end;
+                        inner_stmts.len = end;
                     }
 
                     if (!c.options.minify_syntax and hoisty.decls.items.len > 0) {
@@ -5442,7 +5465,7 @@ const LinkerContext = struct {
                             .args = &.{},
                             .is_async = is_async,
                             .body = .{
-                                .stmts = stmts.all_stmts.items,
+                                .stmts = inner_stmts,
                                 .loc = Logger.Loc.Empty,
                             },
                         },
@@ -5457,7 +5480,7 @@ const LinkerContext = struct {
                                 .target = Expr.init(
                                     E.Identifier,
                                     E.Identifier{
-                                        .ref = toESMRef,
+                                        .ref = c.esm_runtime_ref,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -5495,6 +5518,15 @@ const LinkerContext = struct {
             out_stmts = stmts.outside_wrapper_prefix.items;
         }
 
+        if (out_stmts.len == 0) {
+            return .{
+                .result = .{
+                    .code = &[_]u8{},
+                    .source_map = null,
+                },
+            };
+        }
+
         const parts_to_print = &[_]js_ast.Part{
             js_ast.Part{
                 // .tag = .stmts,
@@ -5507,7 +5539,8 @@ const LinkerContext = struct {
             .indent = 0,
 
             .allocator = allocator,
-            .to_module_ref = toESMRef,
+            .to_esm_ref = toESMRef,
+            .to_commonjs_ref = toCommonJSRef,
             .require_ref = runtimeRequireRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(
                 LinkerContext,

@@ -475,7 +475,8 @@ pub const SourceMapHandler = struct {
 
 pub const Options = struct {
     transform_imports: bool = true,
-    to_module_ref: Ref = Ref.None,
+    to_commonjs_ref: Ref = Ref.None,
+    to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
     indent: usize = 0,
     externals: []u32 = &[_]u32{},
@@ -539,7 +540,7 @@ pub const RequireOrImportMeta = struct {
         callback: *const Fn = undefined,
 
         pub fn call(self: Callback, id: u32) RequireOrImportMeta {
-            return self.callback(self.ctx, id);
+            return self.callback(self.ctx.?, id);
         }
 
         pub fn init(
@@ -1040,6 +1041,7 @@ fn NewPrinter(
         }
 
         pub fn printSymbol(p: *Printer, ref: Ref) void {
+            std.debug.assert(!ref.isNull());
             const name = p.renamer.nameForSymbol(ref);
 
             p.printIdentifier(name);
@@ -1529,9 +1531,10 @@ fn NewPrinter(
             p: *Printer,
             import_record_index: u32,
             leading_interior_comments: []G.Comment,
-            level: Level,
+            level_: Level,
             flags: ExprFlag.Set,
         ) void {
+            var level = level_;
             const wrap = level.gte(.new) or flags.contains(.forbid_call);
             if (wrap) p.print("(");
             defer if (wrap) p.print(")");
@@ -1558,6 +1561,89 @@ fn NewPrinter(
                     }
                     return;
                 }
+            }
+
+            if (record.source_index.isValid()) {
+                var meta = p.options.requireOrImportMetaForSource(record.source_index.get());
+
+                // Don't need the namespace object if the result is unused anyway
+                if (!flags.contains(.expr_result_is_unused)) {
+                    meta.exports_ref = Ref.None;
+                }
+
+                // Internal "import()" of async ESM
+                if (record.kind == .dynamic and meta.is_wrapper_async) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(meta.wrapper_ref);
+                    p.print("()");
+                    if (meta.exports_ref.isValid()) {
+                        _ = p.printDotThenPrefix();
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(meta.exports_ref);
+                        p.printDotThenSuffix();
+                    }
+                    return;
+                }
+
+                // Internal "require()" or "import()"
+                if (record.kind == .dynamic) {
+                    p.printSpaceBeforeIdentifier();
+                    p.print("Promise.resolve()");
+
+                    level = p.printDotThenPrefix();
+                }
+                defer if (record.kind == .dynamic) p.printDotThenSuffix();
+
+                // Make sure the comma operator is propertly wrapped
+
+                if (meta.exports_ref.isValid() and level.gte(.comma)) {
+                    p.print("()");
+                }
+                defer if (meta.exports_ref.isValid() and level.gte(.comma)) p.print(")");
+
+                // Wrap this with a call to "__toESM()" if this is a CommonJS file
+                const wrap_with_to_esm = record.wrap_with_to_esm;
+                if (wrap_with_to_esm) {
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(p.options.to_esm_ref);
+                    p.print("(");
+                }
+
+                // Call the wrapper
+                p.printSpaceBeforeIdentifier();
+                p.printSymbol(meta.wrapper_ref);
+                p.print("()");
+
+                // Return the namespace object if this is an ESM file
+                if (meta.exports_ref.isValid()) {
+                    p.print(",");
+                    p.printSpace();
+
+                    // Wrap this with a call to "__toCommonJS()" if this is an ESM file
+                    const wrap_with_to_cjs = record.wrap_with_to_commonjs;
+                    if (wrap_with_to_cjs) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(p.options.to_commonjs_ref);
+                        p.print("(");
+                    }
+                    p.printSymbol(meta.exports_ref);
+                    if (wrap_with_to_cjs) {
+                        p.print(")");
+                    }
+                }
+
+                if (wrap_with_to_esm) {
+                    // Finish the call to "__toESM()"
+                    // TODO:
+                    // if (p.module_type.isESM()) {
+                    //     p.print(",");
+                    //     p.printSpace();
+                    //     p.print("1");
+                    // }
+                    p.print(")");
+                }
+
+                return;
             }
 
             const is_external = std.mem.indexOfScalar(
@@ -1599,6 +1685,7 @@ fn NewPrinter(
             p.addSourceMapping(record.range.loc);
 
             p.printSpaceBeforeIdentifier();
+
             // Allow it to fail at runtime, if it should
             p.print("import(");
             p.printImportRecordPath(record);

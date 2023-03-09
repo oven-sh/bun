@@ -2488,7 +2488,7 @@ pub const Expect = struct {
             },
         }
 
-        var hint = hint_string.withEncoding().toSlice(default_allocator);
+        var hint = hint_string.toSlice(default_allocator);
         defer hint.deinit();
 
         const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {

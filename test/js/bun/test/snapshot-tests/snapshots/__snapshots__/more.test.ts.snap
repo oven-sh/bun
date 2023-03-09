@@ -104,6 +104,22 @@ exports[`d0 snapshot name edgecases: one 1`] = `1`;
 
 exports[`d0 snapshot name edgecases: one 2`] = `3`;
 
+exports[`d0 snapshot name edgecases: ¾ 1`] = `
+{
+  "a": 1,
+  "b": 2,
+  "c": 3,
+}
+`;
+
+exports[`d0 snapshot name edgecases: 🐄 1`] = `
+{
+  "a": 1,
+  "b": 2,
+  "c": 3,
+}
+`;
+
 exports[`d0 t3 1`] = `"hello snapshot"`;
 
 exports[`d0 t4 1`] = `"hello\`snapshot\\"`;

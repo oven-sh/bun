@@ -2763,11 +2763,7 @@ pub const ZigConsoleClient = struct {
                     }
 
                     if (iter.i == 0) {
-                        if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
-                            this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
-                        else if (value.isCallable(this.globalThis.vm()))
-                            this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
-                        else {
+                        if (this.snapshot_format) {
                             var object_name = ZigString.Empty;
                             value.getClassName(this.globalThis, &object_name);
 
@@ -2784,7 +2780,12 @@ pub const ZigConsoleClient = struct {
                                 // don't write "Object"
                                 writer.writeAll("{}");
                             }
-                        }
+                        } else if (value.isClass(this.globalThis) and !value.isCallable(this.globalThis.vm()))
+                            this.printAs(.Class, Writer, writer_, value, jsType, enable_ansi_colors)
+                        else if (value.isCallable(this.globalThis.vm()))
+                            this.printAs(.Function, Writer, writer_, value, jsType, enable_ansi_colors)
+                        else
+                            writer.writeAll("{}");
                     } else {
                         this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
 

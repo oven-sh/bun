@@ -275,7 +275,7 @@ pub const BundleV2 = struct {
         }
 
         if (comptime Environment.allow_assert) {
-            Output.prettyErrorln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
+            Output.prettyln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
         }
 
         return visitor.reachable.toOwnedSlice();
@@ -1315,6 +1315,10 @@ const LinkerGraph = struct {
         return LinkerGraph{ .allocator = allocator, .files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, file_count) };
     }
 
+    pub fn runtimeFunction(this: *const LinkerGraph, name: string) Ref {
+        return this.ast.items(.named_exports)[Index.runtime.value].get(name).?.ref;
+    }
+
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
         var source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
 
@@ -1346,7 +1350,7 @@ const LinkerGraph = struct {
     ) !void {
         if (count > 0) debug("generateRuntimeSymbolImportAndUse({s}) for {d}", .{ name, source_index });
 
-        const ref = graph.ast.items(.module_scope)[Index.runtime.get()].members.get(name).?.ref;
+        const ref = graph.runtimeFunction(name);
         try graph.generateSymbolImportAndUse(
             source_index,
             entry_point_part_index.get(),
@@ -1408,7 +1412,7 @@ const LinkerGraph = struct {
     }
     pub fn generateSymbolImportAndUse(
         g: *LinkerGraph,
-        id: u32,
+        source_index: u32,
         part_index: u32,
         ref: Ref,
         use_count: u32,
@@ -1417,32 +1421,33 @@ const LinkerGraph = struct {
         if (use_count == 0) return;
 
         // Mark this symbol as used by this part
-        var parts_list = g.ast.items(.parts)[id].slice();
+        var parts_list = g.ast.items(.parts)[source_index].slice();
         var part: *js_ast.Part = &parts_list[part_index];
-
-        var uses = part.symbol_uses.getOrPut(g.allocator, ref) catch unreachable;
-        if (uses.found_existing) {
-            uses.value_ptr.count_estimate += use_count;
+        var uses = part.symbol_uses;
+        var entry = uses.getOrPut(g.allocator, ref) catch unreachable;
+        if (entry.found_existing) {
+            entry.value_ptr.count_estimate += use_count;
         } else {
-            uses.value_ptr.* = .{ .count_estimate = use_count };
+            entry.value_ptr.* = .{ .count_estimate = use_count };
         }
+        part.symbol_uses = uses;
 
-        const exports_ref = g.ast.items(.exports_ref)[id];
-        const module_ref = g.ast.items(.module_ref)[id].?;
+        const exports_ref = g.ast.items(.exports_ref)[source_index];
+        const module_ref = g.ast.items(.module_ref)[source_index].?;
         if (ref.eql(exports_ref)) {
-            g.ast.items(.uses_exports_ref)[id] = true;
+            g.ast.items(.uses_exports_ref)[source_index] = true;
         }
 
         if (ref.eql(module_ref)) {
-            g.ast.items(.uses_module_ref)[id] = true;
+            g.ast.items(.uses_module_ref)[source_index] = true;
         }
 
         // null ref shouldn't be there.
         std.debug.assert(!ref.isEmpty());
 
         // Track that this specific symbol was imported
-        if (source_index_to_import_from.get() != id) {
-            try g.meta.items(.imports_to_bind)[id].put(g.allocator, ref, .{
+        if (source_index_to_import_from.get() != source_index) {
+            try g.meta.items(.imports_to_bind)[source_index].put(g.allocator, ref, .{
                 .data = .{
                     .source_index = source_index_to_import_from,
                     .import_ref = ref,
@@ -2429,30 +2434,30 @@ const LinkerContext = struct {
                     const import_id = import_source_index;
                     const ref = import_ref.*;
 
-                    const named_import = named_imports[id].get(ref) orelse continue;
+                    if (named_imports[id].get(ref)) |named_import| {
+                        for (named_import.local_parts_with_uses.slice()) |part_index| {
+                            var part: *js_ast.Part = &parts[part_index];
+                            const parts_declaring_symbol = this.topLevelSymbolsToParts(import_id, import.data.import_ref);
 
-                    for (named_import.local_parts_with_uses.slice()) |part_index| {
-                        var part: *js_ast.Part = &parts[part_index];
-                        const parts_declaring_symbol = this.topLevelSymbolsToParts(import_id, import.data.import_ref);
+                            part.dependencies.ensureUnusedCapacity(
+                                this.allocator,
+                                parts_declaring_symbol.len + @as(usize, import.re_exports.len),
+                            ) catch unreachable;
 
-                        part.dependencies.ensureUnusedCapacity(
-                            this.allocator,
-                            parts_declaring_symbol.len + @as(usize, import.re_exports.len),
-                        ) catch unreachable;
+                            // Depend on the file containing the imported symbol
+                            for (parts_declaring_symbol) |resolved_part_index| {
+                                part.dependencies.appendAssumeCapacity(
+                                    .{
+                                        .source_index = Index.source(import_source_index),
+                                        .part_index = resolved_part_index,
+                                    },
+                                );
+                            }
 
-                        // Depend on the file containing the imported symbol
-                        for (parts_declaring_symbol) |resolved_part_index| {
-                            part.dependencies.appendAssumeCapacity(
-                                .{
-                                    .source_index = Index.source(import_source_index),
-                                    .part_index = resolved_part_index,
-                                },
-                            );
+                            // Also depend on any files that re-exported this symbol in between the
+                            // file containing the import and the file containing the imported symbol
+                            part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                         }
-
-                        // Also depend on any files that re-exported this symbol in between the
-                        // file containing the import and the file containing the imported symbol
-                        part.dependencies.appendSliceAssumeCapacity(import.re_exports.slice());
                     }
 
                     // Merge these symbols so they will share the same name
@@ -3064,7 +3069,8 @@ const LinkerContext = struct {
         defer local_dependencies.deinit();
         var parts = &c.graph.ast.items(.parts)[id];
         var parts_slice: []js_ast.Part = parts.slice();
-        var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
+        var named_imports: js_ast.Ast.NamedImports = c.graph.ast.items(.named_imports)[id];
+        defer c.graph.ast.items(.named_imports)[id] = named_imports;
         for (parts_slice, 0..) |*part, part_index| {
 
             // TODO: inline const TypeScript enum here
@@ -3073,6 +3079,8 @@ const LinkerContext = struct {
 
             // note: if we crash on append, it is due to threadlocal heaps in mimalloc
             const symbol_uses = part.symbol_uses.keys();
+
+            // Now that we know this, we can determine cross-part dependencies
             for (symbol_uses, 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     std.debug.assert(part.symbol_uses.values()[j].count_estimate > 0);
@@ -5148,7 +5156,7 @@ const LinkerContext = struct {
     }
 
     fn runtimeFunction(c: *LinkerContext, name: []const u8) Ref {
-        return c.graph.ast.items(.module_scope)[Index.runtime.value].members.get(name).?.ref;
+        return c.graph.runtimeFunction(name);
     }
 
     fn generateCodeForFileInChunkJS(
@@ -6349,7 +6357,7 @@ const LinkerContext = struct {
         source_index: Index.Int,
     ) void {
         var named_imports = named_imports_ptr.cloneWithAllocator(c.allocator) catch unreachable;
-        defer named_imports.deinit();
+        defer named_imports_ptr.* = named_imports;
 
         const Sorter = struct {
             imports: *JSAst.NamedImports,

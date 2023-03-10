@@ -581,16 +581,15 @@ class Server extends EventEmitter {
             hostname = path;
             port = undefined;
           } else {
-            let message = "The argument 'options' must have the property \"port\" or \"path\""
+            let message = 'The argument \'options\' must have the property "port" or "path"';
             try {
               message = `${message}. Received ${JSON.stringify(options)}`;
-            } catch { }
+            } catch {}
 
-            const error = new TypeError(message)
+            const error = new TypeError(message);
             error.code = "ERR_INVALID_ARG_VALUE";
             throw error;
           }
-
         } else if (!Number.isSafeInteger(port) || port < 0) {
           port = 0;
         }

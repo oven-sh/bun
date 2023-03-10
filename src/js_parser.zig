@@ -878,7 +878,6 @@ pub const ImportScanner = struct {
                     defer {
                         if (st.default_name.ref) |ref| {
                             p.recordExport(st.default_name.loc, "default", ref) catch {};
-                            p.recordUsage(ref);
                         }
                     }
 

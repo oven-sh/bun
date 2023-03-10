@@ -8,6 +8,13 @@ import { join } from "path";
 const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
 
 describe("net.createServer listen", () => {
+  it("should throw when no port or path when using options", done => {
+    expect(() => createServer().listen({ exclusive: true })).toThrow(
+      'The argument \'options\' must have the property "port" or "path". Received {"exclusive":true}',
+    );
+    done();
+  });
+
   it("should listen on IPv6 by default", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -426,7 +433,7 @@ it("should call abort with signal", done => {
         done();
       }),
     )
-    .listen({ signal: controller.signal }, () => {
+    .listen({ port: 0, signal: controller.signal }, () => {
       controller.abort();
     });
 });

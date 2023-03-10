@@ -568,16 +568,29 @@ class Server extends EventEmitter {
         onListen = port;
         port = 0;
       } else if (typeof port === "object") {
-        port.signal?.addEventListener("abort", () => this.close());
+        const options = port;
+        options.signal?.addEventListener("abort", () => this.close());
 
-        hostname = port.host;
-        exclusive = port.exclusive === true;
-        const path = port.path;
-        port = port.port;
+        hostname = options.host;
+        exclusive = options.exclusive === true;
+        const path = options.path;
+        port = options.port;
 
-        if (!port && path) {
-          hostname = path;
-          port = undefined;
+        if (!Number.isSafeInteger(port) || port < 0) {
+          if (path) {
+            hostname = path;
+            port = undefined;
+          } else {
+            let message = "The argument 'options' must have the property \"port\" or \"path\""
+            try {
+              message = `${message}. Received ${JSON.stringify(options)}`;
+            } catch { }
+
+            const error = new TypeError(message)
+            error.code = "ERR_INVALID_ARG_VALUE";
+            throw error;
+          }
+
         } else if (!Number.isSafeInteger(port) || port < 0) {
           port = 0;
         }

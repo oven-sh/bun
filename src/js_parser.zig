@@ -878,6 +878,7 @@ pub const ImportScanner = struct {
                     defer {
                         if (st.default_name.ref) |ref| {
                             p.recordExport(st.default_name.loc, "default", ref) catch {};
+                            p.recordUsage(ref);
                         }
                     }
 
@@ -15927,8 +15928,10 @@ fn NewParser_(
                     }
                 },
                 .s_export_default => |data| {
-                    if (data.default_name.ref) |ref| {
-                        try p.recordDeclaredSymbol(ref);
+                    defer {
+                        if (data.default_name.ref) |ref| {
+                            p.recordDeclaredSymbol(ref) catch unreachable;
+                        }
                     }
 
                     var mark_for_replace: bool = false;
@@ -15996,6 +15999,10 @@ fn NewParser_(
                                 stmts.append(p.s(S.SExpr{ .value = p.callRuntime(expr.loc, "__exportDefault", export_default_args) }, expr.loc)) catch unreachable;
                                 return;
                             }
+
+                            if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
+                            }
                         },
 
                         .stmt => |s2| {
@@ -16048,6 +16055,10 @@ fn NewParser_(
 
                                         stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;
+                                    }
+
+                                    if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                        data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
                                     stmts.append(stmt.*) catch unreachable;
@@ -16103,6 +16114,10 @@ fn NewParser_(
 
                                         stmts.append(p.s(S.SExpr{ .value = p.callRuntime(s2.loc, "__exportDefault", export_default_args) }, s2.loc)) catch unreachable;
                                         return;
+                                    }
+
+                                    if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                        data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
                                     }
 
                                     stmts.append(stmt.*) catch unreachable;

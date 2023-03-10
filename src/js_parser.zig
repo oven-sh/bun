@@ -17298,7 +17298,7 @@ fn NewParser_(
                             }
                         }
 
-                        if (!prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
+                        if (prop.kind != .class_static_block and !prop.flags.contains(.is_method) and prop.key.?.data != .e_private_identifier and prop.ts_decorators.len > 0) {
                             // remove decorated fields without initializers to avoid assigning undefined.
                             const initializer = if (prop.initializer) |initializer_value| initializer_value else continue;
 
@@ -17721,20 +17721,20 @@ fn NewParser_(
             var class_name_ref: Ref = if (class.class_name != null)
                 class.class_name.?.ref.?
             else
-                p.newSymbol(.other, "this") catch unreachable;
+                Ref.None;
 
             var shadow_ref = Ref.None;
 
             if (!class_name_ref.eql(Ref.None)) {
                 // are not allowed to assign to this symbol (it throws a TypeError).
-                const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
-                var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
-                bun.copy(u8, identifier[1..identifier.len], name);
-                identifier[0] = '_';
-                shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
-                p.recordDeclaredSymbol(shadow_ref) catch unreachable;
+                // const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
+                // var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
+                // bun.copy(u8, identifier[1..identifier.len], name);
+                // identifier[0] = '_';
+                // shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
+                // p.recordDeclaredSymbol(shadow_ref) catch unreachable;
                 if (class.class_name) |class_name| {
-                    p.current_scope.members.put(p.allocator, identifier, Scope.Member{ .loc = class_name.loc, .ref = shadow_ref }) catch unreachable;
+                    p.current_scope.members.put(p.allocator, p.loadNameFromRef(class_name.ref.?), Scope.Member{ .loc = class_name.loc, .ref = class_name.ref.? }) catch unreachable;
                 }
             }
 
@@ -17908,15 +17908,17 @@ fn NewParser_(
                 }
             }
 
-            if (!shadow_ref.eql(Ref.None)) {
-                if (p.symbols.items[shadow_ref.innerIndex()].use_count_estimate == 0) {
-                    // Don't generate a shadowing name if one isn't needed
-                    shadow_ref = Ref.None;
-                } else if (class.class_name) |_| {
-                    // If there was originally no class name but something inside needed one
-                    // (e.g. there was a static property initializer that referenced "this"),
-                    // store our generated name so the class expression ends up with a name.
-                    class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
+            if (p.symbols.items[shadow_ref.innerIndex()].use_count_estimate == 0) {
+                // Don't generate a shadowing name if one isn't needed
+                shadow_ref = class_name_ref;
+            } else if (class.class_name == null) {
+                // If there was originally no class name but something inside needed one
+                // (e.g. there was a static property initializer that referenced "this"),
+                // store our generated name so the class expression ends up with a name.
+                class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
+                if (class_name_ref.isNull()) {
+                    class_name_ref = p.newSymbol(.other, "_this") catch unreachable;
+                    class.class_name.?.ref = class_name_ref;
                     p.current_scope.generated.push(p.allocator, class_name_ref) catch unreachable;
                     p.recordDeclaredSymbol(class_name_ref) catch unreachable;
                 }

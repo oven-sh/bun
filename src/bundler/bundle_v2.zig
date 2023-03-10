@@ -2803,26 +2803,29 @@ const LinkerContext = struct {
             // Exports of imports need EImportIdentifier in case they need to be re-
             // written to a property access later on
             // note: this is stack allocated
-            var value: js_ast.Expr = undefined;
-            if (c.graph.symbols.getConst(export_.data.import_ref).?.namespace_alias != null) {
-                value = js_ast.Expr.init(
-                    js_ast.E.ImportIdentifier,
-                    js_ast.E.ImportIdentifier{
-                        .ref = export_.data.import_ref,
-                    },
-                    loc,
-                );
-            } else {
-                value = js_ast.Expr.init(
+            const value: js_ast.Expr = brk: {
+                if (c.graph.symbols.getConst(export_.data.import_ref)) |symbol| {
+                    if (symbol.namespace_alias != null) {
+                        break :brk js_ast.Expr.init(
+                            js_ast.E.ImportIdentifier,
+                            js_ast.E.ImportIdentifier{
+                                .ref = export_.data.import_ref,
+                            },
+                            loc,
+                        );
+                    }
+                }
+
+                break :brk js_ast.Expr.init(
                     js_ast.E.Identifier,
                     js_ast.E.Identifier{
                         .ref = export_.data.import_ref,
                     },
                     loc,
                 );
-            }
+            };
 
-            var block = stmts.eat1(
+            const block = stmts.eat1(
                 js_ast.Stmt.allocate(allocator_, js_ast.S.Block, .{
                     .stmts = stmts.eat1(
                         js_ast.Stmt.allocate(
@@ -5163,8 +5166,7 @@ const LinkerContext = struct {
     ) js_printer.PrintResult {
         // var file = &c.graph.files.items(.input_file)[part.source_index.get()];
         var parts: []js_ast.Part = c.graph.ast.items(.parts)[part_range.source_index.get()].slice()[part_range.part_index_begin..part_range.part_index_end];
-        const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
-        _ = resolved_exports;
+        // const resolved_exports: []ResolvedExports = c.graph.meta.items(.resolved_exports);
         const all_flags: []const JSMeta.Flags = c.graph.meta.items(.flags);
         const flags = all_flags[part_range.source_index.get()];
         const wrapper_part_index = c.graph.meta.items(.wrapper_part_index)[part_range.source_index.get()];
@@ -5427,7 +5429,7 @@ const LinkerContext = struct {
                                         stmt.loc,
                                     );
                                 },
-                                .s_function => {
+                                .s_class, .s_function => {
                                     stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
                                     continue;
                                 },

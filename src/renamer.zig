@@ -22,6 +22,8 @@ pub const NoOpRenamer = struct {
         return NoOpRenamer{ .symbols = symbols, .source = source };
     }
 
+    pub const originalName = nameForSymbol;
+
     pub fn nameForSymbol(renamer: *NoOpRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
             return renamer.source.contents[ref.sourceIndex() .. ref.sourceIndex() + ref.innerIndex()];
@@ -59,6 +61,12 @@ pub const Renamer = union(enum) {
         };
     }
 
+    pub fn originalName(renamer: Renamer, ref: Ref) ?string {
+        return switch (renamer) {
+            inline else => |r| r.originalName(ref),
+        };
+    }
+
     pub fn deinit(renamer: Renamer) void {
         switch (renamer) {
             .NumberRenamer => |r| r.deinit(),
@@ -83,6 +91,15 @@ pub const NumberRenamer = struct {
         return .{
             .NumberRenamer = this,
         };
+    }
+
+    pub fn originalName(r: *NumberRenamer, ref: Ref) string {
+        if (ref.isSourceContentsSlice()) {
+            unreachable;
+        }
+
+        const resolved = r.symbols.follow(ref);
+        return r.symbols.getConst(resolved).?.original_name;
     }
 
     pub fn assignName(r: *NumberRenamer, scope: *NumberScope, input_ref: Ref) void {

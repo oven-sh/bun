@@ -8,7 +8,7 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
-export var __copyProps = (to, from, except, desc) => {
+var __copyProps = (to, from, except, desc) => {
   if ((from && typeof from === "object") || typeof from === "function")
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
@@ -27,25 +27,30 @@ export var __markAsModule = target => __defProp(target, "__esModule", { value: t
 // current module is an entry point and the target format is CommonJS, we
 // also copy the properties to "module.exports" in addition to our module's
 // internal ESM export object.
-export var __reExport = (target, mod, secondTarget) => (
-  __copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default")
-);
+export var __reExport = (target, mod, secondTarget) => {
+  __copyProps(target, mod, "default");
+  return secondTarget && __copyProps(secondTarget, mod, "default");
+};
 
 // Converts the module from CommonJS to ESM. When in node mode (i.e. in an
 // ".mjs" file, package.json has "type: module", or the "__esModule" export
 // in the CommonJS file is falsy or missing), the "default" property is
 // overridden to point to the original CommonJS exports object instead.
-export var __toESM = (mod, isNodeMode, target) => (
-  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
-  __copyProps(
+export var __toESM = (mod, isNodeMode, target) => {
+  target = mod != null ? __create(__getProtoOf(mod)) : {};
+  const mode =
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  return __copyProps(
     // If the importer is in node compatibility mode or this is not an ESM
     // file that has been converted to a CommonJS file using a Babel-
     // compatible transform (i.e. "__esModule" has not been set), then set
     // "default" to the CommonJS "module.exports" for node compatibility.
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mode,
     mod,
-  )
-);
+    void 0,
+    void 0,
+  );
+};
 
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
@@ -234,7 +239,4 @@ export var __decorateClass = (decorators, target, key, kind) => {
 
 export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
 
-export var __esm = (fn, res) =>
-  function __init() {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])((fn = 0))), res;
-  };
+export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);

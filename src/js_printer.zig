@@ -493,6 +493,8 @@ pub const Options = struct {
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
 
+    module_type: options.OutputFormat = .preserve,
+
     // TODO: remove this
     // The reason for this is:
     // 1. You're bundling a React component
@@ -1031,7 +1033,6 @@ fn NewPrinter(
             }
         }
 
-        // noop for now
         pub inline fn addSourceMapping(printer: *Printer, location: logger.Loc) void {
             if (comptime !generate_source_map) {
                 return;
@@ -1567,7 +1568,7 @@ fn NewPrinter(
                 var meta = p.options.requireOrImportMetaForSource(record.source_index.get());
 
                 // Don't need the namespace object if the result is unused anyway
-                if (!flags.contains(.expr_result_is_unused)) {
+                if (flags.contains(.expr_result_is_unused)) {
                     meta.exports_ref = Ref.None;
                 }
 
@@ -1597,7 +1598,7 @@ fn NewPrinter(
                 // Make sure the comma operator is propertly wrapped
 
                 if (meta.exports_ref.isValid() and level.gte(.comma)) {
-                    p.print("()");
+                    p.print("(");
                 }
                 defer if (meta.exports_ref.isValid() and level.gte(.comma)) p.print(")");
 
@@ -1622,7 +1623,6 @@ fn NewPrinter(
                     // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                     const wrap_with_to_cjs = record.wrap_with_to_commonjs;
                     if (wrap_with_to_cjs) {
-                        p.printSpaceBeforeIdentifier();
                         p.printSymbol(p.options.to_commonjs_ref);
                         p.print("(");
                     }
@@ -1633,13 +1633,11 @@ fn NewPrinter(
                 }
 
                 if (wrap_with_to_esm) {
-                    // Finish the call to "__toESM()"
-                    // TODO:
-                    // if (p.module_type.isESM()) {
-                    //     p.print(",");
-                    //     p.printSpace();
-                    //     p.print("1");
-                    // }
+                    if (p.options.module_type.isESM()) {
+                        p.print(",");
+                        p.printSpace();
+                        p.print("1");
+                    }
                     p.print(")");
                 }
 
@@ -2457,34 +2455,70 @@ fn NewPrinter(
                             p.printUndefined(level);
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
-                            const import_record = p.importRecord(namespace.import_record_index);
-                            if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
-                                var wrap = false;
+                            if (namespace.import_record_index < p.import_records.len) {
+                                const import_record = p.importRecord(namespace.import_record_index);
+                                if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
+                                    var wrap = false;
+                                    didPrint = true;
+
+                                    if (p.call_target) |target| {
+                                        wrap = e.was_originally_identifier and (target == .e_identifier and
+                                            target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
+                                    }
+
+                                    if (wrap) {
+                                        p.printWhitespacer(ws("(0, "));
+                                    }
+                                    p.addSourceMapping(expr.loc);
+                                    p.printNamespaceAlias(import_record.*, namespace);
+
+                                    if (wrap) {
+                                        p.print(")");
+                                    }
+                                } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                                    p.addSourceMapping(expr.loc);
+
+                                    if (import_record.handles_import_errors) {
+                                        p.printRequireError(import_record.path.text);
+                                    } else {
+                                        p.printDisabledImport();
+                                    }
+                                    didPrint = true;
+                                }
+                            }
+
+                            if (!didPrint) {
                                 didPrint = true;
 
-                                if (p.call_target) |target| {
-                                    wrap = e.was_originally_identifier and (target == .e_identifier and
-                                        target.e_identifier.ref.eql(expr.data.e_import_identifier.ref));
-                                }
+                                const wrap = if (p.call_target) |target|
+                                    e.was_originally_identifier and (target == .e_identifier and
+                                        target.e_identifier.ref.eql(expr.data.e_import_identifier.ref))
+                                else
+                                    false;
 
                                 if (wrap) {
                                     p.printWhitespacer(ws("(0, "));
                                 }
+
+                                p.printSpaceBeforeIdentifier();
                                 p.addSourceMapping(expr.loc);
-                                p.printNamespaceAlias(import_record.*, namespace);
+                                p.printSymbol(namespace.namespace_ref);
+                                const alias = namespace.alias;
+                                if (p.canPrintIdentifier(alias)) {
+                                    p.print(".");
+                                    // TODO: addSourceMappingForName
+                                    p.printIdentifier(alias);
+                                } else {
+                                    p.print("[");
+                                    // TODO: addSourceMappingForName
+                                    // p.addSourceMappingForName(alias);
+                                    p.printQuotedUTF8(alias, true);
+                                    p.print("]");
+                                }
 
                                 if (wrap) {
                                     p.print(")");
                                 }
-                            } else if (import_record.was_originally_require and import_record.path.is_disabled) {
-                                p.addSourceMapping(expr.loc);
-
-                                if (import_record.handles_import_errors) {
-                                    p.printRequireError(import_record.path.text);
-                                } else {
-                                    p.printDisabledImport();
-                                }
-                                didPrint = true;
                             }
                         }
                     }

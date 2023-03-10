@@ -712,7 +712,42 @@ pub const ImportScanner = struct {
                                 }) catch unreachable;
                             }
                         }
+
+                        p.named_imports.ensureUnusedCapacity(
+                            st.items.len + @as(
+                                usize,
+                                @boolToInt(st.default_name != null),
+                            ),
+                        ) catch unreachable;
+
+                        if (st.default_name) |default| {
+                            p.named_imports.putAssumeCapacity(
+                                default.ref.?,
+                                .{
+                                    .alias = "default",
+                                    .alias_loc = default.loc,
+                                    .namespace_ref = namespace_ref,
+                                    .import_record_index = st.import_record_index,
+                                },
+                            );
+                        }
+
+                        for (st.items) |item| {
+                            const name: LocRef = item.name;
+                            const name_ref = name.ref.?;
+
+                            p.named_imports.putAssumeCapacity(
+                                name_ref,
+                                js_ast.NamedImport{
+                                    .alias = item.alias,
+                                    .alias_loc = name.loc,
+                                    .namespace_ref = namespace_ref,
+                                    .import_record_index = st.import_record_index,
+                                },
+                            );
+                        }
                     } else {
+
                         // ESM requires live bindings
                         // CommonJS does not require live bindings
                         // We load ESM in browsers & in Bun.js
@@ -743,22 +778,26 @@ pub const ImportScanner = struct {
                                 .was_originally_property_access = st.star_name_loc != null and existing_items.contains(symbol.original_name),
                             };
                         }
+
+                        if (record.was_originally_require) {
+                            var symbol = &p.symbols.items[namespace_ref.innerIndex()];
+                            symbol.namespace_alias = G.NamespaceAlias{
+                                .namespace_ref = namespace_ref,
+                                .alias = "",
+                                .import_record_index = st.import_record_index,
+                                .was_originally_property_access = false,
+                            };
+                        }
                     }
 
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
 
-                    if (st.star_name_loc != null) {
-                        record.contains_import_star = true;
-                    }
+                    record.contains_import_star = record.contains_import_star or st.star_name_loc != null;
+                    record.contains_default_alias = record.contains_default_alias or st.default_name != null;
 
-                    if (record.was_originally_require) {
-                        var symbol = &p.symbols.items[namespace_ref.innerIndex()];
-                        symbol.namespace_alias = G.NamespaceAlias{
-                            .namespace_ref = namespace_ref,
-                            .alias = "",
-                            .import_record_index = st.import_record_index,
-                            .was_originally_property_access = false,
-                        };
+                    for (st.items) |*item| {
+                        record.contains_default_alias = record.contains_default_alias or strings.eqlComptime(item.alias, "default");
+                        record.contains_es_module_alias = record.contains_es_module_alias or strings.eqlComptime(item.alias, "__esModule");
                     }
                 },
 

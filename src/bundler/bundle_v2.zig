@@ -2411,7 +2411,7 @@ const LinkerContext = struct {
                 // parallel and can't safely mutate the "importsToBind" map of another file.
                 if (flag.needs_exports_variable) {
                     if (!runtime_export_symbol_ref.isValid()) {
-                        runtime_export_symbol_ref = this.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
+                        runtime_export_symbol_ref = this.runtimeFunction("__export");
                     }
 
                     std.debug.assert(runtime_export_symbol_ref.isValid());
@@ -5822,7 +5822,13 @@ const LinkerContext = struct {
 
         part.is_live = true;
         if (comptime bun.Environment.allow_assert)
-            debug("markPartLiveForTreeShaking({d}): {s}:{d}", .{ id, c.parse_graph.input_files.get(id).source.path.text, part_index });
+            debug("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
+                id,
+                c.parse_graph.input_files.get(id).source.path.text,
+                part_index,
+                if (part.stmts.len > 0) part.stmts[0].loc.start else Logger.Loc.Empty.start,
+                if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),
+            });
 
         for (part.dependencies.slice()) |dependency| {
             const _id = dependency.source_index.get();
@@ -5874,6 +5880,9 @@ const LinkerContext = struct {
                     break :loop;
                 }
             }
+
+            const prev_import_ref = tracker.import_ref;
+            const prev_source_index = tracker.source_index.get();
             c.cycle_detector.append(tracker.*) catch unreachable;
 
             // Resolve the import by one step
@@ -5896,7 +5905,7 @@ const LinkerContext = struct {
                     // property access. Don't do this if the namespace reference is invalid
                     // though. This is the case for star imports, where the import is the
                     // namespace.
-                    const named_import: js_ast.NamedImport = named_imports[other_id].get(tracker.import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
 
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (result.kind == .normal) {

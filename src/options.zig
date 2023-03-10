@@ -1198,6 +1198,10 @@ pub const OutputFormat = enum {
     pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
         return this == .esm;
     }
+
+    pub inline fn isESM(this: OutputFormat) bool {
+        return this == .esm;
+    }
 };
 
 /// BundleOptions is used when ResolveMode is not set to "disable".

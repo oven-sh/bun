@@ -2400,6 +2400,15 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub fn isAnonymousNamed(expr: Expr) bool {
+        return switch (expr.data) {
+            .e_arrow => true,
+            .e_function => |func| func.func.name == null,
+            .e_class => |class| class.class_name == null,
+            else => false,
+        };
+    }
+
     pub fn clone(this: Expr, allocator: std.mem.Allocator) !Expr {
         return .{
             .loc = this.loc,
@@ -2733,23 +2742,6 @@ pub const Expr = struct {
         }
 
         return [2]f64{ left.e_number.value, right.e_number.value };
-    }
-
-    pub fn isAnonymousNamed(e: *Expr) bool {
-        switch (e.data) {
-            .e_arrow => {
-                return true;
-            },
-            .e_function => |func| {
-                return func.func.name == null;
-            },
-            .e_class => |class| {
-                return class.class_name == null;
-            },
-            else => {
-                return false;
-            },
-        }
     }
 
     pub var icount: usize = 0;
@@ -5247,21 +5239,49 @@ pub const DeclaredSymbol = struct {
     is_top_level: bool = false,
 
     pub const List = struct {
-        refs: std.ArrayListUnmanaged(Ref) = .{},
+        refs_list: std.ArrayListUnmanaged(Ref) = .{},
         is_top_level: bun.bit_set.DynamicBitSetUnmanaged = .{},
 
+        pub fn refs(this: *const List) []Ref {
+            return this.refs_list.items;
+        }
+
+        pub fn toOwnedSlice(this: *List) List {
+            var new = this.*;
+            if (this.is_top_level.bit_length > this.refs_list.items.len)
+                new.is_top_level.setRangeValue(
+                    .{
+                        .start = this.refs_list.items.len,
+                        .end = this.is_top_level.bit_length,
+                    },
+                    false,
+                );
+
+            this.* = .{};
+            return new;
+        }
+
         pub fn clone(this: *const List, allocator: std.mem.Allocator) !List {
-            var refs = try this.refs.clone(allocator);
-            errdefer refs.deinit(allocator);
+            var refs_list = try this.refs_list.clone(allocator);
+            errdefer refs_list.deinit(allocator);
+            var top = try this.is_top_level.clone(allocator);
+            if (top.bit_length > this.refs_list.items.len)
+                top.setRangeValue(
+                    .{
+                        .start = this.refs_list.items.len,
+                        .end = top.bit_length,
+                    },
+                    false,
+                );
 
             return List{
-                .refs = refs,
-                .is_top_level = try this.is_top_level.clone(allocator),
+                .refs_list = refs_list,
+                .is_top_level = top,
             };
         }
 
         pub inline fn len(this: List) usize {
-            return this.refs.items.len;
+            return this.refs().len;
         }
 
         pub fn append(this: *List, allocator: std.mem.Allocator, entry: DeclaredSymbol) !void {
@@ -5275,8 +5295,8 @@ pub const DeclaredSymbol = struct {
         }
 
         pub fn appendListAssumeCapacity(this: *List, other: List) void {
-            var j = other.refs.items.len;
-            this.refs.appendSliceAssumeCapacity(other.refs.items);
+            var j = other.refs().len;
+            this.refs_list.appendSliceAssumeCapacity(other.refs());
             var is_top_level = &this.is_top_level;
             var iter = other.is_top_level.iterator(.{});
 
@@ -5287,40 +5307,40 @@ pub const DeclaredSymbol = struct {
         }
 
         pub fn appendAssumeCapacity(this: *List, entry: DeclaredSymbol) void {
-            this.refs.appendAssumeCapacity(entry.ref);
-            this.is_top_level.setValue(this.refs.items.len - 1, entry.is_top_level);
+            this.refs_list.appendAssumeCapacity(entry.ref);
+            this.is_top_level.setValue(this.refs().len - 1, entry.is_top_level);
         }
 
         pub fn ensureTotalCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
-            try this.ensureUnusedCapacity(allocator, this.refs.capacity -| this.refs.items.len +| count);
+            try this.ensureUnusedCapacity(allocator, this.refs_list.capacity -| this.refs().len +| count);
         }
 
         pub fn ensureUnusedCapacity(this: *List, allocator: std.mem.Allocator, count: usize) !void {
-            try this.refs.ensureUnusedCapacity(allocator, count);
-            if (this.is_top_level.capacity() < this.refs.capacity) {
+            try this.refs_list.ensureUnusedCapacity(allocator, count);
+            if (this.is_top_level.capacity() < this.refs_list.capacity) {
                 var prev = this.is_top_level;
-                this.is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, this.refs.capacity);
+                this.is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, this.refs_list.capacity);
                 prev.copyInto(this.is_top_level);
                 prev.deinit(allocator);
             }
         }
 
         pub fn clearRetainingCapacity(this: *List) void {
-            this.refs.clearRetainingCapacity();
+            this.refs_list.clearRetainingCapacity();
             this.is_top_level.setAll(false);
         }
 
         pub fn deinit(this: *List, allocator: std.mem.Allocator) void {
-            this.refs.deinit(allocator);
+            this.refs_list.deinit(allocator);
             this.is_top_level.deinit(allocator);
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !List {
-            var refs = try std.ArrayListUnmanaged(Ref).initCapacity(allocator, capacity);
-            errdefer refs.deinit(allocator);
-            var is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, refs.capacity);
+            var refs_list = try std.ArrayListUnmanaged(Ref).initCapacity(allocator, capacity);
+            errdefer refs_list.deinit(allocator);
+            var is_top_level = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(allocator, refs_list.capacity);
             return List{
-                .refs = refs,
+                .refs_list = refs_list,
                 .is_top_level = is_top_level,
             };
         }
@@ -5337,10 +5357,11 @@ pub const DeclaredSymbol = struct {
     };
 
     pub fn forEachTopLevelSymbol(decls: *List, ctx: anytype, comptime Fn: anytype) void {
-        var refs = decls.refs.items;
+        var refs = decls.refs();
         std.debug.assert(refs.len <= decls.is_top_level.capacity());
         var iter = decls.is_top_level.iterator(.{ .direction = .forward });
         while (iter.next()) |index| {
+            std.debug.assert(index < refs.len);
             const ref = refs[index];
             Fn(ctx, ref);
         }

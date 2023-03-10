@@ -4171,19 +4171,14 @@ const LinkerContext = struct {
                                 .{
                                     .default_name = .{
                                         .loc = Logger.Loc.Empty,
+                                        .ref = ast.wrapper_ref.?,
                                     },
                                     .value = .{
-                                        .stmt = Stmt.alloc(
-                                            S.SExpr,
-                                            .{
-                                                .value = Expr.init(
-                                                    E.Call,
-                                                    E.Call{
-                                                        .target = Expr.initIdentifier(
-                                                            ast.wrapper_ref.?,
-                                                            Logger.Loc.Empty,
-                                                        ),
-                                                    },
+                                        .expr = Expr.init(
+                                            E.Call,
+                                            E.Call{
+                                                .target = Expr.initIdentifier(
+                                                    ast.wrapper_ref.?,
                                                     Logger.Loc.Empty,
                                                 ),
                                             },

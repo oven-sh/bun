@@ -2332,18 +2332,14 @@ const LinkerContext = struct {
                     var count: usize = 0;
                     if (is_entry_point and this.options.output_format == .esm) {
                         for (aliases) |alias| {
-                            count += std.fmt.count("{}", .{strings.fmtIdentifier(alias)});
+                            count += std.fmt.count("export_{}", .{strings.fmtIdentifier(alias)});
                         }
-                        count *= "export_".len;
                     }
 
-                    var ident_fmt_len: usize = 0;
-                    if (wrap == .esm or (wrap != .cjs and export_kind != .cjs)) {
-                        ident_fmt_len += if (source.identifier_name.len > 0)
-                            source.identifier_name.len
-                        else
-                            std.fmt.count("{}", .{source.fmtIdentifier()});
-                    }
+                    const ident_fmt_len: usize = if (source.identifier_name.len > 0)
+                        source.identifier_name.len
+                    else
+                        std.fmt.count("{}", .{source.fmtIdentifier()});
 
                     if (wrap == .esm) {
                         count += "init_".len + ident_fmt_len;
@@ -2396,9 +2392,9 @@ const LinkerContext = struct {
                 // aesthetics and is not about correctness. This is done here because by
                 // this point, we know the CommonJS status will not change further.
                 if (wrap != .cjs and export_kind != .cjs) {
-                    const exports_name = bufPrint(buf, "exports_{s}", .{source.fmtIdentifier()}) catch unreachable;
+                    const exports_name = bufPrint(buf, "exports_{any}", .{source.fmtIdentifier()}) catch unreachable;
                     buf = buf[exports_name.len..];
-                    const module_name = bufPrint(buf, "module_{s}", .{source.fmtIdentifier()}) catch unreachable;
+                    const module_name = bufPrint(buf, "module_{any}", .{source.fmtIdentifier()}) catch unreachable;
                     buf = buf[module_name.len..];
                     if (exports_symbol != null)
                         exports_symbol.?.original_name = exports_name;
@@ -4467,7 +4463,6 @@ const LinkerContext = struct {
             .allocator = allocator,
             .to_esm_ref = toESMRef,
             .to_commonjs_ref = toCommonJSRef,
-            // .require_ref = toCommonJSRef,
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
             .minify_whitespace = c.options.minify_whitespace,

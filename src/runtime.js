@@ -1,5 +1,5 @@
-const tagSymbol = Symbol.for("CommonJSTransformed");
-const cjsRequireSymbol = Symbol.for("CommonJS");
+var tagSymbol;
+var cjsRequireSymbol;
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
@@ -8,19 +8,49 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
+export var __copyProps = (to, from, except, desc) => {
+  if ((from && typeof from === "object") || typeof from === "function")
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+        });
+
+  return to;
+};
+
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 
-export var __reExport = (target, mod, copyDefault, desc) => {
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== "default"))
-        __defProp(target, key, {
-          get: () => mod[key],
-          configurable: true,
-          enumerable: !(desc = __getOwnPropDesc(mod, key)) || desc.enumerable,
-        });
-  return target;
-};
+// This is used to implement "export * from" statements. It copies properties
+// from the imported module to the current module's ESM export object. If the
+// current module is an entry point and the target format is CommonJS, we
+// also copy the properties to "module.exports" in addition to our module's
+// internal ESM export object.
+export var __reExport = (target, mod, secondTarget) => (
+  __copyProps(target, mod, "default"), secondTarget && __copyProps(secondTarget, mod, "default")
+);
+
+// Converts the module from CommonJS to ESM. When in node mode (i.e. in an
+// ".mjs" file, package.json has "type: module", or the "__esModule" export
+// in the CommonJS file is falsy or missing), the "default" property is
+// overridden to point to the original CommonJS exports object instead.
+export var __toESM = (mod, isNodeMode, target) => (
+  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
+  __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod,
+  )
+);
+
+// Converts the module from ESM to CommonJS. This clones the input module
+// object with the addition of a non-enumerable "__esModule" property set
+// to "true", which overwrites any existing export named "__esModule".
+export var __toCommonJS = mod => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // lazy require to prevent loading one icon from a design system
 export var $$lzy = (target, mod, props) => {
@@ -35,25 +65,16 @@ export var $$lzy = (target, mod, props) => {
   return target;
 };
 
-export var __toModule = mod => {
-  return __reExport(
-    __markAsModule(
-      __defProp(
-        mod != null ? __create(__getProtoOf(mod)) : {},
-        "default",
-        mod && mod.__esModule && "default" in mod
-          ? { get: () => mod.default, enumerable: true, configurable: true }
-          : { value: mod, enumerable: true, configurable: true },
-      ),
-    ),
-    mod,
-  );
-};
+// When you do know the module is CJS
+export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-export var __commonJS = (cb, name) => {
+// When you don't know if the module is going to be ESM or CJS
+export var __cJS2eSM = (cb, name) => {
   var mod;
   var origExports;
   var has_run = false;
+  tagSymbol ??= Symbol.for("CommonJSTransformed");
+  cjsRequireSymbol ??= Symbol.for("CommonJS");
 
   const requireFunction = function load() {
     if (has_run) {
@@ -121,8 +142,6 @@ export var __commonJS = (cb, name) => {
   requireFunction[cjsRequireSymbol] = 1;
   return requireFunction;
 };
-
-export var __cJS2eSM = __commonJS;
 
 export var __internalIsCommonJSNamespace = namespace =>
   namespace != null &&
@@ -215,39 +234,7 @@ export var __decorateClass = (decorators, target, key, kind) => {
 
 export var __decorateParam = (index, decorator) => (target, key) => decorator(target, key, index);
 
-// Converts the module from CommonJS to ESM
-export var __toESM = (mod, isNodeMode) => {
-  return __reExport(
-    __markAsModule(
-      __defProp(
-        mod != null ? __create(__getProtoOf(mod)) : {},
-        "default",
-
-        // If the importer is not in node compatibility mode and this is an ESM
-        // file that has been converted to a CommonJS file using a Babel-
-        // compatible transform (i.e. "__esModule" has been set), then forward
-        // "default" to the export named "default". Otherwise set "default" to
-        // "module.exports" for node compatibility.
-        !isNodeMode && mod && mod.__esModule
-          ? { get: () => mod.default, enumerable: true }
-          : { value: mod, enumerable: true },
-      ),
-    ),
-    mod,
-  );
-};
-
 export var __esm = (fn, res) =>
   function __init() {
     return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])((fn = 0))), res;
   };
-
-// Converts the module from ESM to CommonJS
-export var __toCommonJS = /* @__PURE__ */ (cache => {
-  return (mod, temp) => {
-    return (
-      (cache && cache.get(mod)) ||
-      ((temp = __reExport(__markAsModule({}), mod, /* copyDefault */ 1)), cache && cache.set(mod, temp), temp)
-    );
-  };
-})(typeof WeakMap !== "undefined" ? new WeakMap() : 0);

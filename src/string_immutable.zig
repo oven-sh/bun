@@ -3845,7 +3845,7 @@ pub fn join(slices: []const string, delimiter: string, allocator: std.mem.Alloca
 pub fn order(a: []const u8, b: []const u8) std.math.Order {
     const len = @min(a.len, b.len);
     const cmp = bun.C.memcmp(a.ptr, b.ptr, len);
-    return switch (cmp) {
+    return switch (std.math.sign(cmp)) {
         0 => std.math.order(a.len, b.len),
         1 => .gt,
         -1 => .lt,

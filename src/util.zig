@@ -1,5 +1,6 @@
 // Things that maybe should go in Zig standard library at some point
 const std = @import("std");
+const bun = @import("bun");
 
 pub fn Key(comptime Map: type) type {
     return FieldType(Map.KV, "key").?;
@@ -168,6 +169,18 @@ pub inline fn from(
     }
 
     return fromSlice(Array, allocator, []const Of(Array), @as([]const Of(Array), default));
+}
+
+pub fn concat(
+    comptime T: type,
+    dest: []T,
+    src: []const []const T,
+) void {
+    var remain = dest;
+    for (src) |group| {
+        bun.copy(T, remain[0..group.len], group);
+        remain = remain[group.len..];
+    }
 }
 
 pub fn fromSlice(

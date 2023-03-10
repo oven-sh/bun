@@ -324,7 +324,14 @@ pub const SocketConfig = struct {
             default_data = default_data_value;
         }
 
-        return SocketConfig{ .hostname_or_unix = hostname_or_unix, .port = port, .ssl = ssl, .handlers = handlers, .default_data = default_data, .exclusive = exclusive };
+        return SocketConfig{
+            .hostname_or_unix = hostname_or_unix,
+            .port = port,
+            .ssl = ssl,
+            .handlers = handlers,
+            .default_data = default_data,
+            .exclusive = exclusive,
+        };
     }
 };
 

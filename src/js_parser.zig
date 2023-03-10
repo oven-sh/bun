@@ -13399,6 +13399,7 @@ fn NewParser_(
                     return p.handleIdentifier(expr.loc, e_, original_name, IdentifierOpts{
                         .assign_target = in.assign_target,
                         .is_delete_target = is_delete_target,
+                        .is_call_target = @as(Expr.Tag, p.call_target) == .e_identifier and expr.data.e_identifier.ref.eql(p.call_target.e_identifier.ref),
                         .was_originally_identifier = true,
                     });
                 },
@@ -14329,6 +14330,23 @@ fn NewParser_(
                         if (literal.len > index) {
                             return p.newExpr(E.String{ .data = literal[index .. index + 1] }, expr.loc);
                         }
+                    } else if ((comptime FeatureFlags.inline_properties_in_transpiler) and
+                        // Input:
+                        //
+                        //   [123][0]
+                        //
+                        // Output:
+                        //
+                        //   123
+                        in.assign_target == .none and
+                        !is_delete_target and
+                        e_.optional_chain == null and
+                        target.data == .e_array and
+                        e_.index.data == .e_number and
+                        target.data.e_array.items.len == 1 and
+                        e_.index.data.e_number.value == 0.0)
+                    {
+                        return target.data.e_array.items.ptr[0];
                     }
                     // Create an error for assigning to an import namespace when bundling. Even
                     // though this is a run-time error, we make it a compile-time error when
@@ -14623,10 +14641,7 @@ fn NewParser_(
 
                     var has_spread = false;
                     var has_proto = false;
-                    var i: usize = 0;
-                    while (i < e_.properties.len) : (i += 1) {
-                        var property = e_.properties.ptr[i];
-
+                    for (e_.properties.slice()) |*property| {
                         if (property.kind != .spread) {
                             property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
                             const key = property.key.?;
@@ -14682,8 +14697,6 @@ fn NewParser_(
                                 }
                             }
                         }
-
-                        e_.properties.ptr[i] = property;
                     }
                 },
                 .e_import => |e_| {
@@ -15710,6 +15723,33 @@ fn NewParser_(
                             return null;
 
                         return p.newExpr(E.Number{ .value = @intToFloat(f64, str.len()) }, loc);
+                    }
+                },
+                .e_object => |obj| {
+                    if (comptime FeatureFlags.inline_properties_in_transpiler) {
+                        //
+                        // Rewrite a property access like this:
+                        //   { f: () => {} }.f
+                        // To:
+                        //   () => {}
+                        //
+                        // To avoid thinking too much about edgecases, only do this for:
+                        //   1) Objects with a single property
+                        //   2) Not a method, not a computed property
+                        if (obj.properties.len == 1 and
+                            !identifier_opts.is_delete_target and
+                            identifier_opts.assign_target == .none)
+                        {
+                            const prop: G.Property = obj.properties.ptr[0];
+                            if (prop.value != null and
+                                prop.flags.count() == 0 and
+                                prop.key != null and
+                                prop.key.?.data == .e_string and
+                                prop.key.?.data.e_string.eql([]const u8, name))
+                            {
+                                return prop.value.?;
+                            }
+                        }
                     }
                 },
                 else => {},
@@ -19076,17 +19116,16 @@ fn NewParser_(
             if (p.options.bundle) {
 
                 // Each part tracks the other parts it depends on within this file
-                var i: u32 = 0;
-                const count = @truncate(u32, parts.len);
-                while (i < count) : (i += 1) {
-                    var decls = &parts[i].declared_symbols;
+                for (parts, 0..) |*part, i| {
                     var ctx_ = .{
                         .allocator = p.allocator,
                         .top_level_symbols_to_parts = &top_level_symbols_to_parts,
                         .symbols = p.symbols.items,
-                        .part_index = i,
+                        .part_index = @truncate(u32, i),
                     };
                     const Ctx = @TypeOf(ctx_);
+                    var decls = &part.declared_symbols;
+
                     const Iterator = struct {
                         pub fn next(ctx: Ctx, input: Ref) void {
                             // If this symbol was merged, use the symbol at the end of the
@@ -19094,7 +19133,7 @@ fn NewParser_(
                             // declarations with the same name, for example.
                             var ref = input;
                             var symbol_ref = &ctx.symbols[ref.innerIndex()];
-                            while (symbol_ref.link.isValid()) : (symbol_ref = &ctx.symbols[ref.innerIndex()]) {
+                            while (symbol_ref.hasLink()) : (symbol_ref = &ctx.symbols[ref.innerIndex()]) {
                                 ref = symbol_ref.link;
                             }
 

@@ -113,3 +113,5 @@ pub const hardcode_localhost_to_127_0_0_1 = true;
 pub const support_jsxs_in_jsx_transform = false;
 
 pub const use_simdutf = !@import("bun").JSC.is_bindgen;
+
+pub const inline_properties_in_transpiler = true;

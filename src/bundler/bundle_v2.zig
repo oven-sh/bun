@@ -1987,10 +1987,14 @@ const LinkerContext = struct {
             visitor.visit(order.source_index);
         }
 
-        chunk.content.javascript.files_in_chunk_order = visitor.files.items;
         var parts_in_chunk_order = try this.allocator.alloc(PartRange, visitor.part_ranges.items.len + visitor.parts_prefix.items.len);
-        std.mem.copy(PartRange, parts_in_chunk_order, visitor.parts_prefix.items);
-        std.mem.copy(PartRange, parts_in_chunk_order[visitor.parts_prefix.items.len..], visitor.part_ranges.items);
+        bun.concat(
+            PartRange,
+            parts_in_chunk_order,
+            &.{ visitor.parts_prefix.items, visitor.part_ranges.items },
+        );
+        chunk.content.javascript.files_in_chunk_order = visitor.files.items;
+
         chunk.content.javascript.parts_in_chunk_in_order = parts_in_chunk_order;
     }
 
@@ -2773,7 +2777,7 @@ const LinkerContext = struct {
         const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
 
         const stmts_count =
-            // 3 statements for every export
+            // 2 statements for every export
             export_aliases.len * 2 +
             // + 1 if there are non-zero exports
             @as(usize, @boolToInt(export_aliases.len > 0)) +
@@ -3081,7 +3085,7 @@ const LinkerContext = struct {
 
                 for (other_parts) |other_part_index| {
                     var local = local_dependencies.getOrPut(@intCast(u32, other_part_index)) catch unreachable;
-                    if (!local.found_existing or other_part_index != part_index) {
+                    if (!local.found_existing or local.value_ptr.* != part_index) {
                         local.value_ptr.* = @intCast(u32, part_index);
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
@@ -4023,11 +4027,12 @@ const LinkerContext = struct {
             newline_before_comment = compile_result.code().len > 0;
         }
 
-        if (entry_point_tail.code().len > 0) {
+        const tail_code = entry_point_tail.code();
+        if (tail_code.len > 0) {
             // Stick the entry point tail at the end of the file. Deliberately don't
             // include any source mapping information for this because it's automatically
             // generated and doesn't correspond to a location in the input file.
-            j.push(entry_point_tail.code());
+            j.push(tail_code);
         }
 
         // Put the cross-chunk suffix inside the IIFE
@@ -5272,10 +5277,10 @@ const LinkerContext = struct {
                     // Only include the arguments that are actually used
                     var args = std.ArrayList(js_ast.G.Arg).initCapacity(
                         temp_allocator,
-                        @boolToInt(ast.uses_exports_ref) + @boolToInt(ast.uses_module_ref),
+                        if (ast.uses_module_ref or ast.uses_exports_ref) 2 else 0,
                     ) catch unreachable;
 
-                    if (ast.uses_exports_ref) {
+                    if (ast.uses_module_ref or ast.uses_exports_ref) {
                         args.appendAssumeCapacity(
                             js_ast.G.Arg{
                                 .binding = js_ast.Binding.alloc(
@@ -5287,20 +5292,20 @@ const LinkerContext = struct {
                                 ),
                             },
                         );
-                    }
 
-                    if (ast.uses_module_ref) {
-                        args.appendAssumeCapacity(
-                            js_ast.G.Arg{
-                                .binding = js_ast.Binding.alloc(
-                                    temp_allocator,
-                                    js_ast.B.Identifier{
-                                        .ref = ast.module_ref.?,
-                                    },
-                                    Logger.Loc.Empty,
-                                ),
-                            },
-                        );
+                        if (ast.uses_module_ref) {
+                            args.appendAssumeCapacity(
+                                js_ast.G.Arg{
+                                    .binding = js_ast.Binding.alloc(
+                                        temp_allocator,
+                                        js_ast.B.Identifier{
+                                            .ref = ast.module_ref.?,
+                                        },
+                                        Logger.Loc.Empty,
+                                    ),
+                                },
+                            );
+                        }
                     }
 
                     // TODO: variants of the runtime functions
@@ -5323,7 +5328,7 @@ const LinkerContext = struct {
                             .target = Expr.init(
                                 E.Identifier,
                                 E.Identifier{
-                                    .ref = toCommonJSRef,
+                                    .ref = c.cjs_runtime_ref,
                                 },
                                 Logger.Loc.Empty,
                             ),

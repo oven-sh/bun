@@ -125,8 +125,8 @@ pub const NumberRenamer = struct {
 
         const new_len = @max(inner.len, ref.innerIndex() + 1);
         if (inner.cap < new_len) {
-            const prev_cap = inner.cap;
-            inner.ensureUnusedCapacity(r.allocator, new_len) catch unreachable;
+            const prev_cap = inner.len;
+            inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
             const to_write = inner.ptr[prev_cap..inner.cap];
             @memset(std.mem.sliceAsBytes(to_write).ptr, 0, std.mem.sliceAsBytes(to_write).len);
         }

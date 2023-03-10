@@ -14324,7 +14324,13 @@ fn NewParser_(
                             }
                         }
                         // "foo"[2]
-                    } else if (e_.optional_chain == null and target.data == .e_string and e_.index.data == .e_number and target.data.e_string.isUTF8() and e_.index.data.e_number.value >= 0) {
+                    } else if ((comptime FeatureFlags.inline_properties_in_transpiler) and
+                        e_.optional_chain == null and
+                        target.data == .e_string and
+                        e_.index.data == .e_number and
+                        target.data.e_string.isUTF8() and
+                        e_.index.data.e_number.value >= 0)
+                    {
                         const literal = target.data.e_string.slice(p.allocator);
                         const index = e_.index.data.e_number.toUsize();
                         if (literal.len > index) {
@@ -14340,11 +14346,13 @@ fn NewParser_(
                         //   123
                         in.assign_target == .none and
                         !is_delete_target and
-                        e_.optional_chain == null and
+                        !is_call_target and
+                        // target should already be on the stack
                         target.data == .e_array and
-                        e_.index.data == .e_number and
                         target.data.e_array.items.len == 1 and
-                        e_.index.data.e_number.value == 0.0)
+                        e_.index.data == .e_number and
+                        e_.index.data.e_number.value == 0.0 and
+                        e_.optional_chain == null)
                     {
                         return target.data.e_array.items.ptr[0];
                     }
@@ -15738,7 +15746,7 @@ fn NewParser_(
                         //   2) Not a method, not a computed property
                         if (obj.properties.len == 1 and
                             !identifier_opts.is_delete_target and
-                            identifier_opts.assign_target == .none)
+                            identifier_opts.assign_target == .none and !identifier_opts.is_call_target)
                         {
                             const prop: G.Property = obj.properties.ptr[0];
                             if (prop.value != null and

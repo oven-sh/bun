@@ -849,8 +849,8 @@ pub const DynamicBitSetUnmanaged = struct {
                 bulk_mask_index = start_mask_index;
             }
 
-            while (bulk_mask_index < end_mask_index) : (bulk_mask_index += 1) {
-                self.masks[bulk_mask_index] = std.math.boolMask(MaskInt, value);
+            for (self.masks[bulk_mask_index..end_mask_index]) |*mask| {
+                mask.* = std.math.boolMask(MaskInt, value);
             }
 
             if (end_bit > 0) {
@@ -1306,7 +1306,7 @@ pub const IteratorOptions = struct {
 };
 
 // The iterator is reusable between several bit set types
-fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) type {
+pub fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) type {
     const ShiftInt = std.math.Log2Int(MaskInt);
     const kind = options.kind;
     const direction = options.direction;

@@ -273,7 +273,7 @@ it("should call close", done => {
   done();
 });
 
-it("should call drop", done => {
+it("should call connection and drop", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
   let timeout;
@@ -291,8 +291,14 @@ it("should call drop", done => {
   timeout = setTimeout(() => {
     closeAndFail();
   }, 100);
-
+  let connection_called = false;
   server
+    .on(
+      "connection",
+      mustCall(() => {
+        connection_called = true;
+      }),
+    )
     .on(
       "drop",
       mustCall(data => {
@@ -303,6 +309,7 @@ it("should call drop", done => {
         expect(data.remoteFamily).toBeDefined();
         expect(data.localFamily).toBeDefined();
         expect(data.localAddress).toBeDefined();
+        expect(connection_called).toBe(true);
         done();
       }),
     )
@@ -325,48 +332,6 @@ it("should call drop", done => {
         spawnClient();
         spawnClient();
       }
-    });
-});
-
-it("should call connection", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
-
-  let timeout;
-  const server = createServer();
-  let maxClients = 2;
-  server.maxConnections = maxClients - 1;
-
-  const closeAndFail = mustNotCall("connection not called (timeout)", () => {
-    clearTimeout(timeout);
-    server.close();
-    done();
-  });
-
-  //should be faster than 100ms
-  timeout = setTimeout(() => {
-    closeAndFail();
-  }, 100);
-
-  server
-    .on(
-      "connection",
-      mustCall(() => {
-        server.close();
-        clearTimeout(timeout);
-        done();
-      }),
-    )
-    .listen(49025, "127.0.0.1", () => {
-      const address = server.address();
-
-      Bun.connect({
-        port: address.port,
-        hostname: address.address,
-        socket: {
-          data(socket) {},
-          open(socket) {},
-        },
-      });
     });
 });
 

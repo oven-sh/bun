@@ -11,6 +11,11 @@ test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: new Date() }).toMatchSnapshot({ a: expect.any(Date) });
 
   expect({ j: 2, a: "any", b: "any2" }).toMatchSnapshot({ j: expect.any(Number), a: "any", b: expect.any(String) });
+  expect({ j: /regex/, a: "any", b: "any2" }).toMatchSnapshot({
+    j: expect.any(RegExp),
+    a: "any",
+    b: expect.any(String),
+  });
 });
 
 describe("toMatchSnapshot errors", () => {

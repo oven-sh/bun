@@ -41,6 +41,7 @@ const HTTPThread = @import("bun").HTTP.HTTPThread;
 const JSC = @import("bun").JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
+const Snapshots = JSC.Jest.Snapshots;
 const Test = TestRunner.Test;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
 const uws = @import("bun").uws;
@@ -355,7 +356,7 @@ pub const TestCommand = struct {
         Output.flush();
 
         const args = try std.process.argsAlloc(ctx.allocator);
-        jest.Jest.Snapshots.update_snapshots = strings.leftHasAnyInRight(args, &.{"--updateSnapshot"});
+        const update_snapshots = strings.leftHasAnyInRight(args, &.{"--updateSnapshot"});
         std.process.argsFree(ctx.allocator, args);
 
         var env_loader = brk: {
@@ -369,12 +370,23 @@ pub const TestCommand = struct {
         bun.JSC.initialize();
         HTTPThread.init() catch {};
 
+        var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
+        var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
+        var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .snapshots = Snapshots{
+                    .allocator = ctx.allocator,
+                    .update_snapshots = update_snapshots,
+                    .file_buf = &snapshot_file_buf,
+                    .values = &snapshot_values,
+                    .counts = &snapshot_counts,
+                },
             },
             .callback = undefined,
         };
@@ -425,7 +437,7 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
-        try jest.Jest.Snapshots.cleanup();
+        try jest.Jest.runner.?.snapshots.writeSnapshotFile();
 
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
@@ -488,6 +500,31 @@ pub const TestCommand = struct {
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
 
             if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
+
+            if (reporter.jest.snapshots.total > 0) {
+                const passed = reporter.jest.snapshots.passed;
+                const failed = reporter.jest.snapshots.failed;
+                const added = reporter.jest.snapshots.added;
+                Output.prettyError(" snapshots: ", .{});
+                if (passed > 0) {
+                    Output.prettyError("<green>", .{});
+                } else {
+                    Output.prettyError("<d>", .{});
+                }
+                Output.prettyError("{d} passed<r>, ", .{passed});
+                if (added > 0) {
+                    Output.prettyError("<green>", .{});
+                } else {
+                    Output.prettyError("<d>", .{});
+                }
+                Output.prettyError("{d} added<r>, ", .{added});
+                if (failed > 0) {
+                    Output.prettyError("<red>", .{});
+                } else {
+                    Output.prettyError("<d>", .{});
+                }
+                Output.prettyError("{d} failed<r>\n", .{failed});
+            }
 
             Output.prettyError("Ran {d} tests across {d} files ", .{
                 reporter.summary.fail + reporter.summary.pass,

@@ -542,6 +542,7 @@ class Server extends EventEmitter {
   listen(port, hostname, onListen) {
     let backlog;
     let path;
+    let exclusive = false;
     //port is actually path
     if (typeof port === "string") {
       if (Number.isSafeInteger(hostname)) {
@@ -567,18 +568,20 @@ class Server extends EventEmitter {
         onListen = port;
         port = 0;
       } else if (typeof port === "object") {
-        port?.signal?.addEventListener("abort", () => this.close());
+        port.signal?.addEventListener("abort", () => this.close());
 
-        hostname = port?.host;
+        hostname = port.host;
+        exclusive = port.exclusive === true;
+        const path = port.path;
+        port = port.port;
 
-        port = port?.port;
-        const path = port?.path;
         if (!port && path) {
           hostname = path;
           port = undefined;
         } else if (!Number.isSafeInteger(port) || port < 0) {
           port = 0;
         }
+
         // port <number>
         // host <string>
         // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
@@ -589,7 +592,7 @@ class Server extends EventEmitter {
         // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
         // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
 
-        if (typeof port?.callback === "function") onListen = port?.callback;
+        if (typeof port.callback === "function") onListen = port?.callback;
       } else if (!Number.isSafeInteger(port) || port < 0) {
         port = 0;
       }
@@ -600,11 +603,13 @@ class Server extends EventEmitter {
       this.#server = Bun.listen(
         path
           ? {
+              exclusive,
               unix: path,
               tls: false,
               socket: SocketClass[bunSocketServerHandlers],
             }
           : {
+              exclusive,
               port,
               hostname,
               tls: false,

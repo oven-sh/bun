@@ -4274,7 +4274,7 @@ fn NewParser_(
             for (symbol_use_refs, symbol_use_values) |ref, prev| {
                 symbols[ref.innerIndex()].use_count_estimate -|= prev.count_estimate;
             }
-            const declared_refs = part.declared_symbols.refs.items;
+            const declared_refs = part.declared_symbols.refs();
             for (declared_refs) |declared| {
                 symbols[declared.innerIndex()].use_count_estimate = 0;
                 // }
@@ -5519,8 +5519,11 @@ fn NewParser_(
                 }
             }
 
-            for (0..scope.children.slice().len) |i| {
-                p.hoistSymbols(scope.children.mut(i).*);
+            {
+                const children = scope.children.slice();
+                for (children) |child| {
+                    p.hoistSymbols(child);
+                }
             }
         }
 
@@ -12922,14 +12925,14 @@ fn NewParser_(
                         for (previous_parts, 0..) |*previous_part, j| {
                             if (previous_part.stmts.len == 0) continue;
 
-                            var refs = previous_part.declared_symbols.refs.items;
+                            var refs = previous_part.declared_symbols.refs();
 
                             for (refs) |ref| {
                                 if (p.symbol_uses.contains(ref)) {
                                     // we move this part to our other file
                                     for (previous_parts[0..j]) |*this_part| {
                                         if (this_part.stmts.len == 0) continue;
-                                        const other_refs = this_part.declared_symbols.refs.items;
+                                        const other_refs = this_part.declared_symbols.refs();
 
                                         for (other_refs) |other_ref| {
                                             if (previous_part.symbol_uses.contains(other_ref)) {
@@ -12962,7 +12965,7 @@ fn NewParser_(
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
                     .symbol_uses = p.symbol_uses,
-                    .declared_symbols = p.declared_symbols.clone(p.allocator) catch unreachable,
+                    .declared_symbols = p.declared_symbols.toOwnedSlice(),
                     .import_record_indices = bun.BabyList(u32).init(
                         p.import_records_for_current_part.toOwnedSlice(
                             p.allocator,
@@ -12972,7 +12975,6 @@ fn NewParser_(
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
                 p.symbol_uses = .{};
-                p.declared_symbols.clearRetainingCapacity();
             } else if (p.declared_symbols.len() > 0 or p.symbol_uses.count() > 0) {
 
                 // if the part is dead, invalidate all the usage counts
@@ -13795,7 +13797,7 @@ fn NewParser_(
 
                     const is_call_target = @as(Expr.Tag, p.call_target) == .e_binary and expr.data.e_binary == p.call_target.e_binary;
                     // const is_stmt_expr = @as(Expr.Tag, p.stmt_expr_value) == .e_binary and expr.data.e_binary == p.stmt_expr_value.e_binary;
-                    const was_anonymous_named_expr = p.isAnonymousNamedExpr(e_.right);
+                    const was_anonymous_named_expr = e_.right.isAnonymousNamed();
 
                     if (comptime jsx_transform_type == .macro) {
                         if (e_.op == Op.Code.bin_instanceof and (e_.right.data == .e_jsx_element or e_.left.data == .e_jsx_element)) {
@@ -14554,7 +14556,7 @@ fn NewParser_(
                             },
                             .e_binary => |e2| {
                                 if (in.assign_target != .none and e2.op == .bin_assign) {
-                                    const was_anonymous_named_expr = p.isAnonymousNamedExpr(e2.right);
+                                    const was_anonymous_named_expr = e2.right.isAnonymousNamed();
                                     e2.left = p.visitExprInOut(e2.left, ExprIn{ .assign_target = .replace });
                                     e2.right = p.visitExpr(e2.right);
 
@@ -14628,7 +14630,7 @@ fn NewParser_(
                         }
 
                         if (property.initializer != null) {
-                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(property.initializer orelse unreachable);
+                            const was_anonymous_named_expr = property.initializer.?.isAnonymousNamed();
                             property.initializer = p.visitExpr(property.initializer.?);
 
                             if (property.value) |val| {
@@ -15906,7 +15908,7 @@ fn NewParser_(
 
                     switch (data.value) {
                         .expr => |expr| {
-                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(expr);
+                            const was_anonymous_named_expr = expr.isAnonymousNamed();
 
                             data.value.expr = p.visitExpr(expr);
 
@@ -16739,7 +16741,7 @@ fn NewParser_(
 
                 if (decls[i].value != null) {
                     var val = decls[i].value.?;
-                    const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
+                    const was_anonymous_named_expr = val.isAnonymousNamed();
                     var replacement: ?*const RuntimeFeatures.ReplaceableExport = null;
 
                     const prev_macro_call_count = p.macro_call_count;
@@ -17421,27 +17423,13 @@ fn NewParser_(
             loc: logger.Loc,
             ref: Ref,
         ) Expr {
-            p.relocated_top_level_vars.append(p.allocator, LocRef{ .loc = loc, .ref = ref }) catch unreachable;
-            var _ref = ref;
-            p.recordUsage(_ref);
-            return Expr.initIdentifier(_ref, loc);
-        }
+            // There was a Zig stage1 bug here we had to copy `ref` into a local
+            // const variable or else the result would be wrong
+            // I remember that bug in particular took hours, possibly days to uncover.
 
-        fn isAnonymousNamedExpr(_: *P, expr: ExprNodeIndex) bool {
-            switch (expr.data) {
-                .e_arrow => {
-                    return true;
-                },
-                .e_function => |func| {
-                    return func.func.name == null;
-                },
-                .e_class => |class| {
-                    return class.class_name == null;
-                },
-                else => {
-                    return false;
-                },
-            }
+            p.relocated_top_level_vars.append(p.allocator, LocRef{ .loc = loc, .ref = ref }) catch unreachable;
+            p.recordUsage(ref);
+            return Expr.initIdentifier(ref, loc);
         }
 
         fn valueForDefine(p: *P, loc: logger.Loc, assign_target: js_ast.AssignTarget, is_delete_target: bool, define_data: *const DefineData) Expr {
@@ -17555,7 +17543,7 @@ fn NewParser_(
                     for (bind.items) |*item| {
                         p.visitBinding(item.binding, duplicate_arg_check);
                         if (item.default_value) |default_value| {
-                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(default_value);
+                            const was_anonymous_named_expr = default_value.isAnonymousNamed();
                             item.default_value = p.visitExpr(default_value);
 
                             switch (item.binding.data) {
@@ -17579,7 +17567,7 @@ fn NewParser_(
 
                         p.visitBinding(property.value, duplicate_arg_check);
                         if (property.default_value) |default_value| {
-                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(default_value);
+                            const was_anonymous_named_expr = default_value.isAnonymousNamed();
                             property.default_value = p.visitExpr(default_value);
 
                             switch (property.value.data) {
@@ -17797,7 +17785,7 @@ fn NewParser_(
 
                     if (property.value) |val| {
                         if (name_to_keep) |name| {
-                            const was_anon = p.isAnonymousNamedExpr(val);
+                            const was_anon = val.isAnonymousNamed();
                             property.value = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
                         } else {
                             property.value = p.visitExpr(val);
@@ -17813,7 +17801,7 @@ fn NewParser_(
                     if (property.initializer) |val| {
                         // if (property.flags.is_static and )
                         if (name_to_keep) |name| {
-                            const was_anon = p.isAnonymousNamedExpr(val);
+                            const was_anon = val.isAnonymousNamed();
                             property.initializer = p.maybeKeepExprSymbolName(p.visitExpr(val), name, was_anon);
                         } else {
                             property.initializer = p.visitExpr(val);
@@ -18449,7 +18437,7 @@ fn NewParser_(
             }
 
             const bundling = p.options.bundle;
-            var parts_end: usize = 0;
+            var parts_end: usize = @as(usize, @boolToInt(bundling));
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
@@ -18457,7 +18445,7 @@ fn NewParser_(
                 var kept_import_equals = false;
                 var removed_import_equals = false;
 
-                var i: usize = 0;
+                var i: usize = parts_end;
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
                 while (i < parts.len) : (i += 1) {
@@ -18470,7 +18458,7 @@ fn NewParser_(
                     removed_import_equals = removed_import_equals or result.removed_import_equals;
 
                     part.stmts = result.stmts;
-                    if (part.stmts.len > 0 or (i == js_ast.namespace_export_part_index and bundling)) {
+                    if (part.stmts.len > 0) {
                         if (p.module_scope.contains_direct_eval and part.declared_symbols.len() > 0) {
                             // If this file contains a direct call to "eval()", all parts that
                             // declare top-level symbols must be kept since the eval'd code may
@@ -18494,7 +18482,6 @@ fn NewParser_(
                         parts[parts_end] = part;
                         parts_end += 1;
                     }
-                    p.declared_symbols.clearRetainingCapacity();
                 }
 
                 // We need to iterate multiple times if an import-equals statement was
@@ -18504,6 +18491,7 @@ fn NewParser_(
                 }
             }
 
+            // leave the first part in there for namespace export when bundling
             parts = parts[0..parts_end];
 
             // Do a second pass for exported items now that imported items are filled out
@@ -18559,19 +18547,19 @@ fn NewParser_(
                 var imports_list_i: u32 = 0;
                 var exports_list_i: u32 = 0;
 
-                for (part.stmts, 0..) |_, i| {
-                    switch (part.stmts[i].data) {
+                for (part.stmts) |*stmt| {
+                    switch (stmt.data) {
                         .s_import => {
-                            imports_list[imports_list_i] = part.stmts[i];
-                            part.stmts[i] = Stmt.empty();
-                            part.stmts[i].loc = imports_list[imports_list_i].loc;
+                            imports_list[imports_list_i] = stmt.*;
+                            stmt.* = Stmt.empty();
+                            stmt.loc = imports_list[imports_list_i].loc;
                             imports_list_i += 1;
                         },
 
                         .s_export_star, .s_export_from => {
-                            exports_list[exports_list_i] = part.stmts[i];
-                            part.stmts[i] = Stmt.empty();
-                            part.stmts[i].loc = exports_list[exports_list_i].loc;
+                            exports_list[exports_list_i] = stmt.*;
+                            stmt.* = Stmt.empty();
+                            stmt.loc = exports_list[exports_list_i].loc;
                             exports_list_i += 1;
                         },
                         else => {},
@@ -19050,8 +19038,9 @@ fn NewParser_(
                             // linked list in the map. This is the case for multiple "var"
                             // declarations with the same name, for example.
                             var ref = input;
-                            while (ctx.symbols[ref.innerIndex()].link.isValid()) {
-                                ref = ctx.symbols[ref.innerIndex()].link;
+                            var symbol_ref = &ctx.symbols[ref.innerIndex()];
+                            while (symbol_ref.link.isValid()) : (symbol_ref = &ctx.symbols[ref.innerIndex()]) {
+                                ref = symbol_ref.link;
                             }
 
                             var entry = ctx.top_level_symbols_to_parts.getOrPut(ctx.allocator, ref) catch unreachable;

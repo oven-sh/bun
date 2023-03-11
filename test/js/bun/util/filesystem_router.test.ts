@@ -5,7 +5,7 @@ import fs, { mkdirSync, realpathSync, rmSync } from "fs";
 import { tmpdir } from "os";
 const tempdir = realpathSync(tmpdir()) + "/";
 
-function createTree(basedir, paths) {
+function createTree(basedir: string, paths: string[]) {
   for (const end of paths) {
     const abs = path.join(basedir, end);
     try {
@@ -16,7 +16,7 @@ function createTree(basedir, paths) {
   }
 }
 var count = 0;
-function make(files) {
+function make(files: string[]) {
   const dir = tempdir + `fs-router-test-${count++}`;
   rmSync(dir, {
     recursive: true,
@@ -55,7 +55,7 @@ it("should find files", () => {
   });
 
   const routes = router.routes;
-  const fixture = {
+  const fixture: Record<string, string> = {
     "/": `${dir}/index.tsx`,
     "/[id]": `${dir}/[id].tsx`,
     "/a": `${dir}/a.tsx`,
@@ -94,6 +94,7 @@ it("should handle empty dirs", () => {
   });
 
   // assert this doesn't crash
+  // @ts-ignore
   expect(router.bar).toBeUndefined();
 
   const routes = router.routes;
@@ -110,7 +111,7 @@ it("should match dynamic routes", () => {
     style: "nextjs",
   });
 
-  const { name, filePath } = router.match("/posts/hello-world");
+  const { name, filePath } = router.match("/posts/hello-world")!;
 
   expect(name).toBe("/posts/[id]");
   expect(filePath).toBe(`${dir}/posts/[id].tsx`);
@@ -127,7 +128,7 @@ it(".params works on dynamic routes", () => {
 
   const {
     params: { id },
-  } = router.match("/posts/hello-world");
+  } = router.match("/posts/hello-world")!;
 
   expect(id).toBe("hello-world");
 });
@@ -141,7 +142,7 @@ it("should support static routes", () => {
     style: "nextjs",
   });
 
-  const { name, params, filePath } = router.match("/posts/hey");
+  const { name, params, filePath } = router.match("/posts/hey")!;
 
   expect(name).toBe("/posts/hey");
   expect(filePath).toBe(`${dir}/posts/hey.tsx`);
@@ -161,7 +162,7 @@ it("should support optional catch-all routes", () => {
   }
 
   for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123"]) {
-    const { name, params, filePath } = router.match(fixture);
+    const { name, params, filePath } = router.match(fixture)!;
 
     expect(name).toBe("/posts/[[...id]]");
     expect(filePath).toBe(`${dir}/posts/[[...id]].tsx`);
@@ -190,7 +191,7 @@ it("should support catch-all routes", () => {
   }
 
   for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123", "/posts/wow/hey/there"]) {
-    const { name, params, filePath } = router.match(fixture);
+    const { name, params, filePath } = router.match(fixture)!;
 
     expect(name).toBe("/posts/[...id]");
     expect(filePath).toBe(`${dir}/posts/[...id].tsx`);
@@ -208,7 +209,7 @@ it("should support index routes", () => {
   });
 
   for (let route of ["/", "/index"]) {
-    const { name, params, filePath } = router.match(route);
+    const { name, params, filePath } = router.match(route)!;
 
     expect(name).toBe("/");
     expect(filePath).toBe(`${dir}/index.tsx`);
@@ -216,7 +217,7 @@ it("should support index routes", () => {
   }
 
   for (let route of ["/posts", "/posts/index", "/posts/"]) {
-    const { name, params, filePath } = router.match(route);
+    const { name, params, filePath } = router.match(route)!;
 
     expect(name).toBe("/posts");
     expect(filePath).toBe(`${dir}/posts.tsx`);
@@ -241,7 +242,7 @@ it("should support Request", async () => {
       name,
       params: { id },
       filePath,
-    } = router.match(current);
+    } = router.match(current)!;
     expect(name).toBe("/posts/[id]");
     expect(filePath).toBe(`${dir}/posts/[id].tsx`);
     expect(id).toBe("hello-world");
@@ -264,7 +265,13 @@ it("assetPrefix, src, and origin", async () => {
     new Request({ url: "http://helloooo.com/posts/hello-world" }),
     new Request({ url: "https://nextjs.org/posts/hello-world" }),
   ]) {
-    const { name, src, filePath, checkThisDoesntCrash } = router.match(current);
+    const {
+      name,
+      src,
+      filePath,
+      // @ts-ignore
+      checkThisDoesntCrash,
+    } = router.match(current)!;
     expect(name).toBe("/posts/[id]");
 
     // check nothing is weird on the MatchedRoute object
@@ -294,8 +301,15 @@ it(".query works", () => {
       { hello: "world", second: "2", third: "3" },
     ],
     [new URL("https://example.com/posts").href, {}],
-  ]) {
-    const { name, src, filePath, checkThisDoesntCrash, query } = router.match(current);
+  ] as const) {
+    const {
+      name,
+      src,
+      filePath,
+      // @ts-ignore
+      checkThisDoesntCrash,
+      query,
+    } = router.match(current)!;
     expect(name).toBe("/posts");
 
     // check nothing is weird on the MatchedRoute object
@@ -317,9 +331,9 @@ it("reload() works", () => {
     origin: "https://nextjs.org",
   });
 
-  expect(router.match("/posts").name).toBe("/posts");
+  expect(router.match("/posts")!.name).toBe("/posts");
   router.reload();
-  expect(router.match("/posts").name).toBe("/posts");
+  expect(router.match("/posts")!.name).toBe("/posts");
 });
 
 it(".query works with dynamic routes, including params", () => {
@@ -341,8 +355,15 @@ it(".query works with dynamic routes, including params", () => {
       { id: "123", hello: "world", second: "2", third: "3" },
     ],
     [new URL("https://example.com/posts/123").href, { id: "123" }],
-  ]) {
-    const { name, src, filePath, checkThisDoesntCrash, query } = router.match(current);
+  ] as const) {
+    const {
+      name,
+      src,
+      filePath,
+      // @ts-ignore
+      checkThisDoesntCrash,
+      query,
+    } = router.match(current)!;
     expect(name).toBe("/posts/[id]");
 
     // check nothing is weird on the MatchedRoute object

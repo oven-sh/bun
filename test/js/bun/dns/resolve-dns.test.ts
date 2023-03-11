@@ -41,7 +41,7 @@ describe("dns.lookup", () => {
       try {
         await dns.lookup("yololololololo1234567.com", { backend });
         throw 42;
-      } catch (e) {
+      } catch (e: any) {
         expect(typeof e).not.toBe("number");
         expect(e.code).toBe("DNS_ENOTFOUND");
       }

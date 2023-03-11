@@ -500,7 +500,7 @@ declare module "bun" {
          * `"system"` uses the same API underneath (except non-blocking).
          *
          */
-        backend?: "c-ares" | "system" | "getaddrinfo";
+        backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
   };
@@ -3170,6 +3170,8 @@ declare module "bun" {
       /** The base path to use when routing */
       assetPrefix?: string;
       origin?: string;
+      /** Limit the pages to those with particular file extensions. */
+      fileExtensions?: string[];
     });
 
     // todo: URL

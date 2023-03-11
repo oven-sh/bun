@@ -851,7 +851,7 @@ type ReferrerPolicy =
   | "strict-origin"
   | "strict-origin-when-cross-origin"
   | "unsafe-url";
-type RequestInfo = Request | string | RequestInit;
+// type RequestInfo = Request | string | RequestInit;
 
 type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
 type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
@@ -962,7 +962,10 @@ interface FetchRequestInit extends RequestInit {
  * ```
  */
 declare class Request implements BlobInterface {
-  constructor(requestInfo: RequestInfo, requestInit?: RequestInit);
+  // Request | string | RequestInit;
+  constructor(requestInfo: string, requestInit?: RequestInit);
+  constructor(requestInfo: RequestInit & { url: string });
+  constructor(requestInfo: Request, requestInit?: RequestInit);
 
   /**
    * Read or write the HTTP headers for this request.
@@ -2157,7 +2160,11 @@ interface ReadableStream<R = any> {
 declare var ReadableStream: {
   prototype: ReadableStream;
   new <R = any>(
-    underlyingSource?: DirectUnderlyingSource<R> | UnderlyingSource<R>,
+    underlyingSource?: UnderlyingSource<R>,
+    strategy?: QueuingStrategy<R>,
+  ): ReadableStream<R>;
+  new <R = any>(
+    underlyingSource?: DirectUnderlyingSource<R>,
     strategy?: QueuingStrategy<R>,
   ): ReadableStream<R>;
 };

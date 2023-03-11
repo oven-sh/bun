@@ -41,7 +41,7 @@ describe("FileSink", () => {
     ],
   ] as const;
 
-  function getPath(label) {
+  function getPath(label: string) {
     const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
     try {
       require("fs").unlinkSync(path);
@@ -52,7 +52,7 @@ describe("FileSink", () => {
   var activeFIFO: Promise<string>;
   var decoder = new TextDecoder();
 
-  function getFd(label) {
+  function getFd(label: string) {
     const path = `/tmp/bun-test-${Bun.hash(label).toString(10)}.txt`;
     try {
       require("fs").unlinkSync(path);

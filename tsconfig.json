@@ -8,7 +8,7 @@
   },
   "include": [
     ".",
-    "**/*.d.ts"
+    "packages/bun-types/index.d.ts"
   ],
   "exclude": [
     "src/test",

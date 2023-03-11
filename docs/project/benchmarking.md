@@ -18,8 +18,6 @@ When writing your own benchmarks, it's important to choose the right tool.
   - [`http_load_test`](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c)
 - For benchmarking scripts or CLI commands, we recommend [`hyperfine`](https://github.com/sharkdp/hyperfine). It's an easy way to compare 
 
-Recommended HTTP clients:
-
 
 ## Measuring memory usage
 

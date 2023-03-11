@@ -3,7 +3,11 @@ import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 
 describe("dns.lookup", () => {
-  const backends = [process.platform === "darwin" ? "system" : undefined, "libc", "c-ares"].filter(Boolean);
+  const backends = [process.platform === "darwin" ? "system" : undefined, "libc", "c-ares"].filter(x => !!x) as (
+    | "system"
+    | "libc"
+    | "c-ares"
+  )[];
   for (let backend of backends) {
     it(backend + " parallell x 10", async () => {
       const promises = [];

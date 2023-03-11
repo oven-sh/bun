@@ -23,7 +23,6 @@
     "src/bun.js/WebKit",
     "src/api/demo",
     "test/snapshots",
-    "test/snapshots-no-hmr",
     "node_modules"
   ]
 }

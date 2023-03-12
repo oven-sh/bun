@@ -5312,7 +5312,7 @@ pub const DeclaredSymbol = struct {
         }
 
         pub fn appendListAssumeCapacity(this: *List, other: List) void {
-            var j = other.refs().len;
+            const j = other.refs().len;
             this.refs_list.appendSliceAssumeCapacity(other.refs());
             var is_top_level = &this.is_top_level;
             var iter = other.is_top_level.iterator(.{});

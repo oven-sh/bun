@@ -2198,9 +2198,10 @@ const FnOnlyDataVisit = struct {
     this_capture_ref: ?Ref = null,
     arguments_capture_ref: ?Ref = null,
 
-    // Inside a static class property initializer, "this" expressions should be
-    // replaced with the class name.
-    this_class_static_ref: ?Ref = null,
+    /// This is a reference to the enclosing class name if there is one. It's used
+    /// to implement "this" and "super" references. A name is automatically generated
+    /// if one is missing so this will always be present inside a class body.
+    class_name_ref: ?*Ref = null,
 
     // If we're inside an async arrow function and async functions are not
     // supported, then we will have to convert that arrow function to a generator
@@ -3004,7 +3005,7 @@ pub const Parser = struct {
                                 const dot_call_target = brk: {
                                     // var react = $aopaSD123();
 
-                                    if (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime) {
+                                    if (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime) {
                                         break :brk classic_identifier;
                                     } else if (p.options.features.dynamic_require) {
                                         break :brk p.newExpr(E.Require{ .import_record_index = import_record_id }, loc);
@@ -5297,7 +5298,7 @@ fn NewParser_(
                 p.jest.afterAll = try p.declareCommonJSSymbol(.unbound, "afterAll");
             }
 
-            if (p.options.enable_bundling) {
+            if (p.options.enable_legacy_bundling) {
                 p.runtime_imports.@"$$m" = try p.declareGeneratedSymbol(.other, "$$m");
 
                 p.runtime_imports.@"$$lzy" = try p.declareGeneratedSymbol(.other, "$$lzy");
@@ -13174,6 +13175,7 @@ fn NewParser_(
         }
 
         fn recordDeclaredSymbol(p: *P, ref: Ref) !void {
+            std.debug.assert(ref.isSymbol());
             try p.declared_symbols.append(p.allocator, DeclaredSymbol{
                 .ref = ref,
                 .is_top_level = p.current_scope == p.module_scope,
@@ -13243,9 +13245,9 @@ fn NewParser_(
 
         fn valueForThis(p: *P, loc: logger.Loc) ?Expr {
             // Substitute "this" if we're inside a static class property initializer
-            if (p.fn_only_data_visit.this_class_static_ref) |ref| {
-                p.recordUsage(ref);
-                return p.newExpr(E.Identifier{ .ref = ref }, loc);
+            if (p.fn_only_data_visit.class_name_ref) |ref| {
+                p.recordUsage(ref.*);
+                return p.newExpr(E.Identifier{ .ref = ref.* }, loc);
             }
 
             // oroigianlly was !=- modepassthrough
@@ -14974,8 +14976,7 @@ fn NewParser_(
                         return expr;
                     }
 
-                    // This might be wrong.
-                    _ = p.visitClass(expr.loc, e_);
+                    _ = p.visitClass(expr.loc, e_, Ref.None);
                 },
                 else => {},
             }
@@ -16117,7 +16118,7 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    _ = p.visitClass(s2.loc, &class.class);
+                                    _ = p.visitClass(s2.loc, &class.class, data.default_name.ref.?);
 
                                     if (p.is_control_flow_dead)
                                         return;
@@ -16176,7 +16177,7 @@ fn NewParser_(
                     }
                 },
                 .s_export_equals => |data| {
-                    if (p.options.enable_bundling) {
+                    if (p.options.enable_legacy_bundling) {
                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                         export_default_args[0] = p.@"module.exports"(stmt.loc);
                         export_default_args[1] = data.value;
@@ -16625,7 +16626,7 @@ fn NewParser_(
                         }
                     }
 
-                    _ = p.visitClass(stmt.loc, &data.class);
+                    _ = p.visitClass(stmt.loc, &data.class, Ref.None);
 
                     // Remove the export flag inside a namespace
                     const was_export_inside_namespace = data.is_export and p.enclosing_namespace_arg_ref != null;
@@ -17765,7 +17766,7 @@ fn NewParser_(
             return res;
         }
 
-        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class) Ref {
+        fn visitClass(p: *P, name_scope_loc: logger.Loc, class: *G.Class, default_name_ref: Ref) Ref {
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
@@ -17780,25 +17781,22 @@ fn NewParser_(
             const old_enclosing_class_keyword = p.enclosing_class_keyword;
             p.enclosing_class_keyword = class.class_keyword;
             p.current_scope.recursiveSetStrictMode(.implicit_strict_mode_class);
-            var class_name_ref: Ref = if (class.class_name != null)
-                class.class_name.?.ref.?
-            else
-                Ref.None;
-
             var shadow_ref = Ref.None;
 
-            if (!class_name_ref.eql(Ref.None)) {
-                // are not allowed to assign to this symbol (it throws a TypeError).
-                // const name = p.symbols.items[class_name_ref.innerIndex()].original_name;
-                // var identifier = p.allocator.alloc(u8, name.len + 1) catch unreachable;
-                // bun.copy(u8, identifier[1..identifier.len], name);
-                // identifier[0] = '_';
-                // shadow_ref = p.newSymbol(Symbol.Kind.cconst, identifier) catch unreachable;
-                // p.recordDeclaredSymbol(shadow_ref) catch unreachable;
-                if (class.class_name) |class_name| {
-                    p.current_scope.members.put(p.allocator, p.loadNameFromRef(class_name.ref.?), Scope.Member{ .loc = class_name.loc, .ref = class_name.ref.? }) catch unreachable;
-                }
+            // Insert a shadowing name that spans the whole class, which matches
+            // JavaScript's semantics. The class body (and extends clause) "captures" the
+            // original value of the name. This matters for class statements because the
+            // symbol can be re-assigned to something else later. The captured values
+            // must be the original value of the name, not the re-assigned value.
+            // Use "const" for this symbol to match JavaScript run-time semantics. You
+            // are not allowed to assign to this symbol (it throws a TypeError).
+            if (class.class_name) |name| {
+                shadow_ref = name.ref.?;
+            } else {
+                const name_str: []const u8 = if (default_name_ref.isNull()) "_this" else "_default";
+                shadow_ref = p.newSymbol(.cconst, name_str) catch unreachable;
             }
+            p.recordDeclaredSymbol(shadow_ref) catch unreachable;
 
             if (class.extends) |extends| {
                 class.extends = p.visitExpr(extends);
@@ -17820,7 +17818,7 @@ fn NewParser_(
                         var old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
                         var old_fn_only_data = p.fn_only_data_visit;
                         p.fn_or_arrow_data_visit = .{};
-                        p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true };
+                        p.fn_only_data_visit = .{ .is_this_nested = true, .is_new_target_allowed = true, .class_name_ref = &shadow_ref };
 
                         p.pushScopeForVisitPass(.class_static_init, property.class_static_block.?.loc) catch unreachable;
 
@@ -17854,12 +17852,12 @@ fn NewParser_(
 
                     // The value of "this" is shadowed inside property values
                     const old_is_this_captured = p.fn_only_data_visit.is_this_nested;
-                    const old_this = p.fn_only_data_visit.this_class_static_ref;
+                    const old_class_name_ref = p.fn_only_data_visit.class_name_ref;
                     p.fn_only_data_visit.is_this_nested = true;
                     p.fn_only_data_visit.is_new_target_allowed = true;
-                    p.fn_only_data_visit.this_class_static_ref = null;
+                    p.fn_only_data_visit.class_name_ref = &shadow_ref;
                     defer p.fn_only_data_visit.is_this_nested = old_is_this_captured;
-                    defer p.fn_only_data_visit.this_class_static_ref = old_this;
+                    defer p.fn_only_data_visit.class_name_ref = old_class_name_ref;
 
                     // We need to explicitly assign the name to the property initializer if it
                     // will be transformed such that it is no longer an inline initializer.
@@ -17971,19 +17969,22 @@ fn NewParser_(
             }
 
             if (p.symbols.items[shadow_ref.innerIndex()].use_count_estimate == 0) {
-                // Don't generate a shadowing name if one isn't needed
-                shadow_ref = class_name_ref;
-            } else if (class.class_name == null) {
                 // If there was originally no class name but something inside needed one
                 // (e.g. there was a static property initializer that referenced "this"),
                 // store our generated name so the class expression ends up with a name.
-                class.class_name = LocRef{ .loc = name_scope_loc, .ref = class_name_ref };
-                if (class_name_ref.isNull()) {
+                shadow_ref = Ref.None;
+            } else if (class.class_name == null) {
+                var class_name_ref = default_name_ref;
+                if (default_name_ref.isNull()) {
                     class_name_ref = p.newSymbol(.other, "_this") catch unreachable;
-                    class.class_name.?.ref = class_name_ref;
                     p.current_scope.generated.push(p.allocator, class_name_ref) catch unreachable;
                     p.recordDeclaredSymbol(class_name_ref) catch unreachable;
                 }
+
+                class.class_name = LocRef{
+                    .ref = class_name_ref,
+                    .loc = name_scope_loc,
+                };
             }
 
             // class name scope
@@ -18548,11 +18549,11 @@ fn NewParser_(
                 var kept_import_equals = false;
                 var removed_import_equals = false;
 
-                var i: usize = parts_end;
+                const begin = parts_end;
                 // Potentially remove some statements, then filter out parts to remove any
                 // with no statements
-                while (i < parts.len) : (i += 1) {
-                    var part = parts[i];
+                for (parts[begin..]) |part_| {
+                    var part = part_;
                     p.import_records_for_current_part.clearRetainingCapacity();
                     p.declared_symbols.clearRetainingCapacity();
 
@@ -19122,39 +19123,42 @@ fn NewParser_(
             };
 
             if (p.options.bundle) {
+                const Ctx = struct {
+                    allocator: std.mem.Allocator,
+                    top_level_symbols_to_parts: *js_ast.Ast.TopLevelSymbolToParts,
+                    symbols: []const js_ast.Symbol,
+                    part_index: u32,
+
+                    pub fn next(ctx: @This(), input: Ref) void {
+                        // If this symbol was merged, use the symbol at the end of the
+                        // linked list in the map. This is the case for multiple "var"
+                        // declarations with the same name, for example.
+                        var ref = input;
+                        var symbol_ref = &ctx.symbols[ref.innerIndex()];
+                        while (symbol_ref.hasLink()) : (symbol_ref = &ctx.symbols[ref.innerIndex()]) {
+                            ref = symbol_ref.link;
+                        }
+
+                        var entry = ctx.top_level_symbols_to_parts.getOrPut(ctx.allocator, ref) catch unreachable;
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = .{};
+                        }
+
+                        entry.value_ptr.push(ctx.allocator, @truncate(u32, ctx.part_index)) catch unreachable;
+                    }
+                };
 
                 // Each part tracks the other parts it depends on within this file
-                for (parts, 0..) |*part, i| {
-                    var ctx_ = .{
+                for (parts, 0..) |*part, part_index| {
+                    var decls = &part.declared_symbols;
+                    const ctx = Ctx{
                         .allocator = p.allocator,
                         .top_level_symbols_to_parts = &top_level_symbols_to_parts,
                         .symbols = p.symbols.items,
-                        .part_index = @truncate(u32, i),
-                    };
-                    const Ctx = @TypeOf(ctx_);
-                    var decls = &part.declared_symbols;
-
-                    const Iterator = struct {
-                        pub fn next(ctx: Ctx, input: Ref) void {
-                            // If this symbol was merged, use the symbol at the end of the
-                            // linked list in the map. This is the case for multiple "var"
-                            // declarations with the same name, for example.
-                            var ref = input;
-                            var symbol_ref = &ctx.symbols[ref.innerIndex()];
-                            while (symbol_ref.hasLink()) : (symbol_ref = &ctx.symbols[ref.innerIndex()]) {
-                                ref = symbol_ref.link;
-                            }
-
-                            var entry = ctx.top_level_symbols_to_parts.getOrPut(ctx.allocator, ref) catch unreachable;
-                            if (!entry.found_existing) {
-                                entry.value_ptr.* = .{};
-                            }
-
-                            entry.value_ptr.push(ctx.allocator, @truncate(u32, ctx.part_index)) catch unreachable;
-                        }
+                        .part_index = @truncate(u32, part_index),
                     };
 
-                    DeclaredSymbol.forEachTopLevelSymbol(decls, ctx_, Iterator.next);
+                    DeclaredSymbol.forEachTopLevelSymbol(decls, ctx, Ctx.next);
                 }
 
                 // Pulling in the exports of this module always pulls in the export part

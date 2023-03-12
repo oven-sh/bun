@@ -4435,6 +4435,10 @@ fn NewParser_(
         }
 
         pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
+            return findSymbolWithRecordUsage(p, loc, name, true);
+        }
+
+        pub fn findSymbolWithRecordUsage(p: *P, loc: logger.Loc, name: string, record_usage: bool) !FindSymbolResult {
             var declare_loc: logger.Loc = undefined;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
@@ -4499,7 +4503,7 @@ fn NewParser_(
             }
 
             // Track how many times we've referenced this symbol
-            p.recordUsage(ref);
+            if (record_usage) p.recordUsage(ref);
 
             return FindSymbolResult{
                 .ref = ref,
@@ -13373,8 +13377,8 @@ fn NewParser_(
 
                     // Substitute user-specified defines for unbound symbols
                     if (p.symbols.items[e_.ref.innerIndex()].kind == .unbound and !result.is_inside_with_scope and !is_delete_target) {
-                        if (p.define.identifiers.get(name)) |def| {
-                            if (!def.isUndefined()) {
+                        if (p.define.forIdentifier(name)) |def| {
+                            if (!def.valueless) {
                                 const newvalue = p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &def);
 
                                 // Don't substitute an identifier for a non-identifier if this is an
@@ -14324,7 +14328,7 @@ fn NewParser_(
                             if (p.define.dots.get(literal)) |parts| {
                                 for (parts) |define| {
                                     if (p.isDotDefineMatch(expr, define.parts)) {
-                                        if (!define.data.isUndefined()) {
+                                        if (!define.data.valueless) {
                                             return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                         }
 
@@ -14494,7 +14498,7 @@ fn NewParser_(
                             if (p.isDotDefineMatch(expr, define.parts)) {
                                 if (in.assign_target == .none) {
                                     // Substitute user-specified defines
-                                    if (!define.data.isUndefined()) {
+                                    if (!define.data.valueless) {
                                         return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
                                     }
                                 }
@@ -17568,33 +17572,22 @@ fn NewParser_(
             };
         }
 
-        fn isDotDefineMatchInner(p: *P, expr: Expr, parts: []const string) ?Ref {
+        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
                         if (ex.optional_chain != null) {
-                            return null;
+                            return false;
                         }
 
                         // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
-                        if (is_tail_match) {
-                            if (p.isDotDefineMatchInner(ex.target, parts[0..last])) |ref| {
-                                if (last == 0) {
-                                    ex.target.data.e_identifier.ref = ref;
-                                }
-
-                                return ref;
-                            }
-                        }
+                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
                     }
                 },
                 .e_import_meta => {
-                    if (parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta")) {
-                        p.is_dot_define_match = true;
-                        return null;
-                    }
+                    return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
                 },
                 // Note: this behavior differs from esbuild
                 // esbuild does not try to match index accessors
@@ -17603,20 +17596,13 @@ fn NewParser_(
                 .e_index => |index| {
                     if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
                         if (index.optional_chain != null) {
-                            return null;
+                            return false;
                         }
 
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        if (is_tail_match) {
-                            if (p.isDotDefineMatchInner(index.target, parts[0..last])) |ref| {
-                                if (last == 0) {
-                                    index.target.data.e_identifier.ref = ref;
-                                }
-
-                                return ref;
-                            }
-                        }
+                        return is_tail_match and
+                            p.isDotDefineMatch(index.target, parts[0..last]);
                     }
                 },
                 .e_identifier => |ex| {
@@ -17625,37 +17611,23 @@ fn NewParser_(
                     if (parts.len == 1) {
                         const name = p.loadNameFromRef(ex.ref);
                         if (!strings.eql(name, parts[0])) {
-                            return null;
+                            return false;
                         }
 
-                        const result = p.findSymbol(expr.loc, name) catch return false;
+                        const result = p.findSymbolWithRecordUsage(expr.loc, name, false) catch return false;
 
                         // We must not be in a "with" statement scope
                         if (result.is_inside_with_scope) {
-                            p.is_dot_define_match = false;
-
-                            // preserve the updated Ref
-                            return result.ref;
+                            return false;
                         }
 
-                        // The last symbol must be unbound
-                        p.is_dot_define_match = p.symbols.items[result.ref.innerIndex()].kind == .unbound;
-
-                        // preserve the updated Ref
-                        return result.ref;
+                        return p.symbols.items[result.ref.innerIndex()].kind == .unbound;
                     }
                 },
                 else => {},
             }
 
-            return null;
-        }
-
-        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
-            _ = p.isDotDefineMatchInner(expr, parts);
-            const result = p.is_dot_define_match;
-            p.is_dot_define_match = false;
-            return result;
+            return false;
         }
 
         fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringVoidMap) void {

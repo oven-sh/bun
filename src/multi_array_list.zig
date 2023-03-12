@@ -450,8 +450,7 @@ pub fn MultiArrayList(comptime S: type) type {
             }
         }
 
-        pub fn appendList(this: *Self, allocator: std.mem.Allocator, other: Self) !void {
-            try this.ensureUnusedCapacity(allocator, other.len);
+        pub fn appendListAssumeCapacity(this: *Self, other: Self) void {
             const offset = this.len;
             this.len += other.len;
             const other_slice = other.slice();
@@ -462,6 +461,11 @@ pub fn MultiArrayList(comptime S: type) type {
                     mem.copy(field_info.type, this_slice.items(field)[offset..], other_slice.items(field));
                 }
             }
+        }
+
+        pub fn appendList(this: *Self, allocator: std.mem.Allocator, other: Self) !void {
+            try this.ensureUnusedCapacity(allocator, other.len);
+            this.appendListAssumeCapacity(other);
         }
 
         fn allocatedBytes(self: Self) []align(@alignOf(S)) u8 {

@@ -47,6 +47,7 @@ fn _disabledAssert(_: bool) void {
 }
 
 const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+const debug = Output.scoped(.JSParser, false);
 const ExprListLoc = struct {
     list: ExprNodeList,
     loc: logger.Loc,
@@ -3736,6 +3737,8 @@ fn NewParser_(
         allow_in: bool = false,
         allow_private_identifiers: bool = false,
 
+        is_dot_define_match: bool = false,
+
         has_top_level_return: bool = false,
         latest_return_had_semicolon: bool = false,
         has_import_meta: bool = false,
@@ -5914,10 +5917,14 @@ fn NewParser_(
             //     function foo(): void;
             //     function foo(): void {}
             //
-            if (name) |*name_| {
-                const kind = if (is_generator or is_async) Symbol.Kind.generator_or_async_function else Symbol.Kind.hoisted_function;
-                name_.ref = try p.declareSymbol(kind, name_.loc, nameText);
-                func.name = name_.*;
+            if (name != null) {
+                const kind = if (is_generator or is_async)
+                    Symbol.Kind.generator_or_async_function
+                else
+                    Symbol.Kind.hoisted_function;
+
+                name.?.ref = try p.declareSymbol(kind, name.?.loc, nameText);
+                func.name = name;
             }
 
             func.flags.setPresent(.has_if_scope, hasIfScope);
@@ -13323,6 +13330,7 @@ fn NewParser_(
 
                     if (p.define.dots.get("meta")) |meta| {
                         for (meta) |define| {
+                            // TODO: clean up how we do define matches
                             if (p.isDotDefineMatch(expr, define.parts)) {
                                 // Substitute user-specified defines
                                 return p.valueForDefine(expr.loc, in.assign_target, is_delete_target, &define.data);
@@ -17560,24 +17568,33 @@ fn NewParser_(
             };
         }
 
-        // This function is recursive
-        // But it shouldn't be that long
-        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
+        fn isDotDefineMatchInner(p: *P, expr: Expr, parts: []const string) ?Ref {
             switch (expr.data) {
                 .e_dot => |ex| {
                     if (parts.len > 1) {
                         if (ex.optional_chain != null) {
-                            return false;
+                            return null;
                         }
 
                         // Intermediates must be dot expressions
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], ex.name);
-                        return is_tail_match and p.isDotDefineMatch(ex.target, parts[0..last]);
+                        if (is_tail_match) {
+                            if (p.isDotDefineMatchInner(ex.target, parts[0..last])) |ref| {
+                                if (last == 0) {
+                                    ex.target.data.e_identifier.ref = ref;
+                                }
+
+                                return ref;
+                            }
+                        }
                     }
                 },
                 .e_import_meta => {
-                    return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
+                    if (parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta")) {
+                        p.is_dot_define_match = true;
+                        return null;
+                    }
                 },
                 // Note: this behavior differs from esbuild
                 // esbuild does not try to match index accessors
@@ -17586,12 +17603,20 @@ fn NewParser_(
                 .e_index => |index| {
                     if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
                         if (index.optional_chain != null) {
-                            return false;
+                            return null;
                         }
 
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
+                        if (is_tail_match) {
+                            if (p.isDotDefineMatchInner(index.target, parts[0..last])) |ref| {
+                                if (last == 0) {
+                                    index.target.data.e_identifier.ref = ref;
+                                }
+
+                                return ref;
+                            }
+                        }
                     }
                 },
                 .e_identifier => |ex| {
@@ -17600,24 +17625,37 @@ fn NewParser_(
                     if (parts.len == 1) {
                         const name = p.loadNameFromRef(ex.ref);
                         if (!strings.eql(name, parts[0])) {
-                            return false;
+                            return null;
                         }
 
                         const result = p.findSymbol(expr.loc, name) catch return false;
 
                         // We must not be in a "with" statement scope
                         if (result.is_inside_with_scope) {
-                            return false;
+                            p.is_dot_define_match = false;
+
+                            // preserve the updated Ref
+                            return result.ref;
                         }
 
                         // The last symbol must be unbound
-                        return p.symbols.items[result.ref.innerIndex()].kind == .unbound;
+                        p.is_dot_define_match = p.symbols.items[result.ref.innerIndex()].kind == .unbound;
+
+                        // preserve the updated Ref
+                        return result.ref;
                     }
                 },
                 else => {},
             }
 
-            return false;
+            return null;
+        }
+
+        fn isDotDefineMatch(p: *P, expr: Expr, parts: []const string) bool {
+            _ = p.isDotDefineMatchInner(expr, parts);
+            const result = p.is_dot_define_match;
+            p.is_dot_define_match = false;
+            return result;
         }
 
         fn visitBinding(p: *P, binding: BindingNodeIndex, duplicate_arg_check: ?*StringVoidMap) void {
@@ -18615,7 +18653,7 @@ fn NewParser_(
             }
 
             if (p.options.tree_shaking) {
-                p.treeShake(&parts, commonjs_wrapper_expr != null or p.options.features.hot_module_reloading or p.options.enable_bundling);
+                p.treeShake(&parts, commonjs_wrapper_expr != null or p.options.features.hot_module_reloading or p.options.enable_legacy_bundling);
             }
 
             if (commonjs_wrapper_expr) |commonjs_wrapper| {
@@ -19105,6 +19143,7 @@ fn NewParser_(
                 part.stmts = _stmts[0 .. imports_list.len + toplevel_stmts.len + exports_from.len];
             } else if (p.options.features.hot_module_reloading) {}
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
+            var top_level = &top_level_symbols_to_parts;
             const wrapper_ref = brk: {
                 if (p.options.bundle) {
                     break :brk p.newSymbol(
@@ -19153,7 +19192,7 @@ fn NewParser_(
                     var decls = &part.declared_symbols;
                     const ctx = Ctx{
                         .allocator = p.allocator,
-                        .top_level_symbols_to_parts = &top_level_symbols_to_parts,
+                        .top_level_symbols_to_parts = top_level,
                         .symbols = p.symbols.items,
                         .part_index = @truncate(u32, part_index),
                     };
@@ -19164,7 +19203,7 @@ fn NewParser_(
                 // Pulling in the exports of this module always pulls in the export part
 
                 {
-                    var entry = top_level_symbols_to_parts.getOrPut(p.allocator, p.exports_ref) catch unreachable;
+                    var entry = top_level.getOrPut(p.allocator, p.exports_ref) catch unreachable;
 
                     if (!entry.found_existing) {
                         entry.value_ptr.* = .{};

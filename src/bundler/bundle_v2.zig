@@ -1370,20 +1370,17 @@ const LinkerGraph = struct {
         part: js_ast.Part,
     ) !u32 {
         var parts: *js_ast.Part.List = &graph.ast.items(.parts)[id];
-        const part_id = parts.len;
+        const part_id = @truncate(u32, parts.len);
         try parts.push(graph.allocator, part);
         var top_level_symbol_to_parts_overlay: ?*TopLevelSymbolToParts = null;
 
-        var ctx = .{
-            .graph = graph,
-            .id = id,
-            .part_id = part_id,
-            .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
-        };
-        const Ctx = @TypeOf(ctx);
-
         const Iterator = struct {
-            pub fn next(self: *Ctx, ref: Ref) void {
+            graph: *LinkerGraph,
+            id: u32,
+            top_level_symbol_to_parts_overlay: *?*TopLevelSymbolToParts,
+            part_id: u32,
+
+            pub fn next(self: *@This(), ref: Ref) void {
                 var overlay = brk: {
                     if (self.top_level_symbol_to_parts_overlay.*) |out| {
                         break :brk out;
@@ -1408,6 +1405,13 @@ const LinkerGraph = struct {
                     entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
                 }
             }
+        };
+
+        var ctx = Iterator{
+            .graph = graph,
+            .id = id,
+            .part_id = part_id,
+            .top_level_symbol_to_parts_overlay = &top_level_symbol_to_parts_overlay,
         };
 
         js_ast.DeclaredSymbol.forEachTopLevelSymbol(&parts.ptr[part_id].declared_symbols, &ctx, Iterator.next);
@@ -1475,11 +1479,15 @@ const LinkerGraph = struct {
     }
 
     pub fn topLevelSymbolToParts(g: *LinkerGraph, id: u32, ref: Ref) []u32 {
-        var list: BabyList(u32) = g.meta.items(.top_level_symbol_to_parts_overlay)[id].get(ref) orelse
-            g.ast.items(.top_level_symbols_to_parts)[id].get(ref) orelse
-            return &.{};
+        if (g.meta.items(.top_level_symbol_to_parts_overlay)[id].get(ref)) |overlay| {
+            return overlay.slice();
+        }
 
-        return list.slice();
+        if (g.ast.items(.top_level_symbols_to_parts)[id].get(ref)) |list| {
+            return list.slice();
+        }
+
+        return &.{};
     }
 
     pub fn load(this: *LinkerGraph, entry_points: []const Index, sources: []const Logger.Source) !void {

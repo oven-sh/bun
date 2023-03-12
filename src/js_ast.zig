@@ -111,19 +111,30 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         pub fn reclaim() []*Block {
             if (_self.overflow.used == 0) return &[_]*Block{};
 
-            var used = _self.overflow.allocator.dupe(*Block, _self.overflow.slice()) catch unreachable;
-            var new_head = _self.overflow.allocator.create(Block) catch unreachable;
-            new_head.* = .{};
-
             var to_move = _self.overflow.ptrs[0.._self.overflow.allocated][_self.overflow.used..];
-            if (to_move.len > 0) {
+            
+            // This returns the list of maxed out blocks
+            var used_list = _self.overflow.slice();
+
+            // The last block may be partially used.
+            if (_self.overflow.allocated > _self.overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
                 to_move = to_move[1..];
+                used_list.len += 1;
             }
 
-            bun.copy(*Block, _self.overflow.ptrs[1..], to_move);
-            _self.overflow.ptrs[0] = new_head;
-            _self.overflow.allocated = 1 + @truncate(Overflow.UsedSize, to_move.len);
-            reset();
+            var used = _self.overflow.allocator.dupe(*Block, used_list) catch unreachable;
+
+            for (to_move, _self.overflow.ptrs[0..to_move.len]) |b, *out| {
+                b.* = Block{
+                    .items = undefined,
+                    .used = 0,
+                };
+                out.* = b;
+            }
+
+            _self.overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
+            _self.overflow.used = 0;
+
             return used;
         }
 

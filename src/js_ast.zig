@@ -109,22 +109,28 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
         pub threadlocal var _self: *Self = undefined;
 
         pub fn reclaim() []*Block {
-            if (_self.overflow.used == 0) return &[_]*Block{};
+            var overflow = &_self.overflow;
 
-            var to_move = _self.overflow.ptrs[0.._self.overflow.allocated][_self.overflow.used..];
-            
+            if (overflow.used == 0) {
+                if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
+                    return &.{};
+                }
+            }
+
+            var to_move = overflow.ptrs[0..overflow.allocated][overflow.used..];
+
             // This returns the list of maxed out blocks
-            var used_list = _self.overflow.slice();
+            var used_list = overflow.slice();
 
             // The last block may be partially used.
-            if (_self.overflow.allocated > _self.overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
+            if (overflow.allocated > overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
                 to_move = to_move[1..];
                 used_list.len += 1;
             }
 
-            var used = _self.overflow.allocator.dupe(*Block, used_list) catch unreachable;
+            var used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
 
-            for (to_move, _self.overflow.ptrs[0..to_move.len]) |b, *out| {
+            for (to_move, overflow.ptrs[0..to_move.len]) |b, *out| {
                 b.* = Block{
                     .items = undefined,
                     .used = 0,
@@ -132,8 +138,8 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
                 out.* = b;
             }
 
-            _self.overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
-            _self.overflow.used = 0;
+            overflow.allocated = @truncate(Overflow.UsedSize, to_move.len);
+            overflow.used = 0;
 
             return used;
         }

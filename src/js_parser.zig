@@ -5374,7 +5374,7 @@ fn NewParser_(
 
         // This won't work for adversarial cases
         pub fn resolveGeneratedSymbol(p: *P, generated_symbol: *GeneratedSymbol) void {
-            if (generated_symbol.ref.isNull()) return;
+            if (generated_symbol.ref.isNull() or p.options.bundle) return;
 
             if (p.symbols.items[generated_symbol.primary.innerIndex()].use_count_estimate == 0 and
                 p.symbols.items[generated_symbol.primary.innerIndex()].link.isNull())
@@ -9696,6 +9696,15 @@ fn NewParser_(
 
         fn declareGeneratedSymbol(p: *P, kind: Symbol.Kind, comptime name: string) !GeneratedSymbol {
             const static = @field(StaticSymbolName.List, name);
+            if (p.options.bundle) {
+                const ref = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true);
+                return GeneratedSymbol{
+                    .backup = ref,
+                    .primary = ref,
+                    .ref = ref,
+                };
+            }
+
             return GeneratedSymbol{
                 .backup = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.backup, true),
                 .primary = try declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, static.primary, true),

@@ -654,7 +654,7 @@ pub const ImportScanner = struct {
                     }
 
                     const namespace_ref = st.namespace_ref;
-                    const convert_star_to_clause = !p.options.bundle or (!p.options.enable_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
+                    const convert_star_to_clause = !p.options.bundle or (!p.options.enable_legacy_bundling and !p.options.can_import_from_bundle and p.symbols.items[namespace_ref.innerIndex()].use_count_estimate == 0);
 
                     if (convert_star_to_clause and !keep_unused_imports) {
                         st.star_name_loc = null;
@@ -2345,7 +2345,7 @@ pub const Parser = struct {
         warn_about_unbundled_modules: bool = true,
 
         // Used when bundling node_modules
-        enable_bundling: bool = false,
+        enable_legacy_bundling: bool = false,
         transform_require_to_import: bool = true,
 
         moduleType: ModuleType = ModuleType.esm,
@@ -2638,7 +2638,7 @@ pub const Parser = struct {
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
             if (!p.options.bundle) {
-                if (p.options.transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_bundling)) {
+                if (p.options.transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_legacy_bundling)) {
                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
                     if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
@@ -2890,7 +2890,7 @@ pub const Parser = struct {
 
                                 // We do not mark this as .require becuase we are already wrapping it manually.
                                 // unless it's bun and you're not bundling
-                                const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime);
+                                const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_legacy_bundling or !p.options.features.allow_runtime);
                                 const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
                                 const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
 
@@ -3230,7 +3230,7 @@ pub const Parser = struct {
 
                         if (!p.options.jsx.use_embedded_refresh_runtime) {
                             if (comptime Environment.allow_assert)
-                                assert(!p.options.enable_bundling);
+                                assert(!p.options.enable_legacy_bundling);
                             var declared_symbols = DeclaredSymbol.List{};
                             try declared_symbols.ensureTotalCapacity(p.allocator, 1);
                             const loc = logger.Loc.Empty;
@@ -3275,7 +3275,7 @@ pub const Parser = struct {
                 else => {},
             }
 
-            if (p.options.enable_bundling) p.resolveBundlingSymbols();
+            if (p.options.enable_legacy_bundling) p.resolveBundlingSymbols();
         }
         var runtime_imports_iter = p.runtime_imports.iter();
 
@@ -3306,7 +3306,7 @@ pub const Parser = struct {
             // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
             // - when HMR is not enabled, we only need any runtime imports if we're importing require()
             if (p.options.features.allow_runtime and
-                !p.options.enable_bundling and
+                !p.options.enable_legacy_bundling and
                 (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
             {
                 const before_start = before.items.len;
@@ -5259,7 +5259,7 @@ fn NewParser_(
 
             var generated_symbols_count: u32 = 3;
 
-            if (p.options.enable_bundling) {
+            if (p.options.enable_legacy_bundling) {
                 generated_symbols_count += 4;
             }
 
@@ -16039,7 +16039,7 @@ fn NewParser_(
                             }
 
                             // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                            if (p.options.enable_bundling) {
+                            if (p.options.enable_legacy_bundling) {
                                 var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                 export_default_args[0] = p.@"module.exports"(expr.loc);
                                 export_default_args[1] = data.value.expr;
@@ -16080,14 +16080,14 @@ fn NewParser_(
                                         }
 
                                         // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                                        if (p.options.enable_bundling) {
+                                        if (p.options.enable_legacy_bundling) {
                                             var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                             export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
                                             export_default_args[1] = data.value.expr;
                                             stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
                                             return;
                                         }
-                                    } else if (p.options.enable_bundling) {
+                                    } else if (p.options.enable_legacy_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.@"module.exports"(s2.loc);
 
@@ -16132,14 +16132,14 @@ fn NewParser_(
                                         }
 
                                         // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
-                                        if (p.options.enable_bundling) {
+                                        if (p.options.enable_legacy_bundling) {
                                             var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                             export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
                                             export_default_args[1] = data.value.expr;
                                             stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
                                             return;
                                         }
-                                    } else if (p.options.enable_bundling) {
+                                    } else if (p.options.enable_legacy_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.@"module.exports"(s2.loc);
 

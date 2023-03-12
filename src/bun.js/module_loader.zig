@@ -1579,7 +1579,7 @@ pub const ModuleLoader = struct {
                     var jsx = bundler.options.jsx;
                     jsx.parse = false;
                     var opts = js_parser.Parser.Options.init(jsx, .js);
-                    opts.enable_bundling = false;
+                    opts.enable_legacy_bundling = false;
                     opts.transform_require_to_import = false;
                     opts.features.dynamic_require = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;

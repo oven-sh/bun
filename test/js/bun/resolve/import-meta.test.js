@@ -164,5 +164,5 @@ it('import("bun") works', async () => {
 });
 
 it("require.resolve with empty options object", () => {
-  expect(require.resolve("bun", {})).toBe("bun");
+  expect(require.resolve(import.meta.path + String(""), {})).toBe(import.meta.path);
 });

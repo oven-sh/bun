@@ -467,7 +467,7 @@ pub const Arguments = struct {
         var output_dir: ?string = null;
         const production = false;
 
-        if (cmd == .BuildCommand) {
+        if (cmd == .BuildCommand or cmd == .BunCommand) {
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     output_dir = outdir;
@@ -1455,7 +1455,7 @@ pub const Command = struct {
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
-                Command.Tag.BuildCommand => Arguments.build_params,
+                Command.Tag.BunCommand, Command.Tag.BuildCommand => Arguments.build_params,
                 else => Arguments.params,
             };
         }

@@ -178,7 +178,7 @@ pub const BunCommand = struct {
 
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
-            const output_files = try BundleV2.generate(
+            const output_files = BundleV2.generate(
                 &this_bundler,
                 allocator,
                 loaded_framework,
@@ -188,7 +188,16 @@ pub const BunCommand = struct {
                 ctx.debug.package_bundle_map,
                 bun.JSC.AnyEventLoop.init(ctx.allocator),
                 std.crypto.random.int(u64),
-            );
+            ) catch |err| {
+                if (log.msgs.items.len > 0) {
+                    try log.printForLogLevel(Output.errorWriter());
+                } else {
+                    try Output.errorWriter().print("error: {s}", .{@errorName(err)});
+                }
+
+                Output.flush();
+                Global.exit(1);
+            };
 
             {
                 dump: {

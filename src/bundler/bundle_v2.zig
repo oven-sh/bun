@@ -525,6 +525,10 @@ pub const BundleV2 = struct {
         this.graph.pool.pool.schedule(batch);
         this.waitForParse();
 
+        if (this.bundler.log.errors > 0) {
+            return error.BuildFailed;
+        }
+
         this.linker.allocator = this.bundler.allocator;
         this.linker.graph.allocator = this.bundler.allocator;
         this.linker.graph.ast = try this.graph.ast.clone(this.linker.allocator);
@@ -3789,14 +3793,15 @@ const LinkerContext = struct {
         const toESMRef = c.graph.symbols.follow(runtime_members.get("__toESM").?.ref);
         const runtimeRequireRef = c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
+        js_ast.Expr.Data.Store.create(bun.default_allocator);
+        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+
         var r = try c.renameSymbolsInChunk(allocator, chunk, repr.files_in_chunk_order);
         defer r.deinit();
         const part_ranges = repr.parts_in_chunk_in_order;
         var stmts = StmtList.init(allocator);
         defer stmts.deinit();
 
-        js_ast.Expr.Data.Store.create(allocator);
-        js_ast.Stmt.Data.Store.create(allocator);
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
         var compile_results = std.ArrayList(CompileResult).initCapacity(allocator, part_ranges.len) catch unreachable;

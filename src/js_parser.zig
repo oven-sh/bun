@@ -3737,8 +3737,6 @@ fn NewParser_(
         allow_in: bool = false,
         allow_private_identifiers: bool = false,
 
-        is_dot_define_match: bool = false,
-
         has_top_level_return: bool = false,
         latest_return_had_semicolon: bool = false,
         has_import_meta: bool = false,
@@ -4438,7 +4436,7 @@ fn NewParser_(
             return findSymbolWithRecordUsage(p, loc, name, true);
         }
 
-        pub fn findSymbolWithRecordUsage(p: *P, loc: logger.Loc, name: string, record_usage: bool) !FindSymbolResult {
+        pub fn findSymbolWithRecordUsage(p: *P, loc: logger.Loc, name: string, comptime record_usage: bool) !FindSymbolResult {
             var declare_loc: logger.Loc = undefined;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
@@ -4475,6 +4473,14 @@ fn NewParser_(
 
                 // Allocate an "unbound" symbol
                 p.checkForNonBMPCodePoint(loc, name);
+                if (comptime !record_usage) {
+                    return FindSymbolResult{
+                        .ref = Ref.None,
+                        .declare_loc = loc,
+                        .is_inside_with_scope = is_inside_with_scope,
+                    };
+                }
+
                 var gpe = p.module_scope.getOrPutMemberWithHash(allocator, name, hash) catch unreachable;
 
                 // I don't think this happens?
@@ -4503,7 +4509,7 @@ fn NewParser_(
             }
 
             // Track how many times we've referenced this symbol
-            if (record_usage) p.recordUsage(ref);
+            if (comptime record_usage) p.recordUsage(ref);
 
             return FindSymbolResult{
                 .ref = ref,
@@ -17596,7 +17602,7 @@ fn NewParser_(
                     }
                 },
                 .e_import_meta => {
-                    return parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta");
+                    return (parts.len == 2 and strings.eqlComptime(parts[0], "import") and strings.eqlComptime(parts[1], "meta"));
                 },
                 // Note: this behavior differs from esbuild
                 // esbuild does not try to match index accessors
@@ -17610,8 +17616,7 @@ fn NewParser_(
 
                         const last = parts.len - 1;
                         const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
-                        return is_tail_match and
-                            p.isDotDefineMatch(index.target, parts[0..last]);
+                        return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
                     }
                 },
                 .e_identifier => |ex| {
@@ -17630,7 +17635,13 @@ fn NewParser_(
                             return false;
                         }
 
-                        return p.symbols.items[result.ref.innerIndex()].kind == .unbound;
+                        return
+                        // TODO: figure out why this is needed when bundling
+                        // The problem is all the top-level vars are getting removed when they're not actually side effect free
+                        !p.source.index.isRuntime() and
+                            // when there's actually no symbol by that name, we return Ref.None
+                            // If a symbol had already existed by that name, we return .unbound
+                            (result.ref.isNull() or p.symbols.items[result.ref.innerIndex()].kind == .unbound);
                     }
                 },
                 else => {},
@@ -18555,9 +18566,9 @@ fn NewParser_(
             var parts = _parts;
             // Insert an import statement for any runtime imports we generated
 
-            if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
-                p.treeShake(&parts, false);
-            }
+            // if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
+            //     p.treeShake(&parts, false);
+            // }
 
             const bundling = p.options.bundle;
             var parts_end: usize = @as(usize, @boolToInt(bundling));
@@ -18633,9 +18644,9 @@ fn NewParser_(
                 }
             }
 
-            if (p.options.tree_shaking) {
-                p.treeShake(&parts, commonjs_wrapper_expr != null or p.options.features.hot_module_reloading or p.options.enable_legacy_bundling);
-            }
+            // if (p.options.tree_shaking) {
+            //     p.treeShake(&parts, commonjs_wrapper_expr != null or p.options.features.hot_module_reloading or p.options.enable_legacy_bundling);
+            // }
 
             if (commonjs_wrapper_expr) |commonjs_wrapper| {
                 var part = &parts[parts.len - 1];
@@ -19125,22 +19136,6 @@ fn NewParser_(
             } else if (p.options.features.hot_module_reloading) {}
             var top_level_symbols_to_parts = js_ast.Ast.TopLevelSymbolToParts{};
             var top_level = &top_level_symbols_to_parts;
-            const wrapper_ref = brk: {
-                if (p.options.bundle) {
-                    break :brk p.newSymbol(
-                        .other,
-                        std.fmt.allocPrint(
-                            p.allocator,
-                            "require_{any}",
-                            .{
-                                p.source.fmtIdentifier(),
-                            },
-                        ) catch unreachable,
-                    ) catch unreachable;
-                }
-
-                break :brk @as(?Ref, null);
-            };
 
             if (p.options.bundle) {
                 const Ctx = struct {
@@ -19193,6 +19188,23 @@ fn NewParser_(
                     entry.value_ptr.push(p.allocator, js_ast.namespace_export_part_index) catch unreachable;
                 }
             }
+
+            const wrapper_ref = brk: {
+                if (p.options.bundle) {
+                    break :brk p.newSymbol(
+                        .other,
+                        std.fmt.allocPrint(
+                            p.allocator,
+                            "require_{any}",
+                            .{
+                                p.source.fmtIdentifier(),
+                            },
+                        ) catch unreachable,
+                    ) catch unreachable;
+                }
+
+                break :brk @as(?Ref, null);
+            };
 
             return .{
                 .allocator = p.allocator,

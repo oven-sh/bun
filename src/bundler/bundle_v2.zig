@@ -1394,13 +1394,22 @@ const LinkerGraph = struct {
 
                 var entry = overlay.getOrPut(self.graph.allocator, ref) catch unreachable;
                 if (!entry.found_existing) {
-                    entry.value_ptr.* = bun.from(
-                        BabyList(u32),
-                        self.graph.allocator,
-                        &[_]u32{
-                            self.part_id,
-                        },
-                    ) catch unreachable;
+                    if (self.graph.ast.items(.top_level_symbols_to_parts)[self.id].get(ref)) |original_parts| {
+                        var list = std.ArrayList(u32).init(self.graph.allocator);
+                        list.ensureTotalCapacityPrecise(original_parts.len + 1) catch unreachable;
+                        list.appendSliceAssumeCapacity(original_parts.slice());
+                        list.appendAssumeCapacity(self.part_id);
+
+                        entry.value_ptr.* = BabyList(u32).init(list.items);
+                    } else {
+                        entry.value_ptr.* = bun.from(
+                            BabyList(u32),
+                            self.graph.allocator,
+                            &[_]u32{
+                                self.part_id,
+                            },
+                        ) catch unreachable;
+                    }
                 } else {
                     entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
                 }
@@ -1455,7 +1464,8 @@ const LinkerGraph = struct {
 
         // Track that this specific symbol was imported
         if (source_index_to_import_from.get() != source_index) {
-            try g.meta.items(.imports_to_bind)[source_index].put(g.allocator, ref, .{
+            var to_bind = &g.meta.items(.imports_to_bind)[source_index];
+            try to_bind.put(g.allocator, ref, .{
                 .data = .{
                     .source_index = source_index_to_import_from,
                     .import_ref = ref,
@@ -2244,10 +2254,6 @@ const LinkerContext = struct {
                     const source_index = source_index_.get();
                     const id = source_index;
 
-                    // ignore the runtime
-                    if (source_index == Index.runtime.get())
-                        continue;
-
                     // not a JS ast or empty
                     if (id >= named_imports.len) {
                         continue;
@@ -2290,7 +2296,6 @@ const LinkerContext = struct {
                         wrapped_ref,
                         &wrapper_part_indices[id],
                         source_index,
-                        id,
                     );
                 }
             }
@@ -5450,7 +5455,7 @@ const LinkerContext = struct {
                                         stmt.loc,
                                     );
                                 },
-                                .s_class, .s_function => {
+                                .s_function => {
                                     stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
                                     continue;
                                 },
@@ -5843,24 +5848,24 @@ const LinkerContext = struct {
                 if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),
             });
 
+        // Include the file containing this part
+        c.markFileLiveForTreeShaking(
+            id,
+            side_effects,
+            parts,
+            import_records,
+            entry_point_kinds,
+        );
+
         for (part.dependencies.slice()) |dependency| {
-            const _id = dependency.source_index.get();
-            if (c.markPartLiveForTreeShaking(
+            _ = c.markPartLiveForTreeShaking(
                 dependency.part_index,
-                _id,
+                dependency.source_index.get(),
                 side_effects,
                 parts,
                 import_records,
                 entry_point_kinds,
-            )) {
-                c.markFileLiveForTreeShaking(
-                    _id,
-                    side_effects,
-                    parts,
-                    import_records,
-                    entry_point_kinds,
-                );
-            }
+            );
         }
 
         return true;
@@ -6120,7 +6125,6 @@ const LinkerContext = struct {
         wrapper_ref: Ref,
         wrapper_part_index: *Index,
         source_index: Index.Int,
-        id: u32,
     ) void {
         switch (wrap) {
             // If this is a CommonJS file, we're going to need to generate a wrapper
@@ -6139,6 +6143,18 @@ const LinkerContext = struct {
             // of it.
             .cjs => {
                 const common_js_parts = c.topLevelSymbolsToPartsForRuntime(c.cjs_runtime_ref);
+
+                var total_dependencies_count = common_js_parts.len;
+                var runtime_parts = c.graph.ast.items(.parts)[Index.runtime.get()].slice();
+
+                for (common_js_parts) |part_id| {
+                    var part: *js_ast.Part = &runtime_parts[part_id];
+                    var symbol_refs = part.symbol_uses.keys();
+                    for (symbol_refs) |ref| {
+                        if (ref.eql(c.cjs_runtime_ref)) continue;
+                        total_dependencies_count += c.topLevelSymbolsToPartsForRuntime(ref).len;
+                    }
+                }
 
                 // generate a dummy part that depends on the "__commonJS" symbol
                 var dependencies = c.allocator.alloc(js_ast.Dependency, common_js_parts.len) catch unreachable;
@@ -6162,9 +6178,9 @@ const LinkerContext = struct {
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
                             c.allocator,
                             &[_]js_ast.DeclaredSymbol{
-                                .{ .ref = c.graph.ast.items(.exports_ref)[id], .is_top_level = true },
-                                .{ .ref = c.graph.ast.items(.module_ref)[id].?, .is_top_level = true },
-                                .{ .ref = c.graph.ast.items(.wrapper_ref)[id].?, .is_top_level = true },
+                                .{ .ref = c.graph.ast.items(.exports_ref)[source_index], .is_top_level = true },
+                                .{ .ref = c.graph.ast.items(.module_ref)[source_index].?, .is_top_level = true },
+                                .{ .ref = c.graph.ast.items(.wrapper_ref)[source_index].?, .is_top_level = true },
                             },
                         ) catch unreachable,
                         .dependencies = Dependency.List.init(dependencies),

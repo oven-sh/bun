@@ -784,11 +784,12 @@ pub const Symbol = struct {
     };
 
     pub fn slotNamespace(this: *const Symbol) SlotNamespace {
-        if (this.must_not_be_renamed) {
+        const kind = this.kind;
+
+        if (kind == .unbound or this.must_not_be_renamed) {
             return .must_not_be_renamed;
         }
 
-        const kind = this.kind;
         if (kind.isPrivate()) {
             return .private_name;
         }

@@ -878,17 +878,29 @@ pub const DynamicBitSetUnmanaged = struct {
     /// same bit_length.
     pub fn toggleSet(self: *Self, toggles: Self) void {
         if (comptime Environment.allow_assert) std.debug.assert(toggles.bit_length == self.bit_length);
+        const bit_length = self.bit_length;
+        if (bit_length == 0) return;
         const num_masks = numMasks(self.bit_length);
         for (self.masks[0..num_masks], toggles.masks[0..num_masks]) |*mask, other_mask| {
             mask.* ^= other_mask;
         }
+
+        const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
+        const last_item_mask = (~@as(MaskInt, 0)) >> @intCast(ShiftInt, padding_bits);
+        self.masks[num_masks - 1] &= last_item_mask;
     }
 
     pub fn setAll(self: *Self, value: bool) void {
+        const bit_length = self.bit_length;
+        if (bit_length == 0) return;
         const num_masks = numMasks(self.bit_length);
         for (self.masks[0..num_masks]) |*mask| {
             mask.* = std.math.boolMask(MaskInt, value);
         }
+
+        const padding_bits = num_masks * @bitSizeOf(MaskInt) - bit_length;
+        const last_item_mask = (~@as(MaskInt, 0)) >> @intCast(ShiftInt, padding_bits);
+        self.masks[num_masks - 1] &= last_item_mask;
     }
 
     /// Flips every bit in the bit set.
@@ -1067,7 +1079,7 @@ pub const DynamicBitSetUnmanaged = struct {
 };
 
 pub const AutoBitSet = union(enum) {
-    const Static = ArrayBitSet(usize, (@bitSizeOf(DynamicBitSetUnmanaged) - 1));
+    pub const Static = ArrayBitSet(usize, (@bitSizeOf(DynamicBitSetUnmanaged) - 1));
 
     static: Static,
     dynamic: DynamicBitSetUnmanaged,

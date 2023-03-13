@@ -187,6 +187,8 @@ pub const Index = packed struct(u32) {
 };
 
 pub const Ref = packed struct(u64) {
+    inner_index: Int = 0,
+
     tag: enum(u2) {
         invalid,
         allocated_name,
@@ -195,10 +197,9 @@ pub const Ref = packed struct(u64) {
     } = .invalid,
 
     source_index: Int = 0,
-    inner_index: Int = 0,
 
     pub inline fn isEmpty(this: Ref) bool {
-        return @bitCast(u64, this) == 0;
+        return this.asU64() == 0;
     }
 
     pub const ArrayHashCtx = RefHashCtx;
@@ -220,11 +221,11 @@ pub const Ref = packed struct(u64) {
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(
             writer,
-            "Ref: sourceIndex = {d}, innerIndex = {d}, is_source_contents_slice = {}",
+            "Ref[{d}, {d}, {s}]",
             .{
                 ref.sourceIndex(),
                 ref.innerIndex(),
-                ref.isSourceContentsSlice(),
+                @tagName(ref.tag),
             },
         );
     }
@@ -269,17 +270,11 @@ pub const Ref = packed struct(u64) {
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        // This type isn't quite a u64 because it is used in a few other packed structs which have variables in them
-        // But, there are some footguns with the stage1 implementation of packed structs
-        // so it is safer to do comparisons as u64
-        // but we want to ensure that the value of the unused bits in the u64 are 0
-        // i have not looked at the assembly to verify that the unused bits default to 0
-        // so we set it to u64 0 just to be sure
         return @bitCast(u64, key);
     }
 
     pub inline fn hash64(key: Ref) u64 {
-        return std.hash.Wyhash.hash(0, &@bitCast([8]u8, @bitCast(u64, key)));
+        return std.hash.Wyhash.hash(0, &@bitCast([8]u8, key.asU64()));
     }
 
     pub fn eql(ref: Ref, b: Ref) bool {

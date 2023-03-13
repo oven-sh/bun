@@ -18,6 +18,7 @@ const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
 const MutableString = bun.MutableString;
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -3193,9 +3194,7 @@ pub const JSValue = enum(JSValueReprInt) {
         var writer = buffered_writer.writer();
         const Writer = @TypeOf(writer);
 
-        // const array_newlines = this.isIterable(globalObject) and this.getLengthOfArray(globalObject) > 0 and !this.isObject();
-
-        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+        const fmt_options = JestPrettyFormat.FormatOptions{
             .enable_colors = false,
             .add_newline = false,
             .flush = false,
@@ -3204,7 +3203,7 @@ pub const JSValue = enum(JSValueReprInt) {
             .snapshot_format = true,
         };
 
-        JSC.ZigConsoleClient.format(
+        JestPrettyFormat.format(
             .Debug,
             globalObject,
             @ptrCast([*]const JSValue, &this),

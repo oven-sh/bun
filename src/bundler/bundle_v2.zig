@@ -525,7 +525,7 @@ pub const BundleV2 = struct {
         this.graph.pool.pool.schedule(batch);
         this.waitForParse();
 
-        if (this.bundler.log.errors > 0) {
+        if (this.bundler.log.msgs.items.len > 0) {
             return error.BuildFailed;
         }
 

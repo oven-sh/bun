@@ -3198,7 +3198,6 @@ pub const JSValue = enum(JSValueReprInt) {
             .enable_colors = false,
             .add_newline = false,
             .flush = false,
-            .ordered_properties = true,
             .quote_strings = true,
         };
 

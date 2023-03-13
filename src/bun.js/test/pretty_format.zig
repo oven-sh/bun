@@ -93,7 +93,6 @@ pub const JestPrettyFormat = struct {
         enable_colors: bool,
         add_newline: bool,
         flush: bool,
-        ordered_properties: bool = false,
         quote_strings: bool = false,
     };
 
@@ -120,7 +119,6 @@ pub const JestPrettyFormat = struct {
             fmt = JestPrettyFormat.Formatter{
                 .remaining_values = &[_]JSValue{},
                 .globalThis = global,
-                .ordered_properties = options.ordered_properties,
                 .quote_strings = options.quote_strings,
             };
             const tag = JestPrettyFormat.Formatter.Tag.get(vals[0], global);
@@ -198,7 +196,6 @@ pub const JestPrettyFormat = struct {
         fmt = JestPrettyFormat.Formatter{
             .remaining_values = vals[0..len][1..],
             .globalThis = global,
-            .ordered_properties = options.ordered_properties,
             .quote_strings = options.quote_strings,
         };
         var tag: JestPrettyFormat.Formatter.Tag.Result = undefined;
@@ -264,7 +261,6 @@ pub const JestPrettyFormat = struct {
         failed: bool = false,
         estimated_line_length: usize = 0,
         always_newline_scope: bool = false,
-        ordered_properties: bool = false,
 
         pub fn goodTimeForANewLine(this: *@This()) bool {
             if (this.estimated_line_length > 80) {
@@ -1182,15 +1178,11 @@ pub const JestPrettyFormat = struct {
 
                             was_good_time = was_good_time or !tag.tag.isPrimitive() or this.goodTimeForANewLine();
 
-                            if (this.ordered_properties or was_good_time) {
-                                this.resetLine();
-                                writer.writeAll("[");
-                                writer.writeAll("\n");
-                                this.writeIndent(Writer, writer_) catch unreachable;
-                                this.addForNewLine(1);
-                            } else {
-                                writer.writeAll("[ ");
-                            }
+                            this.resetLine();
+                            writer.writeAll("[");
+                            writer.writeAll("\n");
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            this.addForNewLine(1);
 
                             this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
@@ -1208,12 +1200,9 @@ pub const JestPrettyFormat = struct {
                         var i: u32 = 1;
                         while (i < len) : (i += 1) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            if (this.ordered_properties or this.goodTimeForANewLine()) {
-                                writer.writeAll("\n");
-                                this.writeIndent(Writer, writer_) catch unreachable;
-                            } else {
-                                writer.writeAll(" ");
-                            }
+
+                            writer.writeAll("\n");
+                            this.writeIndent(Writer, writer_) catch unreachable;
 
                             const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
                             const tag = Tag.get(element, this.globalThis);
@@ -1232,20 +1221,15 @@ pub const JestPrettyFormat = struct {
                         }
                     }
 
-                    if (this.ordered_properties or was_good_time or this.goodTimeForANewLine()) {
-                        this.resetLine();
+                    this.resetLine();
+                    writer.writeAll("\n");
+                    this.writeIndent(Writer, writer_) catch {};
+                    writer.writeAll("]");
+                    if (this.indent == 0) {
                         writer.writeAll("\n");
-                        this.writeIndent(Writer, writer_) catch {};
-                        writer.writeAll("]");
-                        if (this.indent == 0) {
-                            writer.writeAll("\n");
-                        }
-                        this.resetLine();
-                        this.addForNewLine(1);
-                    } else {
-                        writer.writeAll(" ]");
-                        this.addForNewLine(2);
                     }
+                    this.resetLine();
+                    this.addForNewLine(1);
                 },
                 .Private => {
                     if (value.as(JSC.WebCore.Response)) |response| {
@@ -1732,11 +1716,7 @@ pub const JestPrettyFormat = struct {
                         .parent = value,
                     };
 
-                    if (this.ordered_properties) {
-                        value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
-                    } else {
-                        value.forEachProperty(this.globalThis, &iter, Iterator.forEach);
-                    }
+                    value.forEachPropertyOrdered(this.globalThis, &iter, Iterator.forEach);
 
                     if (iter.i == 0) {
                         var object_name = ZigString.Empty;

@@ -26,6 +26,10 @@ $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
+```bash#proto
+$ proto install bun
+```
+
 {% /codetabs %}
 
 ## Upgrading
@@ -38,6 +42,8 @@ $ bun upgrade
 
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+
+**proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:

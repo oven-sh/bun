@@ -105,7 +105,7 @@ pub const NumberRenamer = struct {
     pub fn assignName(r: *NumberRenamer, scope: *NumberScope, input_ref: Ref) void {
         const ref = r.symbols.follow(input_ref);
 
-        // Don't rename the symbol more than once
+        // Don't rename the same symbol more than once
         var inner: *bun.BabyList(string) = r.names.mut(input_ref.sourceIndex());
         if (inner.len > ref.innerIndex() and inner.at(ref.innerIndex()).len > 0) return;
 
@@ -115,16 +115,10 @@ pub const NumberRenamer = struct {
             return;
         }
 
-        // TODO: MustStartWithCapitalLetterForJSX
-
-        var name = scope.findUnusedName(r.allocator, symbol.original_name);
-
-        if (strings.eqlLong(name, symbol.original_name, true)) {
-            return;
-        }
+        const name = scope.findUnusedName(r.allocator, symbol.original_name) orelse return;
 
         const new_len = @max(inner.len, ref.innerIndex() + 1);
-        if (inner.cap < new_len) {
+        if (inner.cap <= new_len) {
             const prev_cap = inner.len;
             inner.ensureUnusedCapacity(r.allocator, new_len - prev_cap) catch unreachable;
             const to_write = inner.ptr[prev_cap..inner.cap];
@@ -167,19 +161,25 @@ pub const NumberRenamer = struct {
     }
 
     pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, s: *NumberScope, scope: *js_ast.Scope, source_index: u32, sorted: *std.ArrayList(u32)) void {
-        sorted.clearRetainingCapacity();
-        sorted.ensureUnusedCapacity(scope.members.count()) catch unreachable;
-        var value_iter = scope.members.valueIterator();
-        while (value_iter.next()) |value_ref| {
-            if (comptime Environment.allow_assert)
-                std.debug.assert(!value_ref.ref.isSourceContentsSlice());
+        {
+            sorted.clearRetainingCapacity();
+            sorted.ensureUnusedCapacity(scope.members.count()) catch unreachable;
+            sorted.items.len = scope.members.count();
+            var remaining = sorted.items;
+            var value_iter = scope.members.valueIterator();
+            while (value_iter.next()) |value_ref| {
+                if (comptime Environment.allow_assert)
+                    std.debug.assert(!value_ref.ref.isSourceContentsSlice());
 
-            sorted.appendAssumeCapacity(value_ref.ref.innerIndex());
-        }
-        std.sort.sort(u32, sorted.items, void{}, std.sort.asc(u32));
+                remaining[0] = value_ref.ref.innerIndex();
+                remaining = remaining[1..];
+            }
+            std.debug.assert(remaining.len == 0);
+            std.sort.sort(u32, sorted.items, void{}, std.sort.asc(u32));
 
-        for (sorted.items) |inner_index| {
-            r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));
+            for (sorted.items) |inner_index| {
+                r.assignName(s, Ref.init(@intCast(Ref.Int, inner_index), source_index, false));
+            }
         }
 
         for (scope.generated.slice()) |ref| {
@@ -275,16 +275,17 @@ pub const NumberRenamer = struct {
                 if (comptime Environment.allow_assert)
                     std.debug.assert(JSLexer.isIdentifier(name));
 
-                var s: ?*NumberScope = this;
-
                 // avoid rehashing the same string over for each scope
                 const ctx = bun.StringHashMapContext.pre(name);
 
+                if (this.name_counts.getAdapted(name, ctx)) |count| {
+                    return .{ .same_scope = count };
+                }
+
+                var s: ?*NumberScope = this.parent;
+
                 while (s) |scope| : (s = scope.parent) {
-                    if (scope.name_counts.getAdapted(name, ctx)) |count| {
-                        if (scope == this) {
-                            return .{ .same_scope = count };
-                        }
+                    if (scope.name_counts.containsAdapted(name, ctx)) {
                         return .{ .used = void{} };
                     }
                 }
@@ -294,7 +295,7 @@ pub const NumberRenamer = struct {
         };
 
         /// Caller must use an arena allocator
-        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, input_name: []const u8) string {
+        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, input_name: []const u8) ?string {
             var name = bun.MutableString.ensureValidIdentifier(input_name, allocator) catch unreachable;
 
             switch (NameUse.find(this, name)) {
@@ -314,16 +315,29 @@ pub const NumberRenamer = struct {
 
                     const prefix = name;
 
+                    tries += 1;
+
                     var mutable_name = MutableString.initEmpty(allocator);
-                    mutable_name.growIfNeeded(prefix.len + 10) catch unreachable;
+                    mutable_name.growIfNeeded(prefix.len + 4) catch unreachable;
                     mutable_name.appendSlice(prefix) catch unreachable;
                     mutable_name.appendInt(tries) catch unreachable;
-
-                    tries += 1;
 
                     switch (NameUse.find(this, mutable_name.toOwnedSliceLeaky())) {
                         .unused => {
                             name = mutable_name.toOwnedSliceLeaky();
+
+                            if (use == .same_scope) {
+                                var existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
+                                if (!existing.found_existing) {
+                                    if (strings.eqlLong(input_name, prefix, true)) {
+                                        existing.key_ptr.* = input_name;
+                                    } else {
+                                        existing.key_ptr.* = allocator.dupe(u8, prefix) catch unreachable;
+                                    }
+                                }
+
+                                existing.value_ptr.* = tries;
+                            }
                         },
                         else => |cur_use| {
                             while (true) {
@@ -335,7 +349,16 @@ pub const NumberRenamer = struct {
                                 switch (NameUse.find(this, mutable_name.toOwnedSliceLeaky())) {
                                     .unused => {
                                         if (cur_use == .same_scope) {
-                                            this.name_counts.put(allocator, prefix, tries) catch unreachable;
+                                            var existing = this.name_counts.getOrPut(allocator, prefix) catch unreachable;
+                                            if (!existing.found_existing) {
+                                                if (strings.eqlLong(input_name, prefix, true)) {
+                                                    existing.key_ptr.* = input_name;
+                                                } else {
+                                                    existing.key_ptr.* = allocator.dupe(u8, prefix) catch unreachable;
+                                                }
+                                            }
+
+                                            existing.value_ptr.* = tries;
                                         }
 
                                         name = mutable_name.toOwnedSliceLeaky();
@@ -351,8 +374,12 @@ pub const NumberRenamer = struct {
 
             // Each name starts off with a count of 1 so that the first collision with
             // "name" is called "name2"
-            this.name_counts.put(allocator, name, 1) catch unreachable;
+            if (strings.eqlLong(name, input_name, true)) {
+                this.name_counts.putNoClobber(allocator, input_name, 1) catch unreachable;
+                return null;
+            }
 
+            this.name_counts.putNoClobber(allocator, name, 1) catch unreachable;
             return name;
         }
     };
@@ -418,7 +445,11 @@ pub fn computeInitialReservedNames(
         "Require",
     };
 
-    try names.ensureTotalCapacity(allocator, @truncate(u32, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len));
+    try names.ensureTotalCapacityContext(
+        allocator,
+        @truncate(u32, JSLexer.Keywords.keys().len + JSLexer.StrictModeReservedWords.keys().len + 1 + extras.len),
+        bun.StringHashMapContext{},
+    );
 
     for (JSLexer.Keywords.keys()) |keyword| {
         names.putAssumeCapacity(keyword, 1);

@@ -100,7 +100,7 @@ pub const MutableString = struct {
             }
         }
 
-        if (!needs_gap and str.len >= 3 and str.len <= 10) {
+        if (!needs_gap) {
             return JSLexerTables.StrictModeReservedWordsRemap.get(str) orelse str;
         }
 

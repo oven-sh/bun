@@ -218,6 +218,7 @@ pub const SocketConfig = struct {
     ssl: ?JSC.API.ServerConfig.SSLConfig = null,
     handlers: Handlers,
     default_data: JSC.JSValue = .zero,
+    exclusive: bool = false,
 
     pub fn fromJS(
         opts: JSC.JSValue,
@@ -226,6 +227,7 @@ pub const SocketConfig = struct {
     ) ?SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
+        var exclusive = false;
 
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
@@ -263,6 +265,10 @@ pub const SocketConfig = struct {
                 if (hostname_or_unix.len > 0) {
                     break :hostname_or_unix;
                 }
+            }
+
+            if (opts.getTruthy(globalObject, "exclusive")) |_| {
+                exclusive = true;
             }
 
             if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
@@ -324,6 +330,7 @@ pub const SocketConfig = struct {
             .ssl = ssl,
             .handlers = handlers,
             .default_data = default_data,
+            .exclusive = exclusive,
         };
     }
 };
@@ -432,11 +439,12 @@ pub const Listener = struct {
         var port = socket_config.port;
         var ssl = socket_config.ssl;
         var handlers = socket_config.handlers;
+        const exclusive = socket_config.exclusive;
         handlers.is_server = true;
 
         const ssl_enabled = ssl != null;
 
-        const socket_flags: i32 = 0;
+        const socket_flags: i32 = if (exclusive) 1 else 0;
 
         const ctx_opts: uws.us_socket_context_options_t = brk: {
             var sock_ctx: uws.us_socket_context_options_t = undefined;
@@ -513,7 +521,7 @@ pub const Listener = struct {
             );
         }
 
-        const connection: Listener.UnixOrHost = if (port) |port_| .{
+        var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{
             .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
@@ -524,7 +532,8 @@ pub const Listener = struct {
                 .host => |c| {
                     var host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
                     defer bun.default_allocator.free(host);
-                    break :brk uws.us_socket_context_listen(
+
+                    const socket = uws.us_socket_context_listen(
                         @boolToInt(ssl_enabled),
                         socket_context,
                         normalizeHost(@as([:0]const u8, host)),
@@ -532,6 +541,11 @@ pub const Listener = struct {
                         socket_flags,
                         8,
                     );
+                    // should return the assigned port
+                    if (socket) |s| {
+                        connection.host.port = @intCast(u16, s.getLocalPort(ssl_enabled));
+                    }
+                    break :brk socket;
                 },
                 .unix => |u| {
                     var host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
@@ -803,8 +817,6 @@ pub const Listener = struct {
         }
 
         default_data.ensureStillAlive();
-
-        // const socket_flags: i32 = 0;
 
         var handlers_ptr = handlers.vm.allocator.create(Handlers) catch @panic("OOM");
         handlers_ptr.* = handlers;

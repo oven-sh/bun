@@ -80,11 +80,16 @@ pub const NumberRenamer = struct {
     names: bun.BabyList(bun.BabyList(string)) = .{},
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
+    number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
+    arena: std.heap.ArenaAllocator,
     root: NumberScope = .{},
+    name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
+    name_temp_allocator: std.mem.Allocator = undefined,
 
     pub fn deinit(self: *NumberRenamer) void {
         self.names.deinitWithAllocator(self.allocator);
         self.root.deinit(self.temp_allocator);
+        self.arena.deinit();
     }
 
     pub fn toRenamer(this: *NumberRenamer) Renamer {
@@ -106,7 +111,7 @@ pub const NumberRenamer = struct {
         const ref = r.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        var inner: *bun.BabyList(string) = r.names.mut(input_ref.sourceIndex());
+        var inner: *bun.BabyList(string) = r.names.mut(ref.sourceIndex());
         if (inner.len > ref.innerIndex() and inner.at(ref.innerIndex()).len > 0) return;
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
@@ -115,7 +120,8 @@ pub const NumberRenamer = struct {
             return;
         }
 
-        const name = scope.findUnusedName(r.allocator, symbol.original_name) orelse return;
+        r.name_stack_fallback.fixed_buffer_allocator.end_index = 0;
+        const name = scope.findUnusedName(r.allocator, r.name_temp_allocator, symbol.original_name) orelse return;
 
         const new_len = @max(inner.len, ref.innerIndex() + 1);
         if (inner.cap <= new_len) {
@@ -140,8 +146,22 @@ pub const NumberRenamer = struct {
             .allocator = allocator,
             .temp_allocator = temp_allocator,
             .names = try bun.BabyList(bun.BabyList(string)).initCapacity(allocator, symbols.symbols_for_source.len),
+            .number_scope_pool = undefined,
+            .arena = std.heap.ArenaAllocator.init(temp_allocator),
         };
+        renamer.name_stack_fallback = .{
+            .buffer = undefined,
+            .fallback_allocator = renamer.arena.allocator(),
+            .fixed_buffer_allocator = undefined,
+        };
+        renamer.name_temp_allocator = renamer.name_stack_fallback.get();
+        renamer.number_scope_pool = bun.HiveArray(NumberScope, 128).Fallback.init(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
+        if (comptime Environment.allow_assert) {
+            if (std.os.getenv("BUN_DUMP_SYMBOLS") != null)
+                symbols.dump();
+        }
+
         renamer.names.len = symbols.symbols_for_source.len;
         for (renamer.names.slice()) |*inner| {
             inner.* = .{};
@@ -150,17 +170,26 @@ pub const NumberRenamer = struct {
     }
 
     pub fn assignNamesRecursive(r: *NumberRenamer, scope: *js_ast.Scope, source_index: u32, parent: ?*NumberScope, sorted: *std.ArrayList(u32)) void {
-        var s_ = NumberScope{
+        var s = r.number_scope_pool.get();
+        s.* = NumberScope{
             .parent = parent,
             .name_counts = .{},
         };
-        var s = &s_;
-        defer s.deinit(r.temp_allocator);
+        defer {
+            s.deinit(r.temp_allocator);
+            r.number_scope_pool.put(s);
+        }
 
         assignNamesRecursiveWithNumberScope(r, s, scope, source_index, sorted);
     }
 
-    pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, s: *NumberScope, scope: *js_ast.Scope, source_index: u32, sorted: *std.ArrayList(u32)) void {
+    fn assignNamesInScope(
+        r: *NumberRenamer,
+        s: *NumberScope,
+        scope: *js_ast.Scope,
+        source_index: u32,
+        sorted: *std.ArrayList(u32),
+    ) void {
         {
             sorted.clearRetainingCapacity();
             sorted.ensureUnusedCapacity(scope.members.count()) catch unreachable;
@@ -185,19 +214,44 @@ pub const NumberRenamer = struct {
         for (scope.generated.slice()) |ref| {
             r.assignName(s, ref);
         }
+    }
 
-        // We only need one number scope per scope level, so we can reuse the same one for all children
-        var child_scope_ = NumberScope{
-            .parent = s,
-            .name_counts = .{},
-        };
-        var child_scope = &child_scope_;
-        defer child_scope.deinit(r.temp_allocator);
+    pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, initial_scope: *NumberScope, scope_: *js_ast.Scope, source_index: u32, sorted: *std.ArrayList(u32)) void {
+        var s = initial_scope;
+        var scope = scope_;
+
+        // Ignore function argument scopes
+        if (scope.kind == .function_args and scope.children.len == 1) {
+            scope = scope.children.ptr[0];
+            std.debug.assert(scope.kind == .function_body);
+        }
+
+        while (true) {
+            if (scope.members.count() > 0 or scope.generated.len > 0) {
+                var new_child_scope = r.number_scope_pool.get();
+                new_child_scope.* = .{
+                    .parent = s,
+                    .name_counts = .{},
+                };
+                s = new_child_scope;
+
+                r.assignNamesInScope(s, scope, source_index, sorted);
+            }
+
+            if (scope.children.len == 1) {
+                scope = scope.children.ptr[0];
+                if (scope.kind == .function_args and scope.children.len == 1) {
+                    scope = scope.children.ptr[0];
+                    std.debug.assert(scope.kind == .function_body);
+                }
+            } else {
+                break;
+            }
+        }
 
         // Symbols in child scopes may also have to be renamed to avoid conflicts
         for (scope.children.slice()) |child| {
-            child_scope.name_counts.clearRetainingCapacity();
-            r.assignNamesRecursiveWithNumberScope(child_scope, child, source_index, sorted);
+            r.assignNamesRecursiveWithNumberScope(s, child, source_index, sorted);
         }
     }
 
@@ -210,32 +264,6 @@ pub const NumberRenamer = struct {
         js_ast.DeclaredSymbol.forEachTopLevelSymbol(&decls, r, addTopLevelSymbol);
     }
 
-    pub fn assignNamesByScope(r: *NumberRenamer, nested_scopes: *js_ast.Scope.NestedScopeMap) void {
-        // TODO: parallelize this
-        var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
-        var sorted = &sorted_;
-        defer sorted.deinit();
-
-        var scope_iter = nested_scopes.iterator();
-        var s_ = NumberScope{
-            .parent = &r.root,
-            .name_counts = .{},
-        };
-        var s = &s_;
-
-        while (scope_iter.next()) |entry| {
-            var scopes_list = entry.value_ptr.*;
-            defer entry.value_ptr.deinitWithAllocator(nested_scopes.allocator);
-            const scopes = scopes_list.slice();
-            const source_index = entry.key_ptr.*;
-
-            for (scopes) |scope| {
-                s.name_counts.clearRetainingCapacity();
-                r.assignNamesRecursiveWithNumberScope(s, scope, source_index, sorted);
-            }
-        }
-    }
-
     pub fn nameForSymbol(renamer: *NumberRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
             unreachable;
@@ -243,11 +271,14 @@ pub const NumberRenamer = struct {
 
         const resolved = renamer.symbols.follow(ref);
 
-        const renamed_list = renamer.names
-            .at(resolved.sourceIndex());
+        const source_index = resolved.sourceIndex();
+        const inner_index = resolved.innerIndex();
 
-        if (renamed_list.len > resolved.innerIndex()) {
-            const renamed = renamed_list.at(resolved.innerIndex()).*;
+        const renamed_list = renamer.names
+            .at(source_index);
+
+        if (renamed_list.len > inner_index) {
+            const renamed = renamed_list.at(inner_index).*;
             if (renamed.len > 0) {
                 return renamed;
             }
@@ -295,8 +326,8 @@ pub const NumberRenamer = struct {
         };
 
         /// Caller must use an arena allocator
-        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, input_name: []const u8) ?string {
-            var name = bun.MutableString.ensureValidIdentifier(input_name, allocator) catch unreachable;
+        pub fn findUnusedName(this: *NumberScope, allocator: std.mem.Allocator, temp_allocator: std.mem.Allocator, input_name: []const u8) ?string {
+            var name = bun.MutableString.ensureValidIdentifier(input_name, temp_allocator) catch unreachable;
 
             switch (NameUse.find(this, name)) {
                 .unused => {},
@@ -317,7 +348,7 @@ pub const NumberRenamer = struct {
 
                     tries += 1;
 
-                    var mutable_name = MutableString.initEmpty(allocator);
+                    var mutable_name = MutableString.initEmpty(temp_allocator);
                     mutable_name.growIfNeeded(prefix.len + 4) catch unreachable;
                     mutable_name.appendSlice(prefix) catch unreachable;
                     mutable_name.appendInt(tries) catch unreachable;
@@ -378,6 +409,8 @@ pub const NumberRenamer = struct {
                 this.name_counts.putNoClobber(allocator, input_name, 1) catch unreachable;
                 return null;
             }
+
+            name = allocator.dupe(u8, name) catch unreachable;
 
             this.name_counts.putNoClobber(allocator, name, 1) catch unreachable;
             return name;

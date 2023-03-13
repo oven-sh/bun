@@ -3200,7 +3200,6 @@ pub const JSValue = enum(JSValueReprInt) {
             .flush = false,
             .ordered_properties = true,
             .quote_strings = true,
-            .snapshot_format = true,
         };
 
         JestPrettyFormat.format(

@@ -725,7 +725,7 @@ pub const Snapshots = struct {
 
             var flags: JSC.Node.Mode = std.os.O.CREAT | std.os.O.RDWR;
             if (this.update_snapshots) flags |= std.os.O.TRUNC;
-            const fd = switch (JSC.Node.Syscall.open(snapshot_file_path, flags, 0o777)) {
+            const fd = switch (JSC.Node.Syscall.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return JSC.Maybe(void){
                     .err = err,

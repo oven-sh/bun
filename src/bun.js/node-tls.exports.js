@@ -114,7 +114,7 @@ class Server extends NetServer {
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
     const { key, cert, requestCert, ca, passphrase } = options;
-    console.log(key, cert, passphrase)
+    console.log(key, cert, passphrase);
     this.#key = key;
     this.#cert = cert;
     this.#requestCert = requestCert;
@@ -128,7 +128,7 @@ class Server extends NetServer {
         key: this.#key,
         cert: this.#cert,
         ca: this.#ca,
-        passphrase: this.#passphrase
+        passphrase: this.#passphrase,
       },
       SocketClass,
     ];
@@ -188,7 +188,7 @@ var exports = {
   connect,
   createConnection,
   Server,
-  createServer
+  createServer,
 };
 
 export default exports;

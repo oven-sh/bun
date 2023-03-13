@@ -428,7 +428,7 @@ pub const Listener = struct {
         var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
-        
+
         var hostname_or_unix = socket_config.hostname_or_unix;
         var port = socket_config.port;
         var ssl = socket_config.ssl;

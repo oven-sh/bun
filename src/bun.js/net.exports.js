@@ -616,7 +616,7 @@ class Server extends EventEmitter {
       var TLSSocketClass = undefined;
       const bunTLS = this[bunTlsSymbol];
       if (typeof bunTLS === "function") {
-        [ tls, TLSSocketClass ] = bunTLS.call(this, port, hostname);
+        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname);
       }
 
       this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;

@@ -1876,9 +1876,6 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll("String {}");
                             return;
                         }
-                        if (this.indent == 0 and str.len > 0) {
-                            writer.writeAll("\n");
-                        }
                         writer.writeAll("String {\n");
                         this.indent += 1;
                         defer this.indent -|= 1;
@@ -2063,10 +2060,6 @@ pub const ZigConsoleClient = struct {
                         return;
                     }
 
-                    if (this.indent == 0) {
-                        writer.writeAll("\n");
-                    }
-
                     var was_good_time = this.always_newline_scope;
                     {
                         this.indent += 1;
@@ -2103,10 +2096,6 @@ pub const ZigConsoleClient = struct {
                                     writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                 }
                             }
-
-                            if (len == 1) {
-                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            }
                         }
 
                         var i: u32 = 1;
@@ -2128,10 +2117,6 @@ pub const ZigConsoleClient = struct {
                                 if (comptime enable_ansi_colors) {
                                     writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                 }
-                            }
-
-                            if (i == len - 1) {
-                                this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             }
                         }
                     }
@@ -2689,10 +2674,6 @@ pub const ZigConsoleClient = struct {
                 .TypedArray => {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
                     const slice = arrayBuffer.byteSlice();
-
-                    if (this.indent == 0 and slice.len > 0) {
-                        writer.writeAll("\n");
-                    }
 
                     writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
                     writer.print("({d}) [ ", .{arrayBuffer.len});

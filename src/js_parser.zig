@@ -76,6 +76,8 @@ const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const RefExprMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
 
+const arguments_str: string = "arguments";
+
 // Dear reader,
 // There are some things you should know about this file to make it easier for humans to read
 // "P" is the internal parts of the parser
@@ -5383,14 +5385,14 @@ fn NewParser_(
             if (generated_symbol.ref.isNull() or p.options.bundle) return;
 
             if (p.symbols.items[generated_symbol.primary.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.primary.innerIndex()].link.isNull())
+                p.symbols.items[generated_symbol.primary.innerIndex()].hasLink())
             {
                 p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.primary.innerIndex()].original_name;
                 return;
             }
 
             if (p.symbols.items[generated_symbol.backup.innerIndex()].use_count_estimate == 0 and
-                p.symbols.items[generated_symbol.backup.innerIndex()].link.isNull())
+                p.symbols.items[generated_symbol.backup.innerIndex()].hasLink())
             {
                 p.symbols.items[generated_symbol.ref.innerIndex()].original_name = p.symbols.items[generated_symbol.backup.innerIndex()].original_name;
                 return;
@@ -6131,7 +6133,7 @@ fn NewParser_(
             // this if it wasn't already declared above because arguments are allowed to
             // be called "arguments", in which case the real "arguments" is inaccessible.
             if (!p.current_scope.members.contains("arguments")) {
-                func.arguments_ref = p.declareSymbolMaybeGenerated(.arguments, func.open_parens_loc, "arguments", true) catch unreachable;
+                func.arguments_ref = p.declareSymbolMaybeGenerated(.arguments, func.open_parens_loc, arguments_str, false) catch unreachable;
                 p.symbols.items[func.arguments_ref.?.innerIndex()].must_not_be_renamed = true;
             }
 
@@ -6976,6 +6978,7 @@ fn NewParser_(
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
+                .debug_mode_source_index = if (comptime Environment.allow_assert) p.source.index.get() else 0,
             });
 
             if (is_typescript_enabled) {
@@ -9728,7 +9731,7 @@ fn NewParser_(
             if (comptime !is_generated) {
 
                 // Forbid declaring a symbol with a reserved word in strict mode
-                if (p.isStrictMode() and js_lexer.StrictModeReservedWords.has(name)) {
+                if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
                     try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
                 }
             }
@@ -9787,11 +9790,6 @@ fn NewParser_(
                         // else => unreachable,
                     }
                 } else {
-                    // Ensure that EImportIdentifier is created for the symbol in handleIdentifier
-                    if (symbol.kind == .import and kind != .import) {
-                        try p.is_import_item.put(p.allocator, ref, {});
-                    }
-
                     p.symbols.items[ref.innerIndex()].link = existing.ref;
                 }
             }
@@ -9944,8 +9942,8 @@ fn NewParser_(
                 },
 
                 .b_array => |bind| {
-                    for (bind.items, 0..) |_, i| {
-                        p.declareBinding(kind, &bind.items[i].binding, opts) catch unreachable;
+                    for (bind.items) |*item| {
+                        p.declareBinding(kind, &item.binding, opts) catch unreachable;
                     }
                 },
 
@@ -12954,11 +12952,11 @@ fn NewParser_(
                 for (p.relocated_top_level_vars.items) |*local| {
                     // Follow links because "var" declarations may be merged due to hoisting
                     while (local.ref != null) {
-                        const link = p.symbols.items[local.ref.?.innerIndex()].link;
-                        if (link.isNull()) {
+                        var symbol = &p.symbols.items[local.ref.?.innerIndex()];
+                        if (!symbol.hasLink()) {
                             break;
                         }
-                        local.ref = link;
+                        local.ref = symbol.link;
                     }
                     const ref = local.ref orelse continue;
                     var declaration_entry = try already_declared.getOrPut(already_declared_allocator, ref);
@@ -14796,9 +14794,8 @@ fn NewParser_(
                         if (is_macro_ref)
                             p.options.ignore_dce_annotations = true;
 
-                        for (e_.args.slice(), 0..) |_, i| {
-                            const arg = e_.args.ptr[i];
-                            e_.args.ptr[i] = p.visitExpr(arg);
+                        for (e_.args.slice()) |*arg| {
+                            arg.* = p.visitExpr(arg.*);
                         }
                     }
 
@@ -15035,28 +15032,26 @@ fn NewParser_(
                 duplicate_args_check = StringVoidMap.get(bun.default_allocator);
             }
 
-            var i: usize = 0;
             var duplicate_args_check_ptr: ?*StringVoidMap = if (duplicate_args_check != null)
                 &duplicate_args_check.?.data
             else
                 null;
 
-            while (i < args.len) : (i += 1) {
-                if (args[i].ts_decorators.len > 0) {
-                    args[i].ts_decorators = p.visitTSDecorators(args[i].ts_decorators);
+            for (args) |*arg| {
+                if (arg.ts_decorators.len > 0) {
+                    arg.ts_decorators = p.visitTSDecorators(arg.ts_decorators);
                 }
 
-                p.visitBinding(args[i].binding, duplicate_args_check_ptr);
-                if (args[i].default) |default| {
-                    args[i].default = p.visitExpr(default);
+                p.visitBinding(arg.binding, duplicate_args_check_ptr);
+                if (arg.default) |default| {
+                    arg.default = p.visitExpr(default);
                 }
             }
         }
 
         pub fn visitTSDecorators(p: *P, decs: ExprNodeList) ExprNodeList {
-            var i: usize = 0;
-            while (i < decs.len) : (i += 1) {
-                decs.ptr[i] = p.visitExpr(decs.ptr[i]);
+            for (decs.slice()) |*dec| {
+                dec.* = p.visitExpr(dec.*);
             }
 
             return decs;
@@ -17043,15 +17038,13 @@ fn NewParser_(
                         var array = expr.data.e_array;
 
                         array.items.len = @min(array.items.len, @truncate(u32, bound_array.items.len));
-                        var slice = array.items.slice();
-                        for (bound_array.items[0..array.items.len], 0..) |item, item_i| {
-                            const child_expr = slice[item_i];
+                        for (bound_array.items[0..array.items.len], array.items.slice()) |item, *child_expr| {
                             if (item.binding.data == .b_missing) {
-                                slice[item_i] = p.newExpr(E.Missing{}, expr.loc);
+                                child_expr.* = p.newExpr(E.Missing{}, expr.loc);
                                 continue;
                             }
 
-                            p.visitBindingAndExprForMacro(item.binding, child_expr);
+                            p.visitBindingAndExprForMacro(item.binding, child_expr.*);
                         }
                     }
                 },
@@ -17434,7 +17427,7 @@ fn NewParser_(
 
                             if (class.extends != null) {
                                 const target = p.newExpr(E.Super{}, stmt.loc);
-                                const arguments_ref = p.newSymbol(.unbound, "arguments") catch unreachable;
+                                const arguments_ref = p.newSymbol(.unbound, arguments_str) catch unreachable;
                                 p.current_scope.generated.push(p.allocator, arguments_ref) catch unreachable;
 
                                 const super = p.newExpr(E.Spread{ .value = p.newExpr(E.Identifier{ .ref = arguments_ref }, stmt.loc) }, stmt.loc);
@@ -17826,6 +17819,7 @@ fn NewParser_(
                 const name_str: []const u8 = if (default_name_ref.isNull()) "_this" else "_default";
                 shadow_ref = p.newSymbol(.cconst, name_str) catch unreachable;
             }
+
             p.recordDeclaredSymbol(shadow_ref) catch unreachable;
 
             if (class.extends) |extends| {
@@ -18004,17 +17998,11 @@ fn NewParser_(
                 // store our generated name so the class expression ends up with a name.
                 shadow_ref = Ref.None;
             } else if (class.class_name == null) {
-                var class_name_ref = default_name_ref;
-                if (default_name_ref.isNull()) {
-                    class_name_ref = p.newSymbol(.other, "_this") catch unreachable;
-                    p.current_scope.generated.push(p.allocator, class_name_ref) catch unreachable;
-                    p.recordDeclaredSymbol(class_name_ref) catch unreachable;
-                }
-
                 class.class_name = LocRef{
-                    .ref = class_name_ref,
+                    .ref = shadow_ref,
                     .loc = name_scope_loc,
                 };
+                p.recordDeclaredSymbol(shadow_ref) catch unreachable;
             }
 
             // class name scope

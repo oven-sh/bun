@@ -1,4 +1,4 @@
-Bun provides a fast API for resolving routes against file-system paths. This API is primarily intended by library authors. At the moment only Next.js-style file-system routing is supported, but other styles may be added in the future.
+Bun provides a fast API for resolving routes against file-system paths. This API is primarily intended for library authors. At the moment only Next.js-style file-system routing is supported, but other styles may be added in the future.
 
 ## Next.js-style
 

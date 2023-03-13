@@ -50,7 +50,7 @@ it("require with a query string works on dynamically created content", () => {
 it("import.meta.require (json)", () => {
   expect(import.meta.require("./require-json.json").hello).toBe(sync.hello);
   const require = Module.createRequire(import.meta.path);
-  expect(require("./require-json.json.js").hello).toBe(sync.hello);
+  expect(require("./require-json").hello).toBe(sync.hello);
 });
 
 it("const f = require;require(json)", () => {
@@ -161,4 +161,8 @@ it('require("bun") works', () => {
 
 it('import("bun") works', async () => {
   expect(await import("bun")).toBe(Bun);
+});
+
+it("require.resolve with empty options object", () => {
+  expect(require.resolve(import.meta.path + String(""), {})).toBe(import.meta.path);
 });

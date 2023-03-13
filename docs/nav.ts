@@ -180,8 +180,8 @@ export default {
     page("project/configuration", "Configuration", {
       description: `Bun's runtime is configurable with environment variables and the bunfig.toml config file.`,
     }),
-    page("project/profiling", "Profiling", {
-      description: `Bun is designed for performance. Learn how to benchmark and profile Bun yourself.`,
+    page("project/benchmarking", "Benchmarking", {
+      description: `Bun is designed for performance. Learn how to benchmark Bun yourself.`,
     }),
     page("project/developing", "Development", {
       description: "Learn how to contribute to Bun and get your local development environment up and running.",

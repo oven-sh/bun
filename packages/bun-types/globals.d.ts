@@ -447,6 +447,7 @@ interface Headers {
   entries(): IterableIterator<[string, string]>;
   keys(): IterableIterator<string>;
   values(): IterableIterator<string>;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any,
@@ -493,7 +494,7 @@ declare var Headers: {
   new (init?: HeadersInit): Headers;
 };
 
-type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
+type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
 type ResponseType =
   | "basic"
   | "cors"
@@ -533,7 +534,7 @@ interface FormData {
   has(name: string): boolean;
   set(name: string, value: string | Blob, fileName?: string): void;
   keys(): IterableIterator<string>;
-  values(): IterableIterator<string>;
+  values(): IterableIterator<FormDataEntryValue>;
   entries(): IterableIterator<[string, FormDataEntryValue]>;
   [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
   forEach(
@@ -564,7 +565,29 @@ declare class Blob implements BlobInterface {
    * @param end The index that sets the end of the view.
    *
    */
-  slice(begin?: number, end?: number): Blob;
+  slice(begin?: number, end?: number, contentType?: string): Blob;
+
+  /**
+   * Create a new view **without 🚫 copying** the underlying data.
+   *
+   * Similar to [`BufferSource.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BufferSource/subarray)
+   *
+   * @param begin The index that sets the beginning of the view.
+   * @param end The index that sets the end of the view.
+   *
+   */
+  slice(begin?: number, contentType?: string): Blob;
+
+  /**
+   * Create a new view **without 🚫 copying** the underlying data.
+   *
+   * Similar to [`BufferSource.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BufferSource/subarray)
+   *
+   * @param begin The index that sets the beginning of the view.
+   * @param end The index that sets the end of the view.
+   *
+   */
+  slice(contentType?: string): Blob;
 
   /**
    * Read the data from the blob as a string. It will be decoded from UTF-8.
@@ -1494,7 +1517,7 @@ interface AbortController {
   /**
    * Invoking this method will set this object's AbortSignal's aborted flag and signal to any observers that the associated activity is to be aborted.
    */
-  abort(): void;
+  abort(reason?: any): void;
 }
 
 /** EventTarget is a DOM interface implemented by objects that can receive events and may have listeners for them. */

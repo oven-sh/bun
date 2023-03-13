@@ -9,7 +9,7 @@ function Component(props: {message: string}) {
   );
 }
 
-console.log(<Component />);
+console.log(<Component message="Hello world!" />);
 ```
 
 Bun implements special logging for JSX to make debugging easier.

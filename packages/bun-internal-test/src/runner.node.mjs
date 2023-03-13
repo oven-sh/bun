@@ -1,17 +1,16 @@
 import * as action from "@actions/core";
 import { spawnSync } from "child_process";
-import { fsyncSync, rmSync, writeFileSync, writeSync } from "fs";
+import { fsyncSync, rmSync, statSync, writeFileSync, writeSync } from "fs";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { basename } from "path";
+import { basename, relative } from "path";
 import { fileURLToPath } from "url";
 
 const cwd = resolve(fileURLToPath(import.meta.url), "../../../../");
 process.chdir(cwd);
 
 const isAction = !!process.env["GITHUB_ACTION"];
-const errorPattern = /error: ([\S\s]*?)(?=\n.*?at (\/.*):(\d+):(\d+))/gim;
 
 function* findTests(dir, query) {
   for (const entry of readdirSync(resolve(dir), { encoding: "utf-8", withFileTypes: true })) {
@@ -56,7 +55,7 @@ async function runTest(path) {
     stdout,
     stderr,
     status: exitCode,
-  } = spawnSync("bun", ["test", basename(path)], {
+  } = spawnSync("bun", ["test", path], {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 10_000,
     env: {
@@ -64,26 +63,23 @@ async function runTest(path) {
       FORCE_COLOR: "1",
     },
   });
-  if (isAction) {
-    const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
-    action.startGroup(`${prefix} - ${name}`);
-  }
 
   if (+exitCode !== 0) {
     failingTests.push(name);
   }
 
-  dump(stdout);
-
-  if (isAction) {
+  if (isAction && exitCode !== 0) {
     findErrors(stdout);
-    dump(stderr);
-
-    findErrors(stderr);
-  } else {
-    dump(stderr);
     findErrors(stderr);
   }
+
+  if (isAction) {
+    const prefix = +exitCode === 0 ? "PASS" : `FAIL`;
+    action.startGroup(`${prefix} - ${name}`);
+  }
+
+  dump(stdout);
+  dump(stderr);
 
   if (isAction) {
     action.endGroup();
@@ -93,25 +89,64 @@ async function runTest(path) {
 let failed = false;
 
 function findErrors(data) {
-  const text = new StringDecoder().write(new Buffer(data.buffer));
-  for (const [message, _, path, line, col] of text.matchAll(errorPattern)) {
-    failed = true;
-    action.error(message, {
-      file: path.replace(cwd, "").slice(1),
-      startLine: parseInt(line),
-      startColumn: parseInt(col),
-    });
-  }
-}
+  const text = new StringDecoder().write(new Buffer(data.buffer)).replaceAll(/\u001b\[.*?m/g, "");
+  let index = 0;
+  do {
+    index = text.indexOf("error: ", index);
+    if (index === -1) {
+      break;
+    }
 
-const tests = [];
-for (const path of findTests(resolve(cwd, "test/bun.js"))) {
+    const messageEnd = text.indexOf("\n", index);
+    if (messageEnd === -1) {
+      break;
+    }
+    const message = text.slice(index + 7, messageEnd);
+    index = text.indexOf("at ", index);
+    if (index === -1) {
+      break;
+    }
+    const startAt = index;
+    index = text.indexOf("\n", index);
+    if (index === -1) {
+      break;
+    }
+    const at = text.slice(startAt + 3, index);
+    let file = at.slice(0, at.indexOf(":"));
+    if (file.length === 0) {
+      continue;
+    }
+
+    const startLine = at.slice(at.indexOf(":") + 1, at.indexOf(":") + 1 + at.slice(at.indexOf(":") + 1).indexOf(":"));
+    const startColumn = at.slice(at.indexOf(":") + 1 + at.slice(at.indexOf(":") + 1).indexOf(":") + 1);
+
+    if (file.startsWith("/")) {
+      file = relative(cwd, file);
+    }
+
+    action.error(message, { file, startLine, startColumn });
+  } while (index !== -1);
+}
+var tests = [];
+var testFileNames = [];
+for (const path of findTests(resolve(cwd, "test"))) {
+  testFileNames.push(path);
   tests.push(runTest(path).catch(console.error));
 }
 await Promise.allSettled(tests);
 
 rmSync("failing-tests.txt", { force: true });
-if (failingTests.length > 0) {
-  writeFileSync("failing-tests.txt", failingTests.join("\n") + "\n", "utf-8");
+
+if (isAction) {
+  if (failingTests.length > 0) {
+    action.setFailed(`${failingTests.length} files with failing tests`);
+  }
+  action.setOutput("failing_tests", failingTests.map(a => `- \`${a}\``).join("\n"));
+  action.setOutput("failing_tests_count", failingTests.length);
+  action.summary.addHeading(`${tests.length} files with tests ran`).addList(testFileNames);
+  await action.summary.write();
+} else {
+  writeFileSync("failing-tests.txt", failingTests.join("\n"));
 }
+
 process.exit(failed ? 1 : 0);

@@ -134,11 +134,13 @@ Bun.serve({
 Thus far, the examples on this page have used the explicit `Bun.serve` API. Bun also supports an alternate syntax.
 
 ```ts#server.ts
+import {type Serve} from "bun";
+
 export default {
   fetch(req) {
     return new Response(`Bun!`);
   },
-};
+} satisfies Serve;
 ```
 
 Instead of passing the server options into `Bun.serve`, export it. This file can be executed as-is; when Bun runs a file with a `default` export containing a `fetch` handler, it passes it into `Bun.serve` under the hood.

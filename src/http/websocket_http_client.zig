@@ -776,7 +776,7 @@ const Copy = union(enum) {
         switch (this) {
             .utf16 => |utf16| {
                 header.len = WebsocketHeader.packLength(content_byte_len);
-                const encode_into_result = strings.copyUTF16IntoUTF8(to_mask, []const u16, utf16);
+                const encode_into_result = strings.copyUTF16IntoUTF8(to_mask, []const u16, utf16, true);
                 std.debug.assert(@as(usize, encode_into_result.written) == content_byte_len);
                 std.debug.assert(@as(usize, encode_into_result.read) == utf16.len);
                 header.len = WebsocketHeader.packLength(encode_into_result.written);

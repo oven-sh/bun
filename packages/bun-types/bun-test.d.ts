@@ -1,82 +1,433 @@
 /**
  *
- * This isn't really designed for third-party usage yet.
- * You can try it if you want though!
- *
- * To run the tests, run `bun wiptest`
+ * To run tests, run `bun test`
  *
  * @example
  *
  * ```bash
- * $ bun wiptest
+ * $ bun test
  * ```
  *
  * @example
  * ```bash
- * $ bun wiptest file-name
+ * $ bun test <filename>
  * ```
  */
 
 declare module "bun:test" {
-  export function describe(label: string, body: () => void): any;
-  export interface Test {
+  /**
+   * Describes a group of related tests.
+   *
+   * @example
+   * function sum(a, b) {
+   *   return a + b;
+   * }
+   * describe("sum()", () => {
+   *   test("can sum two values", () => {
+   *     expect(sum(1, 1)).toBe(2);
+   *   });
+   * });
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export type Describe = {
     (
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>,
-    ): any;
+      fn: () => void
+    ): void;
+  };
+  /**
+   * Describes a group of related tests.
+   *
+   * @example
+   * function sum(a, b) {
+   *   return a + b;
+   * }
+   * describe("sum()", () => {
+   *   test("can sum two values", () => {
+   *     expect(sum(1, 1)).toBe(2);
+   *   });
+   * });
+   *
+   * @param label the label for the tests
+   * @param fn the function that defines the tests
+   */
+  export const describe: Describe;
+  /**
+   * Runs a function, once, before all the tests.
+   *
+   * This is useful for running set up tasks, like initializing
+   * a global variable or connecting to a database.
+   *
+   * If this function throws, tests will not run in this file.
+   *
+   * @example
+   * let database;
+   * beforeAll(async () => {
+   *   database = await connect("localhost");
+   * });
+   *
+   * @param fn the function to run
+   */
+  export function beforeAll(
+    fn: (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void)
+  ): void;
+  /**
+   * Runs a function before each test.
+   *
+   * This is useful for running set up tasks, like initializing
+   * a global variable or connecting to a database.
+   *
+   * If this function throws, the test will not run.
+   *
+   * @param fn the function to run
+   */
+  export function beforeEach(
+    fn: (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void)
+  ): void;
+  /**
+   * Runs a function, once, after all the tests.
+   *
+   * This is useful for running clean up tasks, like closing
+   * a socket or deleting temporary files.
+   *
+   * @example
+   * let database;
+   * afterAll(async () => {
+   *   if (database) {
+   *     await database.close();
+   *   }
+   * });
+   *
+   * @param fn the function to run
+   */
+  export function afterAll(
+    fn: (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void)
+  ): void;
+  /**
+   * Runs a function after each test.
+   *
+   * This is useful for running clean up tasks, like closing
+   * a socket or deleting temporary files.
+   *
+   * @param fn the function to run
+   */
+  export function afterEach(
+    fn: (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void)
+  ): void;
+  /**
+   * Runs a test.
+   *
+   * @example
+   * test("can check if using Bun", () => {
+   *   expect(Bun).toBeDefined();
+   * });
+   *
+   * test("can make a fetch() request", async () => {
+   *   const response = await fetch("https://example.com/");
+   *   expect(response.ok).toBe(true);
+   * });
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
+  export type Test = {
+    (
+      label: string,
+      fn: (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void)
+    ): void;
     /**
-     * Note: does not fully work yet.
+     * Skips all other tests, except this test.
+     * @deprecated Not yet implemented.
+     *
+     * @param label the label for the test
+     * @param fn the test function
      */
     only(
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>,
-    ): any;
-
+      fn: (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void)
+    ): void;
     /**
-     * Skip a test
+     * Skips this test.
+     *
+     * @param label the label for the test
+     * @param fn the test function
      */
     skip(
       label: string,
-      test: (done: (err?: any) => void) => void | Promise<any>,
-    ): any;
+      fn: (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void)
+    ): void;
   }
+  /**
+   * Runs a test.
+   *
+   * @example
+   * test("can check if using Bun", () => {
+   *   expect(Bun).toBeDefined();
+   * });
+   *
+   * test("can make a fetch() request", async () => {
+   *   const response = await fetch("https://example.com/");
+   *   expect(response.ok).toBe(true);
+   * });
+   *
+   * @param label the label for the test
+   * @param fn the test function
+   */
   export const test: Test;
   export { test as it };
-
-  export function expect(value: any): Expect;
-  export function afterAll(
-    fn: (done: (err?: any) => void) => void | Promise<any>,
-  ): void;
-  export function beforeAll(
-    fn: (done: (err?: any) => void) => void | Promise<any>,
-  ): void;
-
-  export function afterEach(
-    fn: (done: (err?: any) => void) => void | Promise<any>,
-  ): void;
-  export function beforeEach(
-    fn: (done: (err?: any) => void) => void | Promise<any>,
-  ): void;
-
-  interface Expect {
+  /**
+   * Asserts that a value matches some criteria.
+   *
+   * @link https://jestjs.io/docs/expect#reference
+   * @example
+   * expect(1 + 1).toBe(2);
+   * expect([1,2,3]).toContain(2);
+   * expect(null).toBeNull();
+   *
+   * @param actual the actual value
+   */
+  export function expect(actual: unknown): Expect;
+  /**
+   * Asserts that a value matches some criteria.
+   *
+   * @link https://jestjs.io/docs/expect#reference
+   * @example
+   * expect(1 + 1).toBe(2);
+   * expect([1,2,3]).toContain(2);
+   * expect(null).toBeNull();
+   *
+   * @param actual the actual value
+   */
+  export type Expect = {
+    /**
+     * Negates the result of a subsequent assertion.
+     *
+     * @example
+     * expect(1).not.toBe(0);
+     * expect(null).not.toBeNull();
+     */
     not: Expect;
-    toBe(value: any): void;
-    toContain(value: any): void;
-    toEqual(value: any): void;
-    toStrictEqual(value: any): void;
-    toHaveLength(value: number): void;
-    toHaveProperty(key: string, value?: any): void;
+    /**
+     * Asserts that a value equals what is expected.
+     *
+     * - For non-primitive values, like objects and arrays,
+     * use `toEqual()` instead.
+     * - For floating-point numbers, use `toBeCloseTo()` instead.
+     *
+     * @example
+     * expect(100 + 23).toBe(123);
+     * expect("d" + "og").toBe("dog");
+     * expect([123]).toBe([123]); // fail, use toEqual()
+     * expect(3 + 0.14).toBe(3.14); // fail, use toBeCloseTo()
+     *
+     * @param expected the expected value
+     */
+    toBe(expected: unknown): void;
+    /**
+     * Asserts that a value is deeply equal to what is expected.
+     *
+     * @example
+     * expect(100 + 23).toBe(123);
+     * expect("d" + "og").toBe("dog");
+     * expect([456]).toEqual([456]);
+     * expect({ value: 1 }).toEqual({ value: 1 });
+     *
+     * @param expected the expected value
+     */
+    toEqual(expected: unknown): void;
+    /**
+     * Asserts that a value is deeply and strictly equal to
+     * what is expected.
+     *
+     * There are two key differences from `toEqual()`:
+     * 1. It checks that the class is the same.
+     * 2. It checks that `undefined` values match as well.
+     *
+     * @example
+     * class Dog {
+     *   type = "dog";
+     * }
+     * const actual = new Dog();
+     * expect(actual).toStrictEqual(new Dog());
+     * expect(actual).toStrictEqual({ type: "dog" }); // fail
+     *
+     * @example
+     * const actual = { value: 1, name: undefined };
+     * expect(actual).toEqual({ value: 1 });
+     * expect(actual).toStrictEqual({ value: 1 }); // fail
+     *
+     * @param expected the expected value
+     */
+    toStrictEqual(expected: unknown): void;
+    /**
+     * Asserts that a value contains what is expected.
+     *
+     * The value must be an array or iterable, which
+     * includes strings.
+     *
+     * @example
+     * expect([1, 2, 3]).toContain(1);
+     * expect(new Set([true])).toContain(true);
+     * expect("hello").toContain("o");
+     *
+     * @param expected the expected value
+     */
+    toContain(expected: unknown): void;
+    /**
+     * Asserts that a value has a `.length` property
+     * that is equal to the expected length.
+     *
+     * @example
+     * expect([]).toHaveLength(0);
+     * expect("hello").toHaveLength(4);
+     *
+     * @param length the expected length
+     */
+    toHaveLength(length: number): void;
+    /**
+     * Asserts that a value has a property with the
+     * expected name, and value, if provided.
+     *
+     * @example
+     * expect(new Set()).toHaveProperty("size");
+     * expect(new Uint8Array()).toHaveProperty("byteLength", 0);
+     *
+     * @param name the expected property name
+     * @param value the expected property value, if provided
+     */
+    toHaveProperty(name: string, value?: unknown): void;
+    /**
+     * Asserts that a value is "truthy".
+     *
+     * To assert that a value equals `true`, use `toBe(true)` instead.
+     *
+     * @link https://developer.mozilla.org/en-US/docs/Glossary/Truthy
+     * @example
+     * expect(true).toBeTruthy();
+     * expect(1).toBeTruthy();
+     * expect({}).toBeTruthy();
+     */
     toBeTruthy(): void;
+    /**
+     * Asserts that a value is "falsy".
+     *
+     * To assert that a value equals `false`, use `toBe(false)` instead.
+     *
+     * @link https://developer.mozilla.org/en-US/docs/Glossary/Falsy
+     * @example
+     * expect(true).toBeTruthy();
+     * expect(1).toBeTruthy();
+     * expect({}).toBeTruthy();
+     */
     toBeFalsy(): void;
+    /**
+     * Asserts that a value is defined. (e.g. is not `undefined`)
+     *
+     * @example
+     * expect(true).toBeDefined();
+     * expect(undefined).toBeDefined(); // fail
+     */
     toBeDefined(): void;
+    /**
+     * Asserts that a value is `undefined`.
+     *
+     * @example
+     * expect(undefined).toBeUndefined();
+     * expect(null).toBeUndefined(); // fail
+     */
     toBeUndefined(): void;
-    toBeNaN(): void;
+    /**
+     * Asserts that a value is `null`.
+     *
+     * @example
+     * expect(null).toBeNull();
+     * expect(undefined).toBeNull(); // fail
+     */
     toBeNull(): void;
-    toBeGreaterThan(value: number | bigint): void;
-    toBeGreaterThanOrEqual(value: number | bigint): void;
-    toBeLessThan(value: number | bigint): void;
-    toBeLessThanOrEqual(value: number | bigint): void;
-    toThrow(error?: string | Error | ErrorConstructor): void;
+    /**
+     * Asserts that a value can be coerced to `NaN`.
+     *
+     * Same as using `Number.isNaN()`.
+     *
+     * @example
+     * expect(NaN).toBeNaN();
+     * expect(Infinity).toBeNaN();
+     * expect("notanumber").toBeNaN();
+     */
+    toBeNaN(): void;
+    /**
+     * Asserts that a value is a `number` and is greater than the expected value.
+     *
+     * @example
+     * expect(1).toBeGreaterThan(0);
+     * expect(3.14).toBeGreaterThan(3);
+     * expect(9).toBeGreaterThan(9); // fail
+     *
+     * @param expected the expected number
+     */
+    toBeGreaterThan(expected: number | bigint): void;
+    /**
+     * Asserts that a value is a `number` and is greater than or equal to the expected value.
+     *
+     * @example
+     * expect(1).toBeGreaterThanOrEqual(0);
+     * expect(3.14).toBeGreaterThanOrEqual(3);
+     * expect(9).toBeGreaterThanOrEqual(9);
+     *
+     * @param expected the expected number
+     */
+    toBeGreaterThanOrEqual(expected: number | bigint): void;
+    /**
+     * Asserts that a value is a `number` and is less than the expected value.
+     *
+     * @example
+     * expect(-1).toBeLessThan(0);
+     * expect(3).toBeLessThan(3.14);
+     * expect(9).toBeLessThan(9); // fail
+     *
+     * @param expected the expected number
+     */
+    toBeLessThan(expected: number | bigint): void;
+    /**
+     * Asserts that a value is a `number` and is less than or equal to the expected value.
+     *
+     * @example
+     * expect(-1).toBeLessThanOrEqual(0);
+     * expect(3).toBeLessThanOrEqual(3.14);
+     * expect(9).toBeLessThanOrEqual(9);
+     *
+     * @param expected the expected number
+     */
+    toBeLessThanOrEqual(expected: number | bigint): void;
+    /**
+     * Asserts that a function throws an error.
+     *
+     * - If expected is a `string` or `RegExp`, it will check the `message` property.
+     * - If expected is an `Error` object, it will check the `name` and `message` properties.
+     * - If expected is an `Error` constructor, it will check the class of the `Error`.
+     * - If expected is not provided, it will check if anything as thrown.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrow("Oops!");
+     * expect(fail).toThrow(/oops/i);
+     * expect(fail).toThrow(Error);
+     * expect(fail).toThrow();
+     *
+     * @param expected the expected error, error message, or error pattern
+     */
+    toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
   }
 }
 

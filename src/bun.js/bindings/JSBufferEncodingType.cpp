@@ -39,7 +39,6 @@ static const NeverDestroyed<String> values[] = {
     MAKE_STATIC_STRING_IMPL("base64"),
     MAKE_STATIC_STRING_IMPL("base64url"),
     MAKE_STATIC_STRING_IMPL("hex"),
-    MAKE_STATIC_STRING_IMPL("buffer"),
 };
 
 String convertEnumerationToString(BufferEncodingType enumerationValue)
@@ -104,8 +103,6 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'B': {
         if (WTF::equalIgnoringASCIICase(encoding, "binary"_s))
             return BufferEncodingType::latin1; // BINARY is a deprecated alias of LATIN1.
-        if (WTF::equalIgnoringASCIICase(encoding, "buffer"_s))
-            return BufferEncodingType::buffer;
         if (WTF::equalIgnoringASCIICase(encoding, "base64"_s))
             return BufferEncodingType::base64;
         if (WTF::equalIgnoringASCIICase(encoding, "base64url"_s))
@@ -135,7 +132,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
 }
 template<> const char* expectedEnumerationValues<BufferEncodingType>()
 {
-    return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\", \"buffer\"";
+    return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\"";
 }
 
 } // namespace WebCore

@@ -3,6 +3,7 @@ module.exports = {
   printWidth: 120,
   trailingComma: "all",
   useTabs: false,
+  quoteProps: "preserve",
   overrides: [
     {
       files: "README.md",

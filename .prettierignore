@@ -1,11 +1,4 @@
 src/fallback.html
-# src/test
-test/bun.js/solid-dom-fixtures
-test/bun.js/bundled
-#src/bun.js/builtins
-# src/api/demo
-test/snapshots
-test/snapshots-no-hmr
 src/bun.js/WebKit
 src/bun.js/builtins/js
 src/*.out.js
@@ -13,3 +6,6 @@ src/*out.*.js
 src/deps
 src/test/fixtures
 src/react-refresh.js
+test/snapshots
+test/snapshots-no-hmr
+test/js/deno

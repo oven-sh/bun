@@ -120,6 +120,13 @@ exports[`d0 snapshot name edgecases: 🐄 1`] = `
 }
 `;
 
+exports[`d0 snapshot name edgecases: 😃 1`] = `
+{
+  "a": "🐄",
+  "b": "🐈",
+}
+`;
+
 exports[`d0 t3 1`] = `"hello snapshot"`;
 
 exports[`d0 t4 1`] = `"hello\`snapshot\\"`;

@@ -1,15 +1,15 @@
 import fs from "fs";
-test("it will create a snapshot file if it doesn't exist", () => {
-  expect(() => {
-    fs.rmSync(import.meta.dir + "/__snapshots__/test.test.js.snap", { force: true });
-  }).not.toThrow();
 
+beforeAll(() => {
+  fs.rmSync(import.meta.dir + "/__snapshots__/bun-snapshots.test.ts.snap", { force: true });
+});
+
+test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
   expect({ a: { b: { c: "string" } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(String) } } });
   expect({ a: { b: { c: 4 } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Number) } } });
   expect({ a: { b: { c: 2n } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(BigInt) } } });
   expect({ a: new Date() }).toMatchSnapshot({ a: expect.any(Date) });
-
   expect({ j: 2, a: "any", b: "any2" }).toMatchSnapshot({ j: expect.any(Number), a: "any", b: expect.any(String) });
   expect({ j: /regex/, a: "any", b: "any2" }).toMatchSnapshot({
     j: expect.any(RegExp),

@@ -1,5 +1,7 @@
 const std = @import("std");
 const bun = @import("bun");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
@@ -574,55 +576,88 @@ pub const Snapshots = struct {
     }
 
     pub fn parseFile(this: *Snapshots) !void {
-        var i: usize = 0;
-        outer: while (i < this.file_buf.items.len) {
-            const key_start: usize = brk: {
-                if (strings.indexOf(this.file_buf.items[i..], "exports[`")) |j| {
-                    i += j + "exports[`".len;
-                    if (i == 0 or this.file_buf.items[i - 1] != '\\') {
-                        break :brk i;
+        if (this.file_buf.items.len == 0) return;
+        const vm = VirtualMachine.get();
+        var opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        var temp_log = logger.Log.init(this.allocator);
+
+        const test_file = Jest.runner.?.files.get(this._current_file.?.id);
+        const test_filename = test_file.source.path.name.filename;
+        const dir_path = test_file.source.path.name.dirWithTrailingSlash();
+
+        var snapshot_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
+        bun.copy(u8, remain, dir_path);
+        remain = remain[dir_path.len..];
+        bun.copy(u8, remain, "__snapshots__/");
+        remain = remain["__snapshots__/".len..];
+        bun.copy(u8, remain, test_filename);
+        remain = remain[test_filename.len..];
+        bun.copy(u8, remain, ".snap");
+        remain = remain[".snap".len..];
+        remain[0] = 0;
+        const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
+
+        const source = logger.Source.initPathString(snapshot_file_path, this.file_buf.items);
+
+        var parser = try js_parser.Parser.init(
+            opts,
+            &temp_log,
+            &source,
+            vm.bundler.options.define,
+            this.allocator,
+        );
+
+        var parse_result = try parser.parse();
+        var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+
+        if (ast.exports_ref == null) return;
+        const exports_ref = ast.exports_ref.?;
+
+        const export_default = brk: {
+            for (ast.parts) |part| {
+                for (part.stmts) |stmt| {
+                    if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
+                        break :brk stmt.data.s_export_default.value.expr;
                     }
                 }
+            }
 
-                break :outer;
-            };
+            return;
+        };
 
-            if (i >= this.file_buf.items.len) break :outer;
-
-            const key_end: usize = brk: {
-                while (strings.indexOf(this.file_buf.items[i..], "`]")) |j| {
-                    i += j + "`]".len;
-                    if (this.file_buf.items[i - 3] != '\\') {
-                        break :brk i - 2;
+        if (export_default.data == .e_call) {
+            const function_call = export_default.data.e_call;
+            if (function_call.args.len == 2 and function_call.args.ptr[0].data == .e_function) {
+                const arg_function_stmts = function_call.args.ptr[0].data.e_function.func.body.stmts;
+                for (arg_function_stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_expr => |expr| {
+                            if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                                const left = expr.value.data.e_binary.left;
+                                if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                    const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                    var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                    if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
+                                        const key = index.slice(this.allocator);
+                                        var value_string = expr.value.data.e_binary.right.data.e_string;
+                                        const value = value_string.slice(this.allocator);
+                                        defer {
+                                            if (!index.isUTF8()) this.allocator.free(key);
+                                            if (!value_string.isUTF8()) this.allocator.free(value);
+                                        }
+                                        const value_clone = try this.allocator.alloc(u8, value.len);
+                                        bun.copy(u8, value_clone, value);
+                                        const name_hash = std.hash.Wyhash.hash(0, key);
+                                        try this.values.put(name_hash, value_clone);
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
                     }
                 }
-
-                break :outer;
-            };
-
-            i += " = `".len;
-
-            const value_start = i;
-            if (value_start >= this.file_buf.items.len - 1) break :outer;
-
-            const value_end: usize = brk: {
-                while (strings.indexOf(this.file_buf.items[i..], "`;")) |j| {
-                    i += j + "`;".len;
-                    if (this.file_buf.items[i - 3] != '\\') {
-                        break :brk i - 2;
-                    }
-                }
-
-                break :outer;
-            };
-
-            if (value_end > this.file_buf.items.len) break :outer;
-
-            const key = this.file_buf.items[key_start..key_end];
-            const pretty_value = try this.allocator.alloc(u8, value_end - value_start);
-            bun.copy(u8, pretty_value, this.file_buf.items[value_start..value_end]);
-            const name_hash = std.hash.Wyhash.hash(0, key);
-            try this.values.put(name_hash, pretty_value);
+            }
         }
     }
 
@@ -704,14 +739,17 @@ pub const Snapshots = struct {
                 try this.file_buf.appendSlice(file_header);
             } else {
                 const length = try file.file.getEndPos();
-                const bytes = try file.file.readToEndAlloc(this.allocator, length);
-                try this.file_buf.appendSlice(bytes);
-                this.allocator.free(bytes);
+                if (length == 0) {
+                    try this.file_buf.appendSlice(file_header);
+                } else {
+                    const bytes = try file.file.readToEndAlloc(this.allocator, length);
+                    try this.file_buf.appendSlice(bytes);
+                    this.allocator.free(bytes);
+                }
             }
 
-            try this.parseFile();
-
             this._current_file = file;
+            try this.parseFile();
         }
 
         return JSC.Maybe(void).success;

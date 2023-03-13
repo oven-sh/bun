@@ -31,6 +31,7 @@ describe("d0", () => {
     expect("\nexport[`hello snapshot 2`] = `").toMatchSnapshot();
     expect({ a: 1, b: 2, c: 3 }).toMatchSnapshot("¾");
     expect({ a: 1, b: 2, c: 3 }).toMatchSnapshot("\uD83D\uDC04");
+    expect({ a: "\uD83D\uDC04", b: "🐈" }).toMatchSnapshot("😃");
   });
 });
 

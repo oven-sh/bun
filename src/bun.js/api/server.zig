@@ -127,6 +127,17 @@ pub const ServerConfig = struct {
         const log = Output.scoped(.SSLConfig, false);
 
         pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+            // var ctx_opts: uws.us_bun_socket_context_options_t = uws.us_bun_socket_context_options_t{
+            //     .key_file_name = null,
+            //     .cert_file_name = null,
+            //     .passphrase = null,
+            //     .dh_params_file_name = null,
+            //     .ca_file_name = null,
+            //     .ssl_ciphers = null,
+            //     .ssl_prefer_low_memory_usage = 0,
+            //     .key = null,
+            //     .cert = null,
+            // };
             var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
             @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
@@ -277,10 +288,8 @@ pub const ServerConfig = struct {
                 }
             }
             if (!any) {
-                log("non-TLS", .{});
                 return null;
             }
-            log("TLS", .{});
             return result;
         }
 

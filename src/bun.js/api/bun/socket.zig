@@ -424,7 +424,7 @@ pub const Listener = struct {
             exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
             return .zero;
         }
-        log("socket_config", .{});
+
         var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
@@ -571,12 +571,13 @@ pub const Listener = struct {
         if (socket_config.default_data != .zero) {
             socket.strong_data = JSC.Strong.create(socket_config.default_data, globalObject);
         }
-
         if (ssl) |ssl_config| {
-            if (bun.asByteSlice(ssl_config.server_name).len > 0)
-                uws.us_bun_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
+            if (ssl_config.server_name) |server_name| {
+                const slice = bun.asByteSlice(server_name);
+                if (slice.len > 0)
+                    uws.us_bun_socket_context_add_server_name(1, socket.socket_context, server_name, ctx_opts, null);
+            }
         }
-
         var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
         this.* = socket;
         this.socket_context.?.ext(ssl_enabled, *Listener).?.* = this;

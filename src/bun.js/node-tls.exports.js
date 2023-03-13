@@ -114,7 +114,6 @@ class Server extends NetServer {
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
     const { key, cert, requestCert, ca, passphrase } = options;
-    console.log(key, cert, passphrase);
     this.#key = key;
     this.#cert = cert;
     this.#requestCert = requestCert;

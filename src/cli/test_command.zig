@@ -499,32 +499,41 @@ pub const TestCommand = struct {
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
 
-            if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
-
             if (reporter.jest.snapshots.total > 0) {
                 const passed = reporter.jest.snapshots.passed;
                 const failed = reporter.jest.snapshots.failed;
                 const added = reporter.jest.snapshots.added;
-                Output.prettyError(" snapshots: ", .{});
+
+                var first = true;
+                Output.prettyError(" <d>snapshots:<r> ", .{});
+
                 if (passed > 0) {
-                    Output.prettyError("<green>", .{});
-                } else {
-                    Output.prettyError("<d>", .{});
+                    Output.prettyError("<d>{d} passed<r>", .{passed});
+                    first = false;
                 }
-                Output.prettyError("{d} passed<r>, ", .{passed});
+
                 if (added > 0) {
-                    Output.prettyError("<green>", .{});
-                } else {
-                    Output.prettyError("<d>", .{});
+                    if (first) {
+                        first = false;
+                        Output.prettyError("<d>{d} added<r>", .{added});
+                    } else {
+                        Output.prettyError("<d>, {d} added<r>", .{added});
+                    }
                 }
-                Output.prettyError("{d} added<r>, ", .{added});
+
                 if (failed > 0) {
-                    Output.prettyError("<red>", .{});
-                } else {
-                    Output.prettyError("<d>", .{});
+                    if (first) {
+                        first = false;
+                        Output.prettyError("<red>{d} failed<r>", .{failed});
+                    } else {
+                        Output.prettyError(", <red>{d} failed<r>", .{failed});
+                    }
                 }
-                Output.prettyError("{d} failed<r>\n", .{failed});
+
+                Output.prettyError("\n", .{});
             }
+
+            if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
             Output.prettyError("Ran {d} tests across {d} files ", .{
                 reporter.summary.fail + reporter.summary.pass,

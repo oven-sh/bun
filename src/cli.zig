@@ -193,6 +193,7 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -466,11 +467,16 @@ pub const Arguments = struct {
         // var output_dir = args.option("--outdir");
         var output_dir: ?string = null;
         const production = false;
+        var output_file: ?string = null;
 
         if (cmd == .BuildCommand or cmd == .BunCommand) {
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
                     output_dir = outdir;
+                }
+            } else if (args.option("--outfile")) |outfile| {
+                if (outfile.len > 0) {
+                    output_file = outfile;
                 }
             }
 
@@ -683,6 +689,9 @@ pub const Arguments = struct {
         }
 
         opts.output_dir = output_dir;
+        if (output_file != null)
+            ctx.debug.output_file = output_file.?;
+
         return opts;
     }
 };
@@ -838,6 +847,7 @@ pub const Command = struct {
         package_bundle_map: bun.StringArrayHashMapUnmanaged(options.BundlePackage) = bun.StringArrayHashMapUnmanaged(options.BundlePackage){},
 
         test_directory: []const u8 = "",
+        output_file: []const u8 = "",
     };
 
     pub const Context = struct {

@@ -203,13 +203,18 @@ pub const BunCommand = struct {
                 dump: {
                     defer Output.flush();
                     var writer = Output.errorWriter();
+                    var output_dir = ctx.args.output_dir orelse "";
+                    if (ctx.debug.output_file.len > 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
+                        output_dir = std.fs.path.dirname(ctx.debug.output_file) orelse ".";
+                        output_files.items[0].input.text = std.fs.path.basename(ctx.debug.output_file);
+                    }
 
-                    if ((ctx.args.output_dir orelse "").len == 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
+                    if (output_dir.len == 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
                         try writer.writeAll(output_files.items[0].value.buffer);
                         break :dump;
                     }
 
-                    const root_path = ctx.args.output_dir orelse "out";
+                    const root_path = output_dir;
                     const root_dir = try std.fs.cwd().makeOpenPathIterable(root_path, .{});
                     var all_paths = try ctx.allocator.alloc([]const u8, output_files.items.len);
                     var max_path_len: usize = 0;

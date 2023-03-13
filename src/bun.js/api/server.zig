@@ -121,9 +121,14 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
-            var ctx_opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+        key: [*c]const u8 = null,
+        cert: [*c]const u8 = null,
+
+        const log = Output.scoped(.SSLConfig, false);
+
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -137,6 +142,11 @@ pub const ServerConfig = struct {
                 if (ssl_config.passphrase != null)
                     ctx_opts.passphrase = ssl_config.passphrase;
                 ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+
+                if (ssl_config.key != null)
+                    ctx_opts.key = ssl_config.key;
+                if (ssl_config.cert != null)
+                    ctx_opts.cert = ssl_config.cert;
             }
 
             return ctx_opts;
@@ -150,6 +160,8 @@ pub const ServerConfig = struct {
                 "ca_file_name",
                 "dh_params_file_name",
                 "passphrase",
+                "key",
+                "cert",
             };
 
             inline for (fields) |field| {
@@ -183,6 +195,16 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
+
+            if (obj.getTruthy(global, "key")) |key| {
+                var sliced = key.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.key = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    any = true;
+                }
+            }
+
             if (obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
@@ -193,6 +215,15 @@ pub const ServerConfig = struct {
                         result.deinit();
                         return null;
                     }
+                    any = true;
+                }
+            }
+
+            if (obj.getTruthy(global, "cert")) |cert| {
+                var sliced = cert.toSlice(global, bun.default_allocator);
+                defer sliced.deinit();
+                if (sliced.len > 0) {
+                    result.cert = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     any = true;
                 }
             }
@@ -245,9 +276,11 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
-
-            if (!any)
+            if (!any) {
+                log("non-TLS", .{});
                 return null;
+            }
+            log("TLS", .{});
             return result;
         }
 

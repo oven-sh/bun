@@ -580,13 +580,26 @@ pub const us_socket_context_options_t = extern struct {
     ssl_ciphers: [*c]const u8 = null,
     ssl_prefer_low_memory_usage: i32 = 0,
 };
+pub const us_bun_socket_context_options_t = extern struct {
+    key_file_name: [*c]const u8 = null,
+    cert_file_name: [*c]const u8 = null,
+    passphrase: [*c]const u8 = null,
+    dh_params_file_name: [*c]const u8 = null,
+    ca_file_name: [*c]const u8 = null,
+    ssl_ciphers: [*c]const u8 = null,
+    ssl_prefer_low_memory_usage: i32 = 0,
+    key: [*c]const u8 = null,
+    cert: [*c]const u8 = null,
+};
 
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
 pub extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
+pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;
 extern fn us_socket_context_on_server_name(ssl: i32, context: ?*SocketContext, cb: ?*const fn (?*SocketContext, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: i32, context: ?*SocketContext) ?*anyopaque;
 pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_socket_context_options_t) ?*SocketContext;
+pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;

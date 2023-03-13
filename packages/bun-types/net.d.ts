@@ -14,7 +14,10 @@
  */
 declare module "net" {
   import * as stream from "node:stream";
-  import { Abortable, EventEmitter } from "node:events";
+  import {
+    Abortable,
+    EventEmitter
+  } from "node:events";
   import * as dns from "node:dns";
   type LookupFunction = (
     hostname: string,
@@ -527,13 +530,12 @@ declare module "net" {
    * This class is used to create a TCP or `IPC` server.
    * @since v0.1.90
    */
-  // change back to class once implemented
-  interface Server extends EventEmitter {
-    // constructor(connectionListener?: (socket: Socket) => void);
-    // constructor(
-    //   options?: ServerOpts,
-    //   connectionListener?: (socket: Socket) => void,
-    // );
+  class Server extends EventEmitter {
+    constructor(connectionListener?: (socket: Socket) => void);
+    constructor(
+      options?: ServerOpts,
+      connectionListener?: (socket: Socket) => void,
+    );
     /**
      * Start a server listening for connections. A `net.Server` can be a TCP or
      * an `IPC` server depending on what it listens to.
@@ -646,19 +648,19 @@ declare module "net" {
      * Callback should take two arguments `err` and `count`.
      * @since v0.9.7
      */
-    // getConnections(cb: (error: Error | null, count: number) => void): void;
+    getConnections(cb: (error: Error | null, count: number) => void): void;
     /**
      * Opposite of `unref()`, calling `ref()` on a previously `unref`ed server will _not_ let the program exit if it's the only server left (the default behavior).
      * If the server is `ref`ed calling `ref()` again will have no effect.
      * @since v0.9.1
      */
-    // ref(): this;
+    ref(): this;
     /**
      * Calling `unref()` on a server will allow the program to exit if this is the only
      * active server in the event system. If the server is already `unref`ed calling`unref()` again will have no effect.
      * @since v0.9.1
      */
-    // unref(): this;
+    unref(): this;
     /**
      * Set this property to reject connections when the server's connection count gets
      * high.
@@ -667,13 +669,13 @@ declare module "net" {
      * with `child_process.fork()`.
      * @since v0.2.0
      */
-    // maxConnections: number;
-    // connections: number;
+    maxConnections: number;
+    connections: number;
     /**
      * Indicates whether or not the server is listening for connections.
      * @since v5.7.0
      */
-    // listening: boolean;
+    listening: boolean;
     /**
      * events.EventEmitter
      *   1. close
@@ -864,11 +866,11 @@ declare module "net" {
    * @since v0.5.0
    * @param connectionListener Automatically set as a listener for the {@link 'connection'} event.
    */
-  // function createServer(connectionListener?: (socket: Socket) => void): Server;
-  // function createServer(
-  //   options?: ServerOpts,
-  //   connectionListener?: (socket: Socket) => void,
-  // ): Server;
+  function createServer(connectionListener?: (socket: Socket) => void): Server;
+  function createServer(
+    options?: ServerOpts,
+    connectionListener?: (socket: Socket) => void,
+  ): Server;
   /**
    * Aliases to {@link createConnection}.
    *

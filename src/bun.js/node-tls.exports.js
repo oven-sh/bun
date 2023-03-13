@@ -109,20 +109,36 @@ class Server extends NetServer {
   #cert;
   #requestCert;
   #ca;
+  #passphrase;
 
   constructor(options, secureConnectionListener) {
-    const { key, cert, requestCert, ca } = options;
     super(options, secureConnectionListener);
-
-
+    const { key, cert, requestCert, ca, passphrase } = options;
+    console.log(key, cert, passphrase)
+    this.#key = key;
+    this.#cert = cert;
+    this.#requestCert = requestCert;
+    this.#ca = ca;
+    this.#passphrase = passphrase;
   }
 
   [buntls](port, host) {
-    return {
-      keyFile: #
-    }
+    return [
+      {
+        key: this.#key,
+        cert: this.#cert,
+        ca: this.#ca,
+        passphrase: this.#passphrase
+      },
+      SocketClass,
+    ];
   }
 }
+
+function createServer(options, connectionListener) {
+  return new Server(options, connectionListener);
+}
+
 export const CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600,
   DEFAULT_ECDH_CURVE = "auto",
@@ -171,6 +187,8 @@ var exports = {
   [Symbol.for("CommonJS")]: 0,
   connect,
   createConnection,
+  Server,
+  createServer
 };
 
 export default exports;

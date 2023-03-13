@@ -85,10 +85,12 @@ export const Socket = (function (InternalSocket) {
 })(
   class Socket extends Duplex {
     static #Handlers = {
-      close: Socket.#Close,
+      close({ data: self }) {
+        Socket.#Close(self);
+        self.emit("close");
+      },
       connectError(socket, error) {
         const self = socket.data;
-
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
@@ -101,7 +103,10 @@ export const Socket = (function (InternalSocket) {
         queue.push(buffer);
       },
       drain: Socket.#Drain,
-      end: Socket.#Close,
+      end({ data: self }) {
+        Socket.#Close(self);
+        self.emit("end");
+      },
       error(socket, error) {
         const self = socket.data;
         const callback = self.#writeCallback;
@@ -128,9 +133,9 @@ export const Socket = (function (InternalSocket) {
       binaryType: "buffer",
     };
 
-    static #Close(socket) {
-      const self = socket.data;
+    static #Close(self) {
       if (self.#closed) return;
+      self.unref();
       self.#closed = true;
       const queue = self.#readQueue;
       if (queue.isEmpty()) {
@@ -305,14 +310,14 @@ export const Socket = (function (InternalSocket) {
           ? {
               data: this,
               unix: path,
-              socket: Socket.#Handlers,
+              socket: Socket._Handlers,
               tls,
             }
           : {
               data: this,
               hostname: host || "localhost",
               port: port,
-              socket: Socket.#Handlers,
+              socket: Socket._Handlers,
               tls,
             },
       );
@@ -377,6 +382,16 @@ export const Socket = (function (InternalSocket) {
 
     resetAndDestroy() {
       this.#socket?.end();
+    }
+
+    pause() {
+      //TODO
+      return this;
+    }
+
+    resume() {
+      //TODO
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelay = 0) {
@@ -603,6 +618,7 @@ class Server extends EventEmitter {
       if (typeof bunTLS === "function") {
         [ tls, TLSSocketClass ] = bunTLS.call(this, port, hostname);
       }
+
       this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;
 
       this.#server = Bun.listen(

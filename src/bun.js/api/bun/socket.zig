@@ -424,10 +424,11 @@ pub const Listener = struct {
             exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
             return .zero;
         }
-
+        log("socket_config", .{});
         var socket_config = SocketConfig.fromJS(opts, globalObject, exception) orelse {
             return .zero;
         };
+        
         var hostname_or_unix = socket_config.hostname_or_unix;
         var port = socket_config.port;
         var ssl = socket_config.ssl;
@@ -438,24 +439,12 @@ pub const Listener = struct {
 
         const socket_flags: i32 = 0;
 
-        const ctx_opts: uws.us_socket_context_options_t = brk: {
-            var sock_ctx: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &sock_ctx), 0, @sizeOf(uws.us_socket_context_options_t));
+        const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl);
 
-            if (ssl) |ssl_config| {
-                sock_ctx.key_file_name = ssl_config.key_file_name;
-                sock_ctx.cert_file_name = ssl_config.cert_file_name;
-                sock_ctx.ca_file_name = ssl_config.ca_file_name;
-                sock_ctx.dh_params_file_name = ssl_config.dh_params_file_name;
-                sock_ctx.passphrase = ssl_config.passphrase;
-                sock_ctx.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
-            }
-            break :brk sock_ctx;
-        };
         defer if (ssl != null) ssl.?.deinit();
         globalObject.bunVM().eventLoop().ensureWaker();
 
-        var socket_context = uws.us_create_socket_context(
+        var socket_context = uws.us_create_bun_socket_context(
             @boolToInt(ssl_enabled),
             uws.Loop.get().?,
             @sizeOf(usize),
@@ -585,7 +574,7 @@ pub const Listener = struct {
 
         if (ssl) |ssl_config| {
             if (bun.asByteSlice(ssl_config.server_name).len > 0)
-                uws.us_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
+                uws.us_bun_socket_context_add_server_name(1, socket.socket_context, ssl_config.server_name, ctx_opts, null);
         }
 
         var this: *Listener = handlers.vm.allocator.create(Listener) catch @panic("OOM");
@@ -765,11 +754,11 @@ pub const Listener = struct {
 
         handlers.protect();
 
-        const ctx_opts: uws.us_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
+        const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(socket_config.ssl);
 
         globalObject.bunVM().eventLoop().ensureWaker();
 
-        var socket_context = uws.us_create_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
+        var socket_context = uws.us_create_bun_socket_context(@boolToInt(ssl_enabled), uws.Loop.get().?, @sizeOf(usize), ctx_opts).?;
         var connection: Listener.UnixOrHost = if (port) |port_| .{
             .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
         } else .{

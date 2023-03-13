@@ -2218,8 +2218,7 @@ const LinkerContext = struct {
                                 .import_records_list = import_records_list,
                                 .export_star_records = export_star_import_records,
 
-                                // TODO:
-                                .imports_to_bind = &.{},
+                                .imports_to_bind = this.graph.meta.items(.imports_to_bind),
 
                                 .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator, 32) catch unreachable,
                                 .exports_kind = exports_kind,
@@ -4955,10 +4954,10 @@ const LinkerContext = struct {
                                     stmt.loc,
                                 ),
                             );
-
-                            // Remove the export star statement
-                            continue;
                         }
+
+                        // Remove the export star statement
+                        continue;
                     }
                 },
 
@@ -5974,10 +5973,10 @@ const LinkerContext = struct {
                 },
                 .no_match => {
                     // Report mismatched imports and exports
-                    const symbol = c.graph.symbols.get(tracker.import_ref).?;
-                    const named_import: js_ast.NamedImport = named_imports[other_id].get(tracker.import_ref).?;
+                    const symbol = c.graph.symbols.get(prev_import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
 
-                    const source = c.source_(tracker.source_index.get());
+                    const source = c.source_(prev_source_index);
                     const next_source = c.source_(next_tracker.source_index.get());
                     const r = source.rangeOfIdentifier(named_import.alias_loc.?);
 
@@ -6527,6 +6526,7 @@ const LinkerContext = struct {
             }
 
             this.source_index_stack.append(source_index) catch unreachable;
+            const stack_end_pos = this.source_index_stack.items.len;
             const id = source_index;
 
             const import_records = this.import_records_list[id].slice();
@@ -6557,7 +6557,7 @@ const LinkerContext = struct {
                         continue;
 
                     // This export star is shadowed if any file in the stack has a matching real named export
-                    for (this.source_index_stack.items) |prev| {
+                    for (this.source_index_stack.items[stack_end_pos..]) |prev| {
                         if (this.named_exports[prev].contains(alias)) {
                             continue :next_export;
                         }

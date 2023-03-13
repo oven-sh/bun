@@ -1326,11 +1326,12 @@ const LinkerGraph = struct {
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
         var source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
 
-        const ref = Ref.init(
+        var ref = Ref.init(
             @truncate(Ref.Int, source_symbols.len),
             @truncate(Ref.Int, source_index),
             false,
         );
+        ref.tag = .symbol;
 
         // TODO: will this crash on resize due to using threadlocal mimalloc heap?
         source_symbols.push(
@@ -3674,11 +3675,6 @@ const LinkerContext = struct {
             }
         }
 
-        var child_number_scope_ = renamer.NumberRenamer.NumberScope{
-            .parent = &r.root,
-        };
-        var child_number_scope = &child_number_scope_;
-        defer child_number_scope.deinit(r.temp_allocator);
         var sorted_ = std.ArrayList(u32).init(r.temp_allocator);
         var sorted = &sorted_;
         defer sorted.deinit();
@@ -3751,7 +3747,7 @@ const LinkerContext = struct {
                             }
                         }
                     }
-                    r.assignNamesRecursiveWithNumberScope(child_number_scope, &all_module_scopes[source_index], source_index, sorted);
+                    r.assignNamesRecursiveWithNumberScope(&r.root, &all_module_scopes[source_index], source_index, sorted);
                     continue;
                 },
 
@@ -3781,8 +3777,9 @@ const LinkerContext = struct {
 
                 r.addTopLevelDeclaredSymbols(part.declared_symbols);
                 for (part.scopes) |scope| {
-                    r.assignNamesRecursiveWithNumberScope(child_number_scope, scope, source_index, sorted);
+                    r.assignNamesRecursiveWithNumberScope(&r.root, scope, source_index, sorted);
                 }
+                r.number_scope_pool.hive.available = @TypeOf(r.number_scope_pool.hive.available).initFull();
             }
         }
 
@@ -6406,11 +6403,7 @@ const LinkerContext = struct {
             // Re-use memory for the cycle detector
             c.cycle_detector.clearRetainingCapacity();
 
-            const import_ref = Ref{
-                .inner_index = ref.innerIndex(),
-                .source_index = @truncate(Ref.Int, source_index),
-                .tag = ref.tag,
-            };
+            const import_ref = ref;
 
             var import_tracker = ImportData{
                 .data = .{

@@ -775,6 +775,8 @@ pub const Symbol = struct {
     //
     private_symbol_must_be_lowered: bool = false,
 
+    debug_mode_source_index: if (Environment.allow_assert) Index.Int else u0 = 0,
+
     pub const SlotNamespace = enum {
         default,
         label,
@@ -802,7 +804,7 @@ pub const Symbol = struct {
     }
 
     pub inline fn hasLink(this: *const Symbol) bool {
-        return !this.link.isNull();
+        return this.link.tag != .invalid;
     }
 
     pub const Kind = enum {
@@ -949,6 +951,26 @@ pub const Symbol = struct {
         // "Ref" for more detail.
         symbols_for_source: NestedList = NestedList{},
 
+        pub fn dump(this: Map) void {
+            defer Output.flush();
+            for (this.symbols_for_source.slice(), 0..) |symbols, i| {
+                Output.prettyln("\n\n-- Source ID: {d} ({d} symbols) --\n\n", .{ i, symbols.len });
+                for (symbols.slice(), 0..) |symbol, inner_index| {
+                    Output.prettyln(
+                        " name: {s}\n  tag: {s}\n       {any}\n",
+                        .{
+                            symbol.original_name, @tagName(symbol.kind),
+                            if (symbol.hasLink()) symbol.link else Ref{
+                                .source_index = @truncate(Ref.Int, i),
+                                .inner_index = @truncate(Ref.Int, inner_index),
+                                .tag = .symbol,
+                            },
+                        },
+                    );
+                }
+            }
+        }
+
         pub fn assignChunkIndex(this: *Map, decls_: DeclaredSymbol.List, chunk_index: u32) void {
             const Iterator = struct {
                 map: *Map,
@@ -1031,27 +1053,25 @@ pub const Symbol = struct {
         pub fn followAll(symbols: *Map) void {
             for (symbols.symbols_for_source.slice()) |list| {
                 for (list.slice()) |*symbol| {
-                    if (symbol.hasLink()) {
-                        symbol.link = follow(symbols, symbol.link);
-                    }
+                    if (!symbol.hasLink()) continue;
+                    symbol.link = follow(symbols, symbol.link);
                 }
             }
         }
 
         pub fn follow(symbols: *const Map, ref: Ref) Ref {
-            if (symbols.get(ref)) |symbol| {
-                const link = symbol.link;
-                if (link.isNull())
-                    return ref;
-
-                if (link.eql(ref)) {
-                    symbol.link = ref;
-                }
-
-                return symbol.link;
-            } else {
+            var symbol = symbols.get(ref) orelse return ref;
+            if (!symbol.hasLink()) {
                 return ref;
             }
+
+            const link = follow(symbols, symbol.link);
+
+            if (!symbol.link.eql(link)) {
+                symbol.link = link;
+            }
+
+            return link;
         }
     };
 
@@ -5598,10 +5618,12 @@ pub const Scope = struct {
         // "var foo; function foo() {}"
         // "function foo() {} var foo;"
         // "function *foo() {} function *foo() {}" but not "{ function *foo() {} function *foo() {} }"
-        if (Symbol.isKindHoistedOrFunction(new) and Symbol.isKindHoistedOrFunction(existing) and (scope.kind == .entry or scope.kind == .function_body or
-            (Symbol.isKindHoisted(new) and Symbol.isKindHoisted(existing))))
+        if (Symbol.isKindHoistedOrFunction(new) and
+            Symbol.isKindHoistedOrFunction(existing) and
+            (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
+            (new == existing and Symbol.isKindHoisted(existing))))
         {
-            return .keep_existing;
+            return .replace_with_new;
         }
 
         // "get #foo() {} set #foo() {}"

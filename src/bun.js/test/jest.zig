@@ -577,6 +577,7 @@ pub const Snapshots = struct {
 
     pub fn parseFile(this: *Snapshots) !void {
         if (this.file_buf.items.len == 0) return;
+
         const vm = VirtualMachine.get();
         var opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
         var temp_log = logger.Log.init(this.allocator);
@@ -610,6 +611,7 @@ pub const Snapshots = struct {
 
         var parse_result = try parser.parse();
         var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+        defer ast.deinit();
 
         if (ast.exports_ref == null) return;
         const exports_ref = ast.exports_ref.?;
@@ -2590,6 +2592,7 @@ pub const Expect = struct {
             switch (err) {
                 error.FailedToOpenSnapshotFile => globalObject.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalObject.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
+                error.ParseError => globalObject.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
                 else => globalObject.throw("Failed to snapshot value: {any}", .{value.toFmt(globalObject, &formatter)}),
             }
             return .zero;

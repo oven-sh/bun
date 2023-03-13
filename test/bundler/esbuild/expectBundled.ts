@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
-import { expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { tmpdir } from "os";
 
 const outBase = path.join(tmpdir(), "bun-bundler-tests");
@@ -49,7 +49,8 @@ export interface BundlerTestInput {
         errorLineMatch?: RegExp;
       };
 
-  onBeforeRun?(api: BundlerTestEventAPI): void;
+  /** Run after bundle happens but before runtime. */
+  onAfterBundle?(api: BundlerTestEventAPI): void;
 }
 
 export interface BundlerTestEventAPI {
@@ -79,7 +80,7 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     throw new Error(`expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`);
   }
 
-  const root = path.join(outBase, id);
+  const root = path.join(outBase, id.replaceAll("/", path.sep));
 
   opts.bundle ??= true;
   opts.platform ??= "bun";
@@ -163,6 +164,10 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     writeFileSync(path.join(root, file), dedent(contents));
   }
 
+  if (opts.onAfterBundle) {
+    opts.onAfterBundle({ root, outfile, outdir });
+  }
+
   if (opts.run) {
     if (opts.run.file) {
       opts.run.file = path.join(root, opts.run.file);
@@ -170,10 +175,6 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
       opts.run.file = outfile;
     } else {
       throw new Error("opts.run.file is required when there is more than one entrypoint.");
-    }
-
-    if (opts.onBeforeRun) {
-      opts.onBeforeRun({ root, outfile, outdir });
     }
 
     const { success, stdout, stderr } = Bun.spawnSync({
@@ -233,4 +234,10 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
       expect(stdout!.toString("utf-8").trim()).toBe(opts.run.stdout);
     }
   }
+}
+
+/** Shorthand for it and expectBundled. See `expectBundled` for what this does.
+ */
+export function itBundled(id: string, opts: BundlerTestInput) {
+  it(id.split("/").pop()!, () => expectBundled(id, opts));
 }

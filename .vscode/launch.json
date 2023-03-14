@@ -124,6 +124,31 @@
     {
       "type": "lldb",
       "request": "launch",
+      "name": "bun build debug out.js",
+      "program": "bun-debug",
+      "args": ["--outfile=out.js", "bun", "${file}"],
+      "cwd": "${file}/../",
+      "console": "internalConsole",
+      "env": {
+        "BUN_CONFIG_MINIFY_WHITESPACE": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "bun build debug stdout",
+      "program": "bun-debug",
+      "args": ["bun", "${file}"],
+      "cwd": "${file}/../",
+      "console": "internalConsole",
+      "env": {
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DUMP_SYMBOLS": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
       "name": "bunx debug",
       "program": "bun-debug",
       "args": ["--bun", "x", "tsc", "--help"],

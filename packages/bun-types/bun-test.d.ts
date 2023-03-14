@@ -428,6 +428,18 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      */
     toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
+    /**
+     * Asserts that a value matches the most recent snapshot.
+     *
+     * @example
+     * expect([1, 2, 3]).toMatchSnapshot();
+     * expect({ a: 1, b: 2 }).toMatchSnapshot({ a: 1 });
+     * expect({ c: new Date() }).toMatchSnapshot({ c: expect.any(Date) });
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param hint Hint used to identify the snapshot in the snapshot file.
+     */
+    toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
   }
 }
 

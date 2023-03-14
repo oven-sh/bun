@@ -221,6 +221,7 @@ describe("bundler", () => {
           background: url(./example.png);
         }
       `,
+      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
     snapshot: true,
   });
@@ -232,6 +233,7 @@ describe("bundler", () => {
           background: url(./example.png);
         }
       `,
+      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
     snapshot: true,
   });
@@ -243,6 +245,7 @@ describe("bundler", () => {
           background: url(./example.png);
         }
       `,
+      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
     snapshot: true,
   });
@@ -255,6 +258,7 @@ describe("bundler", () => {
       `,
       "/one.css": `a { background: url(./example.data) }`,
       "/two.css": `b { background: url(./example.data) }`,
+      "/example.data": `This is some data.`,
     },
     snapshot: true,
   });
@@ -466,7 +470,26 @@ describe("bundler", () => {
   });
   itBundled("css/DeduplicateRules", {
     // GENERATED
-    files: {},
+    files: {
+      "/yes0.css": `a { color: red; color: green; color: red }`,
+      "/yes1.css": `a { color: red } a { color: green } a { color: red }`,
+      "/yes2.css": `@media screen { a { color: red } } @media screen { a { color: red } }`,
+      "/no0.css": `@media screen { a { color: red } } @media screen { & a { color: red } }`,
+      "/no1.css": `@media screen { a { color: red } } @media screen { a[x] { color: red } }`,
+      "/no2.css": `@media screen { a { color: red } } @media screen { a.x { color: red } }`,
+      "/no3.css": `@media screen { a { color: red } } @media screen { a#x { color: red } }`,
+      "/no4.css": `@media screen { a { color: red } } @media screen { a:x { color: red } }`,
+      "/no5.css": `@media screen { a:x { color: red } } @media screen { a:x(y) { color: red } }`,
+      "/no6.css": `@media screen { a b { color: red } } @media screen { a + b { color: red } }`,
+      "/across-files.css": `@import 'across-files-0.css'; @import 'across-files-1.css'; @import 'across-files-2.css';`,
+      "/across-files-0.css": `a { color: red; color: red }`,
+      "/across-files-1.css": `a { color: green }`,
+      "/across-files-2.css": `a { color: red }`,
+      "/across-files-url.css": `@import 'across-files-url-0.css'; @import 'across-files-url-1.css'; @import 'across-files-url-2.css';`,
+      "/across-files-url-0.css": `@import 'http://example.com/some.css'; @font-face { src: url(http://example.com/some.font); }`,
+      "/across-files-url-1.css": `@font-face { src: url(http://example.com/some.other.font); }`,
+      "/across-files-url-2.css": `@font-face { src: url(http://example.com/some.font); }`,
+    },
     entryPoints: [
       "/yes0.css",
       "/yes1.css",

@@ -1,5 +1,7 @@
 import { test, describe } from "bun:test";
 import { expectBundled, itBundled } from "./expectBundled";
+import { appendFileSync } from "fs";
+import dedent from "dedent";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -253,9 +255,9 @@ describe("bundler", () => {
       file: "/test.js",
     },
   });
-  // this one is edited heavily. used to be all importing from `foo`, but here i have it
+  // this two were edited heavily. They used to be all importing from `foo`, but here i have it
   // so the modules can actually be resolved at runtime.
-  itBundled("default/ImportFormsWithMinifyIdentifiersAndNoBundle", {
+  const importFormsConfig = {
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -269,7 +271,7 @@ describe("bundler", () => {
           await import('./c'),
           function nested() { return import('./c') },
         ]
-  
+
         import { deepEqual } from 'node:assert'
         deepEqual(a, 1, 'a');
         deepEqual(a2, 4, 'a2');
@@ -306,10 +308,18 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    minifyIdentifiers: true,
     run: {
       file: "./test.js",
     },
+  } as const;
+  itBundled("default/ImportFormsWithNoBundle", {
+    ...importFormsConfig,
+    snapshot: true,
+  });
+  itBundled("default/ImportFormsWithMinifyIdentifiersAndNoBundle", {
+    ...importFormsConfig,
+    minifyIdentifiers: true,
+    snapshot: true,
   });
   itBundled("default/ExportFormsCommonJS", {
     // GENERATED
@@ -334,6 +344,14 @@ describe("bundler", () => {
         export * from './a'
         export * as b from './b'
       `,
+      "/a.js": `export const abc = undefined`,
+      "/b.js": `export const xyz = null`,
+      "/c.js": `export default class {}`,
+      "/d.js": `export default class Foo {} Foo.prop = 123`,
+      "/e.js": `export default function() {}`,
+      "/f.js": `export default function foo() {} foo.prop = 123`,
+      "/g.js": `export default async function() {}`,
+      "/h.js": `export default async function foo() {} foo.prop = 123`,
     },
     snapshot: true,
   });
@@ -2967,6 +2985,39 @@ describe("bundler", () => {
         import "./read-setter.js";     import "./node_modules/read-setter.js";     import "@plugin/read-setter.js"
         import "./delete-super.js";    import "./node_modules/delete-super.js";    import "@plugin/delete-super.js"
       `,
+      "/dup-case.js": `switch (x) { case 0: case 0: }`,
+      "/node_modules/dup-case.js": `switch (x) { case 0: case 0: }`,
+      "/plugin-dir/node_modules/dup-case.js": `switch (x) { case 0: case 0: }`,
+      "/not-in.js": `!a in b`,
+      "/node_modules/not-in.js": `!a in b`,
+      "/plugin-dir/node_modules/not-in.js": `!a in b`,
+      "/not-instanceof.js": `!a instanceof b`,
+      "/node_modules/not-instanceof.js": `!a instanceof b`,
+      "/plugin-dir/node_modules/not-instanceof.js": `!a instanceof b`,
+      "/return-asi.js": `return\n123`,
+      "/node_modules/return-asi.js": `return\n123`,
+      "/plugin-dir/node_modules/return-asi.js": `return\n123`,
+      "/bad-typeof.js": `typeof x == 'null'`,
+      "/node_modules/bad-typeof.js": `typeof x == 'null'`,
+      "/plugin-dir/node_modules/bad-typeof.js": `typeof x == 'null'`,
+      "/equals-neg-zero.js": `x === -0`,
+      "/node_modules/equals-neg-zero.js": `x === -0`,
+      "/plugin-dir/node_modules/equals-neg-zero.js": `x === -0`,
+      "/equals-nan.js": `x === NaN`,
+      "/node_modules/equals-nan.js": `x === NaN`,
+      "/plugin-dir/node_modules/equals-nan.js": `x === NaN`,
+      "/equals-object.js": `x === []`,
+      "/node_modules/equals-object.js": `x === []`,
+      "/plugin-dir/node_modules/equals-object.js": `x === []`,
+      "/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
+      "/node_modules/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
+      "/plugin-dir/node_modules/write-getter.js": `class Foo { get #foo() {} foo() { this.#foo = 123 } }`,
+      "/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
+      "/node_modules/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
+      "/plugin-dir/node_modules/read-setter.js": `class Foo { set #foo(x) {} foo() { return this.#foo } }`,
+      "/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
+      "/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
+      "/plugin-dir/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
     },
     snapshot: true,
   });

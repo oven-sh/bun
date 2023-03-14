@@ -11,6 +11,7 @@ describe("bundler", () => {
     // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
+      "/test.svg": `<svg></svg>`,
     },
     outdir: "/out/",
     snapshot: true,
@@ -24,6 +25,8 @@ describe("bundler", () => {
           require('./b/test.txt'),
         )
       `,
+      "/a/test.txt": `test`,
+      "/b/test.txt": `test`,
     },
     outfile: "/dist/out.js",
     snapshot: true,
@@ -83,6 +86,7 @@ describe("bundler", () => {
     // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,
+      "/test.custom": `a\x00b\x80c\xFFd`,
     },
     snapshot: true,
   });
@@ -90,6 +94,7 @@ describe("bundler", () => {
     // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,
+      "/test.custom": `a\x00b\x80c\xFFd`,
     },
     snapshot: true,
   });
@@ -106,6 +111,7 @@ describe("bundler", () => {
     // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
+      "/test.svg": `a\x00b\x80c\xFFd`,
     },
     snapshot: true,
   });
@@ -159,6 +165,8 @@ describe("bundler", () => {
         import y_txt from './y.txt'
         console.log(x_txt, y_txt)
       `,
+      "/x.txt": `x`,
+      "/y.txt": `y`,
     },
     snapshot: true,
   });
@@ -170,6 +178,8 @@ describe("bundler", () => {
         import y_b64 from './y.b64'
         console.log(x_b64, y_b64)
       `,
+      "/x.b64": `x`,
+      "/y.b64": `y`,
     },
     snapshot: true,
   });
@@ -181,6 +191,8 @@ describe("bundler", () => {
         import y_url from './y.txt'
         console.log(x_url, y_url)
       `,
+      "/x.txt": `x`,
+      "/y.txt": `y`,
     },
     snapshot: true,
   });
@@ -192,6 +204,8 @@ describe("bundler", () => {
         import y_url from './y.txt'
         console.log(x_url, y_url)
       `,
+      "/x.txt": `x`,
+      "/y.txt": `y`,
     },
     snapshot: true,
   });
@@ -202,6 +216,7 @@ describe("bundler", () => {
         import x from '../images/image.png'
         console.log(x)
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     snapshot: true,
@@ -214,6 +229,7 @@ describe("bundler", () => {
           background: url(../images/image.png);
         }
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     snapshot: true,
@@ -225,6 +241,7 @@ describe("bundler", () => {
         import x from '../images/image.png'
         console.log(x)
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -243,6 +260,8 @@ describe("bundler", () => {
         import y from '../uploads/file.txt'
         console.log(x, y)
       `,
+      "/src/images/image.png": `x`,
+      "/src/uploads/file.txt": `y`,
     },
     outbase: "/src",
     /* TODO: 
@@ -261,6 +280,7 @@ describe("bundler", () => {
           background: url(../images/image.png);
         }
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -278,6 +298,7 @@ describe("bundler", () => {
         import x from '../images/image.png'
         console.log(x)
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -292,6 +313,7 @@ describe("bundler", () => {
           background: url(../images/image.png);
         }
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -305,6 +327,7 @@ describe("bundler", () => {
         import x from '../images/image.png'
         console.log(x)
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -325,6 +348,7 @@ describe("bundler", () => {
           background: url(../images/image.png);
         }
       `,
+      "/src/images/image.png": `x`,
     },
     outbase: "/src",
     /* TODO: 
@@ -346,6 +370,7 @@ describe("bundler", () => {
         import x from './common.png'
         console.log(x)
       `,
+      "/src/shared/common.png": `x`,
     },
     entryPoints: ["/src/entries/entry.js", "/src/entries/other/entry.js"],
     outbase: "/src",
@@ -361,6 +386,7 @@ describe("bundler", () => {
           background: url(common.png);
         }
       `,
+      "/src/shared/common.png": `x`,
     },
     entryPoints: ["/src/entries/entry.css", "/src/entries/other/entry.css"],
     outbase: "/src",
@@ -590,6 +616,10 @@ describe("bundler", () => {
           d,
         )
       `,
+      "/shouldUsePercent_1.txt": `\n\n\n`,
+      "/shouldUsePercent_2.txt": `\n\n\n\n`,
+      "/shouldUseBase64_1.txt": `\n\n\n\n\n`,
+      "/shouldUseBase64_2.txt": `\n\n\n\n\n\n`,
     },
     snapshot: true,
   });
@@ -600,6 +630,7 @@ describe("bundler", () => {
         import a from './binary.txt'
         console.log(a)
       `,
+      "/binary.txt": `\xFF`,
     },
     snapshot: true,
   });

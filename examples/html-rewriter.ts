@@ -3,29 +3,18 @@
 Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
-    if (
-      !(pathname.startsWith("/https://") || pathname.startsWith("/http://"))
-    ) {
-      return new Response(
-        "Enter a path that starts with https:// or http://\n",
-        {
-          status: 400,
-        },
-      );
+    if (!(pathname.startsWith("/https://") || pathname.startsWith("/http://"))) {
+      return new Response("Enter a path that starts with https:// or http://\n", {
+        status: 400,
+      });
     }
 
-    const response = await fetch(
-      req.url.substring("http://localhost:3000/".length),
-      req.clone(),
-    );
+    const response = await fetch(req.url.substring("http://localhost:3000/".length), req.clone());
 
     return new HTMLRewriter()
       .on("a[href]", {
         element(element) {
-          element.setAttribute(
-            "href",
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-          );
+          element.setAttribute("href", "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
         },
       })
       .transform(response);

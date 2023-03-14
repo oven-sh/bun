@@ -61,7 +61,7 @@ declare module "bun" {
   /**
    * Start a fast HTTP server.
    *
-   * @param options Server options (port defaults to $PORT || 8080)
+   * @param options Server options (port defaults to $PORT || 3000)
    *
    * -----
    *
@@ -620,8 +620,26 @@ declare module "bun" {
      *
      * @param begin - start offset in bytes
      * @param end - absolute offset in bytes (relative to 0)
+     * @param contentType - MIME type for the new FileBlob
      */
-    slice(begin?: number, end?: number): FileBlob;
+    slice(begin?: number, end?: number, contentType?: string): FileBlob;
+
+    /**
+     * Offset any operation on the file starting at `begin`
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     *
+     * @param begin - start offset in bytes
+     * @param contentType - MIME type for the new FileBlob
+     */
+    slice(begin?: number, contentType?: string): FileBlob;
+
+    /**
+     * @param contentType - MIME type for the new FileBlob
+     */
+    slice(contentType?: string): FileBlob;
 
     /**
      * Incremental writer for files and pipes.
@@ -2484,7 +2502,7 @@ declare module "bun" {
      *
      * "css" will be added in a future version of Bun.
      */
-    loader: "js" | "jsx" | "ts" | "tsx";
+    loader: "js" | "jsx" | "ts" | "tsx" | "json" | "toml";
   }
 
   interface OnLoadResultObject {

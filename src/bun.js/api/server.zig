@@ -377,7 +377,9 @@ pub const ServerConfig = struct {
             }
 
             if (arg.getTruthy(global, "maxRequestBodySize")) |max_request_body_size| {
-                args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
+                if (max_request_body_size.isNumber()) {
+                    args.max_request_body_size = @intCast(u64, @max(0, max_request_body_size.toInt64()));
+                }
             }
 
             if (arg.getTruthy(global, "error")) |onError| {
@@ -1877,7 +1879,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value = .{ .Used = {} };
                 }
             }
-            
+
             streamLog("onResolve({any})", .{wrote_anything});
 
             //aborted so call finalizeForAbort
@@ -3916,13 +3918,18 @@ pub const ServerWebSocket = struct {
             return JSValue.jsUndefined();
         }
 
-        var buf: [512]u8 = undefined;
-        const address = this.websocket.getRemoteAddress(&buf);
-        if (address.len == 0) {
-            return JSValue.jsUndefined();
-        }
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var text_buf: [512]u8 = undefined;
 
-        return ZigString.init(address).toValueGC(globalThis);
+        const address_bytes = this.websocket.getRemoteAddress(&buf);
+        const address: std.net.Address = switch (address_bytes.len) {
+            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+            else => return JSValue.jsUndefined(),
+        };
+
+        const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+        return ZigString.init(text).toValueGC(globalThis);
     }
 };
 

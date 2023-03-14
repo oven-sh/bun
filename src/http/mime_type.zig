@@ -18,6 +18,23 @@ const MimeType = @This();
 value: string,
 category: Category,
 
+pub const Map = bun.StringHashMap(MimeType);
+
+pub fn createHashTable(allocator: std.mem.Allocator) !Map {
+    @setCold(true);
+
+    const decls = comptime std.meta.declarations(all);
+
+    var map = Map.init(allocator);
+    try map.ensureTotalCapacity(@truncate(u32, decls.len));
+    @setEvalBranchQuota(4000);
+    inline for (decls) |decl| {
+        map.putAssumeCapacityNoClobber(decl.name, @field(all, decl.name));
+    }
+
+    return map;
+}
+
 pub fn canOpenInEditor(this: MimeType) bool {
     if (this.category == .text or this.category.isCode())
         return true;

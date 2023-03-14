@@ -1029,13 +1029,13 @@ aborted: ?*std.atomic.Atomic(bool) = null,
 async_http_id: u32 = 0,
 
 pub fn init(allocator: std.mem.Allocator, method: Method, url: URL, header_entries: Headers.Entries, header_buf: string, signal: ?*std.atomic.Atomic(bool)) HTTPClient {
-    return HTTPClient { 
-        .allocator = allocator, 
-        .method = method, 
-        .url = url, 
-        .header_entries = header_entries, 
-        .header_buf = header_buf, 
-        .aborted = signal, 
+    return HTTPClient{
+        .allocator = allocator,
+        .method = method,
+        .url = url,
+        .header_entries = header_entries,
+        .header_buf = header_buf,
+        .aborted = signal,
     };
 }
 
@@ -1335,14 +1335,15 @@ pub const AsyncHTTP = struct {
         std.debug.assert(active_requests > 0);
 
         var completion = this.completion_callback;
-        this.response = result.response;
         this.elapsed = http_thread.timer.read() -| this.elapsed;
         this.redirected = this.client.remaining_redirect_count != default_redirect_count;
         if (!result.isSuccess()) {
             this.err = result.fail;
+            this.response = null;
             this.state.store(State.fail, .Monotonic);
         } else {
             this.err = null;
+            this.response = result.response;
             this.state.store(.success, .Monotonic);
         }
         this.client.deinit();

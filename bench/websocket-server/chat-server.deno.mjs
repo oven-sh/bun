@@ -1,7 +1,6 @@
 // See ./README.md for instructions on how to run this benchmark.
 const port = Deno.env.get("PORT") || 4001;
-const CLIENTS_TO_WAIT_FOR =
-  parseInt(Deno.env.get("CLIENTS_COUNT") || "", 10) || 16;
+const CLIENTS_TO_WAIT_FOR = parseInt(Deno.env.get("CLIENTS_COUNT") || "", 10) || 16;
 
 var clients = [];
 async function reqHandler(req) {
@@ -13,11 +12,9 @@ async function reqHandler(req) {
   clients.push(client);
   const name = new URL(req.url).searchParams.get("name");
 
-  console.log(
-    `${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`
-  );
+  console.log(`${name} connected (${CLIENTS_TO_WAIT_FOR - clients.length} remain)`);
 
-  client.onmessage = (event) => {
+  client.onmessage = event => {
     const msg = `${name}: ${event.data}`;
     for (let client of clients) {
       client.send(msg);

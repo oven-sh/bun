@@ -118,3 +118,29 @@ test("peek.status", () => {
   expect(peek.status(rejected)).toBe("rejected");
 });
 ```
+
+## `Bun.openInEditor`
+
+Open a file in your default editor. Bun auto-detects your editor via the `$VISUAL` or `$EDITOR` environment variables.
+
+```ts
+const currentFile = import.meta.url;
+Bun.openInEditor(currentFile);
+```
+
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/project/configuration)
+
+```toml-diff#bunfig.toml
++ [debug]
++ editor = "code"
+```
+
+Or specify an editor with the `editor` param. You can also specify a line and column number.
+
+```ts
+Bun.openInEditor(import.meta.url, {
+  editor: "vscode", // or "subl"
+  line: 10,
+  column: 5,
+})
+```

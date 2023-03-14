@@ -84,9 +84,11 @@ static EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, 
             // require.resolve also supports a paths array
             // we only support a single path
             if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-                if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s)))) {
-                    if (array->length() > 0) {
-                        fromValue = array->getIndex(globalObject, 0);
+                 if (JSValue pathsValue = fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s))) {
+                    if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(pathsValue)) {
+                        if (array->length() > 0) {
+                            fromValue = array->getIndex(globalObject, 0);
+                        }
                     }
                 }
             }

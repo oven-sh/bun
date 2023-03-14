@@ -588,7 +588,7 @@ pub inline fn endsWithChar(self: string, char: u8) bool {
 pub fn withoutTrailingSlash(this: string) []const u8 {
     var href = this;
     while (href.len > 1 and href[href.len - 1] == '/') {
-        href = href[0 .. href.len - 1];
+        href.len -= 1;
     }
 
     return href;
@@ -2550,7 +2550,7 @@ pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) u16 {
     return latin1_to_utf16_conversion_table[@truncate(u8, char)];
 }
 
-pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
+pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type, comptime allow_partial_write: bool) EncodeIntoResult {
     if (comptime Type == []const u16) {
         if (bun.FeatureFlags.use_simdutf) {
             if (utf16.len == 0)
@@ -2564,14 +2564,14 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
             else
                 buf.len;
 
-            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len);
+            return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, trimmed, out_len, allow_partial_write);
         }
     }
 
-    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len);
+    return copyUTF16IntoUTF8WithBuffer(buf, Type, utf16, utf16, utf16.len, allow_partial_write);
 }
 
-pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize) EncodeIntoResult {
+pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, trimmed: Type, out_len: usize, comptime allow_partial_write: bool) EncodeIntoResult {
     var remaining = buf;
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
@@ -2604,7 +2604,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         const width: usize = replacement.utf8Width();
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
-            switch (width) {
+            if (comptime allow_partial_write) switch (width) {
                 2 => {
                     if (remaining.len > 0) {
                         //only first will be written
@@ -2650,7 +2650,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                 },
 
                 else => {},
-            }
+            };
             break;
         }
 
@@ -3257,8 +3257,9 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
     return null;
 }
 
+const invalid_char: u8 = 0xff;
 const hex_table: [255]u8 = brk: {
-    var values: [255]u8 = [_]u8{0} ** 255;
+    var values: [255]u8 = [_]u8{invalid_char} ** 255;
     values['0'] = 0;
     values['1'] = 1;
     values['2'] = 2;
@@ -3285,20 +3286,39 @@ const hex_table: [255]u8 = brk: {
     break :brk values;
 };
 
-pub fn decodeHexToBytes(destination: []u8, comptime Char: type, source: []const Char) usize {
+pub fn decodeHexToBytes(destination: []u8, comptime Char: type, source: []const Char) !usize {
+    return _decodeHexToBytes(destination, Char, source, false);
+}
+
+pub fn decodeHexToBytesTruncate(destination: []u8, comptime Char: type, source: []const Char) usize {
+    return _decodeHexToBytes(destination, Char, source, true) catch 0;
+}
+
+inline fn _decodeHexToBytes(destination: []u8, comptime Char: type, source: []const Char, comptime truncate: bool) !usize {
     var remain = destination;
     var input = source;
 
-    while (input.len > 1 and remain.len > 0) {
+    while (remain.len > 0 and input.len > 1) {
         const int = input[0..2].*;
+        if (comptime @sizeOf(Char) > 1) {
+            if (int[0] > std.math.maxInt(u8) or int[1] > std.math.maxInt(u8)) {
+                if (comptime truncate) break;
+                return error.InvalidByteSequence;
+            }
+        }
         const a = hex_table[@truncate(u8, int[0])];
         const b = hex_table[@truncate(u8, int[1])];
-        if (a == 255 or b == 255) {
-            break;
+        if (a == invalid_char or b == invalid_char) {
+            if (comptime truncate) break;
+            return error.InvalidByteSequence;
         }
         remain[0] = a << 4 | b;
         remain = remain[1..];
         input = input[2..];
+    }
+
+    if (comptime !truncate) {
+        if (remain.len > 0 and input.len > 0) return error.InvalidByteSequence;
     }
 
     return destination.len - remain.len;
@@ -3615,7 +3635,7 @@ pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !vo
     var slice = slice_;
 
     while (slice.len > 0) {
-        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice);
+        const result = strings.copyUTF16IntoUTF8(chunk, Slice, slice, true);
         if (result.read == 0 or result.written == 0)
             break;
         try writer.writeAll(chunk[0..result.written]);

@@ -39,15 +39,15 @@ const IPv6Reg = new RegExp(
     ")(%[0-9a-zA-Z-.:]{1,})?$",
 );
 
-export function isIPv4(s) {
+function isIPv4(s) {
   return IPv4Reg.test(s);
 }
 
-export function isIPv6(s) {
+function isIPv6(s) {
   return IPv6Reg.test(s);
 }
 
-export function isIP(s) {
+function isIP(s) {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
   return 0;
@@ -64,7 +64,7 @@ const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 var SocketClass;
-export const Socket = (function (InternalSocket) {
+const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
   Object.defineProperty(SocketClass.prototype, Symbol.toStringTag, {
     value: "Socket",
@@ -423,7 +423,7 @@ export const Socket = (function (InternalSocket) {
   },
 );
 
-export function createConnection(port, host, connectListener) {
+function createConnection(port, host, connectListener) {
   if (typeof host == "function") {
     connectListener = host;
     host = undefined;
@@ -438,7 +438,7 @@ export function createConnection(port, host, connectListener) {
   return new Socket(options).connect(options, connectListener);
 }
 
-export const connect = createConnection;
+const connect = createConnection;
 
 class Server extends EventEmitter {
   #server;
@@ -673,3 +673,5 @@ export default {
   [Symbol.for("CommonJS")]: 0,
   [Symbol.for("::bunternal::")]: SocketClass,
 };
+
+export { createServer, Server, createConnection, connect, isIP, isIPv4, isIPv6, Socket };

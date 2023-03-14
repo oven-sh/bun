@@ -457,10 +457,10 @@ pub const Os = struct {
                 //  the address and cidr values can be slices into this same buffer
                 // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
                 var buf: [64]u8 = undefined;
-                const addr_str = formatAddress(addr, &buf) catch unreachable;
+                const addr_str = bun.fmt.formatIp(addr, &buf) catch unreachable;
                 var cidr = JSC.JSValue.null;
                 if (maybe_suffix) |suffix| {
-                    //NOTE addr_str might not start at buf[0] due to slicing in formatAddress
+                    //NOTE addr_str might not start at buf[0] due to slicing in formatIp
                     const start = @ptrToInt(addr_str.ptr) - @ptrToInt(&buf[0]);
                     // Start writing the suffix immediately after the address
                     const suffix_str = std.fmt.bufPrint(buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
@@ -476,7 +476,7 @@ pub const Os = struct {
             // netmask <string> The IPv4 or IPv6 network mask
             {
                 var buf: [64]u8 = undefined;
-                const str = formatAddress(netmask, &buf) catch unreachable;
+                const str = bun.fmt.formatIp(netmask, &buf) catch unreachable;
                 interface.put(globalThis, JSC.ZigString.static("netmask"), JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
             }
 
@@ -722,23 +722,6 @@ pub const Os = struct {
         return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
     }
 };
-
-fn formatAddress(address: std.net.Address, into: []u8) ![]u8 {
-    // std.net.Address.format includes `:<port>` and square brackets (IPv6)
-    //  while Node does neither.  This uses format then strips these to bring
-    //  the result into conformance with Node.
-    var result = try std.fmt.bufPrint(into, "{}", .{address});
-
-    // Strip `:<port>`
-    if (std.mem.lastIndexOfScalar(u8, result, ':')) |colon| {
-        result = result[0..colon];
-    }
-    // Strip brackets
-    if (result[0] == '[' and result[result.len - 1] == ']') {
-        result = result[1 .. result.len - 1];
-    }
-    return result;
-}
 
 /// Given a netmask returns a CIDR suffix.  Returns null if the mask is not valid.
 /// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)

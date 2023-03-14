@@ -3918,13 +3918,18 @@ pub const ServerWebSocket = struct {
             return JSValue.jsUndefined();
         }
 
-        var buf: [512]u8 = undefined;
-        const address = this.websocket.getRemoteAddress(&buf);
-        if (address.len == 0) {
-            return JSValue.jsUndefined();
-        }
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var text_buf: [512]u8 = undefined;
 
-        return ZigString.init(address).toValueGC(globalThis);
+        const address_bytes = this.websocket.getRemoteAddress(&buf);
+        const address: std.net.Address = switch (address_bytes.len) {
+            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+            else => return JSValue.jsUndefined(),
+        };
+
+        const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+        return ZigString.init(text).toValueGC(globalThis);
     }
 };
 

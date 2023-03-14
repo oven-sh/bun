@@ -1296,16 +1296,20 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            var buf: [512]u8 = undefined;
-            var length: i32 = 512;
+            var buf: [64]u8 = [_]u8{0} ** 64;
+            var length: i32 = 64;
+            var text_buf: [512]u8 = undefined;
+
             this.socket.remoteAddress(&buf, &length);
-            const address = buf[0..@intCast(usize, @min(length, 0))];
+            const address_bytes = buf[0..@intCast(usize, length)];
+            const address: std.net.Address = switch (length) {
+                4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+                16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+                else => return JSValue.jsUndefined(),
+            };
 
-            if (address.len == 0) {
-                return JSValue.jsUndefined();
-            }
-
-            return ZigString.init(address).toValueGC(globalThis);
+            const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+            return ZigString.init(text).toValueGC(globalThis);
         }
 
         fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {

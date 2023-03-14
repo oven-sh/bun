@@ -1628,7 +1628,6 @@ pub const VirtualMachine = struct {
     // If there were multiple errors, it could be contained in an AggregateError.
     // In that case, this function becomes recursive.
     // In all other cases, we will convert it to a ZigException.
-    const errors_property = ZigString.init("errors");
     pub fn printErrorlikeObject(
         this: *VirtualMachine,
         value: JSValue,

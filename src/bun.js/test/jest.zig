@@ -1,5 +1,7 @@
 const std = @import("std");
 const bun = @import("bun");
+const js_parser = bun.js_parser;
+const js_ast = bun.JSAst;
 const Api = @import("../../api/schema.zig").Api;
 const RequestContext = @import("../../http.zig").RequestContext;
 const MimeType = @import("../../http.zig").MimeType;
@@ -64,12 +66,75 @@ fn notImplementedProp(
 }
 
 pub const DiffFormatter = struct {
-    received: JSValue,
-    expected: JSValue,
+    received_string: ?string = null,
+    expected_string: ?string = null,
+    received: ?JSValue = null,
+    expected: ?JSValue = null,
     globalObject: *JSC.JSGlobalObject,
     not: bool = false,
 
     pub fn format(this: DiffFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.expected_string != null and this.received_string != null) {
+            const received = this.received_string.?;
+            const expected = this.expected_string.?;
+
+            var dmp = DiffMatchPatch.default;
+            dmp.diff_timeout = 200;
+            var diffs = try dmp.diff(default_allocator, received, expected, false);
+            defer diffs.deinit(default_allocator);
+
+            const equal_fmt = "<d>{s}<r>";
+            const delete_fmt = "<red>{s}<r>";
+            const insert_fmt = "<green>{s}<r>";
+
+            try writer.writeAll("Expected: ");
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .delete => continue,
+                    .insert => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(insert_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(insert_fmt, false), .{df.text});
+                        }
+                    },
+                    .equal => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                        }
+                    },
+                }
+            }
+
+            try writer.writeAll("\nReceived: ");
+            for (diffs.items) |df| {
+                switch (df.operation) {
+                    .insert => continue,
+                    .delete => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(delete_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(delete_fmt, false), .{df.text});
+                        }
+                    },
+                    .equal => {
+                        if (Output.enable_ansi_colors) {
+                            try writer.print(Output.prettyFmt(equal_fmt, true), .{df.text});
+                        } else {
+                            try writer.print(Output.prettyFmt(equal_fmt, false), .{df.text});
+                        }
+                    },
+                }
+            }
+            return;
+        }
+
+        if (this.received == null or this.expected == null) return;
+
+        const received = this.received.?;
+        const expected = this.expected.?;
         var received_buf = MutableString.init(default_allocator, 0) catch unreachable;
         var expected_buf = MutableString.init(default_allocator, 0) catch unreachable;
         defer {
@@ -94,7 +159,7 @@ pub const DiffFormatter = struct {
             JSC.ZigConsoleClient.format(
                 .Debug,
                 this.globalObject,
-                @ptrCast([*]const JSValue, &this.received),
+                @ptrCast([*]const JSValue, &received),
                 1,
                 Writer,
                 Writer,
@@ -131,21 +196,21 @@ pub const DiffFormatter = struct {
             return;
         }
 
-        switch (this.received.determineDiffMethod(this.expected, this.globalObject)) {
+        switch (received.determineDiffMethod(expected, this.globalObject)) {
             .none => {
                 const fmt = "Expected: <green>{any}<r>\nReceived: <red>{any}<r>";
                 var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = this.globalObject, .quote_strings = true };
                 if (Output.enable_ansi_colors) {
                     try writer.print(Output.prettyFmt(fmt, true), .{
-                        this.expected.toFmt(this.globalObject, &formatter),
-                        this.received.toFmt(this.globalObject, &formatter),
+                        expected.toFmt(this.globalObject, &formatter),
+                        received.toFmt(this.globalObject, &formatter),
                     });
                     return;
                 }
 
                 try writer.print(Output.prettyFmt(fmt, true), .{
-                    this.expected.toFmt(this.globalObject, &formatter),
-                    this.received.toFmt(this.globalObject, &formatter),
+                    expected.toFmt(this.globalObject, &formatter),
+                    received.toFmt(this.globalObject, &formatter),
                 });
                 return;
             },
@@ -305,6 +370,8 @@ pub const TestRunner = struct {
     /// This silences TestNotRunningError when expect() is used to halt a running test.
     did_pending_test_fail: bool = false,
 
+    snapshots: Snapshots,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {
@@ -427,6 +494,274 @@ pub const TestRunner = struct {
     };
 };
 
+pub const Snapshots = struct {
+    const file_header = "// Bun Snapshot v1, https://goo.gl/fbAQLP\n";
+    pub const ValuesHashMap = std.HashMap(usize, string, bun.IdentityContext(usize), std.hash_map.default_max_load_percentage);
+
+    allocator: std.mem.Allocator,
+    update_snapshots: bool,
+    total: usize = 0,
+    added: usize = 0,
+    passed: usize = 0,
+    failed: usize = 0,
+
+    file_buf: *std.ArrayList(u8),
+    values: *ValuesHashMap,
+    counts: *bun.StringHashMap(usize),
+    _current_file: ?File = null,
+    snapshot_dir_path: ?string = null,
+
+    const File = struct {
+        id: TestRunner.File.ID,
+        file: std.fs.File,
+    };
+
+    pub fn getOrPut(this: *Snapshots, expect: *Expect, value: JSValue, hint: string, globalObject: *JSC.JSGlobalObject) !?string {
+        switch (try this.getSnapshotFile(expect.scope.file_id)) {
+            .result => {},
+            .err => |err| {
+                return switch (err.syscall) {
+                    .mkdir => error.FailedToMakeSnapshotDirectory,
+                    .open => error.FailedToOpenSnapshotFile,
+                    else => error.SnapshotFailed,
+                };
+            },
+        }
+
+        const snapshot_name = try expect.getSnapshotName(this.allocator, hint);
+        this.total += 1;
+
+        var count_entry = try this.counts.getOrPut(snapshot_name);
+        const counter = brk: {
+            if (count_entry.found_existing) {
+                this.allocator.free(snapshot_name);
+                count_entry.value_ptr.* += 1;
+                break :brk count_entry.value_ptr.*;
+            }
+            count_entry.value_ptr.* = 1;
+            break :brk count_entry.value_ptr.*;
+        };
+
+        const name = count_entry.key_ptr.*;
+
+        var counter_string_buf = [_]u8{0} ** 32;
+        var counter_string = try std.fmt.bufPrint(&counter_string_buf, "{d}", .{counter});
+
+        var name_with_counter = try this.allocator.alloc(u8, name.len + 1 + counter_string.len);
+        defer this.allocator.free(name_with_counter);
+        bun.copy(u8, name_with_counter[0..name.len], name);
+        name_with_counter[name.len] = ' ';
+        bun.copy(u8, name_with_counter[name.len + 1 ..], counter_string);
+
+        const name_hash = std.hash.Wyhash.hash(0, name_with_counter);
+        if (this.values.get(name_hash)) |expected| {
+            return expected;
+        }
+
+        // doesn't exist. append to file bytes and add to hashmap.
+        var pretty_value = try MutableString.init(this.allocator, 0);
+        try value.jestSnapshotPrettyFormat(&pretty_value, globalObject);
+
+        const serialized_length = "\nexports[`".len + name_with_counter.len + "`] = `".len + pretty_value.list.items.len + "`;\n".len;
+        try this.file_buf.ensureUnusedCapacity(serialized_length);
+        this.file_buf.appendSliceAssumeCapacity("\nexports[`");
+        this.file_buf.appendSliceAssumeCapacity(name_with_counter);
+        this.file_buf.appendSliceAssumeCapacity("`] = `");
+        this.file_buf.appendSliceAssumeCapacity(pretty_value.list.items);
+        this.file_buf.appendSliceAssumeCapacity("`;\n");
+
+        this.added += 1;
+        try this.values.put(name_hash, pretty_value.toOwnedSlice());
+        return null;
+    }
+
+    pub fn parseFile(this: *Snapshots) !void {
+        if (this.file_buf.items.len == 0) return;
+
+        const vm = VirtualMachine.get();
+        var opts = js_parser.Parser.Options.init(vm.bundler.options.jsx, .js);
+        var temp_log = logger.Log.init(this.allocator);
+
+        const test_file = Jest.runner.?.files.get(this._current_file.?.id);
+        const test_filename = test_file.source.path.name.filename;
+        const dir_path = test_file.source.path.name.dirWithTrailingSlash();
+
+        var snapshot_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
+        bun.copy(u8, remain, dir_path);
+        remain = remain[dir_path.len..];
+        bun.copy(u8, remain, "__snapshots__/");
+        remain = remain["__snapshots__/".len..];
+        bun.copy(u8, remain, test_filename);
+        remain = remain[test_filename.len..];
+        bun.copy(u8, remain, ".snap");
+        remain = remain[".snap".len..];
+        remain[0] = 0;
+        const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
+
+        const source = logger.Source.initPathString(snapshot_file_path, this.file_buf.items);
+
+        var parser = try js_parser.Parser.init(
+            opts,
+            &temp_log,
+            &source,
+            vm.bundler.options.define,
+            this.allocator,
+        );
+
+        var parse_result = try parser.parse();
+        var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
+        defer ast.deinit();
+
+        if (ast.exports_ref == null) return;
+        const exports_ref = ast.exports_ref.?;
+
+        // TODO: when common js transform changes, keep this updated or add flag to support this version
+
+        const export_default = brk: {
+            for (ast.parts) |part| {
+                for (part.stmts) |stmt| {
+                    if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
+                        break :brk stmt.data.s_export_default.value.expr;
+                    }
+                }
+            }
+
+            return;
+        };
+
+        if (export_default.data == .e_call) {
+            const function_call = export_default.data.e_call;
+            if (function_call.args.len == 2 and function_call.args.ptr[0].data == .e_function) {
+                const arg_function_stmts = function_call.args.ptr[0].data.e_function.func.body.stmts;
+                for (arg_function_stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_expr => |expr| {
+                            if (expr.value.data == .e_binary and expr.value.data.e_binary.op == .bin_assign) {
+                                const left = expr.value.data.e_binary.left;
+                                if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
+                                    const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
+                                    var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
+                                    if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
+                                        const key = index.slice(this.allocator);
+                                        var value_string = expr.value.data.e_binary.right.data.e_string;
+                                        const value = value_string.slice(this.allocator);
+                                        defer {
+                                            if (!index.isUTF8()) this.allocator.free(key);
+                                            if (!value_string.isUTF8()) this.allocator.free(value);
+                                        }
+                                        const value_clone = try this.allocator.alloc(u8, value.len);
+                                        bun.copy(u8, value_clone, value);
+                                        const name_hash = std.hash.Wyhash.hash(0, key);
+                                        try this.values.put(name_hash, value_clone);
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn writeSnapshotFile(this: *Snapshots) !void {
+        if (this._current_file) |_file| {
+            var file = _file;
+            file.file.writeAll(this.file_buf.items) catch {
+                return error.FailedToWriteSnapshotFile;
+            };
+            file.file.close();
+            this.file_buf.clearAndFree();
+
+            var value_itr = this.values.valueIterator();
+            while (value_itr.next()) |value| {
+                this.allocator.free(value.*);
+            }
+            this.values.clearAndFree();
+
+            var count_key_itr = this.counts.keyIterator();
+            while (count_key_itr.next()) |key| {
+                this.allocator.free(key.*);
+            }
+            this.counts.clearAndFree();
+        }
+    }
+
+    fn getSnapshotFile(this: *Snapshots, file_id: TestRunner.File.ID) !JSC.Maybe(void) {
+        if (this._current_file == null or this._current_file.?.id != file_id) {
+            try this.writeSnapshotFile();
+
+            const test_file = Jest.runner.?.files.get(file_id);
+            const test_filename = test_file.source.path.name.filename;
+            const dir_path = test_file.source.path.name.dirWithTrailingSlash();
+
+            var snapshot_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
+            bun.copy(u8, remain, dir_path);
+            remain = remain[dir_path.len..];
+            bun.copy(u8, remain, "__snapshots__/");
+            remain = remain["__snapshots__/".len..];
+
+            if (this.snapshot_dir_path == null or !strings.eqlLong(dir_path, this.snapshot_dir_path.?, true)) {
+                remain[0] = 0;
+                const snapshot_dir_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
+                switch (JSC.Node.Syscall.mkdir(snapshot_dir_path, 0o777)) {
+                    .result => this.snapshot_dir_path = dir_path,
+                    .err => |err| {
+                        switch (err.getErrno()) {
+                            std.os.E.EXIST => this.snapshot_dir_path = dir_path,
+                            else => return JSC.Maybe(void){
+                                .err = err,
+                            },
+                        }
+                    },
+                }
+            }
+
+            bun.copy(u8, remain, test_filename);
+            remain = remain[test_filename.len..];
+            bun.copy(u8, remain, ".snap");
+            remain = remain[".snap".len..];
+            remain[0] = 0;
+            const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
+
+            var flags: JSC.Node.Mode = std.os.O.CREAT | std.os.O.RDWR;
+            if (this.update_snapshots) flags |= std.os.O.TRUNC;
+            const fd = switch (JSC.Node.Syscall.open(snapshot_file_path, flags, 0o644)) {
+                .result => |_fd| _fd,
+                .err => |err| return JSC.Maybe(void){
+                    .err = err,
+                },
+            };
+
+            var file: File = .{
+                .id = file_id,
+                .file = .{ .handle = fd },
+            };
+
+            if (this.update_snapshots) {
+                try this.file_buf.appendSlice(file_header);
+            } else {
+                const length = try file.file.getEndPos();
+                if (length == 0) {
+                    try this.file_buf.appendSlice(file_header);
+                } else {
+                    const buf = try this.allocator.alloc(u8, length);
+                    _ = try file.file.preadAll(buf, 0);
+                    try this.file_buf.appendSlice(buf);
+                    this.allocator.free(buf);
+                }
+            }
+
+            this._current_file = file;
+            try this.parseFile();
+        }
+
+        return JSC.Maybe(void).success;
+    }
+};
+
 pub const Jest = struct {
     pub var runner: ?*TestRunner = null;
 
@@ -465,6 +800,54 @@ pub const Jest = struct {
     }
 };
 
+pub const ExpectAny = struct {
+    pub usingnamespace JSC.Codegen.JSExpectAny;
+
+    pub fn finalize(
+        this: *ExpectAny,
+    ) callconv(.C) void {
+        VirtualMachine.get().allocator.destroy(this);
+    }
+
+    pub fn call(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len == 0) {
+            globalObject.throw("any() expects to be passed a constructor function.", .{});
+            return .zero;
+        }
+
+        const constructor = arguments[0];
+        constructor.ensureStillAlive();
+        if (!constructor.isConstructor()) {
+            const fmt = "<d>expect.<r>any<d>(<r>constructor<d>)<r>\n\nExpected a constructor\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        var any = globalObject.bunVM().allocator.create(ExpectAny) catch unreachable;
+
+        if (Jest.runner.?.pending_test == null) {
+            const err = globalObject.createErrorInstance("expect.any() must be called in a test", .{});
+            err.put(globalObject, ZigString.static("name"), ZigString.init("TestNotRunningError").toValueGC(globalObject));
+            globalObject.throwValue(err);
+            return .zero;
+        }
+
+        any.* = .{};
+        const any_js_value = any.toJS(globalObject);
+        any_js_value.ensureStillAlive();
+        JSC.Jest.ExpectAny.constructorValueSetCached(any_js_value, globalObject, constructor);
+        any_js_value.ensureStillAlive();
+
+        var vm = globalObject.bunVM();
+        vm.autoGarbageCollect();
+
+        return any_js_value;
+    }
+};
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 pub const Expect = struct {
@@ -480,6 +863,49 @@ pub const Expect = struct {
         not,
         pub const Set = std.EnumSet(Op);
     };
+
+    pub fn getSnapshotName(this: *Expect, allocator: std.mem.Allocator, hint: string) ![]const u8 {
+        const test_name = this.scope.tests.items[this.test_id].label;
+
+        var length: usize = 0;
+        var curr_scope: ?*DescribeScope = this.scope;
+        while (curr_scope) |scope| {
+            if (scope.label.len > 0) {
+                length += scope.label.len + 1;
+            }
+            curr_scope = scope.parent;
+        }
+        length += test_name.len;
+        if (hint.len > 0) {
+            length += hint.len + 2;
+        }
+
+        var buf = try allocator.alloc(u8, length);
+
+        var index = buf.len;
+        if (hint.len > 0) {
+            index -= hint.len;
+            bun.copy(u8, buf[index..], hint);
+            index -= test_name.len + 2;
+            bun.copy(u8, buf[index..], test_name);
+            bun.copy(u8, buf[index + test_name.len ..], ": ");
+        } else {
+            index -= test_name.len;
+            bun.copy(u8, buf[index..], test_name);
+        }
+        // copy describe scopes in reverse order
+        curr_scope = this.scope;
+        while (curr_scope) |scope| {
+            if (scope.label.len > 0) {
+                index -= scope.label.len + 1;
+                bun.copy(u8, buf[index..], scope.label);
+                buf[index + scope.label.len] = ' ';
+            }
+            curr_scope = scope.parent;
+        }
+
+        return buf;
+    }
 
     pub fn finalize(
         this: *Expect,
@@ -2080,6 +2506,215 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toMatchSnapshot(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(2);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatchSnapshot() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const not = this.op.contains(.not);
+        if (not) {
+            const signature = comptime getSignature("toMatchSnapshot", "", true);
+            const fmt = signature ++ "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n";
+            globalObject.throwPretty(fmt, .{});
+        }
+
+        var hint_string: ZigString = ZigString.Empty;
+        var property_matchers: ?JSValue = null;
+        switch (arguments.len) {
+            0 => {},
+            1 => {
+                if (arguments[0].isString()) {
+                    arguments[0].toZigString(&hint_string, globalObject);
+                } else if (arguments[0].isObject()) {
+                    property_matchers = arguments[0];
+                }
+            },
+            else => {
+                if (!arguments[0].isObject()) {
+                    const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+                    const fmt = signature ++ "\n\nMatcher error: Expected <green>properties<r> must be an object\n";
+                    globalObject.throwPretty(fmt, .{});
+                    return .zero;
+                }
+
+                property_matchers = arguments[0];
+
+                if (arguments[1].isString()) {
+                    arguments[1].toZigString(&hint_string, globalObject);
+                }
+            },
+        }
+
+        var hint = hint_string.toSlice(default_allocator);
+        defer hint.deinit();
+
+        const value: JSValue = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+
+        if (!value.isObject() and property_matchers != null) {
+            const signature = comptime getSignature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+            const fmt = signature ++ "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n";
+            globalObject.throwPretty(fmt, .{});
+            return .zero;
+        }
+
+        if (property_matchers) |_prop_matchers| {
+            var prop_matchers = _prop_matchers;
+
+            var itr = PropertyMatcherIterator{
+                .received_object = value,
+                .failed = false,
+            };
+
+            prop_matchers.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
+
+            if (itr.failed) {
+                // TODO: print diff with properties from propertyMatchers
+                const signature = comptime getSignature("toMatchSnapshot", "<green>propertyMatchers<r>", false);
+                const fmt = signature ++ "\n\nExpected <green>propertyMatchers<r> to match properties from received object" ++
+                    "\n\nReceived: {any}\n";
+
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throwPretty(fmt, .{value.toFmt(globalObject, &formatter)});
+                return .zero;
+            }
+        }
+
+        const result = Jest.runner.?.snapshots.getOrPut(this, value, hint.slice(), globalObject) catch |err| {
+            var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+            const test_file_path = Jest.runner.?.files.get(this.scope.file_id).source.path.text;
+            switch (err) {
+                error.FailedToOpenSnapshotFile => globalObject.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
+                error.FailedToMakeSnapshotDirectory => globalObject.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
+                error.FailedToWriteSnapshotFile => globalObject.throw("Failed write to snapshot file: {s}", .{test_file_path}),
+                error.ParseError => globalObject.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
+                else => globalObject.throw("Failed to snapshot value: {any}", .{value.toFmt(globalObject, &formatter)}),
+            }
+            return .zero;
+        };
+
+        if (result) |saved_value| {
+            var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
+            value.jestSnapshotPrettyFormat(&pretty_value, globalObject) catch {
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Failed to pretty format value: {s}", .{value.toFmt(globalObject, &formatter)});
+                return .zero;
+            };
+            defer pretty_value.deinit();
+
+            if (strings.eqlLong(pretty_value.toOwnedSliceLeaky(), saved_value, true)) {
+                Jest.runner.?.snapshots.passed += 1;
+                return thisValue;
+            }
+
+            Jest.runner.?.snapshots.failed += 1;
+            const signature = comptime getSignature("toMatchSnapshot", "<green>expected<r>", false);
+            const fmt = signature ++ "\n\n{any}\n";
+            const diff_format = DiffFormatter{
+                .received_string = pretty_value.toOwnedSliceLeaky(),
+                .expected_string = saved_value,
+                .globalObject = globalObject,
+            };
+
+            globalObject.throwPretty(fmt, .{diff_format});
+            return .zero;
+        }
+
+        return thisValue;
+    }
+
+    pub const PropertyMatcherIterator = struct {
+        received_object: JSValue,
+        failed: bool,
+        i: usize = 0,
+
+        pub fn forEach(
+            globalObject: *JSGlobalObject,
+            ctx_ptr: ?*anyopaque,
+            key_: [*c]ZigString,
+            value: JSValue,
+            _: bool,
+        ) callconv(.C) void {
+            const key: ZigString = key_.?[0];
+            if (key.eqlComptime("constructor")) return;
+            if (key.eqlComptime("call")) return;
+
+            var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
+            defer ctx.i += 1;
+            var received_object: JSValue = ctx.received_object;
+
+            if (received_object.get(globalObject, key.slice())) |received_value| {
+                if (JSC.Jest.ExpectAny.fromJS(value)) |_| {
+                    var constructor_value = JSC.Jest.ExpectAny.constructorValueGetCached(value) orelse {
+                        globalObject.throw("Internal consistency error: the expect.any(constructor value) was garbage collected but it should not have been!", .{});
+                        ctx.failed = true;
+                        return;
+                    };
+
+                    if (received_value.isCell() and received_value.isInstanceOf(globalObject, constructor_value)) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+
+                    // check primitives
+                    // TODO: check the constructor for primitives by reading it from JSGlobalObject through a binding.
+                    var constructor_name = ZigString.Empty;
+                    constructor_value.getNameProperty(globalObject, &constructor_name);
+                    if (received_value.isNumber() and constructor_name.eqlComptime("Number")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isBoolean() and constructor_name.eqlComptime("Boolean")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isString() and constructor_name.eqlComptime("String")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+                    if (received_value.isBigInt() and constructor_name.eqlComptime("BigInt")) {
+                        received_object.put(globalObject, &key, value);
+                        return;
+                    }
+
+                    ctx.failed = true;
+                    return;
+                }
+
+                if (value.isObject()) {
+                    if (received_object.get(globalObject, key.slice())) |new_object| {
+                        var itr = PropertyMatcherIterator{
+                            .received_object = new_object,
+                            .failed = false,
+                        };
+                        value.forEachProperty(globalObject, &itr, PropertyMatcherIterator.forEach);
+                        if (itr.failed) {
+                            ctx.failed = true;
+                        }
+                    } else {
+                        ctx.failed = true;
+                    }
+
+                    return;
+                }
+
+                if (value.isSameValue(received_value, globalObject)) return;
+            }
+
+            ctx.failed = true;
+        }
+    };
+
     pub fn toBeInstanceOf(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
         defer this.postMatch(globalObject);
 
@@ -2098,7 +2733,6 @@ pub const Expect = struct {
         }
 
         active_test_expectation_counter.actual += 1;
-
         const expected_value = arguments[0];
         if (!expected_value.jsType().isFunction()) {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
@@ -2156,7 +2790,6 @@ pub const Expect = struct {
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
-    pub const toMatchSnapshot = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingInlineSnapshot = notImplementedJSCFn;
@@ -2179,9 +2812,12 @@ pub const Expect = struct {
     pub const getResolves = notImplementedJSCProp;
     pub const getRejects = notImplementedJSCProp;
 
+    pub fn any(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        return ExpectAny.call(globalObject, callFrame);
+    }
+
     pub const extend = notImplementedStaticFn;
     pub const anything = notImplementedStaticFn;
-    pub const any = notImplementedStaticFn;
     pub const arrayContaining = notImplementedStaticFn;
     pub const assertions = notImplementedStaticFn;
     pub const hasAssertions = notImplementedStaticFn;
@@ -2225,6 +2861,7 @@ pub const TestScope = struct {
     ran: bool = false,
     task: ?*TestRunnerTask = null,
     skipped: bool = false,
+    snapshot_count: usize = 0,
 
     pub const Class = NewClass(
         void,

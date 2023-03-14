@@ -216,7 +216,7 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
-        clap.parseParam("--update                         Update snapshot files") catch unreachable,
+        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -375,7 +375,7 @@ pub const Arguments = struct {
         }
 
         if (cmd == .TestCommand) {
-            ctx.test_options.update_snapshots = args.flag("--update");
+            ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         }
 
         ctx.args.absolute_working_dir = cwd;

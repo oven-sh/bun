@@ -2601,7 +2601,8 @@ pub const Expect = struct {
         if (result) |saved_value| {
             var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
             value.jestSnapshotPrettyFormat(&pretty_value, globalObject) catch {
-                globalObject.throw("Failed to pretty format value", .{});
+                var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject };
+                globalObject.throw("Failed to pretty format value: {s}", .{value.toFmt(globalObject, &formatter)});
                 return .zero;
             };
             defer pretty_value.deinit();

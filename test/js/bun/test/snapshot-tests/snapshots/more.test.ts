@@ -1,5 +1,5 @@
 describe("d0", () => {
-  test("snapshot name edgecases", () => {
+  test("snapshot serialize edgecases", () => {
     expect(1).toMatchSnapshot();
     expect("1\b2\n3\r4").toMatchSnapshot();
     expect("\r\n").toMatchSnapshot();
@@ -26,9 +26,17 @@ describe("d0", () => {
     expect(1).toMatchSnapshot("one");
     expect(2).toMatchSnapshot();
     expect(3).toMatchSnapshot("one");
-    expect("one two three").toMatchSnapshot();
+    expect("`````````\\``````\\`\\``````\\`````\\``\\\\`\\````````````").toMatchSnapshot();
+    expect("`````````\\``````\\`\\``````\\`````\\``\\\\`\\````````````\\").toMatchSnapshot();
+    expect("\\`````````\\``````\\`\\``````\\`````\\``\\\\`\\````````````").toMatchSnapshot();
+    expect("\\`````````\\``````\\`\\``````\\`````\\``\\\\`\\````````````\\").toMatchSnapshot();
+    expect("one t`wo `three").toMatchSnapshot();
+    expect("one tw\\`o three").toMatchSnapshot();
     expect("\nexport[\\`hello snap'shot 2`] = `").toMatchSnapshot();
     expect("\nexport[`hello snapshot 2`] = `").toMatchSnapshot();
+    expect("`hello snapshot3 \\``").toMatchSnapshot();
+    expect("`hello snapshot4 \\`\\`").toMatchSnapshot();
+    expect("\\`hello snapshot5 \\`\\`").toMatchSnapshot();
     expect({ a: 1, b: 2, c: 3 }).toMatchSnapshot("¾");
     expect({ a: 1, b: 2, c: 3 }).toMatchSnapshot("\uD83D\uDC04");
     expect({ a: "\uD83D\uDC04", b: "🐈" }).toMatchSnapshot("😃");

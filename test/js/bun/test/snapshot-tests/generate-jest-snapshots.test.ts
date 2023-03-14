@@ -5,7 +5,6 @@ import { mkdirSync, copyFileSync, writeFileSync } from "node:fs";
 test("generate jest snapshot output", () => {
   // generate jest snapshots and let bun test runner test against them
   const tempDir = tmpdir() + "/generate-jest-snapshots";
-  console.log("making dir:", tempDir);
   mkdirSync(tempDir + "/snapshots/more-snapshots", { recursive: true });
   copyFileSync(import.meta.dir + "/snapshots/snapshot.test.ts", tempDir + "/snapshots/snapshot.test.ts");
   copyFileSync(import.meta.dir + "/snapshots/more.test.ts", tempDir + "/snapshots/more.test.ts");
@@ -21,7 +20,6 @@ test("generate jest snapshot output", () => {
     cwd: tempDir,
   });
 
-  console.log(stderr?.toString());
   expect(exitCode).toBe(0);
 
   // ensure snapshot directories exist

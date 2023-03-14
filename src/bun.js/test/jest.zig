@@ -616,6 +616,8 @@ pub const Snapshots = struct {
         if (ast.exports_ref == null) return;
         const exports_ref = ast.exports_ref.?;
 
+        // TODO: when common js transform changes, keep this updated or add flag to support this version
+
         const export_default = brk: {
             for (ast.parts) |part| {
                 for (part.stmts) |stmt| {
@@ -666,8 +668,9 @@ pub const Snapshots = struct {
     pub fn writeSnapshotFile(this: *Snapshots) !void {
         if (this._current_file) |_file| {
             var file = _file;
-            try file.file.seekTo(0);
-            try file.file.writeAll(this.file_buf.items);
+            file.file.writeAll(this.file_buf.items) catch {
+                return error.FailedToWriteSnapshotFile;
+            };
             file.file.close();
             this.file_buf.clearAndFree();
 
@@ -744,9 +747,10 @@ pub const Snapshots = struct {
                 if (length == 0) {
                     try this.file_buf.appendSlice(file_header);
                 } else {
-                    const bytes = try file.file.readToEndAlloc(this.allocator, length);
-                    try this.file_buf.appendSlice(bytes);
-                    this.allocator.free(bytes);
+                    const buf = try this.allocator.alloc(u8, length);
+                    _ = try file.file.preadAll(buf, 0);
+                    try this.file_buf.appendSlice(buf);
+                    this.allocator.free(buf);
                 }
             }
 
@@ -2592,6 +2596,7 @@ pub const Expect = struct {
             switch (err) {
                 error.FailedToOpenSnapshotFile => globalObject.throw("Failed to open snapshot file for test file: {s}", .{test_file_path}),
                 error.FailedToMakeSnapshotDirectory => globalObject.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
+                error.FailedToWriteSnapshotFile => globalObject.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.ParseError => globalObject.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
                 else => globalObject.throw("Failed to snapshot value: {any}", .{value.toFmt(globalObject, &formatter)}),
             }

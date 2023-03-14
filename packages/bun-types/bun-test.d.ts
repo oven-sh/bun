@@ -69,6 +69,7 @@ declare module "bun:test" {
     toBeTruthy(): void;
     toBeFalsy(): void;
     toBeDefined(): void;
+    toBeInstanceOf(value: Function): void;
     toBeUndefined(): void;
     toBeNaN(): void;
     toBeNull(): void;

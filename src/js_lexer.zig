@@ -1806,6 +1806,10 @@ fn NewLexer_(
                 }) catch unreachable;
             }
 
+            // tsconfig.json doesn't care about annotations
+            if (comptime is_json)
+                return;
+
             // TODO: @jsx annotations
             if (lexer.has_pure_comment_before)
                 return;
@@ -1818,11 +1822,20 @@ fn NewLexer_(
                 const comment_end = rest.ptr + wrapped_len;
                 while (rest.ptr != comment_end) {
                     const vec: strings.AsciiVector = rest.ptr[0..strings.ascii_vector_size].*;
-                    const hashtag = vec & @splat(strings.ascii_vector_size, @as(u8, '#'));
-                    const at = vec & @splat(strings.ascii_vector_size, @as(u8, '@'));
 
-                    if (@reduce(.Max, hashtag | at) > 0) {
+                    // lookahead for any # or @ characters
+                    const hashtag = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '#')));
+                    const at = @bitCast(strings.AsciiVectorU1, vec == @splat(strings.ascii_vector_size, @as(u8, '@')));
+
+                    if (@reduce(.Max, hashtag + at) == 1) {
                         rest.len = @ptrToInt(end) - @ptrToInt(rest.ptr);
+                        if (comptime Environment.allow_assert) {
+                            std.debug.assert(
+                                strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '#') or
+                                    strings.containsChar(&@as([strings.ascii_vector_size]u8, vec), '@'),
+                            );
+                        }
+
                         for (@as([strings.ascii_vector_size]u8, vec), 0..) |c, i| {
                             switch (c) {
                                 '@', '#' => {

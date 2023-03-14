@@ -2943,12 +2943,12 @@ pub const max_16_ascii = @splat(ascii_vector_size, @as(u8, 127));
 pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
 pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
-pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
-pub const AsciiVectorSmall = std.meta.Vector(8, u8);
-pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
-pub const AsciiVectorU1Small = std.meta.Vector(8, u1);
-pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
-pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
+pub const AsciiVector = @Vector(ascii_vector_size, u8);
+pub const AsciiVectorSmall = @Vector(8, u8);
+pub const AsciiVectorU1 = @Vector(ascii_vector_size, u1);
+pub const AsciiVectorU1Small = @Vector(8, u1);
+pub const AsciiVectorU16U1 = @Vector(ascii_u16_vector_size, u1);
+pub const AsciiU16Vector = @Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
 pub fn isAllASCII(slice: []const u8) bool {
     if (bun.FeatureFlags.use_simdutf)

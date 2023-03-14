@@ -5232,8 +5232,8 @@ pub const Ast = struct {
 };
 
 pub const Span = struct {
-    text: string,
-    range: logger.Range,
+    text: string = "",
+    range: logger.Range = .{},
 };
 
 pub const ExportsKind = enum {

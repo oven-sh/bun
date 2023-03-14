@@ -1,9 +1,0 @@
-{
-  "name": "snapshot-tests",
-  "devDependencies": {
-    "bun-types": "^0.5.0"
-  },
-  "dependencies": {
-    "jest": "29.5.0"
-  }
-}

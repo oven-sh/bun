@@ -38,7 +38,7 @@ Bun implements the following globals.
 
 ---
 
-- [`Bun`](https://nodejs.org/api/buffer.html#class-buffer)
+- `Bun`
 - Bun
 - Subject to change as additional APIs are added
 

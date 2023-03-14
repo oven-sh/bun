@@ -8,3 +8,4 @@ src/test/fixtures
 src/react-refresh.js
 test/snapshots
 test/snapshots-no-hmr
+test/js/deno

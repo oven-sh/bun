@@ -13,7 +13,7 @@
     "forceConsistentCasingInFileNames": true,
     "allowJs": true,
     "resolveJsonModule": true,
-    "types": ["bun-types"],
+    "types": ["../packages/bun-types"],
     "baseUrl": ".",
     "paths": {
       "harness": ["harness.ts"],

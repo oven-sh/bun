@@ -1487,13 +1487,7 @@ var defaultObject = {
     return (_globalAgent ??= new Agent());
   },
   set globalAgent(agent) {},
+  [Symbol.for("CommonJS")]: 0,
 };
 
-var wrapper =
-  (0,
-  function () {
-    return defaultObject;
-  });
-
-wrapper[Symbol.for("CommonJS")] = true;
-export default wrapper;
+export default defaultObject;

@@ -1,11 +1,14 @@
-import { test, expect, describe, beforeAll, afterAll, beforeEach, afterEach } from "bun:test";
-
-const hooks = [
+import {
+  test,
+  expect,
+  describe,
   beforeAll,
-  beforeEach,
   afterAll,
+  beforeEach,
   afterEach,
-];
+} from "bun:test";
+
+const hooks = [beforeAll, beforeEach, afterAll, afterEach];
 
 for (const hook of hooks) {
   hook(() => {

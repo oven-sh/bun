@@ -494,7 +494,11 @@ declare var Headers: {
   new (init?: HeadersInit): Headers;
 };
 
-type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
+type HeadersInit =
+  | Headers
+  | Record<string, string>
+  | Array<[string, string]>
+  | IterableIterator<[string, string]>;
 type ResponseType =
   | "basic"
   | "cors"
@@ -555,7 +559,7 @@ declare class Blob implements BlobInterface {
    * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
    * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
    */
-  constructor(parts?: BlobPart[] | Blob, options?: BlobPropertyBag);
+  constructor(parts?: BlobPart[], options?: BlobPropertyBag);
   /**
    * Create a new view **without 🚫 copying** the underlying data.
    *
@@ -1961,6 +1965,10 @@ interface AbortSignal extends EventTarget {
    * Returns true if this AbortSignal's AbortController has signaled to abort, and false otherwise.
    */
   readonly aborted: boolean;
+  /**
+   * The reason the signal aborted, or undefined if not aborted.
+   */
+  readonly reason: any;
   onabort: ((this: AbortSignal, ev: Event) => any) | null;
   addEventListener<K extends keyof AbortSignalEventMap>(
     type: K,
@@ -1982,7 +1990,12 @@ interface AbortSignal extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+}
 
+declare var AbortSignal: {
+  prototype: AbortSignal;
+  new (): AbortSignal;
+  abort(reason?: any): AbortSignal;
   /**
    * Create an AbortSignal which times out after milliseconds
    *
@@ -1998,13 +2011,6 @@ interface AbortSignal extends EventTarget {
    * })
    * ```
    */
-  timeout(milliseconds: number): AbortSignal;
-}
-
-declare var AbortSignal: {
-  prototype: AbortSignal;
-  new (): AbortSignal;
-  abort(reason?: any): AbortSignal;
   timeout(milliseconds: number): AbortSignal;
 };
 

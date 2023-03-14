@@ -7,7 +7,7 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test/bun.js",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1"
       },

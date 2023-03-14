@@ -1965,6 +1965,10 @@ interface AbortSignal extends EventTarget {
    * Returns true if this AbortSignal's AbortController has signaled to abort, and false otherwise.
    */
   readonly aborted: boolean;
+  /**
+   * The reason the signal aborted, or undefined if not aborted.
+   */
+  readonly reason: any;
   onabort: ((this: AbortSignal, ev: Event) => any) | null;
   addEventListener<K extends keyof AbortSignalEventMap>(
     type: K,
@@ -1986,7 +1990,12 @@ interface AbortSignal extends EventTarget {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void;
+}
 
+declare var AbortSignal: {
+  prototype: AbortSignal;
+  new (): AbortSignal;
+  abort(reason?: any): AbortSignal;
   /**
    * Create an AbortSignal which times out after milliseconds
    *
@@ -2002,13 +2011,6 @@ interface AbortSignal extends EventTarget {
    * })
    * ```
    */
-  timeout(milliseconds: number): AbortSignal;
-}
-
-declare var AbortSignal: {
-  prototype: AbortSignal;
-  new (): AbortSignal;
-  abort(reason?: any): AbortSignal;
   timeout(milliseconds: number): AbortSignal;
 };
 

@@ -1,8 +1,8 @@
-import { beforeEach, describe, it } from "bun:test";
 import readline from "node:readline";
 import { Writable, PassThrough } from "node:stream";
 import { EventEmitter } from "node:events";
-import { createDoneDotAll, createCallCheckCtx, assert } from "node-harness";
+import { createTest } from "node-harness";
+const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
   CSI,

@@ -1,7 +1,7 @@
-import { describe, it } from "bun:test";
 import readlinePromises from "node:readline/promises";
 import { EventEmitter } from "node:events";
-import { createDoneDotAll, createCallCheckCtx, assert } from "node-harness";
+import { createTest } from "node-harness";
+const { describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
 // Helpers

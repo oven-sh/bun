@@ -83,4 +83,4 @@ Do not copy from examples leveraging the JavaScriptCore C API. Please do not use
 
 ## Testing
 
-See `../test/README.md` for information on how to run tests.
+See `test/README.md` for information on how to run tests.

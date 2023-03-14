@@ -8,7 +8,7 @@ import { expectBundled, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("tsconfig/TsConfigPaths", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import baseurl_dot from './baseurl_dot'
@@ -127,7 +127,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsNoBaseURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import simple from './simple'
@@ -225,7 +225,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigBadPathsNoBaseURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.ts": `import "should-not-be-imported"`,
       "/Users/user/project/should-not-be-imported.ts": ``,
@@ -263,7 +263,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsOverriddenBaseURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import test from '#/test'
@@ -291,7 +291,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsOverriddenBaseURLDifferentDir", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import test from '#/test'
@@ -319,7 +319,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsMissingBaseURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import test from '#/test'
@@ -346,7 +346,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsTypeOnly", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import { fib } from "fib";
@@ -376,7 +376,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -391,7 +391,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigNestedJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.ts": /* ts */ `
         import factory from './factory'
@@ -428,7 +428,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -444,7 +444,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSXDev", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -459,7 +459,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSXWithDevInMainConfig", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -475,7 +475,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonBaseUrl", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
         import fn from 'lib/util'
@@ -497,7 +497,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/JsconfigJsonBaseUrl", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
         import fn from 'lib/util'
@@ -519,7 +519,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonAbsoluteBaseUrl", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
         import fn from 'lib/util'
@@ -541,7 +541,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonCommentAllowed", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
         import fn from 'lib/util'
@@ -564,7 +564,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonTrailingCommaAllowed", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.js": /* js */ `
         import fn from 'lib/util'
@@ -586,7 +586,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonExtends", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": `console.log(<div/>, <></>)`,
       "/tsconfig.json": /* json */ `
@@ -610,7 +610,7 @@ describe("bundler", () => {
   });
   test("tsconfig/TsconfigJsonExtendsAbsolute", () => {
     expectBundled("tsconfig/TsconfigJsonExtendsAbsolute", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Unix",
       files: {
         "/Users/user/project/entry.jsx": `console.log(<div/>, <></>)`,
@@ -634,7 +634,7 @@ describe("bundler", () => {
       snapshot: true,
     });
     expectBundled("tsconfig/TsconfigJsonExtendsAbsolute_TODO_LABEL_1", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Windows",
       files: {
         "/Users/user/project/entry.jsx": `console.log(<div/>, <></>)`,
@@ -659,7 +659,7 @@ describe("bundler", () => {
     });
   });
   itBundled("tsconfig/TsconfigJsonExtendsThreeLevels", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.jsx": /* jsx */ `
         import "test/import.js"
@@ -695,7 +695,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonExtendsLoop", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
       "/tsconfig.json": /* json */ `
@@ -712,7 +712,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonExtendsPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.jsx": `console.log(<div/>)`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -731,7 +731,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideMissing", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.ts": `import 'foo'`,
       "/Users/user/project/src/foo-bad.ts": `console.log('bad')`,
@@ -761,7 +761,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideNodeModules", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.ts": `import 'foo'`,
       "/Users/user/project/src/node_modules/foo/index.js": `console.log('default')`,
@@ -792,14 +792,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideInvalid", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": ``,
     },
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonNodeModulesImplicitFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -819,7 +819,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonInsideNodeModules", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/app/entry.tsx": `import 'foo'`,
       "/Users/user/project/src/node_modules/foo/index.tsx": `console.log(<div/>)`,
@@ -834,7 +834,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigWarningsInsideNodeModules", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.tsx": /* tsx */ `
         import "./foo"
@@ -848,7 +848,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigRemoveUnusedImports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import {x, y} from "./foo"
@@ -865,7 +865,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveUnusedImports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import {x, y} from "./foo"
@@ -883,7 +883,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigImportsNotUsedAsValuesPreserve", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import {x, y} from "./foo"
@@ -905,7 +905,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveValueImports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import {} from "a"
@@ -933,7 +933,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import {} from "a"
@@ -962,7 +962,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigTarget", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import "./es2018"
@@ -1019,7 +1019,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigTargetError", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `x = 123n`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -1034,7 +1034,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigTargetIgnored", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `x = 123n`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -1049,7 +1049,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigUseDefineForClassFieldsES2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         Foo = class {
@@ -1067,7 +1067,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigUseDefineForClassFieldsESNext", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         Foo = class {
@@ -1085,7 +1085,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigUnrecognizedTargetWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import "./a"
@@ -1111,7 +1111,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigTargetWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `await 0`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -1127,7 +1127,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsconfigOverriddenTargetWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `await 0`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -1145,7 +1145,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigNoBaseURLExtendsPaths", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import { foo } from "foo"
@@ -1170,7 +1170,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigBaseURLExtendsPaths", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import { foo } from "foo"
@@ -1198,7 +1198,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsExtendsBaseURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import { foo } from "foo"
@@ -1226,7 +1226,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesInsert", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import "./foo"
@@ -1253,7 +1253,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesNoInsert", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import "./foo.b"
@@ -1278,7 +1278,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesNoEmpty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `
         import "./foo.js"
@@ -1297,7 +1297,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementAlwaysStrictFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1312,7 +1312,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementAlwaysStrictTrue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1326,7 +1326,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementStrictFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1341,7 +1341,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementStrictTrue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1355,7 +1355,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementStrictFalseAlwaysStrictTrue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1370,7 +1370,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementStrictTrueAlwaysStrictFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.ts": `with (x) y`,
       "/Users/user/project/tsconfig.json": /* json */ `
@@ -1386,7 +1386,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectivePassThrough", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
       "/Users/user/project/src/explicit.ts": /* ts */ `
@@ -1406,7 +1406,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveFormat", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
       "/Users/user/project/src/explicit.ts": /* ts */ `
@@ -1426,7 +1426,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
       "/Users/user/project/src/explicit.ts": /* ts */ `
@@ -1446,7 +1446,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleCJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should start with "use strict"')`,
       "/Users/user/project/src/explicit.ts": /* ts */ `
@@ -1466,7 +1466,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/implicit.ts": `console.log('this file should not start with "use strict"')`,
       "/Users/user/project/src/explicit.ts": /* ts */ `
@@ -1486,7 +1486,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigExtendsDotWithoutSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
       "/Users/user/project/src/foo.json": /* json */ `
@@ -1507,7 +1507,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigExtendsDotDotWithoutSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
       "/Users/user/project/src/tsconfig.json": /* json */ `
@@ -1527,7 +1527,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigExtendsDotWithSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
       "/Users/user/project/src/foo.json": /* json */ `
@@ -1548,7 +1548,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("tsconfig/TsConfigExtendsDotDotWithSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/main.ts": `console.log(123n)`,
       "/Users/user/project/src/tsconfig.json": /* json */ `

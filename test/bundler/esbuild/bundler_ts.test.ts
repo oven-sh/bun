@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("ts/TSDeclareConst", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare const require: any
@@ -22,7 +22,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareLet", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare let require: any
@@ -36,7 +36,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareVar", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare var require: any
@@ -50,7 +50,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareClass", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare class require {}
@@ -64,7 +64,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareClassFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import './define-false'
@@ -109,7 +109,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareFunction", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare function require(): void
@@ -123,7 +123,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare namespace require {}
@@ -137,7 +137,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareEnum", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare enum require {}
@@ -151,7 +151,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSDeclareConstEnum", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         declare const enum require {}
@@ -165,7 +165,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSConstEnumComments", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -195,7 +195,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportEmptyNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './ns.ts'
@@ -207,7 +207,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import fn, {x as a, y as b} from './foo'
@@ -218,7 +218,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportMissingUnusedES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
@@ -226,7 +226,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSExportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -238,7 +238,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportMissingFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {Something} from './doesNotExist.ts'
@@ -248,7 +248,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportTypeOnlyFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {SomeType1} from './doesNotExist1.ts'
@@ -259,7 +259,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSExportEquals", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         import b from './b.ts'
@@ -273,7 +273,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSExportNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         import {Foo} from './b.ts'
@@ -292,7 +292,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyEnum", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": `enum Foo { A, B, C = Foo }`,
       "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
@@ -305,7 +305,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnum", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
       "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
@@ -318,7 +318,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnumNoLogicalAssignment", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
       "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
@@ -332,7 +332,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnumNoArrow", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": `function foo() { enum Foo { A, B, C = Foo } return Foo }`,
       "/b.ts": `export function foo() { enum Foo { X, Y, Z = Foo } return Foo }`,
@@ -346,7 +346,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -371,7 +371,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNamespaceNoLogicalAssignment", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -397,7 +397,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyNamespaceNoArrow", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.ts": /* ts */ `
         namespace Foo {
@@ -423,7 +423,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifyDerivedClass", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo extends Bar {
@@ -443,7 +443,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportVsLocalCollisionAllTypes", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e} from './other.ts'
@@ -459,7 +459,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportVsLocalCollisionMixed", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {a, b, c, d, e, real} from './other.ts'
@@ -475,7 +475,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportEqualsEliminationTest", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import a = foo.a
@@ -492,7 +492,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportEqualsTreeShakingFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -505,7 +505,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportEqualsTreeShakingTrue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -518,7 +518,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportEqualsBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { foo } from 'pkg'
@@ -530,7 +530,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifiedBundleES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {foo} from './a'
@@ -548,7 +548,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSMinifiedBundleCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const {foo} = require('./a')
@@ -567,7 +567,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TypeScriptDecorators", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import all from './all'
@@ -707,7 +707,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TypeScriptDecoratorsKeepNames", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         @decoratorMustComeAfterName
@@ -717,7 +717,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TypeScriptDecoratorScopeIssue2147", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         let foo = 1
@@ -748,7 +748,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSExportDefaultTypeIssue316", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import dc_def, { bar as dc } from './keep/declare-class'
@@ -870,7 +870,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImplicitExtensions", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import './pick-js.js'
@@ -896,7 +896,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImplicitExtensionsMissing", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import './mjs.mjs'
@@ -914,7 +914,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/ExportTypeIssue379", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as A from './a'
@@ -949,7 +949,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { console.log(this) }
@@ -981,7 +981,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSUseDefineForClassFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { console.log(this) }
@@ -1013,7 +1013,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { console.log(this) }
@@ -1046,7 +1046,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         function foo(x = this) { console.log(this) }
@@ -1079,7 +1079,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1097,7 +1097,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineTrue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1115,7 +1115,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineTrueLower", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1135,7 +1135,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSAbstractClassFieldUseAssign", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const keepThis = Symbol('keepThis')
@@ -1154,7 +1154,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSAbstractClassFieldUseDefine", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const keepThisToo = Symbol('keepThisToo')
@@ -1173,7 +1173,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportMTS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,
@@ -1181,7 +1181,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportCTS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `require('./required.cjs')`,
       "/required.cjs": `console.log('works')`,
@@ -1189,7 +1189,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSSideEffectsFalseWarningTypeDeclarations", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import "some-js"
@@ -1212,7 +1212,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSSiblingNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1240,7 +1240,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSSiblingEnum", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/number.ts": /* ts */ `
         export enum x { y, yy = y }
@@ -1317,7 +1317,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumTreeShaking", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/simple-member.ts": /* ts */ `
         enum x { y = 123 }
@@ -1369,7 +1369,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/element.tsx": /* tsx */ `
         export enum Foo { Div = 'div' }
@@ -1393,7 +1393,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumDefine", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `enum a { b = 123, c = d }`,
     },
@@ -1401,7 +1401,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumSameModuleInliningAccess", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         enum a { x = 123 }
@@ -1421,7 +1421,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningAccess", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { a, b, c, d, e } from './enums'
@@ -1444,7 +1444,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningDefinitions", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import { a } from './enums'
@@ -1467,7 +1467,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningReExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import { a } from './re-export'
@@ -1490,7 +1490,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleTreeShaking", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -1536,7 +1536,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumExportClause", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -1564,7 +1564,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSThisIsUndefinedWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/warning1.ts": `export var foo = this`,
       "/warning2.ts": `export var foo = this || this.foo`,
@@ -1577,7 +1577,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSCommonJSVariableInESMTypeModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `module.exports = null`,
       "/package.json": `{ "type": "module" }`,
@@ -1585,7 +1585,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/EnumRulesFrom_TypeScript_5_0", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/supported.ts": /* ts */ `
         // From https://github.com/microsoft/TypeScript/pull/50528:
@@ -1664,7 +1664,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSEnumUseBeforeDeclare", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         export function before() {

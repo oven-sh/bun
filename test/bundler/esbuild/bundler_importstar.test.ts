@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("importstar/ImportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -20,7 +20,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -32,7 +32,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -44,7 +44,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -60,7 +60,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -76,7 +76,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -92,7 +92,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -105,7 +105,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -118,7 +118,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './bar'
@@ -131,7 +131,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
@@ -144,7 +144,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
@@ -157,7 +157,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './bar'
@@ -170,7 +170,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -182,7 +182,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -194,7 +194,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -206,7 +206,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarAndCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -218,7 +218,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -230,7 +230,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -242,7 +242,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -254,7 +254,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -267,7 +267,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -280,7 +280,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -293,7 +293,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarOmitAmbiguous", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './common'
@@ -315,7 +315,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportExportStarAmbiguousError", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x, y, z} from './common'
@@ -337,7 +337,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportExportStarAmbiguousWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './common'
@@ -359,7 +359,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x, y} from './common'
@@ -376,7 +376,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * from './a'
@@ -390,7 +390,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguous", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from './a'
@@ -406,7 +406,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguousReExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from './a'
@@ -423,7 +423,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportStarOfExportStarAs", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo_ns from './foo'
@@ -435,7 +435,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportOfExportStar", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar} from './foo'
@@ -454,7 +454,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportOfExportStarOfImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar} from './foo'
@@ -474,7 +474,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -485,7 +485,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -496,7 +496,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -507,7 +507,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -518,7 +518,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfCommonJSMinified", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         module.exports = {foo: 123}
@@ -530,7 +530,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportSelfCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         exports.foo = 123
@@ -542,7 +542,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfAsNamespaceES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -553,7 +553,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportExportSelfAsNamespaceES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -565,7 +565,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportOtherFileExportSelfAsNamespaceES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
@@ -577,7 +577,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportOtherFileImportExportSelfAsNamespaceES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
@@ -590,7 +590,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/OtherFileExportSelfAsNamespaceUnusedES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {foo} from './foo'`,
       "/foo.js": /* js */ `
@@ -602,7 +602,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/OtherFileImportExportSelfAsNamespaceUnusedES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {foo} from './foo'`,
       "/foo.js": /* js */ `
@@ -615,7 +615,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfAsNamespaceCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -626,7 +626,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfAndRequireSelfCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export const foo = 123
@@ -637,7 +637,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportSelfAndImportSelfCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as x from './entry'
@@ -649,7 +649,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportOtherAsNamespaceCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as ns from './foo'`,
       "/foo.js": `exports.foo = 123`,
@@ -658,7 +658,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportExportOtherAsNamespaceCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -670,7 +670,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -682,7 +682,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportOtherCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {bar} from './foo'`,
       "/foo.js": `exports.foo = 123`,
@@ -691,7 +691,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportOtherNestedCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {y} from './bar'`,
       "/bar.js": `export {x as y} from './foo'`,
@@ -701,7 +701,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportUnusedMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -713,7 +713,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportMissingCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -724,7 +724,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportUnusedMissingCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -735,7 +735,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportNamespaceImportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './foo'
@@ -747,7 +747,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportNamespaceImportUnusedMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {ns} from './foo'
@@ -759,7 +759,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportReExportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -771,7 +771,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportReExportUnusedMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -783,7 +783,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportReExportStarMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -796,7 +796,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/NamespaceImportReExportStarUnusedMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -809,7 +809,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ExportStarDefaultExportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from './foo'`,
       "/foo.js": /* js */ `
@@ -821,7 +821,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/Issue176", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as things from './folders'
@@ -834,7 +834,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -843,7 +843,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -851,7 +851,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -859,7 +859,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarIIFENoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -868,7 +868,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarES6NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -877,7 +877,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarCommonJSNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from "foo"`,
     },
@@ -886,7 +886,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -895,7 +895,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -903,7 +903,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -911,7 +911,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsIIFENoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -920,7 +920,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsES6NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -929,7 +929,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarAsCommonJSNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * as out from "foo"`,
     },
@@ -938,7 +938,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportDefaultNamespaceComboIssue446", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/external-default2.js": /* js */ `
         import def, {default as default2} from 'external'
@@ -1008,7 +1008,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportDefaultNamespaceComboNoDefault", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry-default-ns-prop.js": `import def, * as ns from './foo'; console.log(def, ns, ns.default)`,
       "/entry-default-ns.js": `import def, * as ns from './foo'; console.log(def, ns)`,
@@ -1028,7 +1028,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertyEmptyFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry-nope.js": /* js */ `
         import * as js from './empty.js'
@@ -1059,7 +1059,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertySideEffectFreeFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry-nope.js": /* js */ `
         import * as js from './foo/no-side-effects.js'
@@ -1091,7 +1091,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * from 'a'

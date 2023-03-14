@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         body {
@@ -19,14 +19,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImportMissing", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
     snapshot: true,
   });
   itBundled("css/CSSAtImportExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "./internal.css";
@@ -62,7 +62,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "./a.css";
@@ -82,7 +82,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSFromJSMissingImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {missing} from "./a.css"
@@ -93,7 +93,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSFromJSMissingStarImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from "./a.css"
@@ -105,7 +105,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/ImportCSSFromJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "./a.js"
@@ -125,7 +125,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/ImportCSSFromJSWriteToStdout", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import "./entry.css"`,
       "/entry.css": `.entry { color: red }`,
@@ -133,7 +133,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/ImportJSFromCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export default 123`,
       "/entry.css": `@import "./entry.js";`,
@@ -142,7 +142,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/ImportJSONFromCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.json": `{}`,
       "/entry.css": `@import "./entry.json";`,
@@ -151,7 +151,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/MissingImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entry.css": /* css */ `
         a { background: url(./one.png); }
@@ -161,7 +161,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/ExternalImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entry.css": /* css */ `
         div:after {
@@ -180,7 +180,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/InvalidImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a {
@@ -202,7 +202,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/TextImportURLInCSSText", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a {
@@ -214,7 +214,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/DataURLImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a {
@@ -225,7 +225,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/BinaryImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a {
@@ -236,7 +236,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/Base64ImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a {
@@ -247,7 +247,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/FileImportURLInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "./one.css";
@@ -259,7 +259,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/IgnoreURLsInAtRulePrelude", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         /* This should not generate a path resolution error */
@@ -271,7 +271,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/PackageURLsInCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "test.css";
@@ -289,7 +289,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImportExtensionOrderCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "./test";`,
       "/test.js": `console.log('js')`,
@@ -301,7 +301,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "./test";`,
       "/test.js": `console.log('js')`,
@@ -313,7 +313,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "./print.css" print;`,
     },
@@ -321,21 +321,21 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundleExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/print.css" print;`,
     },
     snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundleExternalConditionWithURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/foo.css" (foo: url("foo.png")) and (bar: url("bar.png"));`,
     },
     snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "./print.css" print;`,
       "/print.css": `body { color: red }`,
@@ -343,7 +343,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSAndJavaScriptCodeSplittingIssue1064", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import shared from './shared.js'
@@ -370,7 +370,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSExternalQueryAndHashNoMatchIssue1822", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a { background: url(foo/bar.png?baz) }
@@ -381,7 +381,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSExternalQueryAndHashMatchIssue1822", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a { background: url(foo/bar.png?baz) }
@@ -392,7 +392,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/CSSNestingOldBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/nested-@layer.css": `a { @layer base { color: red; } }`,
       "/nested-@media.css": `a { @media screen { color: red; } }`,
@@ -443,7 +443,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/MetafileCSSBundleTwoToOne", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/foo/entry.js": /* js */ `
         import '../common.css'
@@ -465,7 +465,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("css/DeduplicateRules", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {},
     entryPoints: [
       "/yes0.css",

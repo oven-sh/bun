@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -27,7 +27,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -46,7 +46,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -65,7 +65,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -84,7 +84,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -103,7 +103,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -122,7 +122,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -142,7 +142,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -162,7 +162,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -181,7 +181,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -200,7 +200,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -219,7 +219,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -238,7 +238,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -257,7 +257,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import * as ns from "demo-pkg"
@@ -276,7 +276,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -295,7 +295,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -314,7 +314,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -339,7 +339,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -364,7 +364,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -389,7 +389,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -419,7 +419,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -444,7 +444,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -469,7 +469,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -494,7 +494,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -524,7 +524,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/keep/this/file"
@@ -545,7 +545,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"
@@ -564,7 +564,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsKeepExportDefaultExpr", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import foo from "demo-pkg"
@@ -580,7 +580,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesIssue999", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg"
@@ -603,7 +603,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import {foo} from "demo-pkg"`,
       "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
@@ -616,7 +616,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUsed", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -632,7 +632,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainAll", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -653,7 +653,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainOne", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -671,7 +671,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "a"
@@ -697,7 +697,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -715,7 +715,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import("a").then(x => assert(x.foo === "foo"))`,
       "/Users/user/project/node_modules/a/index.js": `export {foo} from "b"`,
@@ -735,7 +735,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/JSONLoaderRemoveUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.json"
@@ -746,7 +746,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TextLoaderRemoveUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.txt"
@@ -757,7 +757,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/Base64LoaderRemoveUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
@@ -768,7 +768,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DataURLLoaderRemoveUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
@@ -779,7 +779,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/FileLoaderRemoveUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import unused from "./example.data"
@@ -790,7 +790,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportMeta", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -802,7 +802,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveUnusedPureCommentCalls", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function bar() {}
@@ -869,7 +869,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingReactElements", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         function Foo() {}
@@ -887,7 +887,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DisableTreeShaking", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import './remove-me'
@@ -916,7 +916,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("dce/DeadCodeFollowingJump", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function testReturn() {
@@ -1002,7 +1002,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveTrailingReturn", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo() {
@@ -1039,7 +1039,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/ImportReExportOfNamespaceImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         import * as ns from 'pkg'
@@ -1056,7 +1056,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingImportIdentifier", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as a from './a'
@@ -1072,7 +1072,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingObjectProperty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = { x: 'x' }
@@ -1108,7 +1108,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { x }
@@ -1142,7 +1142,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let remove1 = class { static x }
@@ -1176,7 +1176,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingUnaryOperators", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These operators may have side effects
@@ -1199,7 +1199,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingBinaryOperators", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These operators may have side effects
@@ -1254,7 +1254,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1267,7 +1267,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleCJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1280,7 +1280,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function keep() {}
@@ -1293,7 +1293,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {keep1} from './lib'
@@ -1313,7 +1313,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETypeOf", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These should be removed because they have no side effects
@@ -1340,7 +1340,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsString", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         var hasBar = typeof bar !== 'undefined'
@@ -1351,7 +1351,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsStringMangle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
@@ -1364,7 +1364,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsStringGuardCondition", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
@@ -1462,7 +1462,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETypeOfCompareStringGuardCondition", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Everything here should be removed as dead code due to tree shaking
@@ -1524,7 +1524,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveUnusedImports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from 'a'
@@ -1537,7 +1537,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportsEval", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from 'a'
@@ -1551,7 +1551,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import a from 'a'
@@ -1566,7 +1566,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCEClassStaticBlocks", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class A_REMOVE {
@@ -1606,7 +1606,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCEVarExports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         var foo = { bar: 123 }
@@ -1625,13 +1625,13 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/DCETemplateLiteral", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {},
     entryPoints: ["/entry.js"],
     snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class REMOVE_ME {
@@ -1658,7 +1658,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldMinified", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class REMOVE_ME {
@@ -1686,7 +1686,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldAssignment", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class KeepMe1 {
@@ -1712,7 +1712,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/InlineIdentityFunctionCalls", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/identity.js": /* js */ `
         function DROP(x) { return x }
@@ -1859,7 +1859,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/InlineEmptyFunctionCalls", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/empty.js": /* js */ `
         function DROP() {}
@@ -1973,7 +1973,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/InlineFunctionCallBehaviorChanges", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function empty() {}
@@ -2002,7 +2002,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/InlineFunctionCallForInitDecl", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function empty() {}
@@ -2015,7 +2015,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/ConstValueInliningNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/top-level.js": /* js */ `
         // These should be kept because they are top-level and tree shaking is not enabled
@@ -2168,7 +2168,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/ConstValueInliningBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/exported-entry.js": /* js */ `
         const x_REMOVE = 1
@@ -2289,7 +2289,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/ConstValueInliningAssign", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/const-assign.js": /* js */ `
         const x = 1
@@ -2305,7 +2305,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/ConstValueInliningDirectEval", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/top-level-no-eval.js": /* js */ `
         const x = 1
@@ -2352,7 +2352,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/CrossModuleConstantFolding", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/enum-constants.ts": /* ts */ `
         export enum x {
@@ -2462,7 +2462,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2493,7 +2493,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/var2.js": /* js */ `
         var x = 1
@@ -2524,7 +2524,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PureCallsWithSpread", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         /* @__PURE__ */ foo(...args);
@@ -2534,7 +2534,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TopLevelFunctionInliningWithSpread", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function empty1() {}
@@ -2586,7 +2586,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/NestedFunctionInliningWithSpread", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function empty1() {}
@@ -2642,7 +2642,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "demo-pkg/foo"
@@ -2662,7 +2662,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
@@ -2683,7 +2683,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
@@ -2705,7 +2705,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
@@ -2727,7 +2727,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
@@ -2749,7 +2749,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
@@ -2771,7 +2771,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
@@ -2795,7 +2795,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'

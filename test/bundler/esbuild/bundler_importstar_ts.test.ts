@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("ts/TSImportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -20,7 +20,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -32,7 +32,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -44,7 +44,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -60,7 +60,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -76,7 +76,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -92,7 +92,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -105,7 +105,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -118,7 +118,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import {ns} from './bar'
@@ -131,7 +131,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './bar'
@@ -144,7 +144,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './bar'
@@ -157,7 +157,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './bar'
@@ -170,7 +170,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -182,7 +182,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -194,7 +194,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -206,7 +206,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarAndCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -218,7 +218,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -230,7 +230,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -242,7 +242,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -254,7 +254,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleUnused", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -267,7 +267,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -280,7 +280,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleNoCapture", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './foo'
@@ -293,7 +293,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("ts/TSReExportTypeOnlyFileES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import * as ns from './re-export'

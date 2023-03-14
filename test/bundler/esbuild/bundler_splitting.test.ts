@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("splitting/SplittingSharedES6IntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {foo} from "./shared.js"
@@ -26,7 +26,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingSharedCommonJSIntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         const {foo} = require("./shared.js")
@@ -44,7 +44,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicES6IntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import("./foo.js").then(({bar}) => console.log(bar))`,
       "/foo.js": `export let bar = 123`,
@@ -54,7 +54,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicCommonJSIntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import("./foo.js").then(({default: {bar}}) => console.log(bar))`,
       "/foo.js": `exports.bar = 123`,
@@ -64,7 +64,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicAndNotDynamicES6IntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar as a} from "./foo.js"
@@ -77,7 +77,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicAndNotDynamicCommonJSIntoES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {bar as a} from "./foo.js"
@@ -90,7 +90,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingAssignToLocal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {foo, setFoo} from "./shared.js"
@@ -114,7 +114,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingSideEffectsWithoutDependencies", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {a} from "./shared.js"
@@ -136,7 +136,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingNestedDirectories", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/pages/pageA/page.js": /* js */ `
         import x from "../shared.js"
@@ -154,7 +154,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingCircularReferenceIssue251", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         export * from './b.js';
@@ -171,7 +171,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingMissingLazyExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {foo} from './common.js'
@@ -197,7 +197,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingReExportIssue273", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `export const a = 1`,
       "/b.js": `export { a } from './a'`,
@@ -208,7 +208,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicImportIssue272", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `import('./b')`,
       "/b.js": `export default 1`,
@@ -219,7 +219,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDynamicImportOutsideSourceTreeIssue264", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry1.js": `import('package')`,
       "/Users/user/project/src/entry2.js": `import('package')`,
@@ -231,7 +231,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingCrossChunkAssignmentDependencies", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {setValue} from './shared'
@@ -260,7 +260,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingCrossChunkAssignmentDependenciesRecursive", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import { setX } from './x'
@@ -302,7 +302,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingDuplicateChunkCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `import "./ab"`,
       "/b.js": `import "./ab"`,
@@ -318,7 +318,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingMinifyIdentifiersCrashIssue437", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import {foo} from "./shared"
@@ -338,7 +338,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingHybridESMAndCJSIssue617", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `export let foo`,
       "/b.js": `export let bar = require('./a')`,
@@ -349,7 +349,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingPublicPathEntryName", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,
@@ -361,7 +361,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/SplittingChunkPathDirPlaceholderImplicitOutbase", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": `console.log(import('./output-path/should-contain/this-text/file'))`,
       "/project/output-path/should-contain/this-text/file.js": `console.log('file.js')`,
@@ -371,7 +371,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/EdgeCaseIssue2793WithSplitting", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/a.js": `export const A = 42;`,
       "/src/b.js": `export const B = async () => (await import(".")).A`,
@@ -386,7 +386,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("splitting/EdgeCaseIssue2793WithoutSplitting", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/a.js": `export const A = 42;`,
       "/src/b.js": `export const B = async () => (await import(".")).A`,

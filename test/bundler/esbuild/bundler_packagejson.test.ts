@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("packagejson/PackageJsonMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -28,7 +28,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBadMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -48,7 +48,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonSyntaxErrorComment", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -69,7 +69,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonSyntaxErrorTrailingComma", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -90,7 +90,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -116,7 +116,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserString", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -136,7 +136,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeToRelative", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -169,7 +169,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeToModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -195,7 +195,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapRelativeDisabled", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -220,7 +220,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleToRelative", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -253,7 +253,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleToModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -286,7 +286,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapModuleDisabled", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -314,7 +314,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapNativeModuleDisabled", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -337,7 +337,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserMapAvoidMissing", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'component-classes'`,
       "/Users/user/project/node_modules/component-classes/package.json": /* json */ `
@@ -363,7 +363,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserOverModuleBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -396,7 +396,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserOverMainNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -429,7 +429,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserWithModuleBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -470,7 +470,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserWithMainNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -511,7 +511,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserNodeModulesNoExt", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {browser as a} from 'demo-pkg/no-ext'
@@ -539,7 +539,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserNodeModulesIndexNoExt", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {browser as a} from 'demo-pkg/no-ext'
@@ -567,7 +567,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserNoExt", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {browser as a} from './demo-pkg/no-ext'
@@ -595,7 +595,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserIndexNoExt", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {browser as a} from './demo-pkg/no-ext'
@@ -623,7 +623,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserIssue2002A", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -640,7 +640,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserIssue2002B", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -657,7 +657,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonBrowserIssue2002C", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg/sub')`,
       "/Users/user/project/src/node_modules/pkg/package.json": /* json */ `
@@ -674,7 +674,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportOnly", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -692,7 +692,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardRequireOnly", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log(require('demo-pkg'))`,
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
@@ -707,7 +707,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSameFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -725,7 +725,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireSeparateFiles", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -748,7 +748,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireForceModuleBeforeMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -773,7 +773,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -795,7 +795,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireImplicitMainForceModuleBeforeMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-index'
@@ -819,7 +819,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonDualPackageHazardImportAndRequireBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'
@@ -848,7 +848,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonMainFieldsA", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -868,7 +868,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonMainFieldsB", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from 'demo-pkg'
@@ -888,7 +888,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonNeutralNoDefaultMainFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -915,7 +915,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonNeutralExplicitMainFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -939,7 +939,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorInvalidModuleSpecifier", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -960,7 +960,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorInvalidPackageConfiguration", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -972,7 +972,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorInvalidPackageTarget", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -986,7 +986,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorPackagePathNotExported", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": {} } }`,
@@ -994,7 +994,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorModuleNotFound", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { ".": "./foo.js" } }`,
@@ -1002,7 +1002,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorUnsupportedDirectoryImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1015,7 +1015,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsRequireOverImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `require('pkg')`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1033,7 +1033,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsImportOverRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1051,7 +1051,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsDefaultOverImportAndRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1070,7 +1070,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsEntryPointImportOverRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1091,7 +1091,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsEntryPointRequireOnly", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1110,7 +1110,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsEntryPointModuleOverMain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1125,7 +1125,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsEntryPointMainOnly", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/node_modules/pkg/package.json": /* json */ `
         {
@@ -1138,7 +1138,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1157,7 +1157,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1176,7 +1176,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsNeutral", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg'`,
       "/Users/user/project/node_modules/pkg/package.json": /* json */ `
@@ -1196,7 +1196,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsOrderIndependent", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1/foo/bar.js'
@@ -1226,7 +1226,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsWildcard", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1/foo'
@@ -1245,7 +1245,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsErrorMissingTrailingSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": `{ "exports": { "./foo/": "./test" } }`,
@@ -1253,7 +1253,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsCustomConditions", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1271,7 +1271,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsNotExactMissingExtension", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1286,7 +1286,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsNotExactMissingExtensionPattern", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1301,7 +1301,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsExactMissingExtension", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'pkg1/foo/bar'`,
       "/Users/user/project/node_modules/pkg1/package.json": /* json */ `
@@ -1316,7 +1316,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsNoConditionsMatch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1339,7 +1339,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsMustUseRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg1'
@@ -1362,7 +1362,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsMustUseImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         require('pkg1')
@@ -1385,7 +1385,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsReverseLookup", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         require('pkg/path/to/real/file')
@@ -1409,7 +1409,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsPatternTrailers", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import 'pkg/path/foo.js/bar.js'
@@ -1438,7 +1438,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonExportsAlternatives", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import redApple from 'pkg/apples/red.js'
@@ -1463,7 +1463,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImports", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/foo/entry.js": /* js */ `
         import '#top-level'
@@ -1489,7 +1489,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportsRemapToOtherPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import '#top-level'
@@ -1515,7 +1515,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportsErrorMissingRemappedPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import '#foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1529,7 +1529,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportsInvalidPackageConfiguration", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import '#foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1541,7 +1541,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportsErrorEqualsHash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import '#'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1553,7 +1553,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportsErrorStartsWithHashSlash", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import '#/foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1565,7 +1565,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonMainFieldsErrorMessageDefault", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,
       "/Users/user/project/node_modules/foo/package.json": /* json */ `
@@ -1577,7 +1577,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonMainFieldsErrorMessageNotIncluded", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,
       "/Users/user/project/node_modules/foo/package.json": /* json */ `
@@ -1590,7 +1590,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonMainFieldsErrorMessageEmpty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'foo'`,
       "/Users/user/project/node_modules/foo/package.json": /* json */ `
@@ -1603,7 +1603,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonTypeShouldBeTypes", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": ``,
       "/Users/user/project/package.json": /* json */ `
@@ -1617,7 +1617,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1645,7 +1645,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "xyz"
@@ -1672,7 +1672,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingRequireScoped", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         module.exports = 'index'
@@ -1700,7 +1700,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingImportScoped", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": /* js */ `
         import xyz from "@some-scope/xyz"
@@ -1727,7 +1727,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingRequireFailure", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": `require("xyz/src/foo.js")`,
       "/Users/user/project/src/foo.js": `module.exports = 'foo'`,
@@ -1745,7 +1745,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonImportSelfUsingImportFailure", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": `import "xyz/src/foo.js"`,
       "/Users/user/project/src/foo.js": `export default 'foo'`,
@@ -1763,7 +1763,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/CommonJSVariableInESMTypeModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `module.exports = null`,
       "/package.json": `{ "type": "module" }`,
@@ -1771,7 +1771,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("packagejson/PackageJsonNodePathsIssue2752", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entry.js": /* js */ `
         import "pkg1"

@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("loader/LoaderFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
     },
@@ -16,7 +16,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileMultipleNoCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -29,14 +29,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/JSXSyntaxInJSWithJSXLoader", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
     snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import { mustStartWithUpperCaseLetter as Test } from './foo'
@@ -47,7 +47,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetterMinify", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import { mustStartWithUpperCaseLetter as XYYYY } from './foo'
@@ -59,7 +59,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetterMinifyNested", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         x = () => {
@@ -72,7 +72,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionString", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,
       "/test.custom": `#include <stdio.h>`,
@@ -80,21 +80,21 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionBase64", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,
     },
     snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionDataURL", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.custom'))`,
     },
     snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionPreferLongest", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.txt'), require('./test.base64.txt'))`,
       "/test.txt": `test.txt`,
@@ -103,14 +103,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/AutoDetectMimeTypeFromExtension", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.svg'))`,
     },
     snapshot: true,
   });
   itBundled("loader/LoaderJSONCommonJSAndES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_json = require('./x.json')
@@ -131,7 +131,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONInvalidIdentifierES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './test.json'
@@ -144,7 +144,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import {missing} from './test.json'`,
       "/test.json": `{"present": true}`,
@@ -152,7 +152,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderTextCommonJSAndES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_txt = require('./x.txt')
@@ -163,7 +163,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderBase64CommonJSAndES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_b64 = require('./x.b64')
@@ -174,7 +174,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLCommonJSAndES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_url = require('./x.txt')
@@ -185,7 +185,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileCommonJSAndES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x_url = require('./x.txt')
@@ -196,7 +196,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": /* js */ `
         import x from '../images/image.png'
@@ -207,7 +207,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.css": /* css */ `
         div {
@@ -219,7 +219,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathAssetNamesJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": /* js */ `
         import x from '../images/image.png'
@@ -236,7 +236,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileExtPathAssetNamesJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": /* js */ `
         import x from '../images/image.png'
@@ -254,7 +254,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathAssetNamesCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.css": /* css */ `
         div {
@@ -272,7 +272,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFilePublicPathJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": /* js */ `
         import x from '../images/image.png'
@@ -285,7 +285,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFilePublicPathCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.css": /* css */ `
         div {
@@ -299,7 +299,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFilePublicPathAssetNamesJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": /* js */ `
         import x from '../images/image.png'
@@ -318,7 +318,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFilePublicPathAssetNamesCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.css": /* css */ `
         div {
@@ -338,7 +338,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileOneSourceTwoDifferentOutputPathsJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.js": `import '../shared/common.js'`,
       "/src/entries/other/entry.js": `import '../../shared/common.js'`,
@@ -352,7 +352,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileOneSourceTwoDifferentOutputPathsCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry.css": `@import "../shared/common.css";`,
       "/src/entries/other/entry.css": `@import "../../shared/common.css";`,
@@ -367,7 +367,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
@@ -375,7 +375,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
@@ -385,7 +385,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleES6ArbitraryModuleNamespaceNames", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
@@ -394,7 +394,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
@@ -403,7 +403,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
@@ -412,7 +412,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderJSONSharedWithMultipleEntriesIssue413", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import data from './data.json'
@@ -429,7 +429,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFileWithQueryParameter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -442,7 +442,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderFromExtensionWithQueryParameter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import foo from './file.abc?query.xyz'
@@ -453,7 +453,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "data:text/css,body{color:%72%65%64}";
@@ -465,7 +465,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextCSSCannotImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import "data:text/css,@import './other.css';";`,
       "/other.css": `div { should-not-be-imported: true }`,
@@ -473,7 +473,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextJavaScript", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "data:text/javascript,console.log('%31%32%33')";
@@ -485,7 +485,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextJavaScriptCannotImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import "data:text/javascript,import './other.js'"`,
       "/other.js": `shouldNotBeImported = true`,
@@ -493,14 +493,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextJavaScriptPlusCharacter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import "data:text/javascript,console.log(1+2)";`,
     },
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLApplicationJSON", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from 'data:application/json,"%31%32%33"';
@@ -515,7 +515,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLUnknownMIME", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from 'data:some/thing;what,someData%31%32%33';
@@ -526,7 +526,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLExtensionBasedMIME", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.foo": /* foo */ `
         export { default as css }   from "./example.css"
@@ -576,7 +576,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLBase64VsPercentEncoding", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from './shouldUsePercent_1.txt'
@@ -594,7 +594,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLBase64InvalidUTF8", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from './binary.txt'
@@ -604,7 +604,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderDataURLEscapePercents", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import a from './percents.txt'
@@ -619,7 +619,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleFromJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import x from "../assets/some.file"
@@ -631,7 +631,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleFromCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.css": /* css */ `
         body {
@@ -644,7 +644,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleEntryPoint", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import x from "../assets/some.file"
@@ -666,7 +666,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyWithTransform", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log('entry')`,
       "/Users/user/project/assets/some.file": `stuff`,
@@ -677,7 +677,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyWithFormat", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log('entry')`,
       "/Users/user/project/assets/some.file": `stuff`,
@@ -689,7 +689,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/JSXAutomaticNoNameCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import { Link } from "@remix-run/react"
@@ -701,7 +701,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/AssertTypeJSONWrongLoader", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import foo from './foo.json' assert { type: 'json' }`,
       "/foo.json": `{}`,
@@ -709,7 +709,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/EmptyLoaderJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a.empty'
@@ -729,7 +729,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/EmptyLoaderCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import 'a.empty';
@@ -744,7 +744,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/ExtensionlessLoaderJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import './what'`,
       "/what": `foo()`,
@@ -752,7 +752,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/ExtensionlessLoaderCSS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.css": `@import './what';`,
       "/what": `.foo { color: red }`,
@@ -760,7 +760,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyEntryPointAdvanced", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import xyz from './xyz.copy'
@@ -783,14 +783,14 @@ describe("bundler", () => {
   		}, */ snapshot: true,
   });
   itBundled("loader/LoaderCopyUseIndex", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.copy": `some stuff`,
     },
     snapshot: true,
   });
   itBundled("loader/LoaderCopyExplicitOutputFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/TEST FAILED.copy": `some stuff`,
     },
@@ -798,7 +798,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyStartsWithDotAbsPath", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/src/.htaccess": `some stuff`,
       "/project/src/entry.js": `some.stuff()`,
@@ -808,7 +808,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("loader/LoaderCopyStartsWithDotRelPath", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/src/.htaccess": `some stuff`,
       "/project/src/entry.js": `some.stuff()`,

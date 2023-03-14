@@ -312,7 +312,7 @@ describe("bundler", () => {
     },
   });
   itBundled("default/ExportFormsCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require('./commonjs')
@@ -338,7 +338,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportChain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {b as a} from './foo'`,
       "/foo.js": `export {c as b} from './bar'`,
@@ -347,7 +347,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportInfiniteCycle1", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './entry'
@@ -359,7 +359,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportInfiniteCycle2", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './foo'
@@ -373,7 +373,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXImportsCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {elem, frag} from './custom-react'
@@ -387,7 +387,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXImportsES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {elem, frag} from './custom-react'
@@ -404,14 +404,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXSyntaxInJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
     snapshot: true,
   });
   itBundled("default/JSXConstantFragments", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './default'
@@ -436,7 +436,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXAutomaticImportsCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {jsx, Fragment} from './custom-react'
@@ -454,7 +454,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXAutomaticImportsES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {jsx, Fragment} from './custom-react'
@@ -475,7 +475,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXAutomaticSyntaxInJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
@@ -489,7 +489,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NodeModules", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -504,7 +504,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireChildDirCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log(require('./dir'))`,
       "/Users/user/project/src/dir/index.js": `module.exports = 123`,
@@ -512,7 +512,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireChildDirES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from './dir'
@@ -523,7 +523,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireParentDirCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/dir/entry.js": `console.log(require('..'))`,
       "/Users/user/project/src/index.js": `module.exports = 123`,
@@ -531,7 +531,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireParentDirES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/dir/entry.js": /* js */ `
         import value from '..'
@@ -542,7 +542,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -553,7 +553,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMissingUnusedES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
@@ -561,7 +561,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMissingCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -572,7 +572,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/named.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -595,7 +595,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportMissingES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -607,7 +607,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DotImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from '.'
@@ -618,7 +618,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireWithTemplate", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         console.log(require('./b'))
@@ -629,7 +629,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DynamicImportWithTemplateIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import('./b').then(ns => console.log(ns))
@@ -641,7 +641,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireAndDynamicImportInvalidTemplate", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require(tag\` + "\`./b\`" + \`)
@@ -672,7 +672,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DynamicImportWithExpressionCJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import('foo')
@@ -684,7 +684,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedDynamicImportWithExpressionCJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import('foo')
@@ -696,7 +696,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConditionalRequireResolve", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         require.resolve(x ? 'a' : y ? 'b' : 'c')
@@ -708,7 +708,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConditionalRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         require(x ? 'a' : y ? './b' : 'c')
@@ -719,7 +719,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConditionalImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": `import(x ? 'a' : y ? './import' : 'c')`,
       "/b.js": `import(x ? y ? 'a' : './import' : c)`,
@@ -729,7 +729,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireBadArgumentCount", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require()
@@ -745,7 +745,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireJson", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.json'))`,
       "/test.json": /* json */ `
@@ -759,7 +759,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireTxt", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.txt'))`,
       "/test.txt": `This is a test.`,
@@ -767,7 +767,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireBadExtension", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
@@ -775,7 +775,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/FalseRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `(require => require('/test.txt'))()`,
       "/test.txt": `This is a test.`,
@@ -783,7 +783,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireWithoutCall", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const req = require
@@ -793,7 +793,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NestedRequireWithoutCall", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -805,7 +805,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireWithCallInsideTry", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         try {
@@ -820,7 +820,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireWithoutCallInsideTry", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         try {
@@ -834,7 +834,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These shouldn't warn since the format is CommonJS
@@ -849,7 +849,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AwaitImportInsideTry", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         async function main(name) {
@@ -864,7 +864,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportInsideTry", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let x
@@ -878,7 +878,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportThenCatch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import(name).then(pass, fail)
@@ -889,7 +889,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/SourceMap", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {bar} from './bar'
@@ -903,7 +903,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NestedScopeBug", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -920,7 +920,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/HashbangBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #!/usr/bin/env a
@@ -935,7 +935,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/HashbangNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #!/usr/bin/env node
@@ -946,7 +946,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/HashbangBannerUseStrictOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #! in file
@@ -959,14 +959,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireFSBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
     snapshot: true,
   });
   itBundled("default/RequireFSNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `return require('fs')`,
     },
@@ -974,7 +974,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireFSNodeMinify", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `return require('fs')`,
     },
@@ -983,7 +983,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportFSBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
@@ -996,7 +996,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportFSNodeCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
@@ -1010,7 +1010,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportFSNodeES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
@@ -1024,7 +1024,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportFSBrowser", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * as fs from 'fs'
@@ -1034,7 +1034,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportFSNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * as fs from 'fs'
@@ -1044,7 +1044,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportFSNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {fs as f} from './foo'
@@ -1058,7 +1058,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportFSNodeInCommonJSModule", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as fs from 'fs'
@@ -1071,7 +1071,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportWildcardFSNodeES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from 'fs'`,
     },
@@ -1079,7 +1079,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportWildcardFSNodeCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export * from 'fs'`,
     },
@@ -1087,7 +1087,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedBundleES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {foo} from './a'
@@ -1106,7 +1106,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedBundleCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const {foo} = require('./a')
@@ -1125,7 +1125,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedBundleEndingWithImportantSemicolon", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `while(foo()); // This semicolon must not be stripped`,
     },
@@ -1134,7 +1134,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RuntimeNameCollisionNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function __require() { return 123 }
@@ -1145,7 +1145,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         return
@@ -1156,7 +1156,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelReturnForbiddenExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         return
@@ -1167,7 +1167,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelReturnForbiddenTLA", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `return await foo`,
     },
@@ -1175,7 +1175,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ThisOutsideFunction", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (shouldBeExportsNotThis) {
@@ -1199,7 +1199,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ThisInsideFunction", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function foo(x = this) { console.log(this) }
@@ -1231,7 +1231,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ThisWithES6Syntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './cjs'
@@ -1308,7 +1308,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ArrowFnScope", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         tests = {
@@ -1327,7 +1327,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/SwitchScopeNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         switch (foo) { default: var foo }
@@ -1339,7 +1339,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ArgumentDefaultValueScopeNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export function a(x = foo) { var foo; return x }
@@ -1357,7 +1357,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -1404,7 +1404,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/WithStatementTaintingNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -1433,7 +1433,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DirectEvalTaintingNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function test1() {
@@ -1474,7 +1474,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportReExportES6Issue149", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
@@ -1496,7 +1496,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalModuleExclusionPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/index.js": /* js */ `
         import { S3 } from 'aws-sdk';
@@ -1508,7 +1508,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalModuleExclusionScopedPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/index.js": /* js */ `
         import '@a1'
@@ -1530,7 +1530,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ScopedExternalModuleExclusion", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/index.js": /* js */ `
         import { Foo } from '@scope/foo';
@@ -1542,7 +1542,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `
@@ -1557,7 +1557,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportWithHashInPath", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import foo from './file#foo.txt'
@@ -1570,7 +1570,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportWithHashParameter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -1583,7 +1583,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportWithQueryParameter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -1596,7 +1596,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -1609,7 +1609,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportAbsPathAsFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         import pkg from '/Users/user/project/node_modules/pkg/index'
@@ -1621,7 +1621,7 @@ describe("bundler", () => {
   });
   test("default/ImportAbsPathAsDir", () => {
     expectBundled("default/ImportAbsPathAsDir", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Unix",
       files: {
         "/Users/user/project/entry.js": /* js */ `
@@ -1633,7 +1633,7 @@ describe("bundler", () => {
       snapshot: true,
     });
     expectBundled("default/ImportAbsPathAsDir_TODO_LABEL_1", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Windows",
       files: {
         "/Users/user/project/entry.js": /* js */ `
@@ -1646,7 +1646,7 @@ describe("bundler", () => {
     });
   });
   itBundled("default/AutoExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -1659,7 +1659,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AutoExternalNode", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -1676,7 +1676,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalWithWildcard", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Should match
@@ -1694,14 +1694,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalWildcardDoesNotMatchEntryPoint", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import "foo"`,
     },
     snapshot: true,
   });
   itBundled("default/ManyEntryPoints", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/shared.js": `export default 123`,
       "/e00.js": `import x from './shared'; console.log(x)`,
@@ -1790,7 +1790,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RenamePrivateIdentifiersNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1819,7 +1819,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifyPrivateIdentifiersNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1849,7 +1849,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RenameLabelsNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -1876,7 +1876,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifySiblingLabelsNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -1904,7 +1904,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifyNestedLabelsNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{nl('\n')
@@ -1941,7 +1941,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportsAndModuleFormatCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo from './foo/test'
@@ -1955,7 +1955,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedExportsAndModuleFormatCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo from './foo/test'
@@ -1970,7 +1970,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/EmptyExportClauseBundleAsCommonJSIssue910", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./types.mjs'))`,
       "/types.mjs": `export {}`,
@@ -1979,7 +1979,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/UseStrictDirectiveMinifyNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -1994,7 +1994,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleIssue1837", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(require('./cjs'))`,
       "/cjs.js": /* js */ `
@@ -2012,7 +2012,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleIIFEIssue2264", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2022,7 +2022,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleCJSIssue2264", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2032,7 +2032,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleESMIssue2264", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         'use strict'
@@ -2042,14 +2042,14 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NoOverwriteInputFileError", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
     snapshot: true,
   });
   itBundled("default/DuplicateEntryPoint", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
@@ -2057,7 +2057,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RelativeEntryPointError", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
@@ -2065,7 +2065,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
       "/b/entry.js": `import {foo} from '../common.js'; console.log(foo)`,
@@ -2075,7 +2075,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportCommonJSAsES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `export {bar} from './foo'`,
       "/foo.js": `exports.bar = 123`,
@@ -2083,7 +2083,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultInternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
@@ -2095,7 +2095,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultExternalES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from 'foo'
@@ -2107,7 +2107,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultExternalCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from 'foo'
@@ -2119,7 +2119,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
@@ -2130,7 +2130,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundleES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
@@ -2142,7 +2142,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundleCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {default as foo} from './foo'
@@ -2154,7 +2154,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMetaCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
@@ -2162,7 +2162,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMetaES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
@@ -2170,7 +2170,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportMetaNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
@@ -2178,7 +2178,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsNone", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2201,7 +2201,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsInline", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2224,7 +2224,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2247,7 +2247,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsLinked", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2270,7 +2270,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './a'
@@ -2293,7 +2293,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsModifyIndent", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default () => {
@@ -2315,7 +2315,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagInline", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2330,7 +2330,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2345,7 +2345,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         //! <script>foo</script>
@@ -2360,7 +2360,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsManyEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import './a'
@@ -2453,7 +2453,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
@@ -2465,7 +2465,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleExternal", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
@@ -2477,7 +2477,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsNoEscapeSlashScriptEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
@@ -2491,7 +2491,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsNoEscapeSlashStyleEndOfFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": `import "js-pkg"; a /*! </script> */`,
       "/project/node_modules/js-pkg/index.js": `x /*! </script> */`,
@@ -2505,7 +2505,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/LegalCommentsManyLinked", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import './a'
@@ -2570,7 +2570,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/IIFE_ES5", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log('test');`,
     },
@@ -2579,7 +2579,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/OutputExtensionRemappingFile", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log('test');`,
     },
@@ -2587,7 +2587,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/OutputExtensionRemappingDir", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `console.log('test');`,
     },
@@ -2595,7 +2595,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2606,7 +2606,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitIIFEDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2617,7 +2617,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitCJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2628,7 +2628,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitCJSDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2639,7 +2639,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2650,7 +2650,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitESMDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2661,7 +2661,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2672,7 +2672,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2683,7 +2683,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2695,7 +2695,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleESMDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2707,7 +2707,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2719,7 +2719,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleCommonJSDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2731,7 +2731,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleIIFE", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         await foo;
@@ -2743,7 +2743,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleIIFEDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         if (false) await foo;
@@ -2755,7 +2755,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -2772,7 +2772,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitForbiddenRequireDeadBranch", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -2789,7 +2789,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import('./a')
@@ -2806,7 +2806,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import('./a')
@@ -2824,7 +2824,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AssignToImport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "./bad0.js"
@@ -2877,7 +2877,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AssignToImportNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/bad0.js": `import x from "foo"; x = 1`,
       "/bad1.js": `import x from "foo"; x++`,
@@ -2930,7 +2930,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifyArguments", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function a(x = arguments) {
@@ -2951,7 +2951,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/WarningsInsideNodeModules", {
-    // TODO: hand check and tweak
+    // GENERATED
     host: "Unix",
     files: {
       "/entry.js": /* js */ `
@@ -2971,7 +2971,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireResolve", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(require.resolve)
@@ -3006,7 +3006,7 @@ describe("bundler", () => {
   });
   test("default/InjectMissing", () => {
     expectBundled("default/InjectMissing", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Unix",
       files: {
         "/entry.js": ``,
@@ -3014,7 +3014,7 @@ describe("bundler", () => {
       snapshot: true,
     });
     expectBundled("default/InjectMissing_TODO_LABEL_1", {
-      // TODO: hand check and tweak
+      // GENERATED
       host: "Windows",
       files: {
         "/entry.js": ``,
@@ -3023,7 +3023,7 @@ describe("bundler", () => {
     });
   });
   itBundled("default/InjectDuplicate", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": ``,
       "/inject.js": `console.log('injected')`,
@@ -3031,7 +3031,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/Inject", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let sideEffects = console.log('this should be renamed')
@@ -3111,7 +3111,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/InjectNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let sideEffects = console.log('side effects')
@@ -3183,7 +3183,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/InjectJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": `console.log(<><div/></>)`,
       "/inject.js": /* js */ `
@@ -3206,7 +3206,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/InjectJSXDotNames", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": `console.log(<><div/></>)`,
       "/inject.js": /* js */ `
@@ -3221,7 +3221,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/InjectImportTS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": `console.log('here')`,
       "/inject.js": /* js */ `
@@ -3238,7 +3238,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/InjectImportOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         import 'third'
@@ -3261,7 +3261,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/InjectAssign", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         test = true
@@ -3286,7 +3286,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/InjectWithDefine", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -3320,7 +3320,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/Outbase", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a/b/c.js": `console.log('c')`,
       "/a/b/d.js": `console.log('d')`,
@@ -3329,7 +3329,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AvoidTDZ", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -3344,7 +3344,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AvoidTDZNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -3360,7 +3360,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DefineImportMeta", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -3397,7 +3397,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/DefineImportMetaES5", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/replaced.js": `console.log(import.meta.x)`,
       "/kept.js": `console.log(import.meta.y)`,
@@ -3414,7 +3414,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/InjectImportMeta", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -3444,7 +3444,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DefineThis", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         ok(
@@ -3503,7 +3503,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/DefineOptionalChain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -3531,7 +3531,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/DefineOptionalChainLowered", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -3559,7 +3559,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/DefineInfiniteLoopIssue2407", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         a.b()
@@ -3591,7 +3591,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/DefineAssignWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/read.js": /* js */ `
         console.log(
@@ -3644,7 +3644,7 @@ describe("bundler", () => {
   	}) */ snapshot: true,
   });
   itBundled("default/KeepNamesTreeShaking", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function fnStmtRemove() {}
@@ -3668,7 +3668,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/KeepNamesClassStaticName", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class A { static foo }
@@ -3697,7 +3697,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CharFreqIgnoreComments", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -3721,7 +3721,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportRelativeAsPackage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `import 'some/other/file'`,
       "/Users/user/project/src/some/other/file.js": ``,
@@ -3729,7 +3729,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ForbidConstAssignWhenBundling", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const x = 1
@@ -3739,7 +3739,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConstWithLet", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -3753,7 +3753,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConstWithLetNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -3768,7 +3768,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ConstWithLetNoMangle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const a = 1; console.log(a)
@@ -3781,7 +3781,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireMainCacheCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log('is main:', require.main === module)
@@ -3794,7 +3794,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require('./a')
@@ -3819,7 +3819,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CallImportNamespaceWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/js.js": /* js */ `
         import * as a from "a"
@@ -3872,7 +3872,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXThisValueCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -3906,7 +3906,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXThisValueESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -3943,7 +3943,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXThisPropertyCommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -3977,7 +3977,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXThisPropertyESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -4014,7 +4014,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXImportMetaValue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -4051,7 +4051,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/JSXImportMetaProperty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/factory.jsx": /* jsx */ `
         console.log([
@@ -4088,7 +4088,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/BundlingFilesOutsideOfOutbase", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entry.js": `console.log('test')`,
     },
@@ -4168,14 +4168,14 @@ describe("bundler", () => {
   const relocateEntries = ["/top-level.js", "/nested.js", "/let.js", "/function.js", "/function-nested.js"];
 
   itBundled("default/VarRelocatingBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
     snapshot: true,
   });
   itBundled("default/VarRelocatingNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
@@ -4183,7 +4183,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ImportNamespaceThisValue", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/a.js": /* js */ `
         import def, * as ns from 'external'
@@ -4204,7 +4204,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ThisUndefinedWarningESM", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import x from './file1.js'
@@ -4218,7 +4218,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/QuotedProperty", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
@@ -4229,7 +4229,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/QuotedPropertyMangle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from 'ext'
@@ -4241,7 +4241,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/DuplicatePropertyWarning", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './outside-node-modules'
@@ -4255,7 +4255,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/RequireShimSubstitution", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -4284,7 +4284,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export function outer() {
@@ -4304,7 +4304,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log([
@@ -4327,7 +4327,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/app1/main.ts": `console.log(1)`,
       "/src/app2/main.ts": `console.log(2)`,
@@ -4347,7 +4347,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/EntryNamesNonPortableCharacter", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry1-*.ts": `console.log(1)`,
       "/entry2-*.ts": `console.log(2)`,
@@ -4362,7 +4362,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/EntryNamesChunkNamesExtPlaceholder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/src/entries/entry1.js": `import "../lib/shared.js"; import "./entry1.css"; console.log('entry1')`,
       "/src/entries/entry2.js": `import "../lib/shared.js"; import "./entry2.css"; console.log('entry2')`,
@@ -4382,7 +4382,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/import.js": /* js */ `
         import foo from "./WWWWWWWWWWXXXXXXXXXXYYYYYYYYYYZZZZZZZZZZ"
@@ -4400,7 +4400,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ToESMWrapperOmission", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'a_nowrap'
@@ -4439,7 +4439,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NamedFunctionExpressionArgumentCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let x = function foo(foo) {
@@ -4452,7 +4452,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NoWarnCommonJSExportsInESMPassThrough", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/cjs-in-esm.js": /* js */ `
         export let foo = 1
@@ -4471,7 +4471,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/WarnCommonJSExportsInESMConvert", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/cjs-in-esm.js": /* js */ `
         export let foo = 1
@@ -4495,7 +4495,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/WarnCommonJSExportsInESMBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/cjs-in-esm.js": /* js */ `
         export let foo = 1
@@ -4514,7 +4514,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MangleProps", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry1.js": /* js */ `
         export function shouldMangle() {
@@ -4561,7 +4561,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsMinify", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry1.js": /* js */ `
         export function shouldMangle_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX() {
@@ -4610,7 +4610,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsKeywordPropertyMinify", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -4625,7 +4625,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsOptionalChain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default function(x) {
@@ -4644,7 +4644,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default function(x) {
@@ -4664,7 +4664,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ReserveProps", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default {
@@ -4678,7 +4678,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsImportExport", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/esm.js": /* js */ `
         export let foo_ = 123
@@ -4694,7 +4694,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsImportExportBundled", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry-esm.js": /* js */ `
         import { esm_foo_ } from './esm'
@@ -4723,7 +4723,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsJSXTransform", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -4746,7 +4746,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsJSXPreserve", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         let Foo = {
@@ -4764,7 +4764,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         export default [
@@ -4778,7 +4778,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsAvoidCollisions", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default {
@@ -4794,7 +4794,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsTypeScriptFeatures", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/parameter-properties.ts": /* ts */ `
         class Foo {
@@ -4878,7 +4878,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsShorthand", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // This should print as "({ y }) => ({ y })" not "({ y: y }) => ({ y: y })"
@@ -4890,7 +4890,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsNoShorthand", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // This should print as "({ y }) => ({ y: y })" not "({ y: y }) => ({ y: y })"
@@ -4903,7 +4903,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsLoweredClassFields", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -4918,7 +4918,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ManglePropsSuperCall", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {}
@@ -4933,7 +4933,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MangleNoQuotedProps", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         x['_doNotMangleThis'];
@@ -4955,7 +4955,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MangleNoQuotedPropsMinifySyntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         x['_doNotMangleThis'];
@@ -4978,7 +4978,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MangleQuotedProps", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/keep.js": /* js */ `
         foo("_keepThisProperty");
@@ -5021,7 +5021,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MangleQuotedPropsMinifySyntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/keep.js": /* js */ `
         foo("_keepThisProperty");
@@ -5065,7 +5065,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/IndirectRequireMessage", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/array.js": `let x = [require]`,
       "/assign.js": `require = x`,
@@ -5078,7 +5078,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/AmbiguousReexportMsg", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * from './a'
@@ -5093,7 +5093,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/NonDeterminismIssue2537", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         export function aap(noot: boolean, wim: number) {
@@ -5121,7 +5121,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MinifiedJSXPreserveWithObjectSpread", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         const obj = {
@@ -5150,7 +5150,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/PackageAlias", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "pkg1"
@@ -5182,7 +5182,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/PackageAliasMatchLongest", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import "pkg"
@@ -5202,7 +5202,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ErrorsForAssertTypeJSON", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/js-entry.js": /* js */ `
         import all from './foo.json' assert { type: 'json' }
@@ -5237,7 +5237,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/OutputForAssertTypeJSON", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/js-entry.js": /* js */ `
         import all from './foo.json' assert { type: 'json' }
@@ -5263,7 +5263,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExternalPackages", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import 'pkg1'
@@ -5285,7 +5285,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MetafileVariousCases", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import a from 'extern-esm'
@@ -5343,7 +5343,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MetafileNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/entry.js": /* js */ `
         import a from 'pkg'
@@ -5369,7 +5369,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/bytesInOutput should be at least 99 (1).js": /* js */ `
         import a from './\` + strings.Repeat("1", 99) + \`.file'
@@ -5399,7 +5399,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CommentPreservation", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -5555,7 +5555,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CommentPreservationImportAssertions", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import 'foo' /* before */ assert { type: 'json' }
@@ -5568,7 +5568,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CommentPreservationTransformJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -5598,7 +5598,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/CommentPreservationPreserveJSX", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         console.log(
@@ -5628,7 +5628,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ErrorMessageCrashStdinIssue2913", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,
       "/project/node_modules/fflate/main.js": ``,

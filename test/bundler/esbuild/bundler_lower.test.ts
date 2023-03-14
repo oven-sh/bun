@@ -8,7 +8,7 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   itBundled("lower/LowerOptionalCatchNameCollisionNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         try {}
@@ -21,7 +21,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerObjectSpreadNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         let tests = [
@@ -45,7 +45,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerExponentiationOperatorNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let tests = {
@@ -84,7 +84,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2015NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -121,7 +121,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2019NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -158,7 +158,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2020NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -195,7 +195,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignmentsNextNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -231,7 +231,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2019NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -249,7 +249,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2020NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -267,7 +267,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChainNextNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -284,7 +284,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerPrivateFieldOptionalChain2015NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -302,7 +302,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerPrivateStaticMembers2015NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -323,7 +323,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerPrivateFieldAndMethodAvoidNameCollision2015", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class WeakMap {
@@ -338,7 +338,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2015", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -383,7 +383,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2019", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -428,7 +428,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -473,7 +473,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetterNext", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export class Foo {
@@ -517,7 +517,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateMethod2019", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -553,7 +553,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateMethod2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -589,7 +589,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateMethodNext", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export class Foo {
@@ -624,7 +624,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassExpr2020NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export let Foo = class {
@@ -644,7 +644,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateMethodWithModifiers2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -662,7 +662,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsync2016NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         async function foo(bar) {
@@ -691,7 +691,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsync2017NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         async function foo(bar) {
@@ -720,7 +720,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncThis2016CommonJS", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `exports.foo = async () => this`,
     },
@@ -728,7 +728,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncThis2016ES6", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {bar} from "./other"
@@ -741,7 +741,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncES5", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './fn-stmt'
@@ -764,7 +764,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncSuperES2017NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -808,7 +808,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncSuperES2016NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -852,7 +852,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2021NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -896,7 +896,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2016NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -940,7 +940,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticSuperES2021NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -984,7 +984,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticSuperES2016NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Derived extends Base {
@@ -1028,7 +1028,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncArrowSuperES2016", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1067,7 +1067,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerAsyncArrowSuperSetterES2016", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1106,7 +1106,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncArrowSuperES2016", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1145,7 +1145,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncArrowSuperSetterES2016", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1184,7 +1184,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperES2022", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1209,7 +1209,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperES2021", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export { default as foo1 } from "./foo1"
@@ -1234,7 +1234,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperStaticBundleIssue2158", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export class Foo extends Object {
@@ -1249,7 +1249,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerClassField2020NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1269,7 +1269,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerClassFieldNextNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1288,7 +1288,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerClassField2020NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1308,7 +1308,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerClassPrivateFieldNextNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
@@ -1327,7 +1327,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerClassFieldStrictTsconfigJson2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import loose from './loose'
@@ -1363,7 +1363,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerClassFieldStrictTsconfigJson2020", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import loose from './loose'
@@ -1399,7 +1399,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerObjectRest2017NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const { ...local_const } = {};
@@ -1443,7 +1443,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/TSLowerObjectRest2018NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         const { ...local_const } = {};
@@ -1487,7 +1487,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/ClassSuperThisIssue242NoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.ts": /* ts */ `
         export class A {}
@@ -1509,7 +1509,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerExportStarAsNameCollisionNoBundle", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * as ns from 'path'
@@ -1522,7 +1522,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerExportStarAsNameCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as test from './nested'
@@ -1541,7 +1541,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerStrictModeSyntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": `import './for-in'`,
       "/for-in.js": /* js */ `
@@ -1554,7 +1554,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerForbidStrictModeSyntax", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './with'
@@ -1571,7 +1571,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassFieldOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1585,7 +1585,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassMethodOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1599,7 +1599,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassAccessorOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1613,7 +1613,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticFieldOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1633,7 +1633,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticMethodOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1653,7 +1653,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticAccessorOrder", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1673,7 +1673,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassBrandCheckUnsupported", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1693,7 +1693,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassBrandCheckSupported", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
@@ -1713,7 +1713,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerTemplateObject", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         x = () => [
@@ -1724,7 +1724,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerPrivateClassFieldStaticIssue1424", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class T {
@@ -1739,7 +1739,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerNullishCoalescingAssignmentIssue1493", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export class A {
@@ -1753,7 +1753,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/StaticClassBlockESNext", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class A {
@@ -1778,7 +1778,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/StaticClassBlockES2021", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class A {
@@ -1803,7 +1803,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerRegExpNameCollision", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export function foo(RegExp) {
@@ -1814,7 +1814,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerForAwait2017", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default [
@@ -1829,7 +1829,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerForAwait2015", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export default [
@@ -1844,7 +1844,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("lower/LowerNestedFunctionDirectEval", {
-    // TODO: hand check and tweak
+    // GENERATED
     files: {},
     entryPoints: ["/1.js", "/2.js", "/3.js", "/4.js", "/5.js", "/6.js", "/7.js", "/8.js"],
     mode: "passthrough",

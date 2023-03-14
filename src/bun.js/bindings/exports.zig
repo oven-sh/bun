@@ -1871,26 +1871,6 @@ pub const ZigConsoleClient = struct {
                     value.toZigString(&str, this.globalThis);
                     this.addForNewLine(str.len);
 
-                    if (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject) {
-                        if (str.len == 0) {
-                            writer.writeAll("String {}");
-                            return;
-                        }
-                        writer.writeAll("String {\n");
-                        this.indent += 1;
-                        defer this.indent -|= 1;
-                        this.resetLine();
-                        this.writeIndent(Writer, writer_) catch unreachable;
-                        const length = str.len;
-                        for (str.slice(), 0..) |c, i| {
-                            writer.print("\"{d}\": \"{c}\",\n", .{ i, c });
-                            if (i != length - 1) this.writeIndent(Writer, writer_) catch unreachable;
-                        }
-                        this.resetLine();
-                        writer.writeAll("}\n");
-                        return;
-                    }
-
                     if (this.quote_strings and jsType != .RegExpObject) {
                         if (str.len == 0) {
                             writer.writeAll("\"\"");

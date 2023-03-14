@@ -49,18 +49,7 @@ pub const JestPrettyFormat = struct {
     pub const Type = *anyopaque;
     const Counter = std.AutoHashMapUnmanaged(u64, u32);
 
-    const BufferedWriter = std.io.BufferedWriter(4096, Output.WriterType);
-    error_writer: BufferedWriter,
-    writer: BufferedWriter,
-
     counts: Counter = .{},
-
-    pub fn init(error_writer: Output.WriterType, writer: Output.WriterType) JestPrettyFormat {
-        return JestPrettyFormat{
-            .error_writer = BufferedWriter{ .unbuffered_writer = error_writer },
-            .writer = BufferedWriter{ .unbuffered_writer = writer },
-        };
-    }
 
     pub const MessageLevel = enum(u32) {
         Log = 0,

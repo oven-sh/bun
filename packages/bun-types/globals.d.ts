@@ -494,7 +494,11 @@ declare var Headers: {
   new (init?: HeadersInit): Headers;
 };
 
-type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
+type HeadersInit =
+  | Headers
+  | Record<string, string>
+  | Array<[string, string]>
+  | IterableIterator<[string, string]>;
 type ResponseType =
   | "basic"
   | "cors"
@@ -555,7 +559,7 @@ declare class Blob implements BlobInterface {
    * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
    * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
    */
-  constructor(parts?: BlobPart[] | Blob, options?: BlobPropertyBag);
+  constructor(parts?: BlobPart[], options?: BlobPropertyBag);
   /**
    * Create a new view **without 🚫 copying** the underlying data.
    *

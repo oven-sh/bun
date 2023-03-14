@@ -355,10 +355,6 @@ pub const TestCommand = struct {
         }
         Output.flush();
 
-        const args = try std.process.argsAlloc(ctx.allocator);
-        const update_snapshots = strings.leftHasAnyInRight(args, &.{"--updateSnapshot"});
-        std.process.argsFree(ctx.allocator, args);
-
         var env_loader = brk: {
             var map = try ctx.allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(ctx.allocator);
@@ -382,7 +378,7 @@ pub const TestCommand = struct {
                 .callback = undefined,
                 .snapshots = Snapshots{
                     .allocator = ctx.allocator,
-                    .update_snapshots = update_snapshots,
+                    .update_snapshots = ctx.test_options.update_snapshots,
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,

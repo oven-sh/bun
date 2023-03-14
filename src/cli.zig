@@ -198,7 +198,6 @@ pub const Arguments = struct {
         clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
         clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
-        clap.parseParam("--updateSnapshot                  Update snapshot files") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
 
@@ -215,8 +214,14 @@ pub const Arguments = struct {
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
     };
 
+    // TODO: update test completions
+    const test_only_params = [_]ParamType{
+        clap.parseParam("--update                         Update snapshot files") catch unreachable,
+    };
+
     const build_params_public = public_params ++ build_only_params;
     pub const build_params = build_params_public ++ debug_params;
+    pub const test_params = params ++ test_only_params;
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
@@ -367,6 +372,10 @@ pub const Arguments = struct {
             };
         } else {
             cwd = try std.process.getCwdAlloc(allocator);
+        }
+
+        if (cmd == .TestCommand) {
+            ctx.test_options.update_snapshots = args.flag("--update");
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -860,6 +869,10 @@ pub const Command = struct {
         test_directory: []const u8 = "",
     };
 
+    pub const TestOptions = struct {
+        update_snapshots: bool = false,
+    };
+
     pub const Context = struct {
         start_time: i128,
         args: Api.TransformOptions,
@@ -870,6 +883,7 @@ pub const Command = struct {
         install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},
+        test_options: TestOptions = TestOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
@@ -1419,6 +1433,7 @@ pub const Command = struct {
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
                 Command.Tag.BuildCommand => Arguments.build_params,
+                Command.Tag.TestCommand => Arguments.test_params,
                 else => Arguments.params,
             };
         }

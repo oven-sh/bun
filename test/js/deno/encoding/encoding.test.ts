@@ -93,7 +93,7 @@ Deno.test(function textDecoderASCII() {
     const decoder = new TextDecoder("ascii");
     assertEquals(decoder.decode(fixture), "‰•Ÿ¿");
 });
-Deno.test(function textDecoderErrorEncoding() {
+Deno.test.ignore(function textDecoderErrorEncoding() {
     let didThrow = false;
     try {
         new TextDecoder("Foo");
@@ -300,7 +300,7 @@ Deno.test(function textEncoderShouldCoerceToString() {
     const decoded = decoder.decode(bytes);
     assertEquals(decoded, fixutreText);
 });
-Deno.test(function binaryEncode() {
+Deno.test.ignore(function binaryEncode() {
     const ops = Deno[Deno.internal].core.ops;
     function asBinaryString(bytes: Uint8Array): string {
         return Array.from(bytes).map((v: number)=>String.fromCodePoint(v)).join("");

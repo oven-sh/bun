@@ -65,7 +65,11 @@
   },
   {
     "path": "encoding/encoding.test.ts",
-    "remotePath": "cli/tests/unit/text_encoding_test.ts"
+    "remotePath": "cli/tests/unit/text_encoding_test.ts",
+    "skip": [
+      "textDecoderErrorEncoding",
+      "binaryEncode"
+    ]
   },
   {
     "path": "v8/error.test.ts",

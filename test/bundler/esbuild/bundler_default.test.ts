@@ -322,22 +322,41 @@ describe("bundler", () => {
     snapshot: true,
   });
   itBundled("default/ExportFormsCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        require('./commonjs')
-        require('./c')
-        require('./d')
-        require('./e')
-        require('./f')
-        require('./g')
-        require('./h')
+        const commonjs = require("./commonjs");
+        const c = require("./c").default;
+        const d = require("./d").default;
+        const e = require("./e").default;
+        const f = require("./f").default;
+        const g = require("./g").default;
+        const h = require("./h").default;
+        
+        assert.deepEqual(commonjs.varName, 234, "commonjs.default");
+        assert.deepEqual(commonjs.letName, 345, "commonjs.letName");
+        assert.deepEqual(commonjs.constName, 456, "commonjs.constName");
+        commonjs.Fn2();
+        new commonjs.Cls();
+        new commonjs.Cls2();
+        new commonjs.Class();
+        assert("abc" in commonjs, "commonjs.abc");
+        assert.deepEqual(commonjs.abc, undefined, "commonjs.abc");
+        assert.deepEqual(commonjs.b, { xyz: null }, "commonjs.b");
+        new c();
+        new d();
+        assert.deepEqual(d.prop, 567, "d.prop");
+        e();
+        f();
+        assert.deepEqual(f.prop, 678, "f.prop");
+        assert(g() instanceof Promise, "g");
+        assert(h() instanceof Promise, "h");
+        assert.deepEqual(h.prop, 678, "h.prop");
       `,
       "/commonjs.js": /* js */ `
         export default 123
         export var v = 234
-        export let l = 234
-        export const c = 234
+        export let l = 345
+        export const c = 456
         export {Class as C}
         export function Fn() {}
         export class Class {}
@@ -347,25 +366,39 @@ describe("bundler", () => {
       "/a.js": `export const abc = undefined`,
       "/b.js": `export const xyz = null`,
       "/c.js": `export default class {}`,
-      "/d.js": `export default class Foo {} Foo.prop = 123`,
+      "/d.js": `export default class Foo {} Foo.prop = 567`,
       "/e.js": `export default function() {}`,
-      "/f.js": `export default function foo() {} foo.prop = 123`,
+      "/f.js": `export default function foo() {} foo.prop = 678`,
       "/g.js": `export default async function() {}`,
-      "/h.js": `export default async function foo() {} foo.prop = 123`,
+      "/h.js": `export default async function foo() {} foo.prop = 789`,
+
+      // assert bundles weird as of writing
+      "/test.js": /* js */ `
+        globalThis.assert = require('assert');
+        require('./out.js');
+      `,
     },
-    snapshot: true,
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("default/ExportChain", {
-    // GENERATED
     files: {
       "/entry.js": `export {b as a} from './foo'`,
       "/foo.js": `export {c as b} from './bar'`,
       "/bar.js": `export const c = 123`,
+
+      "/test.js": `
+        import { strictEqual } from 'assert';
+        import * as module from './out';
+        strictEqual(module.a, 123);
+      `,
     },
-    snapshot: true,
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("default/ExportInfiniteCycle1", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './entry'
@@ -374,10 +407,16 @@ describe("bundler", () => {
         export {d as a} from './entry'
       `,
     },
-    snapshot: true,
+    bundleErrors: {
+      "/entry.js": [
+        `Detected cycle while resolving import "a"`,
+        `Detected cycle while resolving import "b"`,
+        `Detected cycle while resolving import "c"`,
+        `Detected cycle while resolving import "d"`,
+      ],
+    },
   });
   itBundled("default/ExportInfiniteCycle2", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {a as b} from './foo'
@@ -388,7 +427,10 @@ describe("bundler", () => {
         export {d as a} from './entry'
       `,
     },
-    snapshot: true,
+    bundleErrors: {
+      "/entry.js": [`Detected cycle while resolving import "a"`, `Detected cycle while resolving import "c"`],
+      "/foo.js": [`Detected cycle while resolving import "b"`, `Detected cycle while resolving import "d"`],
+    },
   });
   itBundled("default/JSXImportsCommonJS", {
     // GENERATED

@@ -2080,6 +2080,70 @@ pub const Expect = struct {
         return .zero;
     }
 
+    pub fn toBeInstanceOf(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toBeInstanceOf() requires 1 argument", .{});
+            return .zero;
+        }
+
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toBeInstanceOf() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        const expected_value = arguments[0];
+        if (!expected_value.jsType().isFunction()) {
+            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+            globalObject.throw("Expected value must be a function: {any}", .{expected_value.toFmt(globalObject, &fmt)});
+            return .zero;
+        }
+        expected_value.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        const not = this.op.contains(.not);
+        var pass = value.isInstanceOf(globalObject, expected_value);
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const value_fmt = value.toFmt(globalObject, &formatter);
+        if (not) {
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeInstanceOf", "", true) ++ "\n\n" ++ received_line;
+            if (Output.enable_ansi_colors) {
+                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+                return .zero;
+            }
+
+            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            return .zero;
+        }
+
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeInstanceOf", "", false) ++ "\n\n" ++ received_line;
+        if (Output.enable_ansi_colors) {
+            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+            return .zero;
+        }
+
+        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        return .zero;
+    }
+
     pub const toHaveBeenCalledTimes = notImplementedJSCFn;
     pub const toHaveBeenCalledWith = notImplementedJSCFn;
     pub const toHaveBeenLastCalledWith = notImplementedJSCFn;
@@ -2089,7 +2153,6 @@ pub const Expect = struct {
     pub const toHaveLastReturnedWith = notImplementedJSCFn;
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
     pub const toBeCloseTo = notImplementedJSCFn;
-    pub const toBeInstanceOf = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
     pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;

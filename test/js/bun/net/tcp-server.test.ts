@@ -4,6 +4,58 @@ import * as JSC from "bun:jsc";
 
 var decoder = new TextDecoder();
 
+it("remoteAddress works", async () => {
+  var resolve: () => void, reject: (e: any) => void;
+  var remaining = 2;
+  var prom = new Promise<void>((resolve1, reject1) => {
+    resolve = () => {
+      if (--remaining === 0) resolve1();
+    };
+    reject = reject1;
+  });
+  let server = Bun.listen({
+    socket: {
+      open(ws) {
+        try {
+          expect(ws.remoteAddress).toBe("127.0.0.1");
+          resolve();
+        } catch (e) {
+          reject(e);
+
+          return;
+        } finally {
+          setTimeout(() => server.stop(true), 0);
+        }
+      },
+      close() {},
+      data() {},
+    },
+    port: 0,
+    hostname: "localhost",
+  });
+
+  await Bun.connect({
+    socket: {
+      open(ws) {
+        try {
+          expect(ws.remoteAddress).toBe("127.0.0.1");
+          resolve();
+        } catch (e) {
+          reject(e);
+          return;
+        } finally {
+          ws.end();
+        }
+      },
+      data() {},
+      close() {},
+    },
+    hostname: server.hostname,
+    port: server.port,
+  });
+  await prom;
+});
+
 it("echo server 1 on 1", async () => {
   // wrap it in a separate closure so the GC knows to clean it up
   // the sockets & listener don't escape the closure

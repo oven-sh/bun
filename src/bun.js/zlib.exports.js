@@ -3992,6 +3992,7 @@ var require_lib = __commonJS({
       value: Object.freeze(codes),
       writable: false,
     });
+    exports.constants = require_constants();
     exports.Deflate = Deflate;
     exports.Inflate = Inflate;
     exports.Gzip = Gzip;
@@ -4433,8 +4434,7 @@ var require_lib = __commonJS({
 });
 
 // zlib.js
-var zlib_exports = {};
-__reExport(zlib_exports, __toESM(require_lib()), zlib_exports);
+var zlib_exports = require_lib();
 zlib_exports[Symbol.for("CommonJS")] = 0;
 export default zlib_exports;
 
@@ -4467,4 +4467,5 @@ export var {
   gunzipSync,
   inflateRaw,
   inflateRawSync,
+  constants,
 } = zlib_exports;

@@ -10,6 +10,9 @@ import baseUrl from "../resources/url.json";
 // import * as harness from "deno:harness";
 
 for (const test of tests) {
+  if (test.skip) {
+    continue;
+  }
   const path = join(import.meta.dir, "..", test.path);
   const url = new URL(test.remotePath, baseUrl);
   const response = await fetch(url);

@@ -341,6 +341,15 @@ declare module "bun:test" {
      * expect(undefined).toBeDefined(); // fail
      */
     toBeDefined(): void;
+     /**
+     * Asserts that the expected value is an instance of value
+     *
+     * @example
+     * expect([]).toBeInstanceOf(Array);
+     * expect(null).toBeInstanceOf(Array); // fail
+     */
+    toBeInstanceOf(value: Function): void;
+
     /**
      * Asserts that a value is `undefined`.
      *

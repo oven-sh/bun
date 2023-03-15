@@ -10,8 +10,12 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { gc } from "harness";
-import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun.cjs";
+import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import React from "react";
+
+if (!import.meta.resolveSync("react-dom/server").endsWith("server.bun.js")) {
+  throw new Error("react-dom/server is not the correct version:\n  " + import.meta.resolveSync("react-dom/server"));
+}
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",

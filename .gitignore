@@ -110,3 +110,6 @@ src/bun.js/debug-bindings-obj
 failing-tests.txt
 test.txt
 myscript.sh
+
+test/helpers/*.so
+test/helpers/*.dylib

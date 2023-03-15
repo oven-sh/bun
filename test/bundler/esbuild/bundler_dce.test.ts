@@ -907,13 +907,12 @@ describe("bundler", () => {
       "/keep-me/index.js": `console.log('side effects')`,
       "/keep-me/package.json": `{ "sideEffects": false }`,
     },
-    /* TODO: 
-        IgnoreDCEAnnotations -- true, */
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"pure":    {CallCanBeUnwrappedIfUnused: true},
-  		"some.fn": {CallCanBeUnwrappedIfUnused: true},
-  	}) */ snapshot: true,
+    // TODO: Unsure how to port this: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go#L1249
+    ignoreDCEAnnotations: true,
+    define: {
+      pure: "???",
+      "some.fn": "???",
+    },
   });
   itBundled("dce/DeadCodeFollowingJump", {
     // GENERATED
@@ -2704,28 +2703,31 @@ describe("bundler", () => {
     },
     snapshot: true,
   });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
+  itBundled(
+    "dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS",
+    {
+      // GENERATED
+      files: {
+        "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
         render(<Button/>)
       `,
-      "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
+        "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
+        "/project/node_modules/pkg/package.json": /* json */ `
         {
         "main": "./entry.js",
         "sideEffects": ["*.css"]
       }
       `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
+        "/project/node_modules/pkg/components.jsx": /* jsx */ `
         require('./button.css')
         export const Button = () => <button/>
       `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-    snapshot: true,
-  });
+        "/project/node_modules/pkg/button.css": `button { color: red }`,
+      },
+      snapshot: true,
+    }
+  );
   itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
     // GENERATED
     files: {
@@ -2748,74 +2750,83 @@ describe("bundler", () => {
     },
     snapshot: true,
   });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
+  itBundled(
+    "dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS",
+    {
+      // GENERATED
+      files: {
+        "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
         render(<Button/>)
       `,
-      "/project/node_modules/pkg/entry.js": `export * from './components'`,
-      "/project/node_modules/pkg/package.json": /* json */ `
+        "/project/node_modules/pkg/entry.js": `export * from './components'`,
+        "/project/node_modules/pkg/package.json": /* json */ `
         {
         "main": "./entry.js",
         "sideEffects": ["*.css"]
       }
       `,
-      "/project/node_modules/pkg/components.jsx": /* jsx */ `
+        "/project/node_modules/pkg/components.jsx": /* jsx */ `
         require('./button.css')
         export const Button = () => <button/>
       `,
-      "/project/node_modules/pkg/button.css": `button { color: red }`,
-    },
-    snapshot: true,
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
+        "/project/node_modules/pkg/button.css": `button { color: red }`,
+      },
+      snapshot: true,
+    }
+  );
+  itBundled(
+    "dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse",
+    {
+      // GENERATED
+      files: {
+        "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
         render(<Button/>)
       `,
-      "/project/node_modules/pkg/package.json": /* json */ `
+        "/project/node_modules/pkg/package.json": /* json */ `
         {
         "sideEffects": false
       }
       `,
-      "/project/node_modules/pkg/button.jsx": /* jsx */ `
+        "/project/node_modules/pkg/button.jsx": /* jsx */ `
         import styles from './styles'
         export const Button = () => <button/>
       `,
-      "/project/node_modules/pkg/styles.js": /* js */ `
+        "/project/node_modules/pkg/styles.js": /* js */ `
         import './styles.css'
         export default {}
       `,
-      "/project/node_modules/pkg/styles.css": `button { color: red }`,
-    },
-    snapshot: true,
-  });
-  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
-    // GENERATED
-    files: {
-      "/project/test.jsx": /* jsx */ `
+        "/project/node_modules/pkg/styles.css": `button { color: red }`,
+      },
+      snapshot: true,
+    }
+  );
+  itBundled(
+    "dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS",
+    {
+      // GENERATED
+      files: {
+        "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
         render(<Button/>)
       `,
-      "/project/node_modules/pkg/package.json": /* json */ `
+        "/project/node_modules/pkg/package.json": /* json */ `
         {
         "sideEffects": ["*.css"]
       }
       `,
-      "/project/node_modules/pkg/button.jsx": /* jsx */ `
+        "/project/node_modules/pkg/button.jsx": /* jsx */ `
         import styles from './styles'
         export const Button = () => <button/>
       `,
-      "/project/node_modules/pkg/styles.js": /* js */ `
+        "/project/node_modules/pkg/styles.js": /* js */ `
         import './styles.css'
         export default {}
       `,
-      "/project/node_modules/pkg/styles.css": `button { color: red }`,
-    },
-    snapshot: true,
-  });
+        "/project/node_modules/pkg/styles.css": `button { color: red }`,
+      },
+      snapshot: true,
+    }
+  );
 });

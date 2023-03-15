@@ -300,8 +300,7 @@ describe("bundler", () => {
       "/test.css": `.css { color: red }`,
     },
     outfile: "/out.css",
-    /* TODO: 
-        ExtensionOrder -- []string{".js", ".css"}, */
+    extensionOrder: [".js", ".css"],
     snapshot: true,
   });
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
@@ -312,8 +311,7 @@ describe("bundler", () => {
       "/test.sass": `// some code`,
     },
     outfile: "/out.css",
-    /* TODO: 
-        ExtensionOrder -- []string{".js", ".sass"}, */
+    extensionOrder: [".js", ".sass"],
     snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsNoBundle", {

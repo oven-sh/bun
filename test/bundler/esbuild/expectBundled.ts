@@ -19,6 +19,10 @@ export interface BundlerTestInput {
   mode?: "bundle" | "transform" | "convertformat";
   /** Defaults to false */
   minifyIdentifiers?: boolean;
+  /** Defaults to false */
+  minifySyntax?: boolean;
+  /** Defaults to false */
+  minifyWhitespace?: boolean;
   /** Defaults to `/out.js` */
   outfile?: string;
   /** Defaults to `/out` */
@@ -28,6 +32,9 @@ export interface BundlerTestInput {
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
+  define: Record<string, string | number>;
+  external: string[];
+  inject: string[];
   /**
    * Setting to true or an object will cause the file to be run with bun.
    * Options passed can customize and assert behavior about the bundle.
@@ -93,15 +100,25 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     run,
     runtimeFiles,
     snapshot,
+    define,
+    external,
+    inject,
+    minifySyntax,
+    minifyWhitespace,
     ...unknownProps
   } = opts;
 
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error(
+      "expectBundled recieved unexpected options: " +
+        Object.keys(unknownProps).join(", ")
+    );
   }
 
   if (testsRan.has(id)) {
-    throw new Error(`expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`);
+    throw new Error(
+      `expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`
+    );
   }
 
   const root = path.join(outBase, id.replaceAll("/", path.sep));
@@ -112,14 +129,18 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
   entryPoints ??= [Object.keys(files)[0]];
   if (run === true) run = {};
 
-  const entryPaths = entryPoints.map(file => path.join(root, file));
+  const entryPaths = entryPoints.map((file) => path.join(root, file));
 
   if (entryPaths.length !== 1 && outfile) {
-    throw new Error("Test cannot specify `outfile` when more than one entry path.");
+    throw new Error(
+      "Test cannot specify `outfile` when more than one entry path."
+    );
   }
   // TODO: allow this?
   if (entryPaths.length === 1 && outdir) {
-    throw new Error("Test cannot specify `outdir` when more than one entry path.");
+    throw new Error(
+      "Test cannot specify `outdir` when more than one entry path."
+    );
   }
 
   outfile = path.join(root, outfile ?? "/out.js");
@@ -140,20 +161,36 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           tempPathToBunDebug,
           "bun",
           ...entryPaths,
-          entryPaths.length === 1 ? `--outfile=${outfile}` : `--outdir=${outdir}`,
+          entryPaths.length === 1
+            ? `--outfile=${outfile}`
+            : `--outdir=${outdir}`,
           `--format=${format}`,
           `--platform=${platform}`,
           minifyIdentifiers && `--minify-identifiers`,
+          minifySyntax && `--minify-synatax`,
+          minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
+          external && external.map((x) => ["--external", x]),
+          inject && inject.map((x) => ["--inject", path.join(root, x)]),
+          define &&
+            Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
         ]
       : [
           Bun.which("esbuild"),
           mode === "bundle" && "--bundle",
-          entryPaths.length === 1 ? `--outfile=${outfile}` : `--outdir=${outdir}`,
+          entryPaths.length === 1
+            ? `--outfile=${outfile}`
+            : `--outdir=${outdir}`,
           `--format=${format}`,
           `--platform=${platform === "bun" ? "node" : format}`,
           minifyIdentifiers && `--minify-identifiers`,
+          minifySyntax && `--minify-synatax`,
+          minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
+          external && external.map((x) => `--external:${x}`),
+          inject && inject.map((x) => `--inject:${path.join(root, x)}`),
+          define &&
+            Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
           ...entryPaths,
         ]
   )
@@ -168,7 +205,9 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
   });
 
   if (!success) {
-    throw new Error("Bundle Failed\n" + stdout!.toString("utf-8") + stderr!.toString("utf-8"));
+    throw new Error(
+      "Bundle Failed\n" + stdout!.toString("utf-8") + stderr!.toString("utf-8")
+    );
   }
 
   if (entryPaths.length === 1) {
@@ -198,7 +237,9 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     } else if (entryPaths.length === 1) {
       run.file = outfile;
     } else {
-      throw new Error("run.file is required when there is more than one entrypoint.");
+      throw new Error(
+        "run.file is required when there is more than one entrypoint."
+      );
     }
 
     const { success, stdout, stderr } = Bun.spawnSync({
@@ -209,7 +250,10 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     if (run.error) {
       if (success) {
         throw new Error(
-          "Bundle should have thrown at runtime\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"),
+          "Bundle should have thrown at runtime\n" +
+            stdout!.toString("utf-8") +
+            "\n" +
+            stderr!.toString("utf-8")
         );
       }
 
@@ -222,7 +266,7 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           .toString("utf-8")
           .split("\n")
           .filter(Boolean)
-          .map(x => x.trim())
+          .map((x) => x.trim())
           .reverse();
         for (const line of lines) {
           if (line.startsWith("at")) {
@@ -233,7 +277,9 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           }
         }
         if (!error) {
-          throw new Error(`Runtime failed with no error. Expecting "${run.error}"`);
+          throw new Error(
+            `Runtime failed with no error. Expecting "${run.error}"`
+          );
         }
         expect(error).toBe(run.error);
 
@@ -241,9 +287,13 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           const stackTraceLine = stack.pop()!;
           const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
           if (match) {
-            const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
+            const line = readFileSync(match[1], "utf-8").split("\n")[
+              +match[2] - 1
+            ];
             if (!run.errorLineMatch.test(line)) {
-              throw new Error(`Source code "${line}" does not match expression ${run.errorLineMatch}`);
+              throw new Error(
+                `Source code "${line}" does not match expression ${run.errorLineMatch}`
+              );
             }
           } else {
             throw new Error("Could not trace error.");
@@ -251,7 +301,12 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
         }
       }
     } else if (!success) {
-      throw new Error("Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
+      throw new Error(
+        "Runtime failed\n" +
+          stdout!.toString("utf-8") +
+          "\n" +
+          stderr!.toString("utf-8")
+      );
     }
 
     if (run.stdout !== undefined) {

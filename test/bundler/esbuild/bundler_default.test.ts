@@ -94,7 +94,8 @@ describe("bundler", () => {
         `,
     },
     run: {
-      error: "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
+      error:
+        "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
       errorLineMatch: /console\.log/,
     },
   });
@@ -207,7 +208,7 @@ describe("bundler", () => {
           strictEqual("abc" in globalName, true, ".abc exists");
           strictEqual(globalName.abc, undefined, ".abc");
           strictEqual(globalName.b.xyz, null, ".xyz");
-        `,
+        `
       );
     },
   });
@@ -428,8 +429,14 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": [`Detected cycle while resolving import "a"`, `Detected cycle while resolving import "c"`],
-      "/foo.js": [`Detected cycle while resolving import "b"`, `Detected cycle while resolving import "d"`],
+      "/entry.js": [
+        `Detected cycle while resolving import "a"`,
+        `Detected cycle while resolving import "c"`,
+      ],
+      "/foo.js": [
+        `Detected cycle while resolving import "b"`,
+        `Detected cycle while resolving import "d"`,
+      ],
     },
   });
   itBundled("default/JSXImportsCommonJS", {
@@ -505,12 +512,7 @@ describe("bundler", () => {
       "/custom-react.js": `module.exports = {}`,
     },
     jsx: {},
-    /* TODO: 
-        ExternalSettings -- config.ExternalSettings{
-  				PreResolve: config.ExternalMatchers{Exact: map[string]bool{
-  					"react/jsx-runtime": true,
-  				}},
-  			}, */
+    external: ["react/jsx-runtime"],
     snapshot: true,
   });
   itBundled("default/JSXAutomaticImportsES6", {
@@ -526,12 +528,7 @@ describe("bundler", () => {
       `,
     },
     jsx: {},
-    /* TODO: 
-        ExternalSettings -- config.ExternalSettings{
-  				PreResolve: config.ExternalMatchers{Exact: map[string]bool{
-  					"react/jsx-runtime": true,
-  				}},
-  			}, */
+    external: ["react/jsx-runtime"],
     snapshot: true,
   });
   itBundled("default/JSXAutomaticSyntaxInJS", {
@@ -540,12 +537,7 @@ describe("bundler", () => {
       "/entry.js": `console.log(<div/>)`,
     },
     jsx: {},
-    /* TODO: 
-        ExternalSettings -- config.ExternalSettings{
-  				PreResolve: config.ExternalMatchers{Exact: map[string]bool{
-  					"react/jsx-runtime": true,
-  				}},
-  			}, */
+    external: ["react/jsx-runtime"],
     snapshot: true,
   });
   itBundled("default/NodeModules", {
@@ -651,7 +643,14 @@ describe("bundler", () => {
       "/import.js": `console.log(import('./foo'))`,
       "/foo.js": `console.log('no exports here')`,
     },
-    entryPoints: ["/named.js", "/star.js", "/star-capture.js", "/bare.js", "/require.js", "/import.js"],
+    entryPoints: [
+      "/named.js",
+      "/star.js",
+      "/star-capture.js",
+      "/bare.js",
+      "/require.js",
+      "/import.js",
+    ],
     snapshot: true,
   });
   itBundled("default/ExportMissingES6", {
@@ -958,8 +957,7 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/bar.js": `export function bar() { throw new Error('test') }`,
     },
-    /* TODO: 
-        SourceMap -- config.SourceMapLinkedWithComment, */
+    sourceMap: "linked-with-comment",
     snapshot: true,
   });
   itBundled("default/NestedScopeBug", {
@@ -1014,8 +1012,7 @@ describe("bundler", () => {
         foo()
       `,
     },
-    /* TODO: 
-        JSBanner -- "#! from banner", */
+    banner: "#! from banner",
     snapshot: true,
   });
   itBundled("default/RequireFSBrowser", {
@@ -1680,7 +1677,7 @@ describe("bundler", () => {
     snapshot: true,
   });
   test("default/ImportAbsPathAsDir", () => {
-    expectBundled("default/ImportAbsPathAsDir", {
+    expectBundled("default/ImportAbsPathAsDirUnix", {
       // GENERATED
       host: "Unix",
       files: {
@@ -1692,7 +1689,7 @@ describe("bundler", () => {
       },
       snapshot: true,
     });
-    expectBundled("default/ImportAbsPathAsDir_TODO_LABEL_1", {
+    expectBundled("default/ImportAbsPathAsDirWindows", {
       // GENERATED
       host: "Windows",
       files: {
@@ -2066,8 +2063,7 @@ describe("bundler", () => {
         export { process }
       `,
     },
-    /* TODO: 
-        InjectPaths -- []string{"/shims.js"}, */
+    inject: ["/shims.js"],
     platform: "node",
     snapshot: true,
   });
@@ -2546,8 +2542,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    /* TODO: 
-        LegalComments -- config.LegalCommentsEndOfFile, */
+    legalComments: "eof",
     snapshot: true,
   });
   itBundled("default/LegalCommentsNoEscapeSlashStyleEndOfFile", {
@@ -2560,8 +2555,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    /* TODO: 
-        LegalComments -- config.LegalCommentsEndOfFile, */
+    legalComments: "eof",
     snapshot: true,
   });
   itBundled("default/LegalCommentsManyLinked", {
@@ -3170,38 +3164,20 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    /* TODO: 
-        InjectPaths -- []string{
-  				"/inject.js",
-  				"/node_modules/unused/index.js",
-  				"/node_modules/sideEffects-false/index.js",
-  				"/replacement.js",
-  				"/collision.js",
-  				"/re-export.js",
-  			}, */
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"chain.prop": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"replace"},
-  			},
-  		},
-  		"obj.defined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("defined")},
-  			},
-  		},
-  		"injectedAndDefined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("should be used")},
-  			},
-  		},
-  		"injected.and.defined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("should be used")},
-  			},
-  		},
-  	}) */ snapshot: true,
+    injectPaths: [
+      "/inject.js",
+      "/node_modules/unused/index.js",
+      "/node_modules/sideEffects-false/index.js",
+      "/replacement.js",
+      "/collision.js",
+      "/re-export.js",
+    ],
+    define: {
+      "chain.prop": "replace",
+      "obj.defined": JSON.stringify("defined"),
+      injectedAndDefined: JSON.stringify("should be used"),
+      "injected.and.defined": JSON.stringify("should be used"),
+    },
   });
   itBundled("default/InjectNoBundle", {
     // GENERATED
@@ -3251,29 +3227,12 @@ describe("bundler", () => {
     },
     treeShaking: true,
     mode: "passthrough",
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"chain.prop": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"replace"},
-  			},
-  		},
-  		"obj.defined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("defined")},
-  			},
-  		},
-  		"injectedAndDefined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("should be used")},
-  			},
-  		},
-  		"injected.and.defined": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.EString{Value: helpers.StringToUTF16("should be used")},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "chain.prop": "replace",
+      "obj.defined": '"defined"',
+      injectedAndDefined: '"should be used"',
+      "injected.and.defined": '"should be used"',
+    },
   });
   itBundled("default/InjectJSX", {
     // GENERATED
@@ -3284,19 +3243,10 @@ describe("bundler", () => {
         export function frag() {}
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"React.createElement": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"el"},
-  			},
-  		},
-  		"React.Fragment": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"frag"},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "React.createElement": "el",
+      "React.Fragment": "frag",
+    },
   });
   itBundled("default/InjectJSXDotNames", {
     // GENERATED
@@ -3346,11 +3296,7 @@ describe("bundler", () => {
         console.log('second')
       `,
     },
-    /* TODO: 
-        InjectPaths -- []string{
-  				"/inject-1.js",
-  				"/inject-2.js",
-  			}, */
+    inject: ["/inject-1.js", "/inject-2.js"],
     snapshot: true,
   });
   itBundled("default/InjectAssign", {
@@ -3369,14 +3315,10 @@ describe("bundler", () => {
         export { someDefine as 'some.define' }
       `,
     },
-    /* TODO: 
-        InjectPaths -- []string{
-  				"/inject.js",
-  			}, */
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"defined": {DefineExpr: &config.DefineExpr{Parts: []string{"some", "define"}}},
-  	}) */ snapshot: true,
+    inject: ["/inject.js"],
+    define: {
+      defined: "some.define",
+    },
   });
   itBundled("default/InjectWithDefine", {
     // GENERATED
@@ -3406,10 +3348,8 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO: 
-        InjectPaths -- []string{
-  				"/inject.js",
-  			}, */
+    inject: ["/inject.js"],
+    // TODO: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go#L4915
     snapshot: true,
   });
   itBundled("default/Outbase", {
@@ -3470,24 +3410,11 @@ describe("bundler", () => {
         )
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"import.meta": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 1},
-  			},
-  		},
-  		"import.meta.foo": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 2},
-  			},
-  		},
-  		"import.meta.foo.bar": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 3},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "import.meta": 1,
+      "import.meta.foo": 2,
+      "import.meta.foo.bar": 3,
+    },
   });
   itBundled("default/DefineImportMetaES5", {
     // GENERATED
@@ -3497,14 +3424,9 @@ describe("bundler", () => {
       "/dead-code.js": `var x = () => console.log(import.meta.z)`,
     },
     entryPoints: ["/replaced.js", "/kept.js", "/dead-code.js"],
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"import.meta.x": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 1},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "import.meta.x": 1,
+    },
   });
   itBundled("default/InjectImportMeta", {
     // GENERATED
@@ -3576,24 +3498,11 @@ describe("bundler", () => {
         })();
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"this": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 1},
-  			},
-  		},
-  		"this.foo": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 2},
-  			},
-  		},
-  		"this.foo.bar": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 3},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      this: 1,
+      "this.foo": 2,
+      "this.foo.bar": 3,
+    },
   });
   itBundled("default/DefineOptionalChain", {
     // GENERATED
@@ -3614,14 +3523,9 @@ describe("bundler", () => {
         ])
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"a.b.c": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 1},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "a.b.c": 1,
+    },
   });
   itBundled("default/DefineOptionalChainLowered", {
     // GENERATED
@@ -3642,14 +3546,9 @@ describe("bundler", () => {
         ])
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"a.b.c": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: &js_ast.ENumber{Value: 1},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "a.b.c": 1,
+    },
   });
   itBundled("default/DefineInfiniteLoopIssue2407", {
     // GENERATED
@@ -3659,29 +3558,12 @@ describe("bundler", () => {
         x.y()
       `,
     },
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"a.b": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"b", "c"},
-  			},
-  		},
-  		"b.c": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"c", "a"},
-  			},
-  		},
-  		"c.a": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"a", "b"},
-  			},
-  		},
-  		"x.y": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"y"},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      "a.b": "b.c",
+      "b.c": "c.a",
+      "c.a": "a.b",
+      "x.y": "y",
+    },
   });
   itBundled("default/DefineAssignWarning", {
     // GENERATED
@@ -3702,39 +3584,14 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/read.js", "/write.js"],
-    define: null,
-    /* TODO DEFINES config.ProcessDefines(map[string]config.DefineData{
-  		"a": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: js_ast.ENullShared,
-  			},
-  		},
-  		"b.c": {
-  			DefineExpr: &config.DefineExpr{
-  				Constant: js_ast.ENullShared,
-  			},
-  		},
-  		"d": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"ident"},
-  			},
-  		},
-  		"e.f": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"ident"},
-  			},
-  		},
-  		"g": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"dot", "chain"},
-  			},
-  		},
-  		"h.i": {
-  			DefineExpr: &config.DefineExpr{
-  				Parts: []string{"dot", "chain"},
-  			},
-  		},
-  	}) */ snapshot: true,
+    define: {
+      a: "null",
+      "b.c": "null",
+      d: "ident",
+      "e.f": "ident",
+      g: "dot.chain",
+      "h.i": "dot.chain",
+    },
   });
   itBundled("default/KeepNamesTreeShaking", {
     // GENERATED
@@ -3960,7 +3817,14 @@ describe("bundler", () => {
         <div/>
       `,
     },
-    entryPoints: ["/js.js", "/ts.ts", "/jsx-components.jsx", "/jsx-a.jsx", "/jsx-b.jsx", "/jsx-c.jsx"],
+    entryPoints: [
+      "/js.js",
+      "/ts.ts",
+      "/jsx-components.jsx",
+      "/jsx-a.jsx",
+      "/jsx-b.jsx",
+      "/jsx-c.jsx",
+    ],
     mode: "convertformat",
     snapshot: true,
   });
@@ -4258,7 +4122,13 @@ describe("bundler", () => {
   		x()
   	`,
   };
-  const relocateEntries = ["/top-level.js", "/nested.js", "/let.js", "/function.js", "/function-nested.js"];
+  const relocateEntries = [
+    "/top-level.js",
+    "/nested.js",
+    "/let.js",
+    "/function.js",
+    "/function-nested.js",
+  ];
 
   itBundled("default/VarRelocatingBundle", {
     // GENERATED
@@ -4368,18 +4238,15 @@ describe("bundler", () => {
       `,
       "/example.json": `{ "works": true }`,
     },
-    /* TODO: 
-        ExternalSettings -- config.ExternalSettings{
-  				PreResolve: config.ExternalMatchers{Exact: map[string]bool{
-  					"some-path": true,
-  				}},
-  			}, */
+    external: ["some-path"],
     snapshot: true,
   });
-  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
+  itBundled(
+    "default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552",
+    {
+      // GENERATED
+      files: {
+        "/entry.js": /* js */ `
         export function outer() {
           {
             function inner() {
@@ -4391,11 +4258,12 @@ describe("bundler", () => {
         }
         outer();
       `,
-    },
-    keepNames: true,
-    mode: "passthrough",
-    snapshot: true,
-  });
+      },
+      keepNames: true,
+      mode: "passthrough",
+      snapshot: true,
+    }
+  );
   itBundled("default/BuiltInNodeModulePrecedence", {
     // GENERATED
     files: {
@@ -4559,7 +4427,11 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
+    entryPoints: [
+      "/cjs-in-esm.js",
+      "/import-in-cjs.js",
+      "/no-warnings-here.js",
+    ],
     mode: "passthrough",
     snapshot: true,
   });
@@ -4583,7 +4455,12 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: ["/cjs-in-esm.js", "/cjs-in-esm2.js", "/import-in-cjs.js", "/no-warnings-here.js"],
+    entryPoints: [
+      "/cjs-in-esm.js",
+      "/cjs-in-esm2.js",
+      "/import-in-cjs.js",
+      "/no-warnings-here.js",
+    ],
     mode: "convertformat",
     snapshot: true,
   });
@@ -4602,7 +4479,11 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
+    entryPoints: [
+      "/cjs-in-esm.js",
+      "/import-in-cjs.js",
+      "/no-warnings-here.js",
+    ],
     format: "cjs",
     snapshot: true,
   });
@@ -4966,7 +4847,11 @@ describe("bundler", () => {
         }
       `,
     },
-    entryPoints: ["/parameter-properties.ts", "/namespace-exports.ts", "/enum-values.ts"],
+    entryPoints: [
+      "/parameter-properties.ts",
+      "/namespace-exports.ts",
+      "/enum-values.ts",
+    ],
     mode: "passthrough",
     snapshot: true,
   });
@@ -5166,7 +5051,13 @@ describe("bundler", () => {
       "/dot.js": `let x = require.cache`,
       "/index.js": `let x = require[cache]`,
     },
-    entryPoints: ["/array.js", "/assign.js", "/dot.js", "/ident.js", "/index.js"],
+    entryPoints: [
+      "/array.js",
+      "/assign.js",
+      "/dot.js",
+      "/ident.js",
+      "/index.js",
+    ],
     debugLogs: true,
     snapshot: true,
   });
@@ -5286,13 +5177,11 @@ describe("bundler", () => {
         import "pkg/baz"
       `,
     },
-    /* TODO: 
-        PackageAliases -- map[string]string{
-  				"pkg":         "alias/pkg",
-  				"pkg/foo":     "alias/pkg_foo",
-  				"pkg/foo/bar": "alias/pkg_foo_bar",
-  			}, */
-    snapshot: true,
+    alias: {
+      pkg: "alias/pkg",
+      "pkg/foo": "alias/pkg_foo",
+      "pkg/foo/bar": "alias/pkg_foo_bar",
+    },
   });
   itBundled("default/ErrorsForAssertTypeJSON", {
     // GENERATED
@@ -5726,11 +5615,10 @@ describe("bundler", () => {
       "/project/node_modules/fflate/package.json": `{ "main": "main.js" }`,
       "/project/node_modules/fflate/main.js": ``,
     },
-    /* TODO: 
-        Stdin -- &config.StdinInfo{
-  				Contents:      `import "node_modules/fflate"`,
-  				AbsResolveDir: "/project",
-  			}, */
+    stdin: {
+      contents: `import "node_modules/fflate"`,
+      dir: '/project'
+    },
     platform: "neutral",
     snapshot: true,
   });

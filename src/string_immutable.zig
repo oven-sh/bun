@@ -42,10 +42,12 @@ pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
     inline for (str) |a| {
-        if (indexOf(self, a)) |i| {
+        if (indexOfChar(self, a)) |i| {
             return @intCast(OptionalUsize, i);
         }
     }
+
+    return null;
 }
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
     for (self, 0..) |c, i| {

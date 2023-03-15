@@ -613,13 +613,13 @@ pub const Snapshots = struct {
         var ast = if (parse_result.ok) parse_result.ast else return error.ParseError;
         defer ast.deinit();
 
-        if (ast.exports_ref == null) return;
-        const exports_ref = ast.exports_ref.?;
+        if (ast.exports_ref.isNull()) return;
+        const exports_ref = ast.exports_ref;
 
         // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         const export_default = brk: {
-            for (ast.parts) |part| {
+            for (ast.parts.slice()) |part| {
                 for (part.stmts) |stmt| {
                     if (stmt.data == .s_export_default and stmt.data.s_export_default.value == .expr) {
                         break :brk stmt.data.s_export_default.value.expr;

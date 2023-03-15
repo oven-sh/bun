@@ -3635,6 +3635,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isCallable", .{ this, vm });
     }
 
+    pub fn isConstructor(this: JSValue) bool {
+        return cppFn("isConstructor", .{ this });
+    }
+
     pub fn isException(this: JSValue, vm: *VM) bool {
         return cppFn("isException", .{ this, vm });
     }
@@ -4071,6 +4075,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "isBigInt32",
         "isBoolean",
         "isCallable",
+        "isConstructor",
         "isClass",
         "isCustomGetterSetter",
         "isError",

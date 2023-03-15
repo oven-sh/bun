@@ -2426,6 +2426,12 @@ bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1)
 {
     return JSC::JSValue::decode(JSValue0).isCallable();
 }
+
+bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0)
+{
+    return JSC::JSValue::decode(JSValue0).isConstructor();
+}
+
 bool JSC__JSValue__isGetterSetter(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isGetterSetter();

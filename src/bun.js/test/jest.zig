@@ -2734,7 +2734,7 @@ pub const Expect = struct {
 
         active_test_expectation_counter.actual += 1;
         const expected_value = arguments[0];
-        if (!expected_value.jsType().isFunction()) {
+        if (!expected_value.isConstructor()) {
             var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
             globalObject.throw("Expected value must be a function: {any}", .{expected_value.toFmt(globalObject, &fmt)});
             return .zero;

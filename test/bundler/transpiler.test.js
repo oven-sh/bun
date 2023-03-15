@@ -109,6 +109,7 @@ describe("Bun.Transpiler", () => {
     });
 
     it("types", () => {
+      const exp = ts.expectPrinted_;
       exp("x as 1 < 1", "x < 1");
       exp("x as 1n < 1", "x < 1");
       exp("x as -1 < 1", "x < 1");

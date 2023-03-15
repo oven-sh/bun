@@ -2427,7 +2427,7 @@ const LinkerContext = struct {
                 // Include the "__export" symbol from the runtime if it was used in the
                 // previous step. The previous step can't do this because it's running in
                 // parallel and can't safely mutate the "importsToBind" map of another file.
-                if (flag.needs_exports_variable) {
+                if (flag.needs_export_symbol_from_runtime) {
                     if (!runtime_export_symbol_ref.isValid()) {
                         runtime_export_symbol_ref = this.runtimeFunction("__export");
                     }

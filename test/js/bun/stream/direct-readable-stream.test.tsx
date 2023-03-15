@@ -23,7 +23,6 @@ Object.defineProperty(renderToReadableStreamBrowser, "name", {
 Object.defineProperty(renderToReadableStreamBun, "name", {
   value: "server.bun",
 });
-var port = 8908;
 
 const fixtures = [
   // Needs at least six variations

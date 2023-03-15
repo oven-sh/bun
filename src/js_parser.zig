@@ -15703,7 +15703,7 @@ fn NewParser_(
                                 import_items.put(name, new_item) catch unreachable;
                                 p.is_import_item.put(p.allocator, new_item.ref.?, {}) catch unreachable;
 
-                                var symbol = p.symbols.items[new_item.ref.?.innerIndex()];
+                                var symbol = &p.symbols.items[new_item.ref.?.innerIndex()];
 
                                 // Mark this as generated in case it's missing. We don't want to
                                 // generate errors for missing import items that are automatically

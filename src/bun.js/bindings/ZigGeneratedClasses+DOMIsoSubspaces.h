@@ -3,7 +3,8 @@ std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;std::unique_ptr<IsoSub
 std::unique_ptr<IsoSubspace> m_subspaceForBundlerConstructor;std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasher;
 std::unique_ptr<IsoSubspace> m_subspaceForCryptoHasherConstructor;std::unique_ptr<IsoSubspace> m_subspaceForDirent;
 std::unique_ptr<IsoSubspace> m_subspaceForDirentConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpect;
-std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouter;
+std::unique_ptr<IsoSubspace> m_subspaceForExpectConstructor;std::unique_ptr<IsoSubspace> m_subspaceForExpectAny;
+std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouter;
 std::unique_ptr<IsoSubspace> m_subspaceForFileSystemRouterConstructor;std::unique_ptr<IsoSubspace> m_subspaceForListener;
 std::unique_ptr<IsoSubspace> m_subspaceForMD4;
 std::unique_ptr<IsoSubspace> m_subspaceForMD4Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMD5;

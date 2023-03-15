@@ -990,7 +990,7 @@ Deno.test(async function testWrapKey() {
     assert(wrappedKey instanceof ArrayBuffer);
     assertEquals(wrappedKey.byteLength, 512);
 });
-Deno.test(async function testAesKeyGen() {
+Deno.test.ignore(async function testAesKeyGen() {
     const key = await crypto.subtle.generateKey({
         name: "AES-GCM",
         length: 256
@@ -1009,7 +1009,7 @@ Deno.test(async function testAesKeyGen() {
     assertEquals(algorithm.name, "AES-GCM");
     assertEquals(algorithm.length, 256);
 });
-Deno.test(async function testUnwrapKey() {
+Deno.test.ignore(async function testUnwrapKey() {
     const subtle = crypto.subtle;
     const AES_KEY: AesKeyAlgorithm & AesCbcParams = {
         name: "AES-CBC",

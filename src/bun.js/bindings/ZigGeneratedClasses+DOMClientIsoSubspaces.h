@@ -3,7 +3,8 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;std::u
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasher;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCryptoHasherConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirent;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDirentConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpect;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExpectAny;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouter;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFileSystemRouterConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForListener;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5;

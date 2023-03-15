@@ -35,3 +35,12 @@ export function withoutAggressiveGC(block: () => unknown) {
     Bun.unsafe.gcAggressionLevel(origGC);
   }
 }
+
+export function hideFromStackTrace(block: CallableFunction) {
+  Object.defineProperty(block, "name", {
+    value: "::bunternal::",
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}

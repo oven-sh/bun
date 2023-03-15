@@ -41,6 +41,7 @@ const HTTPThread = @import("bun").HTTP.HTTPThread;
 const JSC = @import("bun").JSC;
 const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
+const Snapshots = JSC.Jest.Snapshots;
 const Test = TestRunner.Test;
 const NetworkThread = @import("bun").HTTP.NetworkThread;
 const uws = @import("bun").uws;
@@ -365,12 +366,23 @@ pub const TestCommand = struct {
         bun.JSC.initialize();
         HTTPThread.init() catch {};
 
+        var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
+        var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
+        var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
                 .allocator = ctx.allocator,
                 .log = ctx.log,
                 .callback = undefined,
+                .snapshots = Snapshots{
+                    .allocator = ctx.allocator,
+                    .update_snapshots = ctx.test_options.update_snapshots,
+                    .file_buf = &snapshot_file_buf,
+                    .values = &snapshot_values,
+                    .counts = &snapshot_counts,
+                },
             },
             .callback = undefined,
         };
@@ -420,6 +432,8 @@ pub const TestCommand = struct {
             // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
+
+        try jest.Jest.runner.?.snapshots.writeSnapshotFile();
 
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
@@ -480,8 +494,49 @@ pub const TestCommand = struct {
             }
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
+            var print_expect_calls = reporter.summary.expectations > 0;
+            if (reporter.jest.snapshots.total > 0) {
+                const passed = reporter.jest.snapshots.passed;
+                const failed = reporter.jest.snapshots.failed;
+                const added = reporter.jest.snapshots.added;
 
-            if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
+                var first = true;
+                if (print_expect_calls and added == 0 and failed == 0) {
+                    print_expect_calls = false;
+                    Output.prettyError(" {d:5>} snapshots, {d:5>} expect() calls", .{ reporter.jest.snapshots.total, reporter.summary.expectations });
+                } else {
+                    Output.prettyError(" <d>snapshots:<r> ", .{});
+
+                    if (passed > 0) {
+                        Output.prettyError("<d>{d} passed<r>", .{passed});
+                        first = false;
+                    }
+
+                    if (added > 0) {
+                        if (first) {
+                            first = false;
+                            Output.prettyError("<b>+{d} added<r>", .{added});
+                        } else {
+                            Output.prettyError("<b>, {d} added<r>", .{added});
+                        }
+                    }
+
+                    if (failed > 0) {
+                        if (first) {
+                            first = false;
+                            Output.prettyError("<red>{d} failed<r>", .{failed});
+                        } else {
+                            Output.prettyError(", <red>{d} failed<r>", .{failed});
+                        }
+                    }
+                }
+
+                Output.prettyError("\n", .{});
+            }
+
+            if (print_expect_calls) {
+                Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
+            }
 
             Output.prettyError("Ran {d} tests across {d} files ", .{
                 reporter.summary.fail + reporter.summary.pass,

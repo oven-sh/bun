@@ -2665,6 +2665,175 @@ void JSExpect::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpect);
+class JSExpectAnyPrototype final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static JSExpectAnyPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSExpectAnyPrototype* ptr = new (NotNull, JSC::allocateCell<JSExpectAnyPrototype>(vm)) JSExpectAnyPrototype(vm, globalObject, structure);
+        ptr->finishCreation(vm, globalObject);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSExpectAnyPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+};
+
+extern "C" void ExpectAnyClass__finalize(void*);
+extern "C" JSC_DECLARE_HOST_FUNCTION(ExpectAnyClass__call);
+
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectAnyPrototype, JSExpectAnyPrototype::Base);
+
+static const HashTableValue JSExpectAnyPrototypeTableValues[] = {};
+
+const ClassInfo JSExpectAnyPrototype::s_info = { "ExpectAny"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectAnyPrototype) };
+
+extern "C" void ExpectAnyPrototype__constructorValueSetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = jsCast<JSExpectAny*>(JSValue::decode(thisValue));
+    thisObject->m_constructorValue.set(vm, thisObject, JSValue::decode(value));
+}
+
+extern "C" EncodedJSValue ExpectAnyPrototype__constructorValueGetCachedValue(JSC::EncodedJSValue thisValue)
+{
+    auto* thisObject = jsCast<JSExpectAny*>(JSValue::decode(thisValue));
+    return JSValue::encode(thisObject->m_constructorValue.get());
+}
+
+void JSExpectAnyPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+{
+    Base::finishCreation(vm);
+
+    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+}
+
+JSExpectAny::~JSExpectAny()
+{
+    if (m_ctx) {
+        ExpectAnyClass__finalize(m_ctx);
+    }
+}
+void JSExpectAny::destroy(JSCell* cell)
+{
+    static_cast<JSExpectAny*>(cell)->JSExpectAny::~JSExpectAny();
+}
+
+const ClassInfo JSExpectAny::s_info = { "ExpectAny"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectAny) };
+
+void JSExpectAny::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSExpectAny* JSExpectAny::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx)
+{
+    JSExpectAny* ptr = new (NotNull, JSC::allocateCell<JSExpectAny>(vm)) JSExpectAny(vm, structure, ctx);
+    ptr->finishCreation(vm);
+    return ptr;
+}
+
+extern "C" void* ExpectAny__fromJS(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+    if (decodedValue.isEmpty() || !decodedValue.isCell())
+        return nullptr;
+
+    JSC::JSCell* cell = decodedValue.asCell();
+    JSExpectAny* object = JSC::jsDynamicCast<JSExpectAny*>(cell);
+
+    if (!object)
+        return nullptr;
+
+    return object->wrapped();
+}
+
+extern "C" bool ExpectAny__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr)
+{
+    JSExpectAny* object = JSC::jsDynamicCast<JSExpectAny*>(JSValue::decode(value));
+    if (!object)
+        return false;
+
+    object->m_ctx = ptr;
+    return true;
+}
+
+extern "C" const size_t ExpectAny__ptrOffset = JSExpectAny::offsetOfWrapped();
+
+void JSExpectAny::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = jsCast<JSExpectAny*>(cell);
+    if (void* wrapped = thisObject->wrapped()) {
+        // if (thisObject->scriptExecutionContext())
+        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    }
+    Base::analyzeHeap(cell, analyzer);
+}
+
+JSObject* JSExpectAny::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+{
+    return JSExpectAnyPrototype::create(vm, globalObject, JSExpectAnyPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+
+extern "C" EncodedJSValue ExpectAny__create(Zig::GlobalObject* globalObject, void* ptr)
+{
+    auto& vm = globalObject->vm();
+    JSC::Structure* structure = globalObject->JSExpectAnyStructure();
+    JSExpectAny* instance = JSExpectAny::create(vm, globalObject, structure, ptr);
+
+    return JSValue::encode(instance);
+}
+
+template<typename Visitor>
+void JSExpectAny::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSExpectAny* thisObject = jsCast<JSExpectAny*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_constructorValue);
+}
+
+DEFINE_VISIT_CHILDREN(JSExpectAny);
+
+template<typename Visitor>
+void JSExpectAny::visitAdditionalChildren(Visitor& visitor)
+{
+    JSExpectAny* thisObject = this;
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    visitor.append(thisObject->m_constructorValue);
+
+    ;
+}
+
+DEFINE_VISIT_ADDITIONAL_CHILDREN(JSExpectAny);
+
+template<typename Visitor>
+void JSExpectAny::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
+{
+    JSExpectAny* thisObject = jsCast<JSExpectAny*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    thisObject->visitAdditionalChildren<Visitor>(visitor);
+}
+
+DEFINE_VISIT_OUTPUT_CONSTRAINTS(JSExpectAny);
 class JSFileSystemRouterPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

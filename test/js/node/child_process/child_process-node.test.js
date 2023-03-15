@@ -1,15 +1,15 @@
-import { beforeAll, describe, expect, it } from "bun:test";
 import { ChildProcess, spawn, exec } from "node:child_process";
-import { throws, assert, createCallCheckCtx, createDoneDotAll } from "node-harness";
+import { createTest } from "node-harness";
 import { tmpdir } from "node:os";
+const { beforeAll, describe, expect, it, throws, assert, createCallCheckCtx, createDoneDotAll } = createTest(
+  import.meta.path,
+);
 const strictEqual = (a, b) => expect(a).toStrictEqual(b);
 const debug = process.env.DEBUG ? console.log : () => {};
 
 const platformTmpDir = require("fs").realpathSync(tmpdir());
 
 const TYPE_ERR_NAME = "TypeError";
-
-console.log(process.cwd());
 
 // Copyright Joyent, Inc. and other Node contributors.
 //

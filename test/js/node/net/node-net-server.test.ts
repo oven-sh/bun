@@ -1,9 +1,12 @@
-import { describe, expect, it } from "bun:test";
-import { createServer } from "net";
-import { createCallCheckCtx } from "node-harness";
+const { createServer } = require("net");
 import { realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { createTest } from "node-harness";
+
+const { throws, assert, createDoneDotAll, beforeAll, describe, expect, it, createCallCheckCtx } = createTest(
+  import.meta.path,
+);
 
 const socket_domain = join(realpathSync(tmpdir()), "node-net-server.sock");
 

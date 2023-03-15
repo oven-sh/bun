@@ -3227,7 +3227,8 @@ void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
 static auto function_string_view = MAKE_STATIC_STRING_IMPL("Function");
 void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
-    JSC::JSCell* cell = JSC::JSValue::decode(JSValue0).asCell();
+    JSValue value = JSValue::decode(JSValue0);
+    JSC::JSCell* cell = value.asCell();
     if (cell == nullptr) {
         arg2->len = 0;
         return;
@@ -3240,12 +3241,16 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     if (view.length() == 0 || StringView(String(function_string_view)) == view) {
         JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
         return;
-    } else {
-        *arg2 = Zig::toZigString(view);
+    }
+
+    JSObject* obj = value.toObject(arg1);
+    StringView calculated = StringView(JSObject::calculatedClassName(obj));
+    if (calculated.length() > 0) {
+        *arg2 = Zig::toZigString(calculated);
         return;
     }
 
-    arg2->len = 0;
+    *arg2 = Zig::toZigString(view);
 }
 
 void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
@@ -3782,6 +3787,12 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyValue.isSymbol());
     }
+}
+
+bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0)
+{
+    JSValue value = JSValue::decode(JSValue0);
+    return value.isConstructor();
 }
 
 extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)

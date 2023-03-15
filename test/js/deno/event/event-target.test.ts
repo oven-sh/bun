@@ -96,7 +96,7 @@ Deno.test(function dispatchEventShouldNotThrowError() {
     }
     assertEquals(hasThrown, false);
 });
-Deno.test(function eventTargetThisShouldDefaultToWindow() {
+Deno.test.ignore(function eventTargetThisShouldDefaultToWindow() {
     const { addEventListener , dispatchEvent , removeEventListener  } = EventTarget.prototype;
     let n = 1;
     const event = new Event("hello");

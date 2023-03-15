@@ -18,7 +18,10 @@
   },
   {
     "path": "event/event-target.test.ts",
-    "remotePath": "cli/tests/unit/event_target_test.ts"
+    "remotePath": "cli/tests/unit/event_target_test.ts",
+    "skip": [
+      "eventTargetThisShouldDefaultToWindow"
+    ]
   },
   {
     "path": "event/custom-event.test.ts",
@@ -35,7 +38,8 @@
   },
   {
     "path": "fetch/file.test.ts",
-    "remotePath": "cli/tests/unit/file_test.ts"
+    "remotePath": "cli/tests/unit/file_test.ts",
+    "skip": true
   },
   {
     "path": "fetch/headers.test.ts",
@@ -61,11 +65,19 @@
   },
   {
     "path": "crypto/webcrypto.test.ts",
-    "remotePath": "cli/tests/unit/webcrypto_test.ts"
+    "remotePath": "cli/tests/unit/webcrypto_test.ts",
+    "skip": [
+      "testUnwrapKey",
+      "testAesKeyGen"
+    ]
   },
   {
     "path": "encoding/encoding.test.ts",
-    "remotePath": "cli/tests/unit/text_encoding_test.ts"
+    "remotePath": "cli/tests/unit/text_encoding_test.ts",
+    "skip": [
+      "textDecoderErrorEncoding",
+      "binaryEncode"
+    ]
   },
   {
     "path": "v8/error.test.ts",

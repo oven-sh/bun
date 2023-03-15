@@ -28,6 +28,12 @@ JSC::Structure* JSExpectStructure() { return m_JSExpect.getInitializedOnMainThre
   JSC::LazyClassStructure m_JSExpect;
   bool hasJSExpectSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectSetterValue;
+JSC::Structure* JSExpectAnyStructure() { return m_JSExpectAny.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSExpectAnyConstructor() { return m_JSExpectAny.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSExpectAnyPrototype() { return m_JSExpectAny.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSExpectAny;
+  bool hasJSExpectAnySetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSExpectAnySetterValue;
 JSC::Structure* JSFileSystemRouterStructure() { return m_JSFileSystemRouter.getInitializedOnMainThread(this); }
         JSC::JSObject* JSFileSystemRouterConstructor() { return m_JSFileSystemRouter.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSFileSystemRouterPrototype() { return m_JSFileSystemRouter.prototypeInitializedOnMainThread(this); }

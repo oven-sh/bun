@@ -196,8 +196,14 @@ pub const Arguments = struct {
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     };
 
+    // TODO: update test completions
+    const test_only_params = [_]ParamType{
+        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+    };
+
     const build_params_public = public_params ++ build_only_params;
     pub const build_params = build_params_public ++ debug_params;
+    pub const test_params = params ++ test_only_params;
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
@@ -348,6 +354,10 @@ pub const Arguments = struct {
             };
         } else {
             cwd = try std.process.getCwdAlloc(allocator);
+        }
+
+        if (cmd == .TestCommand) {
+            ctx.test_options.update_snapshots = args.flag("--update-snapshots");
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -850,6 +860,10 @@ pub const Command = struct {
         output_file: []const u8 = "",
     };
 
+    pub const TestOptions = struct {
+        update_snapshots: bool = false,
+    };
+
     pub const Context = struct {
         start_time: i128,
         args: Api.TransformOptions,
@@ -860,6 +874,7 @@ pub const Command = struct {
         install: ?*Api.BunInstall = null,
 
         debug: DebugOptions = DebugOptions{},
+        test_options: TestOptions = TestOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
@@ -1466,6 +1481,7 @@ pub const Command = struct {
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
                 Command.Tag.BunCommand, Command.Tag.BuildCommand => Arguments.build_params,
+                Command.Tag.TestCommand => Arguments.test_params,
                 else => Arguments.params,
             };
         }

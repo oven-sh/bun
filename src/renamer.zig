@@ -219,6 +219,10 @@ pub const NumberRenamer = struct {
     pub fn assignNamesRecursiveWithNumberScope(r: *NumberRenamer, initial_scope: *NumberScope, scope_: *js_ast.Scope, source_index: u32, sorted: *std.ArrayList(u32)) void {
         var s = initial_scope;
         var scope = scope_;
+        defer if (s != initial_scope) {
+            s.deinit(r.temp_allocator);
+            r.number_scope_pool.put(s);
+        };
 
         // Ignore function argument scopes
         if (scope.kind == .function_args and scope.children.len == 1) {

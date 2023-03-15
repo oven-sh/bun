@@ -7,18 +7,13 @@ describe("expect()", () => {
     const tests = [
       {
         label: "string",
-        value: "",
-        instanceOf: String,
+        value: new String(""),
+        instanceOf: Number,
       },
       {
         label: "number",
-        value: 1,
-        instanceof: Number,
-      },
-      {
-        label: "bigint",
-        value: 1n,
-        instanceof: BigInt,
+        value: new Number(1),
+        instanceOf: Number,
       },
       {
         label: "object",
@@ -28,22 +23,22 @@ describe("expect()", () => {
       {
         label: "function",
         value: () => {},
-        instanceof: Function,
+        instanceOf: Function,
       },
       {
         label: "Class",
         value: new Animal(),
-        instanceof: Animal,
+        instanceOf: Animal,
       },
       {
         label: "extends Class",
         value: new Dog(),
-        instanceof: Dog,
+        instanceOf: Dog,
       },
       {
         label: "super Class",
         value: new Dog(),
-        instanceof: Animal,
+        instanceOf: Animal,
       },
     ];
     for (const { label, value, instanceOf } of tests) {

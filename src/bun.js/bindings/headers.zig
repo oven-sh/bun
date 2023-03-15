@@ -238,6 +238,7 @@ pub extern fn JSC__JSValue__isError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isException(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
 pub extern fn JSC__JSValue__isGetterSetter(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isHeapBigInt(JSValue0: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__isInstanceOf(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isInt32(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isInt32AsAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isIterable(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;

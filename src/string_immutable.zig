@@ -186,7 +186,7 @@ pub const FormatValidIdentifier = struct {
 
         if (needs_gap) {
             needs_gap = false;
-
+            if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
             var slice = self.name[start_i..];
             iterator = strings.CodepointIterator.init(slice);
             cursor = strings.CodepointIterator.Cursor{};

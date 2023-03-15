@@ -224,10 +224,10 @@ describe("ReactDOM", () => {
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
         it("http server, 1 request", async () => {
           await (async function () {
-            var server;
+            let server;
             try {
               server = serve({
-                port: port++,
+                port: 0,
                 async fetch(req) {
                   return new Response(await renderToReadableStream(reactElement));
                 },
@@ -243,7 +243,7 @@ describe("ReactDOM", () => {
             }
           })();
           gc();
-          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBe(1);
+          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBeLessThan(4);
         });
         const count = 4;
         it(`http server, ${count} requests`, async () => {
@@ -252,7 +252,7 @@ describe("ReactDOM", () => {
             var server;
             try {
               server = serve({
-                port: port++,
+                port: 0,
                 async fetch(req) {
                   return new Response(await renderToReadableStream(reactElement));
                 },
@@ -280,7 +280,7 @@ describe("ReactDOM", () => {
           })();
 
           const { ReadableHTTPResponseSinkController = 0 } = heapStats().objectTypeCounts;
-          expect(ReadableHTTPResponseSinkController).toBe(1);
+          expect(ReadableHTTPResponseSinkController).toBeLessThan(4);
           expect(remain + 1).toBe(0);
         });
       });

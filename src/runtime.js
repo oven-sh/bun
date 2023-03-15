@@ -8,18 +8,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
-var __copyProps = (to, from, except, desc) => {
-  if ((from && typeof from === "object") || typeof from === "function")
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, {
-          get: () => from[key],
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
-
-  return to;
-};
-
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
 
 // This is used to implement "export * from" statements. It copies properties
@@ -28,8 +16,23 @@ export var __markAsModule = target => __defProp(target, "__esModule", { value: t
 // also copy the properties to "module.exports" in addition to our module's
 // internal ESM export object.
 export var __reExport = (target, mod, secondTarget) => {
-  __copyProps(target, mod, "default");
-  return secondTarget && __copyProps(secondTarget, mod, "default");
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(target, key) && key !== "default")
+      __defProp(target, key, {
+        get: () => mod[key],
+        enumerable: true,
+      });
+
+  if (secondTarget) {
+    for (let key of __getOwnPropNames(mod))
+      if (!__hasOwnProp.call(secondTarget, key) && key !== "default")
+        __defProp(secondTarget, key, {
+          get: () => mod[key],
+          enumerable: true,
+        });
+
+    return secondTarget;
+  }
 };
 
 // Converts the module from CommonJS to ESM. When in node mode (i.e. in an
@@ -58,7 +61,19 @@ export var __toESM = (mod, isNodeMode, target) => {
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
-export var __toCommonJS = mod => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+export var __toCommonJS = from => {
+  var to = __defProp({}, "__esModule", { value: true });
+  var desc = { enumerable: false };
+  if ((from && typeof from === "object") || typeof from === "function")
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key))
+        __defProp(to, key, {
+          get: () => from[key],
+          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+        });
+
+  return to;
+};
 
 // lazy require to prevent loading one icon from a design system
 export var $$lzy = (target, mod, props) => {

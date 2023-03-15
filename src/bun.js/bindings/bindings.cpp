@@ -3234,6 +3234,15 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
         return;
     }
 
+    const char* ptr = cell->className();
+    auto view = WTF::StringView(ptr, strlen(ptr));
+
+    // Fallback to .name if className is empty
+    if (view.length() == 0 || StringView(String(function_string_view)) == view) {
+        JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
+        return;
+    }
+
     JSObject* obj = value.toObject(arg1);
     StringView calculated = StringView(JSObject::calculatedClassName(obj));
     if (calculated.length() > 0) {
@@ -3241,19 +3250,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
         return;
     }
 
-    const char* ptr = cell->classInfo()->className;
-    auto view = WTF::StringView(ptr, strlen(ptr));
-
-    // Fallback to .name if className is empty
-    if (view.length() == 0 || StringView(String(function_string_view)) == view) {
-        JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
-        return;
-    } else {
-        *arg2 = Zig::toZigString(view);
-        return;
-    }
-
-    arg2->len = 0;
+    *arg2 = Zig::toZigString(view);
 }
 
 void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)

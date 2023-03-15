@@ -875,6 +875,11 @@ pub const ImportScanner = struct {
                     if (p.options.features.hot_module_reloading and st.is_export) {
                         st.is_export = false;
                     }
+
+                    // when bundling, all top-level variables become var
+                    if (p.options.bundle) {
+                        st.kind = .k_var;
+                    }
                 },
                 .s_export_default => |st| {
                     // This is defer'd so that we still record export default for identifiers

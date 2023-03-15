@@ -2700,6 +2700,12 @@ fn NewPrinter(
 
                     p.printSpace();
                     flags.insert(.forbid_in);
+
+                    // this feels like a hack? I think something is wrong here.
+                    if (e.op == .bin_assign) {
+                        flags.remove(.expr_result_is_unused);
+                    }
+
                     p.printExpr(e.right, right_level, flags);
 
                     if (wrap) {

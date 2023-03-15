@@ -27,10 +27,7 @@ export function deferred<T>() {
   return Object.assign(promise, methods);
 }
 
-export function delay(
-  ms: number,
-  options: { signal?: AbortSignal } = {},
-): Promise<void> {
+export function delay(ms: number, options: { signal?: AbortSignal } = {}): Promise<void> {
   const { signal } = options;
   if (signal?.aborted) {
     return Promise.reject(new DOMException("Delay was aborted.", "AbortError"));

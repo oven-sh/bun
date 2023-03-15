@@ -96,7 +96,7 @@ function visitTest(item: CallExpression): void {
     if (argument.expression.type === "FunctionExpression") {
       const fn = argument.expression.identifier?.value;
       if (fn) {
-        const pattern = new RegExp(tests.flatMap((test) => test.skip ?? []).join("|"), "i");
+        const pattern = new RegExp(tests.flatMap(test => test.skip ?? []).join("|"), "i");
         if (pattern.test(fn)) {
           // @ts-ignore
           item.callee.property.value = "test.ignore";

@@ -1,0 +1,12 @@
+{
+    "extends": "../../../../tsconfig.base.json",
+    "compilerOptions": {
+      "allowSyntheticDefaultImports": true,
+      "paths": {
+        "foo/bar": ["baz.js"],
+        "@faasjs/*": ["*.js"]
+      },
+      "baseUrl": "."
+    },
+  }
+  

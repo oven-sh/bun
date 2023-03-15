@@ -1,9 +1,3 @@
-import fs from "fs";
-
-beforeAll(() => {
-  fs.rmSync(import.meta.dir + "/__snapshots__/bun-snapshots.test.ts.snap", { force: true });
-});
-
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
   expect({ a: { b: { c: "string" } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(String) } } });

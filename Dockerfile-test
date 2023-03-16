@@ -1,4 +1,0 @@
-FROM bun:debian
-ADD test .
-RUN bun install
-CMD bun test

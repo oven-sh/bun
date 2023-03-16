@@ -2733,10 +2733,11 @@ pub const Expect = struct {
         }
 
         active_test_expectation_counter.actual += 1;
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+
         const expected_value = arguments[0];
-        if (!expected_value.jsType().isFunction()) {
-            var fmt = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
-            globalObject.throw("Expected value must be a function: {any}", .{expected_value.toFmt(globalObject, &fmt)});
+        if (!expected_value.isConstructor()) {
+            globalObject.throw("Expected value must be a function: {any}", .{expected_value.toFmt(globalObject, &formatter)});
             return .zero;
         }
         expected_value.ensureStillAlive();
@@ -2753,28 +2754,30 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         // handle failure
-        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+        const expected_fmt = expected_value.toFmt(globalObject, &formatter);
         const value_fmt = value.toFmt(globalObject, &formatter);
         if (not) {
-            const received_line = "Received: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toBeInstanceOf", "", true) ++ "\n\n" ++ received_line;
+            const expected_line = "Expected constructor: not <green>{any}<r>\n";
+            const received_line = "Received value: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toBeInstanceOf", "", true) ++ "\n\n" ++ expected_line ++ received_line;
             if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
                 return .zero;
             }
 
-            globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
             return .zero;
         }
 
-        const received_line = "Received: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toBeInstanceOf", "", false) ++ "\n\n" ++ received_line;
+        const expected_line = "Expected constructor: <green>{any}<r>\n";
+        const received_line = "Received value: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toBeInstanceOf", "", false) ++ "\n\n" ++ expected_line ++ received_line;
         if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{value_fmt});
+            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
             return .zero;
         }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{value_fmt});
+        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
         return .zero;
     }
 

@@ -1069,6 +1069,13 @@ pub const ImportScanner = struct {
                             .is_exported = true,
                         });
                         try p.recordExport(item.name.loc, item.alias, ref);
+
+                        var record = &p.import_records.items[st.import_record_index];
+                        if (strings.eqlComptime(item.original_name, "default")) {
+                            record.contains_default_alias = true;
+                        } else if (strings.eqlComptime(item.original_name, "__esModule")) {
+                            record.contains_es_module_alias = true;
+                        }
                     }
                 },
                 else => {},
@@ -19184,7 +19191,7 @@ fn NewParser_(
                 }
             }
 
-            const wrapper_ref = brk: {
+            const wrapper_ref: ?Ref = brk: {
                 if (p.options.bundle) {
                     break :brk p.newSymbol(
                         .other,

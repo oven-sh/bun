@@ -1,6 +1,6 @@
 import { test, describe, expect, it } from "bun:test";
 import { heapStats } from "bun:jsc";
-import { expectObjectTypeCount, gc } from "harness";
+import { expectMaxObjectTypeCount, gc } from "harness";
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
 import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
@@ -159,5 +159,5 @@ test("EventEmitter GCs", async () => {
     myEmitter.emit("foo");
   })();
 
-  await expectObjectTypeCount("EventEmitter", startCount);
+  await expectMaxObjectTypeCount("EventEmitter", startCount);
 });

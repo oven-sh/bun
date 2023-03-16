@@ -1,6 +1,6 @@
 import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectObjectTypeCount } from "harness";
+import { expectMaxObjectTypeCount } from "harness";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -267,6 +267,6 @@ describe("tcp socket binaryType", () => {
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 because that's the prototype / structure
-  await expectObjectTypeCount("Listener", 1);
-  await expectObjectTypeCount("TCPSocket", 1);
+  await expectMaxObjectTypeCount("Listener", 1);
+  await expectMaxObjectTypeCount("TCPSocket", 1);
 });

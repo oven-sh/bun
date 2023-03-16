@@ -1,7 +1,7 @@
 FROM debian:bullseye-slim AS build
 
 # https://github.com/oven-sh/bun/releases
-ARG BUN_VERSION=latest
+ARG BUN_VERSION=0.5.7
 
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \

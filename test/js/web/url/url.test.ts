@@ -27,10 +27,10 @@ describe("url", () => {
     "values": [Function: values],
     "forEach": [Function: forEach],
     "toString": [Function: toString],
-    [Symbol(Symbol.iterator)]: [Function: entries],
+    [Symbol(Symbol.iterator)]: [Function: entries]
   },
   "toJSON": [Function: toJSON],
-  "toString": [Function: toString],
+  "toString": [Function: toString]
 }`);
 
     expect(
@@ -62,10 +62,10 @@ describe("url", () => {
     "values": [Function: values],
     "forEach": [Function: forEach],
     "toString": [Function: toString],
-    [Symbol(Symbol.iterator)]: [Function: entries],
+    [Symbol(Symbol.iterator)]: [Function: entries]
   },
   "toJSON": [Function: toJSON],
-  "toString": [Function: toString],
+  "toString": [Function: toString]
 }`);
   });
   it("works", () => {

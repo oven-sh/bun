@@ -3042,7 +3042,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (!this.isCell())
             return false;
 
-        return JSC.C.JSValueIsInstanceOfConstructor(global, this.asObjectRef(), constructor.asObjectRef(), null);
+        return cppFn("isInstanceOf", .{ this, global, constructor });
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
@@ -4122,6 +4122,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toZigException",
         "toZigString",
         "isConstructor",
+        "isInstanceOf",
     };
 };
 

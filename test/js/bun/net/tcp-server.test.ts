@@ -1,11 +1,13 @@
 import { listen, connect, TCPSocketListener, SocketHandler } from "bun";
 import { describe, expect, it } from "bun:test";
-import * as JSC from "bun:jsc";
+import { expectMaxObjectTypeCount } from "harness";
 
-var decoder = new TextDecoder();
+type Resolve = (value?: unknown) => void;
+type Reject = (reason?: any) => void;
+const decoder = new TextDecoder();
 
 it("remoteAddress works", async () => {
-  var resolve: () => void, reject: (e: any) => void;
+  var resolve: Resolve, reject: Reject;
   var remaining = 2;
   var prom = new Promise<void>((resolve1, reject1) => {
     resolve = () => {
@@ -60,17 +62,17 @@ it("echo server 1 on 1", async () => {
   // wrap it in a separate closure so the GC knows to clean it up
   // the sockets & listener don't escape the closure
   await (async function () {
-    var resolve, reject, serverResolve, serverReject;
-    var prom = new Promise((resolve1, reject1) => {
+    let resolve: Resolve, reject: Reject, serverResolve: Resolve, serverReject: Reject;
+    const prom = new Promise((resolve1, reject1) => {
       resolve = resolve1;
       reject = reject1;
     });
-    var serverProm = new Promise((resolve1, reject1) => {
+    const serverProm = new Promise((resolve1, reject1) => {
       serverResolve = resolve1;
       serverReject = reject1;
     });
 
-    var serverData, clientData;
+    let serverData: any, clientData: any;
     const handlers = {
       open(socket) {
         socket.data.counter = 1;
@@ -129,7 +131,7 @@ it("echo server 1 on 1", async () => {
     var server: TCPSocketListener<any> | undefined = listen({
       socket: handlers,
       hostname: "localhost",
-      port: 8084,
+      port: 0,
 
       data: {
         isServer: true,
@@ -139,7 +141,7 @@ it("echo server 1 on 1", async () => {
     const clientProm = connect({
       socket: handlers,
       hostname: "localhost",
-      port: 8084,
+      port: server.port,
       data: {
         counter: 0,
       },
@@ -151,24 +153,23 @@ it("echo server 1 on 1", async () => {
 });
 
 describe("tcp socket binaryType", () => {
-  var port = 8085;
   const binaryType = ["arraybuffer", "uint8array", "buffer"] as const;
   for (const type of binaryType) {
     it(type, async () => {
       // wrap it in a separate closure so the GC knows to clean it up
       // the sockets & listener don't escape the closure
       await (async function () {
-        var resolve, reject, serverResolve, serverReject;
-        var prom = new Promise((resolve1, reject1) => {
+        let resolve: Resolve, reject: Reject, serverResolve: Resolve, serverReject: Reject;
+        const prom = new Promise((resolve1, reject1) => {
           resolve = resolve1;
           reject = reject1;
         });
-        var serverProm = new Promise((resolve1, reject1) => {
+        const serverProm = new Promise((resolve1, reject1) => {
           serverResolve = resolve1;
           serverReject = reject1;
         });
 
-        var serverData, clientData;
+        let serverData: any, clientData: any;
         const handlers = {
           open(socket) {
             socket.data.counter = 1;
@@ -239,7 +240,7 @@ describe("tcp socket binaryType", () => {
         var server: TCPSocketListener<any> | undefined = listen({
           socket: handlers,
           hostname: "localhost",
-          port,
+          port: 0,
           data: {
             isServer: true,
             counter: 0,
@@ -249,12 +250,11 @@ describe("tcp socket binaryType", () => {
         const clientProm = connect({
           socket: handlers,
           hostname: "localhost",
-          port,
+          port: server.port,
           data: {
             counter: 0,
           },
         });
-        port++;
 
         await Promise.all([prom, clientProm, serverProm]);
         server.stop(true);
@@ -264,11 +264,9 @@ describe("tcp socket binaryType", () => {
   }
 });
 
-it("should not leak memory", () => {
-  // Tell the garbage collector for sure that we're done with the sockets
-  Bun.gc(true);
+it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 because that's the prototype / structure
-  expect(JSC.heapStats().objectTypeCounts.TCPSocket).toBe(1);
-  expect(JSC.heapStats().objectTypeCounts.Listener).toBe(1);
+  await expectMaxObjectTypeCount("Listener", 1);
+  await expectMaxObjectTypeCount("TCPSocket", 1);
 });

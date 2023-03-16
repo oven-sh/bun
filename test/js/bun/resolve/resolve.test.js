@@ -61,7 +61,7 @@ it("import.meta.resolve", async () => {
 
   expect(
     // optional second param can be any path, including a dir
-    await import.meta.resolve("./bun.js/resolve.test.js", join(import.meta.path, "../")),
+    await import.meta.resolve("./resolve/resolve.test.js", join(import.meta.path, "../")),
   ).toBe(import.meta.path);
 
   // can be a package path

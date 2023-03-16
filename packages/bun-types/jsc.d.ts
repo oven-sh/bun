@@ -1,9 +1,9 @@
 declare module "bun:jsc" {
   export function describe(value: any): string;
   export function describeArray(args: any[]): string;
-  export function gcAndSweep(): void;
-  export function fullGC(): void;
-  export function edenGC(): void;
+  export function gcAndSweep(): number;
+  export function fullGC(): number;
+  export function edenGC(): number;
   export function heapSize(): number;
   export function heapStats(): {
     heapSize: number;
@@ -29,7 +29,7 @@ declare module "bun:jsc" {
   export function callerSourceOrigin(): string;
   export function noFTL(func: Function): Function;
   export function noOSRExitFuzzing(func: Function): Function;
-  export function optimizeNextInvocation(func: Function): Function;
+  export function optimizeNextInvocation(func: Function): void;
   export function numberOfDFGCompiles(func: Function): number;
   export function releaseWeakRefs(): void;
   export function totalCompileTime(func: Function): number;

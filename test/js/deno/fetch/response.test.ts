@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/response_test.ts
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "deno:harness";
-Deno.test(async function responseText() {
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals, assertStringIncludes, assertThrows } = createDenoTest(import.meta.path);
+test(async function responseText() {
     const response = new Response("hello world");
     const textPromise = response.text();
     assert(textPromise instanceof Promise);
@@ -9,7 +11,7 @@ Deno.test(async function responseText() {
     assert(typeof text === "string");
     assertEquals(text, "hello world");
 });
-Deno.test(async function responseArrayBuffer() {
+test(async function responseArrayBuffer() {
     const response = new Response(new Uint8Array([
         1,
         2,
@@ -25,7 +27,7 @@ Deno.test(async function responseArrayBuffer() {
         3
     ]));
 });
-Deno.test(async function responseJson() {
+test(async function responseJson() {
     const response = new Response('{"hello": "world"}');
     const jsonPromise = response.json();
     assert(jsonPromise instanceof Promise);
@@ -35,7 +37,7 @@ Deno.test(async function responseJson() {
         hello: "world"
     });
 });
-Deno.test(async function responseBlob() {
+test(async function responseBlob() {
     const response = new Response(new Uint8Array([
         1,
         2,
@@ -52,7 +54,7 @@ Deno.test(async function responseBlob() {
         3
     ]).buffer);
 });
-Deno.test(async function responseFormData() {
+test(async function responseFormData() {
     const input = new FormData();
     input.append("hello", "world");
     const response = new Response(input);
@@ -68,7 +70,7 @@ Deno.test(async function responseFormData() {
         ...input
     ]);
 });
-Deno.test(function responseInvalidInit() {
+test(function responseInvalidInit() {
     assertThrows(()=>new Response("", 0));
     assertThrows(()=>new Response("", {
             status: 0
@@ -77,11 +79,11 @@ Deno.test(function responseInvalidInit() {
             status: null
         }));
 });
-Deno.test(function responseNullInit() {
+test(function responseNullInit() {
     const response = new Response("", null);
     assertEquals(response.status, 200);
 });
-Deno.test.ignore(function customInspectFunction() {
+test.ignore(function customInspectFunction() {
     const response = new Response();
     assertEquals(Deno.inspect(response), `Response {
   body: null,
@@ -95,7 +97,7 @@ Deno.test.ignore(function customInspectFunction() {
 }`);
     assertStringIncludes(Deno.inspect(Response.prototype), "Response");
 });
-Deno.test(async function responseBodyUsed() {
+test(async function responseBodyUsed() {
     const response = new Response("body");
     assert(!response.bodyUsed);
     await response.text();

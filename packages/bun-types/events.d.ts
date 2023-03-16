@@ -121,7 +121,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    once(eventName: string | symbol, listener: (...args: any[]) => void): this;
+    once(eventName: string | symbol, listener: (this: this, ...args: any[]) => void): this;
     /**
      * Removes the specified `listener` from the listener array for the event named`eventName`.
      *

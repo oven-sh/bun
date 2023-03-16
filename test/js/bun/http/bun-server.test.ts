@@ -27,6 +27,36 @@ describe("Server", () => {
     server.stop(true);
   });
 
+  test("allows listen on IPV6", async () => {
+    {
+      const server = Bun.serve({
+        hostname: "[::1]",
+        fetch() {
+          return new Response("Hello");
+        },
+        port: 0,
+      });
+
+      expect(server.port).not.toBe(0);
+      expect(server.port).toBeDefined();
+      server.stop(true);
+    }
+
+    {
+      const server = Bun.serve({
+        hostname: "::1",
+        fetch() {
+          return new Response("Hello");
+        },
+        port: 0,
+      });
+
+      expect(server.port).not.toBe(0);
+      expect(server.port).toBeDefined();
+      server.stop(true);
+    }
+  });
+
   test("abort signal on server", async () => {
     {
       let signalOnServer = false;

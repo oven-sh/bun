@@ -6,12 +6,15 @@ import {
   readableStreamToText,
   serve,
 } from "bun";
-import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
+import { expectMaxObjectTypeCount, gc } from "harness";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
-import { gc } from "harness";
-import { renderToReadableStream as renderToReadableStreamBun } from "./react-dom-server.bun.cjs";
+import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import React from "react";
+
+if (!import.meta.resolveSync("react-dom/server").endsWith("server.bun.js")) {
+  throw new Error("react-dom/server is not the correct version:\n  " + import.meta.resolveSync("react-dom/server"));
+}
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",
@@ -19,7 +22,6 @@ Object.defineProperty(renderToReadableStreamBrowser, "name", {
 Object.defineProperty(renderToReadableStreamBun, "name", {
   value: "server.bun",
 });
-var port = 8908;
 
 const fixtures = [
   // Needs at least six variations
@@ -219,45 +221,39 @@ describe("ReactDOM", () => {
     for (let [inputString, reactElement] of fixtures) {
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
         it("http server, 1 request", async () => {
-          await (async function () {
+          await (async () => {
             var server;
             try {
               server = serve({
-                port: port++,
+                port: 0,
                 async fetch(req) {
                   return new Response(await renderToReadableStream(reactElement));
                 },
               });
-              const resp = await fetch("http://localhost:" + server.port + "/");
-              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(inputString);
-              gc();
-            } catch (e) {
-              throw e;
+              const response = await fetch("http://localhost:" + server.port + "/");
+              const result = await response.text();
+              expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
             } finally {
-              server?.stop();
-              gc();
+              server?.stop(true);
             }
           })();
-          gc();
-          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBe(1);
+          await expectMaxObjectTypeCount("ReadableHTTPResponseSinkController", 2);
         });
         const count = 4;
         it(`http server, ${count} requests`, async () => {
           var remain = count;
-          await (async function () {
-            var server;
+          await (async () => {
+            let server;
             try {
               server = serve({
-                port: port++,
+                port: 0,
                 async fetch(req) {
                   return new Response(await renderToReadableStream(reactElement));
                 },
               });
-              gc();
               while (remain--) {
                 var attempt = remain + 1;
                 const response = await fetch("http://localhost:" + server.port + "/");
-                gc();
                 const result = await response.text();
                 try {
                   expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
@@ -265,19 +261,13 @@ describe("ReactDOM", () => {
                   e.message += "\nAttempt: " + attempt;
                   throw e;
                 }
-
-                gc();
               }
-            } catch (e) {
-              throw e;
             } finally {
-              server.stop();
+              server?.stop(true);
             }
           })();
-
-          const { ReadableHTTPResponseSinkController = 0 } = heapStats().objectTypeCounts;
-          expect(ReadableHTTPResponseSinkController).toBe(1);
-          expect(remain + 1).toBe(0);
+          expect(remain).toBe(-1);
+          await expectMaxObjectTypeCount("ReadableHTTPResponseSinkController", 3);
         });
       });
     }

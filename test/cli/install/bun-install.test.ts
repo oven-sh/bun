@@ -1,4 +1,4 @@
-import { file, listen, spawn } from "bun";
+import { file, listen, Socket, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
 import { bunExe, bunEnv as env } from "harness";
 import { access, mkdir, readlink, writeFile } from "fs/promises";
@@ -14,7 +14,7 @@ import {
   requested,
   root_url,
   setHandler,
-} from "./dummy.registry";
+} from "./dummy.registry.js";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -22,7 +22,7 @@ beforeEach(dummyBeforeEach);
 afterEach(dummyAfterEach);
 
 it("should report connection errors", async () => {
-  function end(socket) {
+  function end(socket: Socket) {
     socket.end();
   }
   const server = listen({
@@ -62,7 +62,7 @@ registry = "http://localhost:${server.port}/"
   });
   expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain("error: ConnectionRefused downloading package manifest bar");
+  expect(err.split(/\r?\n/)).toContain("error: ConnectionClosed downloading package manifest bar");
   expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe("");
   expect(await exited).toBe(1);
@@ -998,7 +998,7 @@ it("should prefer latest-tagged dependency", async () => {
 });
 
 it("should handle dependency aliasing", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {
@@ -1166,7 +1166,7 @@ it("should handle dependency aliasing (dist-tagged)", async () => {
 });
 
 it("should not reinstall aliased dependencies", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {
@@ -1264,7 +1264,7 @@ it("should not reinstall aliased dependencies", async () => {
 });
 
 it("should handle aliased & direct dependency references", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {
@@ -1344,7 +1344,7 @@ it("should handle aliased & direct dependency references", async () => {
 });
 
 it("should not hoist if name collides with alias", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.2": {},
@@ -1958,7 +1958,7 @@ it("should handle GitHub URL in dependencies (git+https://github.com/user/repo.g
 });
 
 it("should consider peerDependencies during hoisting", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {
@@ -2651,7 +2651,7 @@ it("should de-duplicate committish in Git URLs", async () => {
 });
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {},
@@ -2704,7 +2704,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
 });
 
 it("should prefer dependencies over peerDependencies of the same name", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.3": {},

@@ -1,6 +1,8 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/body_test.ts
-import { assert, assertEquals } from "deno:harness";
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals } = createDenoTest(import.meta.path);
 function buildBody(body: any, headers?: Headers): Body {
     const stub = new Request("http://foo/", {
         body: body,
@@ -20,7 +22,7 @@ const intArrays = [
     Float32Array,
     Float64Array
 ];
-Deno.test(async function arrayBufferFromByteArrays() {
+test(async function arrayBufferFromByteArrays() {
     const buffer = new TextEncoder().encode("ahoyhoy8").buffer;
     for (const type of intArrays){
         const body = buildBody(new type(buffer));
@@ -28,7 +30,7 @@ Deno.test(async function arrayBufferFromByteArrays() {
         assertEquals(text, "ahoyhoy8");
     }
 });
-Deno.test({
+test({
     permissions: {
         net: true
     }
@@ -42,7 +44,7 @@ Deno.test({
     assertEquals(formData.get("field_1")!.toString(), "value_1 \r\n");
     assert(formData.has("field_2"));
 });
-Deno.test({
+test({
     permissions: {
         net: true
     }
@@ -57,7 +59,7 @@ Deno.test({
     assert(formData.has("field_2"));
     assertEquals(formData.get("field_2")!.toString(), "<Deno>");
 });
-Deno.test({
+test({
     permissions: {}
 }, async function bodyURLSearchParams() {
     const body = buildBody(new URLSearchParams({
@@ -66,7 +68,7 @@ Deno.test({
     const text = await body.text();
     assertEquals(text, "hello=world");
 });
-Deno.test(async function bodyArrayBufferMultipleParts() {
+test(async function bodyArrayBufferMultipleParts() {
     const parts: Uint8Array[] = [];
     let size = 0;
     for(let i = 0; i <= 150000; i++){

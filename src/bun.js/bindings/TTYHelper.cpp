@@ -1,6 +1,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <cstdio>
+#include <errno.h>
 
 #include "TTYHelper.h"
 
@@ -14,7 +15,7 @@ static bool tty__orig_set = false;
 static struct termios tty__orig_termios;
 static struct termios tty__termios_tmp;
 static int32_t tty__is_tty_val = -1;
-static tty_mode_t tty__stdin_mode = TTY_MODE_NORMAL;
+static tty_mode_t tty__stdin_mode = TTY_MODE_UNSET;
 
 int32_t tty__is_tty(int32_t fd)
 {
@@ -45,10 +46,14 @@ int32_t tty__is_raw(int32_t fd)
 {
     if (fd != STDIN_FILENO || !tty__is_tty(fd))
         return -3;
-    // printf("tty__is_raw(%d) = %s", fd,
-    //     fd == STDIN_FILENO
-    //         ? (tty__stdin_mode == TTY_MODE_RAW ? "true" : "false")
-    //         : "not_stdin");
+
+    if (tty__get_termios(fd, &tty__termios_tmp))
+        return -4;
+
+    tty__stdin_mode = tty__termios_tmp.c_lflag & ICANON
+        ? TTY_MODE_NORMAL
+        : TTY_MODE_RAW;
+
     return tty__stdin_mode == TTY_MODE_RAW;
 }
 
@@ -63,7 +68,7 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
             return 0;
 
         if (tcsetattr(fd, TCSADRAIN, &tty__orig_termios))
-            return -1;
+            return -6;
 
         break;
 
@@ -74,12 +79,12 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
 
         if (!tty__orig_set) {
             if (tty__get_termios(fd, nullptr))
-                return -1;
+                return -4;
             tty__orig_set = true;
         }
 
         if (tcgetattr(fd, &tty__termios_tmp))
-            return -1;
+            return -5;
 
         tty__termios_tmp.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
         tty__termios_tmp.c_oflag |= (ONLCR);
@@ -95,8 +100,10 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
         // tty__termios_tmp.c_cflag &= ~(CSIZE | PARENB);
         // tty__termios_tmp.c_cflag |= CS8;
 
-        if (tcsetattr(fd, TCSADRAIN, &tty__termios_tmp))
-            return -1;
+        if (tcsetattr(fd, TCSADRAIN, &tty__termios_tmp)) {
+            printf("%s", errno);
+            return -6;
+        }
 
         break;
 

@@ -42,10 +42,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionInternalTty_setRawMode,
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (tty__set_mode(fd, shouldBeRaw ? TTY_MODE_RAW : TTY_MODE_NORMAL) < 0) {
+    auto result = tty__set_mode(fd, shouldBeRaw ? TTY_MODE_RAW : TTY_MODE_NORMAL);
+    if (result < 0) {
         JSC::throwException(
             globalObject, throwScope,
-            JSC::createError(globalObject, "Failed to set tty mode"_s));
+            JSC::createError(globalObject, "Failed to set tty mode. Error code: "_s + WTFMove(std::to_string(result).c_str())));
         return JSValue::encode(jsUndefined());
     }
     return JSValue::encode(jsBoolean(true));

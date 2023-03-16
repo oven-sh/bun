@@ -27,14 +27,17 @@
 function asyncIterator() {
     "use strict";
 
+    const { TextDecoder, Symbol, process: { stdin }} = globalThis;
+
     const Iterator = async function* ConsoleAsyncIterator() {
         "use strict";
 
+        stdin.setRawMode(true);
         const stream = @Bun.stdin.stream();
         var reader = stream.getReader();
 
          // TODO: use builtin
-        var decoder = new globalThis.TextDecoder("utf-8", { fatal: false });
+        var decoder = new TextDecoder("utf-8", { fatal: false });
         var deferredError;
         var indexOf = @Bun.indexOfLine;
 
@@ -81,14 +84,14 @@ function asyncIterator() {
           deferredError = e;
         } finally {
           reader.releaseLock();
-
+          stdin.setRawMode(false);
           if (deferredError) {
             throw deferredError;
           }
         }
     };
 
-    const symbol = globalThis.Symbol.asyncIterator;
+    const symbol = Symbol.asyncIterator;
     this[symbol] = Iterator;
     return Iterator();
 }

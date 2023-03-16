@@ -7,6 +7,7 @@ namespace Zig {
 extern "C" typedef enum {
     TTY_MODE_NORMAL,
     TTY_MODE_RAW,
+    TTY_MODE_UNSET = -1,
 } tty_mode_t;
 
 extern "C" int32_t tty__is_tty(int32_t fd);

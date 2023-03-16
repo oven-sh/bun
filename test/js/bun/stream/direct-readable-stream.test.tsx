@@ -6,10 +6,9 @@ import {
   readableStreamToText,
   serve,
 } from "bun";
-import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
+import { expectObjectTypeCount, gc } from "harness";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
-import { gc } from "harness";
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import React from "react";
 
@@ -222,32 +221,7 @@ describe("ReactDOM", () => {
     for (let [inputString, reactElement] of fixtures) {
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
         it("http server, 1 request", async () => {
-          await (async function () {
-            let server;
-            try {
-              server = serve({
-                port: 0,
-                async fetch(req) {
-                  return new Response(await renderToReadableStream(reactElement));
-                },
-              });
-              const resp = await fetch("http://localhost:" + server.port + "/");
-              expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(inputString);
-              gc();
-            } catch (e) {
-              throw e;
-            } finally {
-              server?.stop();
-              gc();
-            }
-          })();
-          gc();
-          expect(heapStats().objectTypeCounts.ReadableHTTPResponseSinkController ?? 0).toBeLessThan(4);
-        });
-        const count = 4;
-        it(`http server, ${count} requests`, async () => {
-          var remain = count;
-          await (async function () {
+          await (async () => {
             var server;
             try {
               server = serve({
@@ -256,11 +230,30 @@ describe("ReactDOM", () => {
                   return new Response(await renderToReadableStream(reactElement));
                 },
               });
-              gc();
+              const response = await fetch("http://localhost:" + server.port + "/");
+              const result = await response.text();
+              expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+            } finally {
+              server?.stop();
+            }
+          })();
+          await expectObjectTypeCount("ReadableHTTPResponseSinkController", 1);
+        });
+        const count = 4;
+        it(`http server, ${count} requests`, async () => {
+          var remain = count;
+          await (async () => {
+            var server;
+            try {
+              server = serve({
+                port: 0,
+                async fetch(req) {
+                  return new Response(await renderToReadableStream(reactElement));
+                },
+              });
               while (remain--) {
                 var attempt = remain + 1;
                 const response = await fetch("http://localhost:" + server.port + "/");
-                gc();
                 const result = await response.text();
                 try {
                   expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
@@ -268,19 +261,13 @@ describe("ReactDOM", () => {
                   e.message += "\nAttempt: " + attempt;
                   throw e;
                 }
-
-                gc();
               }
-            } catch (e) {
-              throw e;
             } finally {
-              server.stop();
+              server?.stop();
             }
           })();
-
-          const { ReadableHTTPResponseSinkController = 0 } = heapStats().objectTypeCounts;
-          expect(ReadableHTTPResponseSinkController).toBeLessThan(4);
-          expect(remain + 1).toBe(0);
+          expect(remain).toBe(-1);
+          await expectObjectTypeCount("ReadableHTTPResponseSinkController", 1);
         });
       });
     }

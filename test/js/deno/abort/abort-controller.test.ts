@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/abort_controller_test.ts
-import { assert, assertEquals } from "deno:harness";
-Deno.test(function basicAbortController() {
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals } = createDenoTest(import.meta.path);
+test(function basicAbortController() {
     const controller = new AbortController();
     assert(controller);
     const { signal  } = controller;
@@ -10,7 +12,7 @@ Deno.test(function basicAbortController() {
     controller.abort();
     assertEquals(signal.aborted, true);
 });
-Deno.test(function signalCallsOnabort() {
+test(function signalCallsOnabort() {
     const controller = new AbortController();
     const { signal  } = controller;
     let called = false;
@@ -22,7 +24,7 @@ Deno.test(function signalCallsOnabort() {
     controller.abort();
     assert(called);
 });
-Deno.test(function signalEventListener() {
+test(function signalEventListener() {
     const controller = new AbortController();
     const { signal  } = controller;
     let called = false;
@@ -34,7 +36,7 @@ Deno.test(function signalEventListener() {
     controller.abort();
     assert(called);
 });
-Deno.test(function onlyAbortsOnce() {
+test(function onlyAbortsOnce() {
     const controller = new AbortController();
     const { signal  } = controller;
     let called = 0;
@@ -47,11 +49,11 @@ Deno.test(function onlyAbortsOnce() {
     controller.abort();
     assertEquals(called, 2);
 });
-Deno.test(function controllerHasProperToString() {
+test(function controllerHasProperToString() {
     const actual = Object.prototype.toString.call(new AbortController());
     assertEquals(actual, "[object AbortController]");
 });
-Deno.test(function abortReason() {
+test(function abortReason() {
     const signal = AbortSignal.abort("hey!");
     assertEquals(signal.aborted, true);
     assertEquals(signal.reason, "hey!");

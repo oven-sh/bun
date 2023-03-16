@@ -1,8 +1,8 @@
 import { heapStats } from "bun:jsc";
-var prevCounts;
+var prevCounts: Record<string, number>;
 export default {
-  fetch(req) {
-    const out = {};
+  fetch(req: Request) {
+    const out: Record<string, number> = {};
     const counts = heapStats().objectTypeCounts;
     for (const key in counts) {
       if (prevCounts) {

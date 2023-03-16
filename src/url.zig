@@ -14,6 +14,8 @@ const C = bun.C;
 
 // This is close to WHATWG URL, but we don't want the validation errors
 pub const URL = struct {
+    const log = Output.scoped(.URL, false);
+
     hash: string = "",
     /// hostname, but with a port
     /// `localhost:3000`
@@ -390,31 +392,61 @@ pub const URL = struct {
         url.hostname = "";
         url.port = "";
 
-        // look for the first "/"
-        // if we have a slash, anything before that is the host
-        // anything before the colon is the hostname
-        // anything after the colon but before the slash is the port
-        // the origin is the scheme before the slash
+        //if starts with "[" so its IPV6
+        if (str.len > 0 and str[0] == '[') {
+            i = 1;
+            var ipv6_i: ?u31 = null;
+            var colon_i: ?u31 = null;
 
-        var colon_i: ?u31 = null;
-        while (i < str.len) : (i += 1) {
-            colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
-
-            switch (str[i]) {
-                // alright, we found the slash
-                '/' => {
-                    break;
-                },
-                else => {},
+            while (i < str.len) : (i += 1) {
+                ipv6_i = if (ipv6_i == null and str[i] == ']') i else ipv6_i;
+                colon_i = if (ipv6_i != null and colon_i == null and str[i] == ':') i else colon_i;
+                switch (str[i]) {
+                    // alright, we found the slash
+                    '/' => {
+                        break;
+                    },
+                    else => {},
+                }
             }
-        }
 
-        url.host = str[0..i];
-        if (colon_i) |colon| {
-            url.hostname = str[0..colon];
-            url.port = str[colon + 1 .. i];
+            url.host = str[0..i];
+            if (ipv6_i) |ipv6| {
+                //hostname includes "[" and "]"
+                url.hostname = str[0 .. ipv6 + 1];
+            }
+
+            if (colon_i) |colon| {
+                url.port = str[colon + 1 .. i];
+            }
         } else {
-            url.hostname = str[0..i];
+
+            // look for the first "/"
+            // if we have a slash, anything before that is the host
+            // anything before the colon is the hostname
+            // anything after the colon but before the slash is the port
+            // the origin is the scheme before the slash
+
+            var colon_i: ?u31 = null;
+            while (i < str.len) : (i += 1) {
+                colon_i = if (colon_i == null and str[i] == ':') i else colon_i;
+
+                switch (str[i]) {
+                    // alright, we found the slash
+                    '/' => {
+                        break;
+                    },
+                    else => {},
+                }
+            }
+
+            url.host = str[0..i];
+            if (colon_i) |colon| {
+                url.hostname = str[0..colon];
+                url.port = str[colon + 1 .. i];
+            } else {
+                url.hostname = str[0..i];
+            }
         }
 
         return i;

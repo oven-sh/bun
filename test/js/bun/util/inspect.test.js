@@ -1,5 +1,29 @@
 import { it, expect, describe } from "bun:test";
 
+it("getters", () => {
+  const obj = {
+    get foo() {
+      return 42;
+    },
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  var called = false;
+  const objWithThrowingGetter = {
+    get foo() {
+      called = true;
+      throw new Error("Test failed!");
+    },
+    set foo(v) {
+      called = true;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(called).toBe(false);
+});
+
 it("Timeout", () => {
   const id = setTimeout(() => {}, 0);
   expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);

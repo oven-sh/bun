@@ -1712,7 +1712,7 @@ pub const Resolver = struct {
                                 if (st == .extract)
                                     manager.enqueuePackageForDownload(
                                         esm.name,
-                                        manager.lockfile.buffers.legacyPackageToDependencyID(resolved_package_id) catch unreachable,
+                                        manager.lockfile.buffers.legacyPackageToDependencyID(null, resolved_package_id) catch unreachable,
                                         resolved_package_id,
                                         resolution.value.npm.version,
                                         manager.lockfile.str(&resolution.value.npm.url),

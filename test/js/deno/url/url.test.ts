@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/url_test.ts
-import { assert, assertEquals, assertStrictEquals, assertThrows } from "deno:harness";
-Deno.test(function urlParsing() {
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals, assertStrictEquals, assertThrows } = createDenoTest(import.meta.path);
+test(function urlParsing() {
     const url = new URL("https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
     assertEquals(url.hash, "#qat");
     assertEquals(url.host, "baz.qat:8000");
@@ -22,7 +24,7 @@ Deno.test(function urlParsing() {
     assertEquals(url.username, "foo");
     assertEquals(String(url), "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
 });
-Deno.test(function urlProtocolParsing() {
+test(function urlProtocolParsing() {
     assertEquals(new URL("Aa+-.1://foo").protocol, "aa+-.1:");
     assertEquals(new URL("aA+-.1://foo").protocol, "aa+-.1:");
     assertThrows(()=>new URL("1://foo"), TypeError, "Invalid URL: '1://foo'");
@@ -40,7 +42,7 @@ Deno.test(function urlProtocolParsing() {
     assertThrows(()=>new URL("*://foo"), TypeError, "Invalid URL: '*://foo'");
     assertThrows(()=>new URL("!:", "*://foo"), TypeError, "Invalid URL: '!:' with base '*://foo'");
 });
-Deno.test(function urlAuthenticationParsing() {
+test(function urlAuthenticationParsing() {
     const specialUrl = new URL("http://foo:bar@baz");
     assertEquals(specialUrl.username, "foo");
     assertEquals(specialUrl.password, "bar");
@@ -51,7 +53,7 @@ Deno.test(function urlAuthenticationParsing() {
     assertEquals(nonSpecialUrl.password, "bar");
     assertEquals(nonSpecialUrl.hostname, "baz");
 });
-Deno.test(function urlHostnameParsing() {
+test(function urlHostnameParsing() {
     assertEquals(new URL("http://[::1]").hostname, "[::1]");
     assertEquals(new URL("file://[::1]").hostname, "[::1]");
     assertEquals(new URL("abcd://[::1]").hostname, "[::1]");
@@ -83,7 +85,7 @@ Deno.test(function urlHostnameParsing() {
     assertEquals(new URL("http://4294967295").hostname, "255.255.255.255");
     assertThrows(()=>new URL("http://4294967296"), TypeError, "Invalid URL");
 });
-Deno.test(function urlPortParsing() {
+test(function urlPortParsing() {
     const specialUrl = new URL("http://foo:8000");
     assertEquals(specialUrl.hostname, "foo");
     assertEquals(specialUrl.port, "8000");
@@ -92,7 +94,7 @@ Deno.test(function urlPortParsing() {
     assertEquals(nonSpecialUrl.hostname, "foo");
     assertEquals(nonSpecialUrl.port, "8000");
 });
-Deno.test(function urlModifications() {
+test(function urlModifications() {
     const url = new URL("https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
     url.hash = "";
     assertEquals(url.href, "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12");
@@ -123,7 +125,7 @@ Deno.test(function urlModifications() {
     url.searchParams.append("foo", "bar");
     assertEquals(url.href, "http://foo%40bar:qux@foo.bar/foo/bar%qat?bar=qat&foo=bar");
 });
-Deno.test(function urlModifyHref() {
+test(function urlModifyHref() {
     const url = new URL("http://example.com/");
     url.href = "https://foo:bar@example.com:8080/baz/qat#qux";
     assertEquals(url.protocol, "https:");
@@ -134,12 +136,12 @@ Deno.test(function urlModifyHref() {
     assertEquals(url.pathname, "/baz/qat");
     assertEquals(url.hash, "#qux");
 });
-Deno.test(function urlNormalize() {
+test(function urlNormalize() {
     const url = new URL("http://example.com");
     assertEquals(url.pathname, "/");
     assertEquals(url.href, "http://example.com/");
 });
-Deno.test(function urlModifyPathname() {
+test(function urlModifyPathname() {
     const url = new URL("http://foo.bar/baz%qat/qux%quux");
     assertEquals(url.pathname, "/baz%qat/qux%quux");
     url.pathname = url.pathname;
@@ -151,24 +153,24 @@ Deno.test(function urlModifyPathname() {
     url.pathname = "\\a\\b\\c";
     assertEquals(url.pathname, "/a/b/c");
 });
-Deno.test(function urlModifyHash() {
+test(function urlModifyHash() {
     const url = new URL("http://foo.bar");
     url.hash = "%foo bar/qat%qux#bar";
     assertEquals(url.hash, "#%foo%20bar/qat%qux#bar");
     url.hash = url.hash;
     assertEquals(url.hash, "#%foo%20bar/qat%qux#bar");
 });
-Deno.test(function urlSearchParamsReuse() {
+test(function urlSearchParamsReuse() {
     const url = new URL("https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
     const sp = url.searchParams;
     url.host = "baz.qat";
     assert(sp === url.searchParams, "Search params should be reused.");
 });
-Deno.test(function urlBackSlashes() {
+test(function urlBackSlashes() {
     const url = new URL("https:\\\\foo:bar@baz.qat:8000\\qux\\quux?foo=bar&baz=12#qat");
     assertEquals(url.href, "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
 });
-Deno.test(function urlProtocolSlashes() {
+test(function urlProtocolSlashes() {
     assertEquals(new URL("http:foo").href, "http://foo/");
     assertEquals(new URL("http://foo").href, "http://foo/");
     assertEquals(new URL("file:foo").href, "file:///foo");
@@ -176,7 +178,7 @@ Deno.test(function urlProtocolSlashes() {
     assertEquals(new URL("abcd:foo").href, "abcd:foo");
     assertEquals(new URL("abcd://foo").href, "abcd://foo");
 });
-Deno.test(function urlRequireHost() {
+test(function urlRequireHost() {
     assertEquals(new URL("file:///").href, "file:///");
     assertThrows(()=>new URL("ftp:///"), TypeError, "Invalid URL");
     assertThrows(()=>new URL("http:///"), TypeError, "Invalid URL");
@@ -184,30 +186,30 @@ Deno.test(function urlRequireHost() {
     assertThrows(()=>new URL("ws:///"), TypeError, "Invalid URL");
     assertThrows(()=>new URL("wss:///"), TypeError, "Invalid URL");
 });
-Deno.test(function urlDriveLetter() {
+test(function urlDriveLetter() {
     assertEquals(new URL("file:///C:").href, "file:///C:");
     assertEquals(new URL("file:///C:/").href, "file:///C:/");
     assertEquals(new URL("file:///C:/..").href, "file:///C:/");
     assertEquals(new URL("file://foo/C:").href, "file:///C:");
 });
-Deno.test(function urlHostnameUpperCase() {
+test(function urlHostnameUpperCase() {
     assertEquals(new URL("http://EXAMPLE.COM").href, "http://example.com/");
     assertEquals(new URL("abcd://EXAMPLE.COM").href, "abcd://EXAMPLE.COM");
 });
-Deno.test(function urlEmptyPath() {
+test(function urlEmptyPath() {
     assertEquals(new URL("http://foo").pathname, "/");
     assertEquals(new URL("file://foo").pathname, "/");
     assertEquals(new URL("abcd://foo").pathname, "");
 });
-Deno.test(function urlPathRepeatedSlashes() {
+test(function urlPathRepeatedSlashes() {
     assertEquals(new URL("http://foo//bar//").pathname, "//bar//");
     assertEquals(new URL("file://foo///bar//").pathname, "/bar//");
     assertEquals(new URL("abcd://foo//bar//").pathname, "//bar//");
 });
-Deno.test(function urlTrim() {
+test(function urlTrim() {
     assertEquals(new URL(" http://example.com  ").href, "http://example.com/");
 });
-Deno.test(function urlEncoding() {
+test(function urlEncoding() {
     assertEquals(new URL("http://a !$&*()=,;+'\"@example.com").username, "a%20!$&*()%3D,%3B+'%22");
     assertEquals(new URL("http://:a !$&*()=,;+'\"@example.com").password, "a%20!$&*()%3D,%3B+'%22");
     assertEquals(new URL("http://mañana/c?d#e").hostname, "xn--maana-pta");
@@ -217,7 +219,7 @@ Deno.test(function urlEncoding() {
     assertEquals(new URL("abcd://example.com?a ~!@$&*()=:/,;?+'\"\\").search, "?a%20~!@$&*()=:/,;?+'%22\\");
     assertEquals(new URL("http://example.com#a ~!@#$&*()=:/,;?+'\"\\").hash, "#a%20~!@#$&*()=:/,;?+'%22\\");
 });
-Deno.test(function urlBase() {
+test(function urlBase() {
     assertEquals(new URL("d", new URL("http://foo/a?b#c")).href, "http://foo/d");
     assertEquals(new URL("", "http://foo/a/b?c#d").href, "http://foo/a/b?c");
     assertEquals(new URL("", "file://foo/a/b?c#d").href, "file://foo/a/b?c");
@@ -248,11 +250,11 @@ Deno.test(function urlBase() {
     assertEquals(new URL("efgh:", "abcd://foo/a/b?c#d").href, "efgh:");
     assertEquals(new URL("/foo", "abcd:/").href, "abcd:/foo");
 });
-Deno.test(function urlDriveLetterBase() {
+test(function urlDriveLetterBase() {
     assertEquals(new URL("/b", "file:///C:/a/b").href, "file:///C:/b");
     assertEquals(new URL("/D:", "file:///C:/a/b").href, "file:///D:");
 });
-Deno.test(function urlSameProtocolBase() {
+test(function urlSameProtocolBase() {
     assertEquals(new URL("http:", "http://foo/a").href, "http://foo/a");
     assertEquals(new URL("file:", "file://foo/a").href, "file://foo/a");
     assertEquals(new URL("abcd:", "abcd://foo/a").href, "abcd:");
@@ -260,28 +262,28 @@ Deno.test(function urlSameProtocolBase() {
     assertEquals(new URL("file:b", "file://foo/a").href, "file://foo/b");
     assertEquals(new URL("abcd:b", "abcd://foo/a").href, "abcd:b");
 });
-Deno.test(function deletingAllParamsRemovesQuestionMarkFromURL() {
+test(function deletingAllParamsRemovesQuestionMarkFromURL() {
     const url = new URL("http://example.com/?param1&param2");
     url.searchParams.delete("param1");
     url.searchParams.delete("param2");
     assertEquals(url.href, "http://example.com/");
     assertEquals(url.search, "");
 });
-Deno.test(function removingNonExistentParamRemovesQuestionMarkFromURL() {
+test(function removingNonExistentParamRemovesQuestionMarkFromURL() {
     const url = new URL("http://example.com/?");
     assertEquals(url.href, "http://example.com/?");
     url.searchParams.delete("param1");
     assertEquals(url.href, "http://example.com/");
     assertEquals(url.search, "");
 });
-Deno.test(function sortingNonExistentParamRemovesQuestionMarkFromURL() {
+test(function sortingNonExistentParamRemovesQuestionMarkFromURL() {
     const url = new URL("http://example.com/?");
     assertEquals(url.href, "http://example.com/?");
     url.searchParams.sort();
     assertEquals(url.href, "http://example.com/");
     assertEquals(url.search, "");
 });
-Deno.test.ignore(function customInspectFunction() {
+test.ignore(function customInspectFunction() {
     const url = new URL("http://example.com/?");
     assertEquals(Deno.inspect(url), `URL {
   href: "http://example.com/?",
@@ -297,13 +299,13 @@ Deno.test.ignore(function customInspectFunction() {
   search: ""
 }`);
 });
-Deno.test(function protocolNotHttpOrFile() {
+test(function protocolNotHttpOrFile() {
     const url = new URL("about:blank");
     assertEquals(url.href, "about:blank");
     assertEquals(url.protocol, "about:");
     assertEquals(url.origin, "null");
 });
-Deno.test(function throwForInvalidPortConstructor() {
+test(function throwForInvalidPortConstructor() {
     const urls = [
         `https://baz.qat:${2 ** 16}`,
         "https://baz.qat:-32",
@@ -317,13 +319,13 @@ Deno.test(function throwForInvalidPortConstructor() {
     new URL("https://baz.qat:65535");
     new URL("https://baz.qat:0");
 });
-Deno.test(function doNotOverridePortIfInvalid() {
+test(function doNotOverridePortIfInvalid() {
     const initialPort = "3000";
     const url = new URL(`https://deno.land:${initialPort}`);
     url.port = `${2 ** 16}`;
     assertEquals(url.port, initialPort);
 });
-Deno.test(function emptyPortForSchemeDefaultPort() {
+test(function emptyPortForSchemeDefaultPort() {
     const nonDefaultPort = "3500";
     const url = new URL("ftp://baz.qat:21");
     assertEquals(url.port, "");
@@ -342,21 +344,21 @@ Deno.test(function emptyPortForSchemeDefaultPort() {
     url2.protocol = "http";
     assertEquals(url2.port, "");
 });
-Deno.test(function assigningPortPropertyAffectsReceiverOnly() {
+test(function assigningPortPropertyAffectsReceiverOnly() {
     const u1 = new URL("http://google.com/");
     const u2 = new URL(u1 as any);
     u2.port = "123";
     assertStrictEquals(u1.port, "");
     assertStrictEquals(u2.port, "123");
 });
-Deno.test(function urlSearchParamsIdentityPreserved() {
+test(function urlSearchParamsIdentityPreserved() {
     const u = new URL("http://foo.com/");
     const sp1 = u.searchParams;
     u.href = "http://bar.com/?baz=42";
     const sp2 = u.searchParams;
     assertStrictEquals(sp1, sp2);
 });
-Deno.test(function urlTakeURLObjectAsParameter() {
+test(function urlTakeURLObjectAsParameter() {
     const url = new URL(new URL("https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat"));
     assertEquals(url.href, "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
 });

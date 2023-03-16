@@ -19,7 +19,9 @@
       "harness": ["harness.ts"],
       "mkfifo": ["mkfifo.ts"],
       "node-harness": ["js/node/harness.ts"],
-      "deno:harness": ["js/deno/harness.ts"]
+      "deno:harness": ["js/deno/harness.ts"],
+      "foo/bar": ["js/bun/resolve/baz.js"],
+      "@faasjs/*": ["js/bun/resolve/*.js"]
     }
   }
 }

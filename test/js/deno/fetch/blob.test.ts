@@ -1,8 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/blob_test.ts
-import { assert, assertEquals, assertStringIncludes } from "deno:harness";
-import { concat } from "deno:harness";
-Deno.test(function blobString() {
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals, assertStringIncludes, concat } = createDenoTest(import.meta.path);
+test(function blobString() {
     const b1 = new Blob([
         "Hello World"
     ]);
@@ -13,7 +14,7 @@ Deno.test(function blobString() {
     ]);
     assertEquals(b2.size, b1.size + str.length);
 });
-Deno.test(function blobBuffer() {
+test(function blobBuffer() {
     const buffer = new ArrayBuffer(12);
     const u8 = new Uint8Array(buffer);
     const f1 = new Float32Array(buffer);
@@ -28,7 +29,7 @@ Deno.test(function blobBuffer() {
     ]);
     assertEquals(b2.size, 3 * u8.length);
 });
-Deno.test(function blobSlice() {
+test(function blobSlice() {
     const blob = new Blob([
         "Deno",
         "Foo"
@@ -44,7 +45,7 @@ Deno.test(function blobSlice() {
     const b4 = blob.slice(0, 10);
     assertEquals(b4.size, blob.size);
 });
-Deno.test(function blobInvalidType() {
+test(function blobInvalidType() {
     const blob = new Blob([
         "foo"
     ], {
@@ -52,7 +53,7 @@ Deno.test(function blobInvalidType() {
     });
     assertEquals(blob.type, "");
 });
-Deno.test(function blobShouldNotThrowError() {
+test(function blobShouldNotThrowError() {
     let hasThrown = false;
     try {
         const options1: any = {
@@ -71,13 +72,13 @@ Deno.test(function blobShouldNotThrowError() {
     }
     assertEquals(hasThrown, false);
 });
-Deno.test(async function blobText() {
+test(async function blobText() {
     const blob = new Blob([
         "Hello World"
     ]);
     assertEquals(await blob.text(), "Hello World");
 });
-Deno.test(async function blobStream() {
+test(async function blobStream() {
     const blob = new Blob([
         "Hello World"
     ]);
@@ -96,7 +97,7 @@ Deno.test(async function blobStream() {
     const decoder = new TextDecoder();
     assertEquals(decoder.decode(bytes), "Hello World");
 });
-Deno.test(async function blobArrayBuffer() {
+test(async function blobArrayBuffer() {
     const uint = new Uint8Array([
         102,
         111,
@@ -107,11 +108,11 @@ Deno.test(async function blobArrayBuffer() {
     ]);
     assertEquals(await blob.arrayBuffer(), uint.buffer);
 });
-Deno.test(function blobConstructorNameIsBlob() {
+test(function blobConstructorNameIsBlob() {
     const blob = new Blob();
     assertEquals(blob.constructor.name, "Blob");
 });
-Deno.test.ignore(function blobCustomInspectFunction() {
+test.ignore(function blobCustomInspectFunction() {
     const blob = new Blob();
     assertEquals(Deno.inspect(blob), `Blob { size: 0, type: "" }`);
     assertStringIncludes(Deno.inspect(Blob.prototype), "Blob");

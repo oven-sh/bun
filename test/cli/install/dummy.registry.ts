@@ -1,13 +1,14 @@
-import { file } from "bun";
+import { file, Server } from "bun";
 import { expect } from "bun:test";
 import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 
-let handler, server;
-export let package_dir, requested, root_url;
+type RequestHandler = (request: Request) => Response | Promise<Response>;
+let handler: RequestHandler, server: Server;
+export let package_dir: string, requested: number, root_url: string;
 
-export function dummyRegistry(urls, info: any = { "0.0.2": {} }) {
+export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }): RequestHandler {
   return async request => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
@@ -20,7 +21,7 @@ export function dummyRegistry(urls, info: any = { "0.0.2": {} }) {
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
     const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
-    const versions = {};
+    const versions: any = {};
     let version;
     for (version in info) {
       if (!/^[0-9]/.test(version)) continue;
@@ -51,7 +52,7 @@ export async function readdirSorted(path: PathLike): Promise<string[]> {
   return results;
 }
 
-export function setHandler(newHandler) {
+export function setHandler(newHandler: RequestHandler) {
   handler = newHandler;
 }
 

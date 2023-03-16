@@ -1,6 +1,6 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
 import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
-import { createDoneDotAll } from "node-harness";
+import { createTest } from "node-harness";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
 function listen(server: any): Promise<URL> {
   return new Promise((resolve, reject) => {

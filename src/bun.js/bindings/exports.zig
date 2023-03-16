@@ -1268,6 +1268,8 @@ pub const ZigConsoleClient = struct {
             JSX,
             Event,
 
+            Getter,
+
             pub fn isPrimitive(this: Tag) bool {
                 return switch (this) {
                     .String,
@@ -1433,8 +1435,6 @@ pub const ZigConsoleClient = struct {
 
                         // None of these should ever exist here
                         // But we're going to check anyway
-                        .GetterSetter,
-                        .CustomGetterSetter,
                         .APIValueWrapper,
                         .NativeExecutable,
                         .ProgramExecutable,
@@ -1460,6 +1460,8 @@ pub const ZigConsoleClient = struct {
                         => .NativeCode,
 
                         .Event => .Event,
+
+                        .GetterSetter, .CustomGetterSetter => .Getter,
 
                         else => .JSON,
                     },
@@ -2031,6 +2033,9 @@ pub const ZigConsoleClient = struct {
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
                     }
+                },
+                .Getter => {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
                 },
                 .Array => {
                     const len = @truncate(u32, value.getLengthOfArray(this.globalThis));
@@ -2800,6 +2805,7 @@ pub const ZigConsoleClient = struct {
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Getter => this.printAs(.Getter, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };

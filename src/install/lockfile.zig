@@ -98,7 +98,6 @@ buffers: Buffers = .{},
 /// name -> PackageID || [*]PackageID
 /// Not for iterating.
 package_index: PackageIndex.Map,
-unique_packages: Bitset,
 string_pool: StringPool,
 allocator: Allocator,
 scratch: Scratch = .{},
@@ -667,10 +666,6 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
         invalid_package_id,
     );
     var clone_queue_ = PendingResolutions.init(old.allocator);
-    new.unique_packages = try Bitset.initEmpty(
-        old.allocator,
-        old.unique_packages.bit_length,
-    );
     var cloner = Cloner{
         .old = old,
         .lockfile = new,
@@ -1449,7 +1444,6 @@ pub fn initEmpty(this: *Lockfile, allocator: Allocator) !void {
         .packages = .{},
         .buffers = .{},
         .package_index = PackageIndex.Map.initContext(allocator, .{}),
-        .unique_packages = try Bitset.initFull(allocator, 0),
         .string_pool = StringPool.init(allocator),
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
@@ -1503,18 +1497,13 @@ pub fn getPackageID(
 }
 
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !void {
-    if (this.unique_packages.capacity() < this.packages.len) try this.unique_packages.resize(this.allocator, this.packages.len, true);
     var gpe = try this.package_index.getOrPut(name_hash);
 
     if (gpe.found_existing) {
         var index: *PackageIndex.Entry = gpe.value_ptr;
 
-        this.unique_packages.unset(id);
-
         switch (index.*) {
             .PackageID => |single| {
-                this.unique_packages.unset(single);
-
                 var ids = try PackageIDList.initCapacity(this.allocator, 8);
                 ids.appendAssumeCapacity(single);
                 ids.appendAssumeCapacity(id);
@@ -1528,7 +1517,6 @@ pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) !v
         }
     } else {
         gpe.value_ptr.* = .{ .PackageID = id };
-        this.unique_packages.set(id);
     }
 }
 
@@ -3227,7 +3215,6 @@ pub const Package = extern struct {
 pub fn deinit(this: *Lockfile) void {
     this.buffers.deinit(this.allocator);
     this.packages.deinit(this.allocator);
-    this.unique_packages.deinit(this.allocator);
     this.string_pool.deinit();
     this.scripts.deinit(this.allocator);
     this.workspace_paths.deinit(this.allocator);
@@ -3414,12 +3401,18 @@ const Buffers = struct {
         }
     }
 
-    pub fn legacyPackageToDependencyID(this: Buffers, package_id: PackageID) !DependencyID {
+    pub fn legacyPackageToDependencyID(this: Buffers, dependency_visited: ?*Bitset, package_id: PackageID) !DependencyID {
         switch (package_id) {
             0 => return Tree.root_dep_id,
             invalid_package_id => return invalid_package_id,
             else => for (this.resolutions.items, 0..) |pkg_id, dep_id| {
-                if (pkg_id == package_id) return @truncate(DependencyID, dep_id);
+                if (pkg_id == package_id) {
+                    if (dependency_visited) |visited| {
+                        if (visited.isSet(dep_id)) continue;
+                        visited.set(dep_id);
+                    }
+                    return @truncate(DependencyID, dep_id);
+                }
             },
         }
         return error.@"Lockfile is missing resolution data";
@@ -3490,14 +3483,20 @@ const Buffers = struct {
 
         // Legacy tree structure stores package IDs instead of dependency IDs
         if (this.trees.items.len > 0 and this.trees.items[0].dependency_id != Tree.root_dep_id) {
+            var visited = try Bitset.initEmpty(allocator, this.dependencies.items.len);
             for (this.trees.items) |*tree| {
-                const dependency_id = tree.dependency_id;
-                tree.dependency_id = try this.legacyPackageToDependencyID(dependency_id);
+                const package_id = tree.dependency_id;
+                tree.dependency_id = try this.legacyPackageToDependencyID(&visited, package_id);
             }
+            visited.setRangeValue(.{
+                .start = 0,
+                .end = this.dependencies.items.len,
+            }, false);
             for (this.hoisted_dependencies.items) |*package_id| {
                 const pid = package_id.*;
-                package_id.* = try this.legacyPackageToDependencyID(pid);
+                package_id.* = try this.legacyPackageToDependencyID(&visited, pid);
             }
+            visited.deinit(allocator);
         }
 
         return this;
@@ -3577,7 +3576,6 @@ pub const Serializer = struct {
 
         {
             lockfile.package_index = PackageIndex.Map.initContext(allocator, .{});
-            lockfile.unique_packages = try Bitset.initFull(allocator, lockfile.packages.len);
             lockfile.string_pool = StringPool.initContext(allocator, .{});
             try lockfile.package_index.ensureTotalCapacity(@truncate(u32, lockfile.packages.len));
             const slice = lockfile.packages.slice();

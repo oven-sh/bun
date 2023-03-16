@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/error_stack_test.ts
-import { assertEquals, assertMatch } from "deno:harness";
-Deno.test(function errorStackMessageLine() {
+import { createDenoTest } from "deno:harness";
+const { test, assertEquals, assertMatch } = createDenoTest(import.meta.path);
+test(function errorStackMessageLine() {
     const e1 = new Error();
     e1.name = "Foo";
     e1.message = "bar";
@@ -27,7 +29,7 @@ Deno.test(function errorStackMessageLine() {
     e6.message = null;
     assertMatch(e6.stack!, /^null: null\n/);
 });
-Deno.test(function captureStackTrace() {
+test(function captureStackTrace() {
     function foo() {
         const error = new Error();
         const stack1 = error.stack!;

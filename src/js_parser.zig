@@ -676,6 +676,7 @@ pub const ImportScanner = struct {
                                 result.* = alias;
                             }
                             strings.sortDesc(sorted);
+                            p.named_imports.ensureUnusedCapacity(sorted.len) catch unreachable;
 
                             // Create named imports for these property accesses. This will
                             // cause missing imports to generate useful warnings.
@@ -1054,7 +1055,7 @@ pub const ImportScanner = struct {
                 },
                 .s_export_from => |st| {
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
-
+                    p.named_imports.ensureUnusedCapacity(st.items.len) catch unreachable;
                     for (st.items) |item| {
                         const ref = item.name.ref orelse p.panic("Expected export from item to have a name {any}", .{st});
                         // Note that the imported alias is not item.Alias, which is the

@@ -1,7 +1,7 @@
 FROM debian:bullseye-slim AS build
 
 # https://github.com/oven-sh/bun/releases
-ARG BUN_VERSION=latest
+ARG BUN_VERSION=0.5.7
 
 RUN apt-get update -qq \
     && apt-get install -qq --no-install-recommends \
@@ -58,7 +58,7 @@ RUN apt-get update -qq \
     && which bunx \
     && bun --version
 
-FROM debian:bullseye-slim
+FROM debian:bullseye
 
 RUN groupadd bun \
       --gid 1000 \

@@ -58,20 +58,11 @@ RUN apt-get update -qq \
     && which bunx \
     && bun --version
 
-FROM debian:bullseye-slim
+FROM gcr.io/distroless/base-nossl-debian11
 
-RUN groupadd bun \
-      --gid 1000 \
-    && useradd bun \
-      --uid 1000 \
-      --gid bun \
-      --shell /bin/sh \
-      --create-home
-
-COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin
 COPY --from=build /usr/local/bin/bunx /usr/local/bin
 
-WORKDIR /home/bun/app
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+WORKDIR /app
+ENTRYPOINT ["/usr/local/bin/bun"]
 CMD ["/usr/local/bin/bun"]

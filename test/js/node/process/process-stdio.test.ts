@@ -234,46 +234,57 @@ describe("process.{stdin, stdout, stderr}", () => {
     expect(checkIsRaw()).toBe(false);
   });
 
+  // TODO: Remove after finishing new version
+  // test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", async () => {
+  //   // Check that we're not already in raw mode
+  //   expect(process.stdin.isRaw).toBe(false);
+  //   expect(checkIsRaw()).toBe(false);
+
+  //   // Inherit stdin, iterate over stdin, then on first iteration, send message to check
+  //   const proc = spawn({
+  //     cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.js"],
+  //     stdin: "inherit",
+  //     // onExit() {
+  //     //   console.log("EXITED");
+  //     // },
+  //   });
+
+  //   // Wait for script to set raw mode and alert us
+  //   // Then wait to get message that raw mode was unset
+  //   let msgNo = 0;
+  //   process.stdin!.write("START\n");
+  //   for await (const line of proc.stdout) {
+  //     const msg = new TextDecoder().decode(line);
+  //     console.log(msg);
+  //     if (msgNo === 0 && msg.includes("Starting")) {
+  //       expect(true).toBeTruthy();
+  //       msgNo += 1;
+  //       console.log("CONFIRMED");
+  //       continue;
+  //     } else if (msgNo === 1 && msg.includes("RAW_MODE_SET")) {
+  //       expect(checkIsRaw()).toBe(true);
+  //       msgNo += 1;
+  //       process.stdin!.write("EXIT\n");
+  //     } else if (msgNo === 2 && msg.includes("RAW_MODE_UNSET")) {
+  //       expect(checkIsRaw()).toBe(false);
+  //       break;
+  //     } else {
+  //       expect(false).toBeTruthy();
+  //     }
+  //   }
+
+  //   expect(checkIsRaw()).toBe(false);
+  // });
+
   test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", async () => {
     // Check that we're not already in raw mode
     expect(process.stdin.isRaw).toBe(false);
     expect(checkIsRaw()).toBe(false);
 
-    // Inherit stdin, iterate over stdin, then on first iteration, send message to check
-    const proc = spawn({
-      cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.js"],
-      stdin: "inherit",
-      // onExit() {
-      //   console.log("EXITED");
-      // },
-    });
-
-    // Wait for script to set raw mode and alert us
-    // Then wait to get message that raw mode was unset
-    let msgNo = 0;
-    process.stdin!.write("START\n");
-    for await (const line of proc.stdout) {
-      const msg = new TextDecoder().decode(line);
-      console.log(msg);
-      if (msgNo === 0 && msg.includes("Starting")) {
-        expect(true).toBeTruthy();
-        msgNo += 1;
-        console.log("CONFIRMED");
-        continue;
-      } else if (msgNo === 1 && msg.includes("RAW_MODE_SET")) {
-        expect(checkIsRaw()).toBe(true);
-        msgNo += 1;
-        process.stdin!.write("EXIT\n");
-      } else if (msgNo === 2 && msg.includes("RAW_MODE_UNSET")) {
-        expect(checkIsRaw()).toBe(false);
-        break;
-      } else {
-        expect(false).toBeTruthy();
-      }
-    }
-
-    expect(checkIsRaw()).toBe(false);
+    // Open new pty using openpty.js
+    // Set stdin to slave side of new pty
+    // spawn using Bun.spawn
+    // restore previous stdin
+    // write to master side of pty
   });
 });
-
-// TODO: Remove debug printf

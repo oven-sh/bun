@@ -1,7 +1,6 @@
 #include <termios.h>
 #include <unistd.h>
 #include <cstdio>
-#include <errno.h>
 
 #include "TTYHelper.h"
 
@@ -19,8 +18,10 @@ static tty_mode_t tty__stdin_mode = TTY_MODE_UNSET;
 
 int32_t tty__is_tty(int32_t fd)
 {
-    if (fd != STDIN_FILENO)
-        return 0;
+    // Only cache is_tty for stdin
+    if (UNLIKELY(fd != STDIN_FILENO)) {
+        return isatty(fd);
+    }
 
     if (tty__is_tty_val == -1)
         tty__is_tty_val = isatty(fd);
@@ -30,13 +31,13 @@ int32_t tty__is_tty(int32_t fd)
 
 int32_t tty__get_termios(int32_t fd, termios* termios_p)
 {
-    if (fd != STDIN_FILENO || !tty__is_tty(fd))
+    if (UNLIKELY(!tty__is_tty(fd)))
         return -3;
 
-    if (termios_p == NULL)
+    if (termios_p == NULL && fd == STDIN_FILENO)
         termios_p = &tty__orig_termios;
 
-    if (tcgetattr(fd, termios_p))
+    if (UNLIKELY(tcgetattr(fd, termios_p)))
         return -1;
 
     return 0;
@@ -44,10 +45,10 @@ int32_t tty__get_termios(int32_t fd, termios* termios_p)
 
 int32_t tty__is_raw(int32_t fd)
 {
-    if (fd != STDIN_FILENO || !tty__is_tty(fd))
+    if (UNLIKELY(!tty__is_tty(fd)))
         return -3;
 
-    if (tty__get_termios(fd, &tty__termios_tmp))
+    if (UNLIKELY(tty__get_termios(fd, &tty__termios_tmp)))
         return -4;
 
     tty__stdin_mode = tty__termios_tmp.c_lflag & ICANON
@@ -59,31 +60,31 @@ int32_t tty__is_raw(int32_t fd)
 
 int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
 {
-    if (fd != STDIN_FILENO || !tty__is_tty(fd))
+    if (UNLIKELY(!tty__is_tty(fd)))
         return -3;
 
     switch (mode) {
     case TTY_MODE_NORMAL:
-        if (!tty__is_raw(fd))
+        if (UNLIKELY(!tty__is_raw(fd)))
             return 0;
 
-        if (tcsetattr(fd, TCSADRAIN, &tty__orig_termios))
+        if (UNLIKELY(tcsetattr(fd, TCSADRAIN, &tty__orig_termios)))
             return -6;
 
         break;
 
     // NOTE: This is based on the code from libuv for TTY_MODE_RAW
     case TTY_MODE_RAW:
-        if (tty__is_raw(fd))
+        if (UNLIKELY(tty__is_raw(fd)))
             return 0;
 
         if (!tty__orig_set) {
-            if (tty__get_termios(fd, nullptr))
+            if (UNLIKELY(tty__get_termios(fd, nullptr)))
                 return -4;
             tty__orig_set = true;
         }
 
-        if (tcgetattr(fd, &tty__termios_tmp))
+        if (UNLIKELY(tcgetattr(fd, &tty__termios_tmp)))
             return -5;
 
         tty__termios_tmp.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
@@ -100,10 +101,8 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
         // tty__termios_tmp.c_cflag &= ~(CSIZE | PARENB);
         // tty__termios_tmp.c_cflag |= CS8;
 
-        if (tcsetattr(fd, TCSADRAIN, &tty__termios_tmp)) {
-            printf("%s", errno);
+        if (UNLIKELY(tcsetattr(fd, TCSADRAIN, &tty__termios_tmp)))
             return -6;
-        }
 
         break;
 
@@ -117,6 +116,9 @@ int32_t tty__set_mode(int32_t fd, tty_mode_t mode)
     //     return -1;
 
     //   return 0;
+    case TTY_MODE_UNSET:
+        // User should never call this with TTY_MODE_UNSET
+        return -10;
     default:
         return -1;
     }

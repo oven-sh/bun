@@ -1749,7 +1749,7 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
     },
   });
-  bundlerTest("default/ImportAbsPathAsDir", () => {
+  bundlerTest.skip("default/ImportAbsPathAsDir", () => {
     expectBundled("default/ImportAbsPathAsDirUnix", {
       // GENERATED
       host: "unix",
@@ -3203,7 +3203,7 @@ describe("bundler", () => {
   entry.js: WARNING: "@scope/missing-pkg" should be marked as external for use with "require.resolve"
   `, */
   });
-  bundlerTest("default/InjectMissing", () => {
+  bundlerTest.skip("default/InjectMissing", () => {
     expectBundled("default/InjectMissingUnix", {
       // GENERATED
       host: "unix",

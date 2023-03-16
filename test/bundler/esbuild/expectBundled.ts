@@ -538,6 +538,7 @@ export function itBundled(id: string, opts: BundlerTestInput) {
   try {
     expectBundled(id, opts, true);
   } catch (error) {
+    it.skip(id, () => {});
     return;
   }
 
@@ -552,6 +553,7 @@ export function bundlerTest(id: string, cb: () => void) {
 
   it(id, cb);
 }
+bundlerTest.skip = it.skip;
 
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {
   return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;

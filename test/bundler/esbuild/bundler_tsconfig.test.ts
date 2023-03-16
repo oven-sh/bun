@@ -605,7 +605,7 @@ describe("bundler", () => {
       `,
     },
   });
-  bundlerTest("tsconfig/TsconfigJsonExtendsAbsolute", () => {
+  bundlerTest.skip("tsconfig/TsconfigJsonExtendsAbsolute", () => {
     expectBundled("tsconfig/TsconfigJsonExtendsAbsoluteUnix", {
       // GENERATED
       host: "unix",

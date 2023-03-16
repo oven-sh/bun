@@ -23,7 +23,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingSharedCommonJSIntoES6", {
     // GENERATED
@@ -41,7 +40,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicES6IntoES6", {
     // GENERATED
@@ -51,7 +49,6 @@ describe("bundler", () => {
     },
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicCommonJSIntoES6", {
     // GENERATED
@@ -61,7 +58,6 @@ describe("bundler", () => {
     },
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicAndNotDynamicES6IntoES6", {
     // GENERATED
@@ -74,7 +70,6 @@ describe("bundler", () => {
     },
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicAndNotDynamicCommonJSIntoES6", {
     // GENERATED
@@ -87,7 +82,6 @@ describe("bundler", () => {
     },
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingAssignToLocal", {
     // GENERATED
@@ -111,7 +105,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingSideEffectsWithoutDependencies", {
     // GENERATED
@@ -133,7 +126,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingNestedDirectories", {
     // GENERATED
@@ -151,7 +143,6 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/pages/pageA/page.js", "/Users/user/project/src/pages/pageB/page.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingCircularReferenceIssue251", {
     // GENERATED
@@ -168,7 +159,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingMissingLazyExport", {
     // GENERATED
@@ -194,7 +184,8 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `common.js: WARNING: Import "missing" will always be undefined because the file "empty.js" has no exports
+  `, */
   });
   itBundled("splitting/SplittingReExportIssue273", {
     // GENERATED
@@ -205,7 +196,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicImportIssue272", {
     // GENERATED
@@ -216,7 +206,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDynamicImportOutsideSourceTreeIssue264", {
     // GENERATED
@@ -228,7 +217,6 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/entry1.js", "/Users/user/project/src/entry2.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingCrossChunkAssignmentDependencies", {
     // GENERATED
@@ -257,7 +245,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingCrossChunkAssignmentDependenciesRecursive", {
     // GENERATED
@@ -299,7 +286,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingDuplicateChunkCollision", {
     // GENERATED
@@ -315,7 +301,6 @@ describe("bundler", () => {
     splitting: true,
     minifyWhitespace: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingMinifyIdentifiersCrashIssue437", {
     // GENERATED
@@ -335,7 +320,6 @@ describe("bundler", () => {
     splitting: true,
     minifyIdentifiers: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingHybridESMAndCJSIssue617", {
     // GENERATED
@@ -346,7 +330,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js"],
     splitting: true,
     format: "esm",
-    snapshot: true,
   });
   itBundled("splitting/SplittingPublicPathEntryName", {
     // GENERATED
@@ -356,9 +339,7 @@ describe("bundler", () => {
     },
     splitting: true,
     format: "esm",
-    /* TODO: 
-        PublicPath -- "/www/", */
-    snapshot: true,
+    publicPath: "/www",
   });
   itBundled("splitting/SplittingChunkPathDirPlaceholderImplicitOutbase", {
     // GENERATED
@@ -368,7 +349,6 @@ describe("bundler", () => {
     },
     format: "esm",
     splitting: true,
-    snapshot: true,
   });
   itBundled("splitting/EdgeCaseIssue2793WithSplitting", {
     // GENERATED
@@ -380,10 +360,10 @@ describe("bundler", () => {
         export * from "./b"
       `,
     },
+    outdir: "/out",
     entryPoints: ["/src/index.js"],
     format: "esm",
     splitting: true,
-    snapshot: true,
   });
   itBundled("splitting/EdgeCaseIssue2793WithoutSplitting", {
     // GENERATED
@@ -397,6 +377,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/src/index.js"],
     format: "esm",
-    snapshot: true,
+    outdir: "/out",
   });
 });

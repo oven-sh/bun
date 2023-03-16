@@ -1,12 +1,12 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from 'bun:test';
+import { expectBundled, itBundled } from './expectBundled';
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_ts_test.go
 
 // For debug, all files are written to $TEMP/bun-bundle-tests/ts
 
-describe("bundler", () => {
+describe('bundler', () => {
   itBundled("ts/TSImportStarUnused", {
     // GENERATED
     files: {
@@ -17,7 +17,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarCapture", {
     // GENERATED
@@ -29,7 +28,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarNoCapture", {
     // GENERATED
@@ -41,7 +39,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarUnused", {
     // GENERATED
@@ -57,7 +54,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarNoCapture", {
     // GENERATED
@@ -73,7 +69,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportImportStarCapture", {
     // GENERATED
@@ -89,7 +84,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsUnused", {
     // GENERATED
@@ -102,7 +96,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsNoCapture", {
     // GENERATED
@@ -115,7 +108,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarAsCapture", {
     // GENERATED
@@ -128,7 +120,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarUnused", {
     // GENERATED
@@ -141,7 +132,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarNoCapture", {
     // GENERATED
@@ -154,7 +144,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarExportStarCapture", {
     // GENERATED
@@ -167,7 +156,6 @@ describe("bundler", () => {
       "/foo.ts": `export const foo = 123`,
       "/bar.ts": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSUnused", {
     // GENERATED
@@ -179,7 +167,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSCapture", {
     // GENERATED
@@ -191,7 +178,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarCommonJSNoCapture", {
     // GENERATED
@@ -203,7 +189,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarAndCommonJS", {
     // GENERATED
@@ -215,7 +200,6 @@ describe("bundler", () => {
       `,
       "/foo.ts": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleUnused", {
     // GENERATED
@@ -227,7 +211,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleCapture", {
     // GENERATED
@@ -239,7 +222,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportStarNoBundleNoCapture", {
     // GENERATED
@@ -251,7 +233,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleUnused", {
     // GENERATED
@@ -264,7 +245,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleCapture", {
     // GENERATED
@@ -277,7 +257,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportStarMangleNoBundleNoCapture", {
     // GENERATED
@@ -290,7 +269,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSReExportTypeOnlyFileES6", {
     // GENERATED
@@ -322,6 +300,5 @@ describe("bundler", () => {
       "/values.ts": `export let foo = 123`,
       "/type.ts": `export type Foo = number`,
     },
-    snapshot: true,
   });
 });

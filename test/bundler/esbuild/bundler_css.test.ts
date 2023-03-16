@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -16,14 +16,14 @@ describe("bundler", () => {
           color: black }
       `,
     },
-    snapshot: true,
   });
   itBundled("css/CSSAtImportMissing", {
-    // GENERATED
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
-    snapshot: true,
+    bundleErrors: {
+      "/entry.css": ['Could not resolve "./missing.css"'],
+    },
   });
   itBundled("css/CSSAtImportExternal", {
     // GENERATED
@@ -59,7 +59,6 @@ describe("bundler", () => {
         .after { color: blue }
       `,
     },
-    snapshot: true,
   });
   itBundled("css/CSSAtImport", {
     // GENERATED
@@ -79,7 +78,6 @@ describe("bundler", () => {
       `,
       "/shared.css": `.shared { color: black }`,
     },
-    snapshot: true,
   });
   itBundled("css/CSSFromJSMissingImport", {
     // GENERATED
@@ -90,7 +88,8 @@ describe("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "a.css" for import "missing"
+  `, */
   });
   itBundled("css/CSSFromJSMissingStarImport", {
     // GENERATED
@@ -101,8 +100,6 @@ describe("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
-    debugLogs: true,
-    snapshot: true,
   });
   itBundled("css/ImportCSSFromJS", {
     // GENERATED
@@ -122,7 +119,6 @@ describe("bundler", () => {
       `,
       "/b.css": `.b { color: blue }`,
     },
-    snapshot: true,
   });
   itBundled("css/ImportCSSFromJSWriteToStdout", {
     // GENERATED
@@ -130,7 +126,8 @@ describe("bundler", () => {
       "/entry.js": `import "./entry.css"`,
       "/entry.css": `.entry { color: red }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Cannot import "entry.css" into a JavaScript file without an output path configured
+  `, */
   });
   itBundled("css/ImportJSFromCSS", {
     // GENERATED
@@ -139,7 +136,9 @@ describe("bundler", () => {
       "/entry.css": `@import "./entry.js";`,
     },
     entryPoints: ["/entry.css"],
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.js" into a CSS file
+  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.js" is not a CSS file (it was loaded with the "js" loader).
+  `, */
   });
   itBundled("css/ImportJSONFromCSS", {
     // GENERATED
@@ -148,7 +147,9 @@ describe("bundler", () => {
       "/entry.css": `@import "./entry.json";`,
     },
     entryPoints: ["/entry.css"],
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.json" into a CSS file
+  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.json" is not a CSS file (it was loaded with the "json" loader).
+  `, */
   });
   itBundled("css/MissingImportURLInCSS", {
     // GENERATED
@@ -158,7 +159,9 @@ describe("bundler", () => {
         b { background: url("./two.png"); }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `src/entry.css: ERROR: Could not resolve "./one.png"
+  src/entry.css: ERROR: Could not resolve "./two.png"
+  `, */
   });
   itBundled("css/ExternalImportURLInCSS", {
     // GENERATED
@@ -177,7 +180,6 @@ describe("bundler", () => {
         path { fill: url(#filter) }
       `,
     },
-    snapshot: true,
   });
   itBundled("css/InvalidImportURLInCSS", {
     // GENERATED
@@ -199,7 +201,19 @@ describe("bundler", () => {
       "/json.json": `{ "test": true }`,
       "/css.css": `a { color: red }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot use "js.js" as a URL
+  NOTE: You can't use a "url()" token to reference the file "js.js" because it was loaded with the "js" loader, which doesn't provide a URL to embed in the resulting CSS.
+  entry.css: ERROR: Cannot use "jsx.jsx" as a URL
+  NOTE: You can't use a "url()" token to reference the file "jsx.jsx" because it was loaded with the "jsx" loader, which doesn't provide a URL to embed in the resulting CSS.
+  entry.css: ERROR: Cannot use "ts.ts" as a URL
+  NOTE: You can't use a "url()" token to reference the file "ts.ts" because it was loaded with the "ts" loader, which doesn't provide a URL to embed in the resulting CSS.
+  entry.css: ERROR: Cannot use "tsx.tsx" as a URL
+  NOTE: You can't use a "url()" token to reference the file "tsx.tsx" because it was loaded with the "tsx" loader, which doesn't provide a URL to embed in the resulting CSS.
+  entry.css: ERROR: Cannot use "json.json" as a URL
+  NOTE: You can't use a "url()" token to reference the file "json.json" because it was loaded with the "json" loader, which doesn't provide a URL to embed in the resulting CSS.
+  entry.css: ERROR: Cannot use "css.css" as a URL
+  NOTE: You can't use a "url()" token to reference a CSS file, and "css.css" is a CSS file (it was loaded with the "css" loader).
+  `, */
   });
   itBundled("css/TextImportURLInCSSText", {
     // GENERATED
@@ -211,7 +225,6 @@ describe("bundler", () => {
       `,
       "/example.txt": `This is some text.`,
     },
-    snapshot: true,
   });
   itBundled("css/DataURLImportURLInCSS", {
     // GENERATED
@@ -223,7 +236,6 @@ describe("bundler", () => {
       `,
       "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
-    snapshot: true,
   });
   itBundled("css/BinaryImportURLInCSS", {
     // GENERATED
@@ -235,7 +247,6 @@ describe("bundler", () => {
       `,
       "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
-    snapshot: true,
   });
   itBundled("css/Base64ImportURLInCSS", {
     // GENERATED
@@ -247,7 +258,6 @@ describe("bundler", () => {
       `,
       "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
     },
-    snapshot: true,
   });
   itBundled("css/FileImportURLInCSS", {
     // GENERATED
@@ -260,7 +270,6 @@ describe("bundler", () => {
       "/two.css": `b { background: url(./example.data) }`,
       "/example.data": `This is some data.`,
     },
-    snapshot: true,
   });
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED
@@ -272,7 +281,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("css/PackageURLsInCSS", {
     // GENERATED
@@ -290,7 +298,6 @@ describe("bundler", () => {
       "/c/3.png": `c-3`,
       "/node_modules/c/3.png": `c-3-node_modules`,
     },
-    snapshot: true,
   });
   itBundled("css/CSSAtImportExtensionOrderCollision", {
     // GENERATED
@@ -301,7 +308,6 @@ describe("bundler", () => {
     },
     outfile: "/out.css",
     extensionOrder: [".js", ".css"],
-    snapshot: true,
   });
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
     // GENERATED
@@ -312,7 +318,9 @@ describe("bundler", () => {
     },
     outfile: "/out.css",
     extensionOrder: [".js", ".sass"],
-    snapshot: true,
+    bundleErrors: {
+      "/entry.css": ['ERROR: No loader is configured for ".sass" files: test.sass'],
+    },
   });
   itBundled("css/CSSAtImportConditionsNoBundle", {
     // GENERATED
@@ -320,21 +328,18 @@ describe("bundler", () => {
       "/entry.css": `@import "./print.css" print;`,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundleExternal", {
     // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/print.css" print;`,
     },
-    snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundleExternalConditionWithURL", {
     // GENERATED
     files: {
       "/entry.css": `@import "https://example.com/foo.css" (foo: url("foo.png")) and (bar: url("bar.png"));`,
     },
-    snapshot: true,
   });
   itBundled("css/CSSAtImportConditionsBundle", {
     // GENERATED
@@ -342,7 +347,8 @@ describe("bundler", () => {
       "/entry.css": `@import "./print.css" print;`,
       "/print.css": `body { color: red }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.css: ERROR: Bundling with conditional "@import" rules is not currently supported
+  `, */
   });
   itBundled("css/CSSAndJavaScriptCodeSplittingIssue1064", {
     // GENERATED
@@ -369,7 +375,6 @@ describe("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.css", "/d.css"],
     format: "esm",
     splitting: true,
-    snapshot: true,
   });
   itBundled("css/CSSExternalQueryAndHashNoMatchIssue1822", {
     // GENERATED
@@ -380,7 +385,11 @@ describe("bundler", () => {
       `,
     },
     outfile: "/out.css",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.css: ERROR: Could not resolve "foo/bar.png?baz"
+  NOTE: You can mark the path "foo/bar.png?baz" as external to exclude it from the bundle, which will remove this error.
+  entry.css: ERROR: Could not resolve "foo/bar.png#baz"
+  NOTE: You can mark the path "foo/bar.png#baz" as external to exclude it from the bundle, which will remove this error.
+  `, */
   });
   itBundled("css/CSSExternalQueryAndHashMatchIssue1822", {
     // GENERATED
@@ -391,7 +400,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/out.css",
-    snapshot: true,
   });
   itBundled("css/CSSNestingOldBrowser", {
     // GENERATED
@@ -441,11 +449,28 @@ describe("bundler", () => {
       "/toplevel-plus.css",
       "/toplevel-tilde.css",
     ],
-    UnsupportedCSSFeatures: "Nesting",
-    snapshot: true,
+    unsupportedCSSFeatures: "Nesting",
+    /* TODO FIX expectedScanLog: `nested-@layer.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-@media.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-ampersand-first.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-ampersand-twice.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-attribute.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-colon.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-dot.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-greaterthan.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-hash.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-plus.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  nested-tilde.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-ampersand-first.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-ampersand-second.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-ampersand-twice.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-ampersand-twice.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-greaterthan.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-plus.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  toplevel-tilde.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
+  `, */
   });
   itBundled("css/MetafileCSSBundleTwoToOne", {
-    // GENERATED
     files: {
       "/foo/entry.js": /* js */ `
         import '../common.css'
@@ -457,14 +482,10 @@ describe("bundler", () => {
       `,
       "/common.css": `body { color: red }`,
     },
+    metafile: true,
     entryPoints: ["/foo/entry.js", "/bar/entry.js"],
-    /* TODO: 
-        EntryPathTemplate -- []config.PathTemplate{
-  				// "[ext]/[hash]"
-  				{Data: "./", Placeholder: config.ExtPlaceholder},
-  				{Data: "/", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    entryNames: "[ext]/[hash]",
+    outdir: "/",
   });
   itBundled("css/DeduplicateRules", {
     // GENERATED
@@ -502,6 +523,5 @@ describe("bundler", () => {
       "/across-files.css",
       "/across-files-url.css",
     ],
-    snapshot: true,
   });
 });

@@ -5,9 +5,17 @@ import { bunEnv, bunExe } from "harness";
 import { expect, it } from "bun:test";
 import { tmpdir } from "os";
 
+const esbuild = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
+const debug = process.env.BUN_BUNDLER_TEST_DEBUG;
+const filter = process.env.BUN_BUNDLER_TEST_FILTER;
+
+if (esbuild) {
+  console.warn("WARNING: using esbuild for bun bundler tests");
+}
+
 const outBase = path.join(tmpdir(), "bun-bundler-tests");
 const testsRan = new Set();
-const tempPathToBunDebug = Bun.which("bun-debug");
+const tempPathToBunDebug = Bun.which("bun-new-bundler") ?? Bun.which("bun-debug") ?? bunExe();
 
 export interface BundlerTestInput {
   files: Record<string, string>;
@@ -15,26 +23,72 @@ export interface BundlerTestInput {
   runtimeFiles?: Record<string, string>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
+  /** ??? */
+  entryPointsAdvanced?: Array<{ input: string; output?: string }>;
   /** Defaults to bundle */
-  mode?: "bundle" | "transform" | "convertformat";
-  /** Defaults to false */
-  minifyIdentifiers?: boolean;
-  /** Defaults to false */
-  minifySyntax?: boolean;
-  /** Defaults to false */
-  minifyWhitespace?: boolean;
+  mode?: "bundle" | "transform" | "convertformat" | "passthrough";
+  /** Used for one test. Recommend not using this. */
+  stdin?: { contents: string; resolveDir: string };
+
+  // bundler options
+  alias?: Record<string, string>;
+  assetNames?: string;
+  banner?: string;
+  customOutputExtension?: string;
+  define?: Record<string, string | number>;
+  entryNames?: string;
+  extensionOrder?: string[];
+  external?: string[];
+  /** Defaults to "esm" */
+  format?: "esm" | "cjs" | "iife";
+  globalName?: string;
+  host?: undefined | "unix" | "windows";
+  ignoreDCEAnnotations?: boolean;
+  inject?: string[];
+  jsx?: {
+    factory?: string;
+    fragment?: string;
+    automaticRuntime?: boolean;
+    development?: boolean;
+  };
+  outbase?: string;
   /** Defaults to `/out.js` */
   outfile?: string;
   /** Defaults to `/out` */
   outdir?: string;
   /** Defaults to "bun" */
   platform?: string;
-  /** Defaults to "esm" */
-  format?: "esm" | "cjs" | "iife";
-  globalName?: string;
-  define: Record<string, string | number>;
-  external: string[];
-  inject: string[];
+  publicPath?: string;
+  keepNames?: boolean;
+  legalComments?: undefined | "eof";
+  loader?: Record<string, string>;
+  mangleProps?: RegExp;
+  mangleQuoted?: boolean;
+  mainFields?: string[];
+  metafile?: boolean | string;
+  minifyIdentifiers?: boolean;
+  minifySyntax?: boolean;
+  targetFromAPI?: "TargetWasConfigured";
+  minifyWhitespace?: boolean;
+  splitting?: boolean;
+  treeShaking?: boolean;
+  unsupportedCSSFeatures?: string;
+  unsupportedJSFeatures?: string;
+  useDefineForClassFields?: boolean;
+  sourceMap?: false | "linked-with-comment" | "external-without-comment";
+
+  // assertion options
+
+  /**
+   * If passed, the bundle should fail with given error messages.
+   *
+   * Pass an object containing filenames to a list of errors from that file.
+   */
+  bundleErrors?: true | Record<string, string[]>;
+  /**
+   * Same as bundleErrors except for warnings. Bundle should still succeed.
+   */
+  bundleWarnings?: true | Record<string, string[]>;
   /**
    * Setting to true or an object will cause the file to be run with bun.
    * Options passed can customize and assert behavior about the bundle.
@@ -56,11 +110,10 @@ export interface BundlerTestInput {
         errorLineMatch?: RegExp;
       };
 
+  // hooks
+
   /** Run after bundle happens but before runtime. */
   onAfterBundle?(api: BundlerTestEventAPI): void;
-
-  /** Does nothing currently. */
-  snapshot?: boolean;
 }
 
 export interface BundlerTestEventAPI {
@@ -77,125 +130,149 @@ export interface BundlerTestEventAPI {
  * `$TEMP/bun-bundler-tests/{id}`.
  * This can be used to inspect and debug bundles, as they are not deleted after runtime.
  *
- * Instead of comparing the bundle outputs against snapshots, most of our test cases just run the
+ * In addition to comparing the bundle outputs against snapshots, most of our test cases run the
  * bundle and have additional code to assert the logic is happening properly. This allows the
- * bundler to change exactly how it writes files (optimizations / variable renaming), without
- * breaking any tests- as long as the code in the end achieves the same result.
- *
- * Also, passing `BUN_BUNDLER_TEST_USE_ESBUILD=1` will bundle with `esbuild` instead, essentially
- * testing the `esbuild` CLI instead.
+ * bundler to change exactly how it writes files (optimizations / variable renaming), and still
+ * have concrete tests that ensure what the bundler creates will function properly.
  */
 export function expectBundled(id: string, opts: BundlerTestInput) {
+  if (filter && id !== filter) {
+    return;
+  }
+
   let {
-    mode,
-    platform,
-    format,
+    bundleErrors,
+    bundleWarnings,
+    define,
     entryPoints,
+    external,
     files,
+    format,
     globalName,
+    inject,
+    metafile,
+    jsx = {},
     minifyIdentifiers,
+    minifySyntax,
+    minifyWhitespace,
+    mode,
     onAfterBundle,
     outdir,
     outfile,
+    platform,
+    entryNames,
     run,
     runtimeFiles,
-    snapshot,
-    define,
-    external,
-    inject,
-    minifySyntax,
-    minifyWhitespace,
     ...unknownProps
   } = opts;
 
+  // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error(
-      "expectBundled recieved unexpected options: " +
-        Object.keys(unknownProps).join(", ")
-    );
+    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
+  // This is a sanity check that protects against bad copy pasting.
   if (testsRan.has(id)) {
-    throw new Error(
-      `expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`
-    );
+    throw new Error(`expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`);
   }
 
-  const root = path.join(outBase, id.replaceAll("/", path.sep));
-
+  // Resolve defaults for options and some related things
   mode ??= "bundle";
   platform ??= "bun";
   format ??= "esm";
   entryPoints ??= [Object.keys(files)[0]];
   if (run === true) run = {};
+  if (metafile === true) metafile = "/metafile.json";
+  if (bundleErrors === true) bundleErrors = {};
 
-  const entryPaths = entryPoints.map((file) => path.join(root, file));
+  const root = path.join(outBase, id.replaceAll("/", path.sep));
+  if (debug) console.log(root);
 
+  const entryPaths = entryPoints.map(file => path.join(root, file));
+
+  const useOutFile = outfile ? true : entryPoints.length === 1;
+
+  outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
+  outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
+  metafile = metafile ? path.join(root, metafile) : undefined;
+
+  // Option validation
   if (entryPaths.length !== 1 && outfile) {
-    throw new Error(
-      "Test cannot specify `outfile` when more than one entry path."
-    );
-  }
-  // TODO: allow this?
-  if (entryPaths.length === 1 && outdir) {
-    throw new Error(
-      "Test cannot specify `outdir` when more than one entry path."
-    );
+    throw new Error("Test cannot specify `outfile` when more than one entry path.");
   }
 
-  outfile = path.join(root, outfile ?? "/out.js");
-  outdir = path.join(root, outdir ?? "/out");
-
+  // Prepare source folder
   if (existsSync(root)) {
     rmSync(root, { recursive: true });
   }
-  mkdirSync(root, { recursive: true });
-
   for (const [file, contents] of Object.entries(files)) {
-    writeFileSync(path.join(root, file), dedent(contents));
+    const filename = path.join(root, file);
+    mkdirSync(path.dirname(filename), { recursive: true });
+    writeFileSync(filename, dedent(contents));
   }
 
+  // Run bun bun cli. In the future we can move to using `Bun.Bundler`
+  if (!esbuild && jsx.automaticRuntime) {
+    throw new Error("jsx.automaticRuntime not implemented");
+  }
+  if (!esbuild && format !== "esm") {
+    throw new Error("formats besides esm not implemented in bun bun");
+  }
   const cmd = (
-    !process.env.BUN_BUNDLER_TEST_USE_ESBUILD
+    !esbuild
       ? [
           tempPathToBunDebug,
           "bun",
           ...entryPaths,
-          entryPaths.length === 1
-            ? `--outfile=${outfile}`
-            : `--outdir=${outdir}`,
-          `--format=${format}`,
+          outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
+          define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
           `--platform=${platform}`,
           minifyIdentifiers && `--minify-identifiers`,
           minifySyntax && `--minify-synatax`,
           minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
-          external && external.map((x) => ["--external", x]),
-          inject && inject.map((x) => ["--inject", path.join(root, x)]),
-          define &&
-            Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
+          external && external.map(x => ["--external", x]),
+          inject && inject.map(x => ["--inject", path.join(root, x)]),
+          jsx.automaticRuntime && "--jsx=automatic",
+          jsx.factory && `--jsx-factory=${jsx.factory}`,
+          jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
+          jsx.development && `--jsx-dev`,
+          metafile && `--metafile=${metafile}`,
+          // entryNames && `--entry-names=${entryNames}`,
+          // `--format=${format}`,
         ]
       : [
           Bun.which("esbuild"),
           mode === "bundle" && "--bundle",
-          entryPaths.length === 1
-            ? `--outfile=${outfile}`
-            : `--outdir=${outdir}`,
+          outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
           `--format=${format}`,
           `--platform=${platform === "bun" ? "node" : format}`,
           minifyIdentifiers && `--minify-identifiers`,
           minifySyntax && `--minify-synatax`,
           minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
-          external && external.map((x) => `--external:${x}`),
-          inject && inject.map((x) => `--inject:${path.join(root, x)}`),
-          define &&
-            Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
+          external && external.map(x => `--external:${x}`),
+          inject && inject.map(x => `--inject:${path.join(root, x)}`),
+          define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
+          jsx.automaticRuntime && "--jsx=automatic",
+          jsx.factory && `--jsx-factory=${jsx.factory}`,
+          jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
+          jsx.development && `--jsx-dev`,
+          entryNames && `--entry-names=${entryNames}`,
+          metafile && `--metafile=${metafile}`,
           ...entryPaths,
         ]
   )
-    .flat()
-    .filter(Boolean) as [string, ...string[]];
+    .flat(Infinity)
+    .filter(Boolean)
+    .map(x => String(x)) as [string, ...string[]];
+
+  if (debug) {
+    writeFileSync(
+      path.join(root, "run.sh"),
+      "#!/bin/sh\n" + cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+    );
+  }
 
   const { stdout, stderr, success } = Bun.spawnSync({
     cmd,
@@ -204,42 +281,121 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
     env: bunEnv,
   });
 
+  // Check for errors
+  const expectedErrors = bundleErrors
+    ? Object.entries(bundleErrors).flatMap(([file, v]) => v.map(error => ({ file, error })))
+    : null;
   if (!success) {
-    throw new Error(
-      "Bundle Failed\n" + stdout!.toString("utf-8") + stderr!.toString("utf-8")
-    );
+    if (!esbuild) {
+      const errorRegex = /^error: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
+      const allErrors = [...stderr!.toString("utf-8").matchAll(errorRegex)].map(([_str1, error, source]) => {
+        const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
+        const file = fullFilename.slice(id.length);
+        return { error, file, line, col };
+      });
+
+      if (expectedErrors) {
+        const errorsLeft = [...expectedErrors];
+        let unexpectedErrors = [];
+
+        for (const error of allErrors) {
+          const i = errorsLeft.findIndex(item => error.file === item.file && item.error === error.error);
+          if (i === -1) {
+            unexpectedErrors.push(error);
+          } else {
+            errorsLeft.splice(i, 1);
+          }
+        }
+
+        if (unexpectedErrors.length) {
+          throw new Error(
+            "Unexpected errors reported while bundling:\n" +
+              [...unexpectedErrors].map(formatError).join("\n") +
+              "\n\nExpected errors:\n" +
+              expectedErrors.map(formatError).join("\n"),
+          );
+        }
+
+        if (errorsLeft.length) {
+          throw new Error("Errors were expected while bundling:\n" + errorsLeft.map(formatError).join("\n"));
+        }
+
+        return;
+      }
+      throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
+    } else if (!expectedErrors) {
+      throw new Error("Bundle Failed\n" + stderr?.toString("utf-8"));
+    }
+    return;
+  } else if (expectedErrors) {
+    throw new Error("Errors were expected while bundling:\n" + expectedErrors.map(formatError).join("\n"));
   }
 
-  if (entryPaths.length === 1) {
+  // Check for warnings
+  const warningRegex = /^warning: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
+  const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
+    const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
+    const file = fullFilename.slice(id.length);
+    return { error, file, line, col };
+  });
+
+  // Check that the bundle failed with status code 0 by verifying all files exist.
+  if (outfile) {
     if (!existsSync(outfile)) {
       throw new Error("Bundle was not written to disk: " + outfile);
+    } else {
+      if (!esbuild) {
+        expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
+      }
     }
   } else {
-    for (const file of entryPaths) {
-      const fullpath = path.join(outdir, path.basename(file));
-      if (!existsSync(fullpath)) {
-        throw new Error("Bundle was not written to disk: " + fullpath);
+    // entryNames makes it so we cannot predict the output file
+    if (!entryNames) {
+      for (const file of entryPaths) {
+        const fullpath = path.join(outdir!, path.basename(file));
+        if (!existsSync(fullpath)) {
+          throw new Error("Bundle was not written to disk: " + fullpath);
+        } else if (!esbuild) {
+          expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
+        }
       }
+    } else if (!esbuild) {
+      // TODO: snapshot these test cases
     }
   }
 
+  // esbuld snapshots kind of suck
+  // if (esbuild) {
+  //   const esbuildSnapshots = getESBuildSnapshot(id);
+  //   if (esbuildSnapshots) {
+  //     if (debug) {
+  //       for (const [file, expected] of Object.entries(esbuildSnapshots)) {
+  //         mkdirSync(path.join(root, "__esbuild_snapshot__", path.dirname(file)), { recursive: true });
+  //         writeFileSync(path.join(root, "__esbuild_snapshot__", file), expected);
+  //       }
+  //     }
+  //     for (const [file, expected] of Object.entries(esbuildSnapshots)) {
+  //       expect(readFileSync(path.join(root, file), "utf-8").trim()).toBe(expected.trim());
+  //     }
+  //   }
+  // }
+
+  // Write runtime files to disk as well as run the post bundle hook.
   for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
     writeFileSync(path.join(root, file), dedent(contents));
   }
-
   if (onAfterBundle) {
-    onAfterBundle({ root, outfile, outdir });
+    onAfterBundle({ root, outfile: outfile!, outdir: outdir! });
   }
 
+  // Runtime checks!
   if (run) {
     if (run.file) {
       run.file = path.join(root, run.file);
     } else if (entryPaths.length === 1) {
       run.file = outfile;
     } else {
-      throw new Error(
-        "run.file is required when there is more than one entrypoint."
-      );
+      throw new Error("run.file is required when there is more than one entrypoint.");
     }
 
     const { success, stdout, stderr } = Bun.spawnSync({
@@ -247,13 +403,11 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
+
     if (run.error) {
       if (success) {
         throw new Error(
-          "Bundle should have thrown at runtime\n" +
-            stdout!.toString("utf-8") +
-            "\n" +
-            stderr!.toString("utf-8")
+          "Bundle should have thrown at runtime\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"),
         );
       }
 
@@ -266,7 +420,7 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           .toString("utf-8")
           .split("\n")
           .filter(Boolean)
-          .map((x) => x.trim())
+          .map(x => x.trim())
           .reverse();
         for (const line of lines) {
           if (line.startsWith("at")) {
@@ -277,9 +431,7 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           }
         }
         if (!error) {
-          throw new Error(
-            `Runtime failed with no error. Expecting "${run.error}"`
-          );
+          throw new Error(`Runtime failed with no error. Expecting "${run.error}"`);
         }
         expect(error).toBe(run.error);
 
@@ -287,13 +439,9 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
           const stackTraceLine = stack.pop()!;
           const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
           if (match) {
-            const line = readFileSync(match[1], "utf-8").split("\n")[
-              +match[2] - 1
-            ];
+            const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
             if (!run.errorLineMatch.test(line)) {
-              throw new Error(
-                `Source code "${line}" does not match expression ${run.errorLineMatch}`
-              );
+              throw new Error(`Source code "${line}" does not match expression ${run.errorLineMatch}`);
             }
           } else {
             throw new Error("Could not trace error.");
@@ -301,22 +449,86 @@ export function expectBundled(id: string, opts: BundlerTestInput) {
         }
       }
     } else if (!success) {
-      throw new Error(
-        "Runtime failed\n" +
-          stdout!.toString("utf-8") +
-          "\n" +
-          stderr!.toString("utf-8")
-      );
+      throw new Error("Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
     }
 
     if (run.stdout !== undefined) {
-      expect(stdout!.toString("utf-8").trim()).toBe(run.stdout);
+      expect(stdout!.toString("utf-8").trim()).toBe(dedent(run.stdout).trim());
     }
   }
 }
 
-/** Shorthand for it and expectBundled. See `expectBundled` for what this does.
+/** Shorthand for bundlerTest and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(id: string, opts: BundlerTestInput) {
+  if (filter && id !== filter) {
+    return;
+  }
+  let {
+    bundleErrors,
+    bundleWarnings,
+    define,
+    entryPoints,
+    external,
+    files,
+    format,
+    globalName,
+    inject,
+    jsx = {},
+    minifyIdentifiers,
+    minifySyntax,
+    minifyWhitespace,
+    mode,
+    onAfterBundle,
+    outdir,
+    outfile,
+    platform,
+    run,
+    runtimeFiles,
+    entryNames,
+    metafile,
+    ...unknownProps
+  } = opts;
+  if (Object.keys(unknownProps).length > 0) {
+    return;
+  }
+
   it(id, () => expectBundled(id, opts));
+}
+
+export function bundlerTest(id: string, cb: () => void) {
+  if (filter && id !== filter) {
+    return;
+  }
+
+  return null;
+
+  it(id, cb);
+}
+
+function formatError(err: { file: string; error: string; line?: string; col?: string }) {
+  return `${err.file}${err.line ? ":" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
+}
+
+const esbuildSnapshotCache: Record<string, string> = {};
+
+function getESBuildSnapshot(id: string) {
+  const [suite, test] = id.split("/");
+  const fullTestName = "Test" + test;
+
+  let snapshotContents = esbuildSnapshotCache[suite];
+  if (!snapshotContents) {
+    snapshotContents = readFileSync(
+      path.join(import.meta.dir, "__snapshots_esbuild__", "snapshots_" + suite + ".txt"),
+      "utf-8",
+    );
+    esbuildSnapshotCache[suite] = snapshotContents;
+  }
+
+  const start = snapshotContents.indexOf(`${"=".repeat(80)}\n${fullTestName}`);
+  const end = snapshotContents.indexOf(`${"=".repeat(80)}`, start + 80);
+  const slice = snapshotContents.slice(start + 82 + fullTestName.length, end);
+  return Object.fromEntries(
+    [...slice.matchAll(/^-{10} (.*?) -{10}\n((?:.|\n)*?)(?=\n----------|$)/gs)].map(([_, key, value]) => [key, value]),
+  );
 }

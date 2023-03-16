@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_lower_test.go
@@ -18,7 +18,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2018",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerObjectSpreadNoBundle", {
     // GENERATED
@@ -42,7 +41,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2017",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerExponentiationOperatorNoBundle", {
     // GENERATED
@@ -81,7 +79,8 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2015",
     mode: "transform",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Big integer literals are not available in the configured target environment
+  `, */
   });
   itBundled("lower/LowerPrivateFieldAssignments2015NoBundle", {
     // GENERATED
@@ -118,7 +117,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2015",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2019NoBundle", {
     // GENERATED
@@ -155,7 +153,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2019",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignments2020NoBundle", {
     // GENERATED
@@ -192,7 +189,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2020",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldAssignmentsNextNoBundle", {
     // GENERATED
@@ -228,7 +224,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2019NoBundle", {
     // GENERATED
@@ -246,7 +241,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2019",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChain2020NoBundle", {
     // GENERATED
@@ -264,7 +258,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2020",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateFieldOptionalChainNextNoBundle", {
     // GENERATED
@@ -281,7 +274,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerPrivateFieldOptionalChain2015NoBundle", {
     // GENERATED
@@ -299,7 +291,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2015",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerPrivateStaticMembers2015NoBundle", {
     // GENERATED
@@ -320,7 +311,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2015",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerPrivateFieldAndMethodAvoidNameCollision2015", {
     // GENERATED
@@ -335,7 +325,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2015", {
     // GENERATED
@@ -380,7 +369,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2015",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2019", {
     // GENERATED
@@ -425,7 +413,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetter2020", {
     // GENERATED
@@ -470,7 +457,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateGetterSetterNext", {
     // GENERATED
@@ -514,7 +500,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateMethod2019", {
     // GENERATED
@@ -550,7 +535,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateMethod2020", {
     // GENERATED
@@ -586,7 +570,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateMethodNext", {
     // GENERATED
@@ -621,7 +604,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassExpr2020NoBundle", {
     // GENERATED
@@ -641,7 +623,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2020",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateMethodWithModifiers2020", {
     // GENERATED
@@ -659,7 +640,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    snapshot: true,
   });
   itBundled("lower/LowerAsync2016NoBundle", {
     // GENERATED
@@ -688,7 +668,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2016",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerAsync2017NoBundle", {
     // GENERATED
@@ -717,7 +696,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2017",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerAsyncThis2016CommonJS", {
     // GENERATED
@@ -725,7 +703,6 @@ describe("bundler", () => {
       "/entry.js": `exports.foo = async () => this`,
     },
     unsupportedJSFeatures: "es2016",
-    snapshot: true,
   });
   itBundled("lower/LowerAsyncThis2016ES6", {
     // GENERATED
@@ -737,8 +714,9 @@ describe("bundler", () => {
       "/other.js": `export let bar = async () => {}`,
     },
     unsupportedJSFeatures: "es2016",
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  entry.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("lower/LowerAsyncES5", {
     // GENERATED
@@ -761,7 +739,14 @@ describe("bundler", () => {
       "/obj-method.js": `({async foo() {}})`,
     },
     unsupportedJSFeatures: "es5",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `arrow-1.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  arrow-2.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  export-def-1.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  export-def-2.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  fn-expr.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  fn-stmt.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  obj-method.js: ERROR: Transforming async functions to the configured target environment is not supported yet
+  `, */
   });
   itBundled("lower/LowerAsyncSuperES2017NoBundle", {
     // GENERATED
@@ -805,7 +790,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2017",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerAsyncSuperES2016NoBundle", {
     // GENERATED
@@ -849,7 +833,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2016",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2021NoBundle", {
     // GENERATED
@@ -893,7 +876,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2021",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncSuperES2016NoBundle", {
     // GENERATED
@@ -937,7 +919,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2016",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticSuperES2021NoBundle", {
     // GENERATED
@@ -981,7 +962,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2021",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticSuperES2016NoBundle", {
     // GENERATED
@@ -1025,7 +1005,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2016",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerAsyncArrowSuperES2016", {
     // GENERATED
@@ -1064,7 +1043,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    snapshot: true,
   });
   itBundled("lower/LowerAsyncArrowSuperSetterES2016", {
     // GENERATED
@@ -1103,7 +1081,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncArrowSuperES2016", {
     // GENERATED
@@ -1142,7 +1119,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    snapshot: true,
   });
   itBundled("lower/LowerStaticAsyncArrowSuperSetterES2016", {
     // GENERATED
@@ -1181,7 +1157,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2016",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperES2022", {
     // GENERATED
@@ -1206,7 +1181,6 @@ describe("bundler", () => {
       "/foo8.js": `export default class extends x { static #foo = () => { super.foo++ } }`,
     },
     unsupportedJSFeatures: "es2022",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperES2021", {
     // GENERATED
@@ -1231,7 +1205,6 @@ describe("bundler", () => {
       "/foo8.js": `export default class extends x { static #foo = () => { super.foo++ } }`,
     },
     unsupportedJSFeatures: "es2021",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateSuperStaticBundleIssue2158", {
     // GENERATED
@@ -1246,7 +1219,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerClassField2020NoBundle", {
     // GENERATED
@@ -1266,7 +1238,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2020",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerClassFieldNextNoBundle", {
     // GENERATED
@@ -1285,7 +1256,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerClassField2020NoBundle", {
     // GENERATED
@@ -1305,7 +1275,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2020",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerClassPrivateFieldNextNoBundle", {
     // GENERATED
@@ -1324,7 +1293,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerClassFieldStrictTsconfigJson2020", {
     // GENERATED
@@ -1360,7 +1328,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    snapshot: true,
   });
   itBundled("lower/TSLowerClassFieldStrictTsconfigJson2020", {
     // GENERATED
@@ -1396,7 +1363,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2020",
-    snapshot: true,
   });
   itBundled("lower/TSLowerObjectRest2017NoBundle", {
     // GENERATED
@@ -1440,7 +1406,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2017",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/TSLowerObjectRest2018NoBundle", {
     // GENERATED
@@ -1484,7 +1449,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2018",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/ClassSuperThisIssue242NoBundle", {
     // GENERATED
@@ -1506,7 +1470,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2019",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerExportStarAsNameCollisionNoBundle", {
     // GENERATED
@@ -1519,7 +1482,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es2019",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("lower/LowerExportStarAsNameCollision", {
     // GENERATED
@@ -1538,7 +1500,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "es2019",
-    snapshot: true,
   });
   itBundled("lower/LowerStrictModeSyntax", {
     // GENERATED
@@ -1551,7 +1512,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("lower/LowerForbidStrictModeSyntax", {
     // GENERATED
@@ -1568,7 +1528,10 @@ describe("bundler", () => {
       "/delete-3.js": `delete (1 ? z : z)`,
     },
     format: "esm",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `delete-1.js: ERROR: Delete of a bare identifier cannot be used with the "esm" output format due to strict mode
+  delete-2.js: ERROR: Delete of a bare identifier cannot be used with the "esm" output format due to strict mode
+  with.js: ERROR: With statements cannot be used with the "esm" output format due to strict mode
+  `, */
   });
   itBundled("lower/LowerPrivateClassFieldOrder", {
     // GENERATED
@@ -1582,7 +1545,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassMethodOrder", {
     // GENERATED
@@ -1596,7 +1558,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassAccessorOrder", {
     // GENERATED
@@ -1610,7 +1571,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticFieldOrder", {
     // GENERATED
@@ -1630,7 +1590,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticMethodOrder", {
     // GENERATED
@@ -1650,7 +1609,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassStaticAccessorOrder", {
     // GENERATED
@@ -1670,7 +1628,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassBrandCheckUnsupported", {
     // GENERATED
@@ -1690,7 +1647,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassBrandCheckSupported", {
     // GENERATED
@@ -1710,7 +1666,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerTemplateObject", {
     // GENERATED
@@ -1721,7 +1676,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerPrivateClassFieldStaticIssue1424", {
     // GENERATED
@@ -1736,7 +1690,6 @@ describe("bundler", () => {
         new T().d();
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerNullishCoalescingAssignmentIssue1493", {
     // GENERATED
@@ -1750,7 +1703,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/StaticClassBlockESNext", {
     // GENERATED
@@ -1775,7 +1727,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/StaticClassBlockES2021", {
     // GENERATED
@@ -1800,7 +1751,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerRegExpNameCollision", {
     // GENERATED
@@ -1811,7 +1761,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("lower/LowerForAwait2017", {
     // GENERATED
@@ -1826,7 +1775,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerForAwait2015", {
     // GENERATED
@@ -1841,7 +1789,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("lower/LowerNestedFunctionDirectEval", {
     // GENERATED
@@ -1857,6 +1804,5 @@ describe("bundler", () => {
     },
     entryPoints: ["/1.js", "/2.js", "/3.js", "/4.js", "/5.js", "/6.js", "/7.js", "/8.js"],
     mode: "passthrough",
-    snapshot: true,
   });
 });

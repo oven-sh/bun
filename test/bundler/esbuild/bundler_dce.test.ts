@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -24,7 +24,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportCommonJS", {
     // GENERATED
@@ -43,7 +42,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportES6", {
     // GENERATED
@@ -62,7 +60,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepStarImportCommonJS", {
     // GENERATED
@@ -81,7 +78,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {
     // GENERATED
@@ -100,7 +96,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepCommonJS", {
     // GENERATED
@@ -119,7 +114,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireES6", {
     // GENERATED
@@ -139,7 +133,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
+  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  `, */
   });
   itBundled("dce/PackageJsonSideEffectsFalseKeepBareImportAndRequireCommonJS", {
     // GENERATED
@@ -159,7 +155,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
+  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  `, */
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportES6", {
     // GENERATED
@@ -178,7 +176,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
+  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  `, */
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveBareImportCommonJS", {
     // GENERATED
@@ -197,7 +197,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects
+  Users/user/project/node_modules/demo-pkg/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  `, */
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportES6", {
     // GENERATED
@@ -216,7 +218,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveNamedImportCommonJS", {
     // GENERATED
@@ -235,7 +236,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportES6", {
     // GENERATED
@@ -254,7 +254,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseRemoveStarImportCommonJS", {
     // GENERATED
@@ -273,7 +272,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayRemove", {
     // GENERATED
@@ -292,7 +290,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeep", {
     // GENERATED
@@ -311,7 +308,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseModule", {
     // GENERATED
@@ -336,7 +332,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainUseMain", {
     // GENERATED
@@ -361,7 +356,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitModule", {
     // GENERATED
@@ -386,7 +380,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepMainImplicitMain", {
     // GENERATED
@@ -416,7 +409,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseModule", {
     // GENERATED
@@ -441,7 +433,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleUseMain", {
     // GENERATED
@@ -466,7 +457,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitModule", {
     // GENERATED
@@ -491,7 +481,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
     // GENERATED
@@ -521,7 +510,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsArrayGlob", {
     // GENERATED
@@ -542,7 +530,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: WARNING: Ignoring this import because "Users/user/project/node_modules/demo-pkg/remove/this/file.js" was marked as having no side effects
+  Users/user/project/node_modules/demo-pkg/package.json: NOTE: It was excluded from the "sideEffects" array in the enclosing "package.json" file:
+  `, */
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
     // GENERATED
@@ -561,7 +551,6 @@ describe("bundler", () => {
         console.log('hello')
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsKeepExportDefaultExpr", {
     // GENERATED
@@ -577,7 +566,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseNoWarningInNodeModulesIssue999", {
     // GENERATED
@@ -600,7 +588,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUnused", {
     // GENERATED
@@ -613,7 +600,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesUsed", {
     // GENERATED
@@ -629,7 +615,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/foo.js": `export const foo = 123`,
       "/Users/user/project/node_modules/demo-pkg/package.json": `{ "sideEffects": false }`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainAll", {
     // GENERATED
@@ -650,7 +635,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesChainOne", {
     // GENERATED
@@ -668,7 +652,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseIntermediateFilesDiamond", {
     // GENERATED
@@ -694,7 +677,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/c/index.js": `export {foo} from "d"`,
       "/Users/user/project/node_modules/d/index.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseOneFork", {
     // GENERATED
@@ -712,7 +694,6 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
     },
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseAllFork", {
     // GENERATED
@@ -732,7 +713,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/d/index.js": `export let baz = "baz"`,
       "/Users/user/project/node_modules/d/package.json": `{ "sideEffects": false }`,
     },
-    snapshot: true,
   });
   itBundled("dce/JSONLoaderRemoveUnused", {
     // GENERATED
@@ -743,7 +723,6 @@ describe("bundler", () => {
       `,
       "/example.json": `{"data": true}`,
     },
-    snapshot: true,
   });
   itBundled("dce/TextLoaderRemoveUnused", {
     // GENERATED
@@ -754,7 +733,6 @@ describe("bundler", () => {
       `,
       "/example.txt": `some data`,
     },
-    snapshot: true,
   });
   itBundled("dce/Base64LoaderRemoveUnused", {
     // GENERATED
@@ -765,7 +743,6 @@ describe("bundler", () => {
       `,
       "/example.data": `some data`,
     },
-    snapshot: true,
   });
   itBundled("dce/DataURLLoaderRemoveUnused", {
     // GENERATED
@@ -776,7 +753,6 @@ describe("bundler", () => {
       `,
       "/example.data": `some data`,
     },
-    snapshot: true,
   });
   itBundled("dce/FileLoaderRemoveUnused", {
     // GENERATED
@@ -787,7 +763,6 @@ describe("bundler", () => {
       `,
       "/example.data": `some data`,
     },
-    snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportMeta", {
     // GENERATED
@@ -799,7 +774,6 @@ describe("bundler", () => {
         console.log('foo is unused')
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/RemoveUnusedPureCommentCalls", {
     // GENERATED
@@ -866,7 +840,6 @@ describe("bundler", () => {
         let new_exp_no = /* @__PURE__ */ new foo() ** foo();
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingReactElements", {
     // GENERATED
@@ -884,7 +857,6 @@ describe("bundler", () => {
         console.log(f)
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/DisableTreeShaking", {
     // GENERATED
@@ -998,7 +970,6 @@ describe("bundler", () => {
         testStmts()
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/RemoveTrailingReturn", {
     // GENERATED
@@ -1035,7 +1006,6 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    snapshot: true,
   });
   itBundled("dce/ImportReExportOfNamespaceImport", {
     // GENERATED
@@ -1052,7 +1022,6 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/pkg/foo.js": `module.exports = 123`,
       "/Users/user/project/node_modules/pkg/bar.js": `module.exports = 'abc'`,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingImportIdentifier", {
     // GENERATED
@@ -1068,7 +1037,6 @@ describe("bundler", () => {
       `,
       "/b.js": `export class Base {}`,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingObjectProperty", {
     // GENERATED
@@ -1104,7 +1072,6 @@ describe("bundler", () => {
     },
     treeShaking: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingClassProperty", {
     // GENERATED
@@ -1138,7 +1105,6 @@ describe("bundler", () => {
     },
     treeShaking: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingClassStaticProperty", {
     // GENERATED
@@ -1172,7 +1138,6 @@ describe("bundler", () => {
     },
     treeShaking: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingUnaryOperators", {
     // GENERATED
@@ -1195,7 +1160,6 @@ describe("bundler", () => {
         void REMOVE;
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingBinaryOperators", {
     // GENERATED
@@ -1250,7 +1214,6 @@ describe("bundler", () => {
         REMOVE && REMOVE2;
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleESM", {
     // GENERATED
@@ -1263,7 +1226,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleCJS", {
     // GENERATED
@@ -1276,7 +1238,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingNoBundleIIFE", {
     // GENERATED
@@ -1289,7 +1250,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingInESMWrapper", {
     // GENERATED
@@ -1309,7 +1269,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("dce/DCETypeOf", {
     // GENERATED
@@ -1336,7 +1295,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsString", {
     // GENERATED
@@ -1347,7 +1305,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsStringMangle", {
     // GENERATED
@@ -1360,7 +1317,6 @@ describe("bundler", () => {
     },
     format: "iife",
     minifySyntax: true,
-    snapshot: true,
   });
   itBundled("dce/DCETypeOfEqualsStringGuardCondition", {
     // GENERATED
@@ -1458,7 +1414,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("dce/DCETypeOfCompareStringGuardCondition", {
     // GENERATED
@@ -1520,7 +1475,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("dce/RemoveUnusedImports", {
     // GENERATED
@@ -1533,7 +1487,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportsEval", {
     // GENERATED
@@ -1547,7 +1500,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/RemoveUnusedImportsEvalTS", {
     // GENERATED
@@ -1562,7 +1514,6 @@ describe("bundler", () => {
     entryPoints: ["/entry.js"],
     minifySyntax: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/DCEClassStaticBlocks", {
     // GENERATED
@@ -1602,7 +1553,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js"],
-    snapshot: true,
   });
   itBundled("dce/DCEVarExports", {
     // GENERATED
@@ -1621,13 +1571,11 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
-    snapshot: true,
   });
   itBundled("dce/DCETemplateLiteral", {
     // GENERATED
     files: {},
     entryPoints: ["/entry.js"],
-    snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticField", {
     // GENERATED
@@ -1654,7 +1602,6 @@ describe("bundler", () => {
         new KeepMe2()
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldMinified", {
     // GENERATED
@@ -1682,7 +1629,6 @@ describe("bundler", () => {
       `,
     },
     unsupportedJSFeatures: "ClassField",
-    snapshot: true,
   });
   itBundled("dce/TreeShakingLoweredClassStaticFieldAssignment", {
     // GENERATED
@@ -1708,7 +1654,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry.js"],
     unsupportedJSFeatures: "ClassField",
-    snapshot: true,
   });
   itBundled("dce/InlineIdentityFunctionCalls", {
     // GENERATED
@@ -1855,7 +1800,6 @@ describe("bundler", () => {
       "/not-identity-rest.js",
       "/not-identity-return.js",
     ],
-    snapshot: true,
   });
   itBundled("dce/InlineEmptyFunctionCalls", {
     // GENERATED
@@ -1969,12 +1913,11 @@ describe("bundler", () => {
       "/reassign-array.js",
       "/reassign-object.js",
     ],
-    snapshot: true,
   });
   itBundled("dce/InlineFunctionCallBehaviorChanges", {
     // GENERATED
     files: {
-      "/entry.js": /* js */ `
+      "/entry.js": `
         function empty() {}
         function id(x) { return x }
   
@@ -1998,7 +1941,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/InlineFunctionCallForInitDecl", {
     // GENERATED
@@ -2011,7 +1953,6 @@ describe("bundler", () => {
         for (var z = id(123); false; ) ;
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/ConstValueInliningNoBundle", {
     // GENERATED
@@ -2164,7 +2105,6 @@ describe("bundler", () => {
       "/backwards-reference-nested-function.js",
     ],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/ConstValueInliningBundle", {
     // GENERATED
@@ -2285,7 +2225,6 @@ describe("bundler", () => {
     ],
     format: "esm",
     minifySyntax: true,
-    snapshot: true,
   });
   itBundled("dce/ConstValueInliningAssign", {
     // GENERATED
@@ -2301,7 +2240,11 @@ describe("bundler", () => {
     },
     entryPoints: ["/const-assign.js", "/const-update.js"],
     mode: "passthrough",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `const-assign.js: ERROR: Cannot assign to "x" because it is a constant
+  const-assign.js: NOTE: The symbol "x" was declared a constant here:
+  const-update.js: ERROR: Cannot assign to "x" because it is a constant
+  const-update.js: NOTE: The symbol "x" was declared a constant here:
+  `, */
   });
   itBundled("dce/ConstValueInliningDirectEval", {
     // GENERATED
@@ -2348,7 +2291,6 @@ describe("bundler", () => {
       "/ts-namespace-eval.ts",
     ],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("dce/CrossModuleConstantFolding", {
     // GENERATED
@@ -2458,7 +2400,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
-    snapshot: true,
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
     // GENERATED
@@ -2489,7 +2430,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/var2.js", "/var3.js", "/function2.js", "/function3.js"],
-    snapshot: true,
   });
   itBundled("dce/MultipleDeclarationTreeShakingMinifySyntax", {
     // GENERATED
@@ -2520,7 +2460,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/var2.js", "/var3.js", "/function2.js", "/function3.js"],
-    snapshot: true,
   });
   itBundled("dce/PureCallsWithSpread", {
     // GENERATED
@@ -2530,7 +2469,6 @@ describe("bundler", () => {
         /* @__PURE__ */ new foo(...args);
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TopLevelFunctionInliningWithSpread", {
     // GENERATED
@@ -2582,7 +2520,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry-outer.js"],
-    snapshot: true,
   });
   itBundled("dce/NestedFunctionInliningWithSpread", {
     // GENERATED
@@ -2638,7 +2575,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry-outer.js"],
-    snapshot: true,
   });
   itBundled("dce/PackageJsonSideEffectsFalseCrossPlatformSlash", {
     // GENERATED
@@ -2658,7 +2594,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSS", {
     // GENERATED
@@ -2679,7 +2614,6 @@ describe("bundler", () => {
       `,
       "/project/node_modules/pkg/menu.css": `menu { color: red }`,
     },
-    snapshot: true,
   });
   itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalse", {
     // GENERATED
@@ -2701,33 +2635,28 @@ describe("bundler", () => {
       `,
       "/project/node_modules/pkg/button.css": `button { color: red }`,
     },
-    snapshot: true,
   });
-  itBundled(
-    "dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS",
-    {
-      // GENERATED
-      files: {
-        "/project/test.jsx": /* jsx */ `
+  itBundled("dce/TreeShakingJSWithAssociatedCSSReExportSideEffectsFalseOnlyJS", {
+    // GENERATED
+    files: {
+      "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
         render(<Button/>)
       `,
-        "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
-        "/project/node_modules/pkg/package.json": /* json */ `
+      "/project/node_modules/pkg/entry.js": `export { Button } from './components'`,
+      "/project/node_modules/pkg/package.json": /* json */ `
         {
         "main": "./entry.js",
         "sideEffects": ["*.css"]
       }
       `,
-        "/project/node_modules/pkg/components.jsx": /* jsx */ `
+      "/project/node_modules/pkg/components.jsx": /* jsx */ `
         require('./button.css')
         export const Button = () => <button/>
       `,
-        "/project/node_modules/pkg/button.css": `button { color: red }`,
-      },
-      snapshot: true,
-    }
-  );
+      "/project/node_modules/pkg/button.css": `button { color: red }`,
+    },
+  });
   itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalse", {
     // GENERATED
     files: {
@@ -2748,85 +2677,72 @@ describe("bundler", () => {
       `,
       "/project/node_modules/pkg/button.css": `button { color: red }`,
     },
-    snapshot: true,
   });
-  itBundled(
-    "dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS",
-    {
-      // GENERATED
-      files: {
-        "/project/test.jsx": /* jsx */ `
+  itBundled("dce/TreeShakingJSWithAssociatedCSSExportStarSideEffectsFalseOnlyJS", {
+    // GENERATED
+    files: {
+      "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg'
         render(<Button/>)
       `,
-        "/project/node_modules/pkg/entry.js": `export * from './components'`,
-        "/project/node_modules/pkg/package.json": /* json */ `
+      "/project/node_modules/pkg/entry.js": `export * from './components'`,
+      "/project/node_modules/pkg/package.json": /* json */ `
         {
         "main": "./entry.js",
         "sideEffects": ["*.css"]
       }
       `,
-        "/project/node_modules/pkg/components.jsx": /* jsx */ `
+      "/project/node_modules/pkg/components.jsx": /* jsx */ `
         require('./button.css')
         export const Button = () => <button/>
       `,
-        "/project/node_modules/pkg/button.css": `button { color: red }`,
-      },
-      snapshot: true,
-    }
-  );
-  itBundled(
-    "dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse",
-    {
-      // GENERATED
-      files: {
-        "/project/test.jsx": /* jsx */ `
+      "/project/node_modules/pkg/button.css": `button { color: red }`,
+    },
+  });
+  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalse", {
+    // GENERATED
+    files: {
+      "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
         render(<Button/>)
       `,
-        "/project/node_modules/pkg/package.json": /* json */ `
+      "/project/node_modules/pkg/package.json": /* json */ `
         {
         "sideEffects": false
       }
       `,
-        "/project/node_modules/pkg/button.jsx": /* jsx */ `
+      "/project/node_modules/pkg/button.jsx": /* jsx */ `
         import styles from './styles'
         export const Button = () => <button/>
       `,
-        "/project/node_modules/pkg/styles.js": /* js */ `
+      "/project/node_modules/pkg/styles.js": /* js */ `
         import './styles.css'
         export default {}
       `,
-        "/project/node_modules/pkg/styles.css": `button { color: red }`,
-      },
-      snapshot: true,
-    }
-  );
-  itBundled(
-    "dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS",
-    {
-      // GENERATED
-      files: {
-        "/project/test.jsx": /* jsx */ `
+      "/project/node_modules/pkg/styles.css": `button { color: red }`,
+    },
+  });
+  itBundled("dce/TreeShakingJSWithAssociatedCSSUnusedNestedImportSideEffectsFalseOnlyJS", {
+    // GENERATED
+    files: {
+      "/project/test.jsx": /* jsx */ `
         import { Button } from 'pkg/button'
         render(<Button/>)
       `,
-        "/project/node_modules/pkg/package.json": /* json */ `
+      "/project/node_modules/pkg/package.json": /* json */ `
         {
-        "sideEffects": ["*.css"]
-      }
+          "sideEffects": ["*.css"]
+        }
       `,
-        "/project/node_modules/pkg/button.jsx": /* jsx */ `
+      "/project/node_modules/pkg/button.jsx": /* jsx */ `
         import styles from './styles'
         export const Button = () => <button/>
       `,
-        "/project/node_modules/pkg/styles.js": /* js */ `
+      "/project/node_modules/pkg/styles.js": /* js */ `
         import './styles.css'
         export default {}
       `,
-        "/project/node_modules/pkg/styles.css": `button { color: red }`,
-      },
-      snapshot: true,
-    }
-  );
+      "/project/node_modules/pkg/styles.css": `button { color: red }`,
+    },
+  });
 });

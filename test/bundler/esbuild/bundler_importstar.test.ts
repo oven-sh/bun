@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_test.go
@@ -17,7 +17,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarCapture", {
     // GENERATED
@@ -29,7 +28,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarNoCapture", {
     // GENERATED
@@ -41,7 +39,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarUnused", {
     // GENERATED
@@ -57,7 +54,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarNoCapture", {
     // GENERATED
@@ -73,7 +69,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportImportStarCapture", {
     // GENERATED
@@ -89,7 +84,6 @@ describe("bundler", () => {
         export {ns}
       `,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsUnused", {
     // GENERATED
@@ -102,7 +96,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsNoCapture", {
     // GENERATED
@@ -115,7 +108,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarAsCapture", {
     // GENERATED
@@ -128,7 +120,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * as ns from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarUnused", {
     // GENERATED
@@ -141,7 +132,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarNoCapture", {
     // GENERATED
@@ -154,7 +144,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarCapture", {
     // GENERATED
@@ -167,7 +156,6 @@ describe("bundler", () => {
       "/foo.js": `export const foo = 123`,
       "/bar.js": `export * from './foo'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSUnused", {
     // GENERATED
@@ -179,7 +167,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSCapture", {
     // GENERATED
@@ -191,7 +178,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarCommonJSNoCapture", {
     // GENERATED
@@ -203,7 +189,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarAndCommonJS", {
     // GENERATED
@@ -215,7 +200,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const foo = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleUnused", {
     // GENERATED
@@ -227,7 +211,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleCapture", {
     // GENERATED
@@ -239,7 +222,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarNoBundleNoCapture", {
     // GENERATED
@@ -251,7 +233,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleUnused", {
     // GENERATED
@@ -264,7 +245,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleCapture", {
     // GENERATED
@@ -277,7 +257,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarMangleNoBundleNoCapture", {
     // GENERATED
@@ -290,7 +269,6 @@ describe("bundler", () => {
     },
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarExportStarOmitAmbiguous", {
     // GENERATED
@@ -312,7 +290,6 @@ describe("bundler", () => {
         export const z = 4
       `,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportExportStarAmbiguousError", {
     // GENERATED
@@ -334,7 +311,10 @@ describe("bundler", () => {
         export const z = 4
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: ERROR: Ambiguous import "y" has multiple matching exports
+  foo.js: NOTE: One matching export is here:
+  bar.js: NOTE: Another matching export is here:
+  `, */
   });
   itBundled("importstar/ImportExportStarAmbiguousWarning", {
     // GENERATED
@@ -356,7 +336,10 @@ describe("bundler", () => {
         export const z = 4
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: WARNING: Import "y" will always be undefined because there are multiple matching exports
+  foo.js: NOTE: One matching export is here:
+  bar.js: NOTE: Another matching export is here:
+  `, */
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousImport", {
     // GENERATED
@@ -373,7 +356,6 @@ describe("bundler", () => {
       "/b.js": `export {x} from './c'`,
       "/c.js": `export let x = 1, y = 2`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarNameCollisionNotAmbiguousExport", {
     // GENERATED
@@ -387,7 +369,6 @@ describe("bundler", () => {
       "/c.js": `export let x = 1, y = 2`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguous", {
     // GENERATED
@@ -403,7 +384,6 @@ describe("bundler", () => {
       "/b.js": `export let x = 2`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarNameShadowingNotAmbiguousReExport", {
     // GENERATED
@@ -420,7 +400,6 @@ describe("bundler", () => {
       "/c.js": `export let x = 2`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ImportStarOfExportStarAs", {
     // GENERATED
@@ -432,7 +411,6 @@ describe("bundler", () => {
       "/foo.js": `export * as bar_ns from './bar'`,
       "/bar.js": `export const bar = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportOfExportStar", {
     // GENERATED
@@ -451,7 +429,6 @@ describe("bundler", () => {
         export const bar = 123
       `,
     },
-    snapshot: true,
   });
   itBundled("importstar/ImportOfExportStarOfImport", {
     // GENERATED
@@ -471,7 +448,6 @@ describe("bundler", () => {
       "/bar.js": `export {value as bar} from './baz'`,
       "/baz.js": `export const value = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfIIFE", {
     // GENERATED
@@ -482,7 +458,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfIIFEWithName", {
     // GENERATED
@@ -493,7 +468,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfES6", {
     // GENERATED
@@ -504,7 +478,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfCommonJS", {
     // GENERATED
@@ -515,7 +488,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfCommonJSMinified", {
     // GENERATED
@@ -527,7 +499,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ImportSelfCommonJS", {
     // GENERATED
@@ -539,7 +510,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfAsNamespaceES6", {
     // GENERATED
@@ -550,7 +520,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ImportExportSelfAsNamespaceES6", {
     // GENERATED
@@ -562,7 +531,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportOtherFileExportSelfAsNamespaceES6", {
     // GENERATED
@@ -574,7 +542,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportOtherFileImportExportSelfAsNamespaceES6", {
     // GENERATED
@@ -587,7 +554,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/OtherFileExportSelfAsNamespaceUnusedES6", {
     // GENERATED
@@ -599,7 +565,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/OtherFileImportExportSelfAsNamespaceUnusedES6", {
     // GENERATED
@@ -612,7 +577,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfAsNamespaceCommonJS", {
     // GENERATED
@@ -623,7 +587,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfAndRequireSelfCommonJS", {
     // GENERATED
@@ -634,7 +597,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportSelfAndImportSelfCommonJS", {
     // GENERATED
@@ -646,7 +608,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportOtherAsNamespaceCommonJS", {
     // GENERATED
@@ -655,7 +616,6 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ImportExportOtherAsNamespaceCommonJS", {
     // GENERATED
@@ -667,7 +627,6 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/NamespaceImportMissingES6", {
     // GENERATED
@@ -678,8 +637,8 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const x = 123`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
+  `, */
   });
   itBundled("importstar/ExportOtherCommonJS", {
     // GENERATED
@@ -688,7 +647,6 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ExportOtherNestedCommonJS", {
     // GENERATED
@@ -698,7 +656,6 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/NamespaceImportUnusedMissingES6", {
     // GENERATED
@@ -709,8 +666,8 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const x = 123`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
+  `, */
   });
   itBundled("importstar/NamespaceImportMissingCommonJS", {
     // GENERATED
@@ -721,7 +678,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.x = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/NamespaceImportUnusedMissingCommonJS", {
     // GENERATED
@@ -732,7 +688,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.x = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ReExportNamespaceImportMissingES6", {
     // GENERATED
@@ -744,7 +699,6 @@ describe("bundler", () => {
       "/foo.js": `export * as ns from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ReExportNamespaceImportUnusedMissingES6", {
     // GENERATED
@@ -756,7 +710,6 @@ describe("bundler", () => {
       "/foo.js": `export * as ns from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    snapshot: true,
   });
   itBundled("importstar/NamespaceImportReExportMissingES6", {
     // GENERATED
@@ -768,7 +721,9 @@ describe("bundler", () => {
       "/foo.js": `export {foo} from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "foo"
+  foo.js: ERROR: No matching export in "bar.js" for import "foo"
+  `, */
   });
   itBundled("importstar/NamespaceImportReExportUnusedMissingES6", {
     // GENERATED
@@ -780,7 +735,9 @@ describe("bundler", () => {
       "/foo.js": `export {foo} from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "foo"
+  foo.js: ERROR: No matching export in "bar.js" for import "foo"
+  `, */
   });
   itBundled("importstar/NamespaceImportReExportStarMissingES6", {
     // GENERATED
@@ -792,8 +749,8 @@ describe("bundler", () => {
       "/foo.js": `export * from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
+  `, */
   });
   itBundled("importstar/NamespaceImportReExportStarUnusedMissingES6", {
     // GENERATED
@@ -805,8 +762,8 @@ describe("bundler", () => {
       "/foo.js": `export * from './bar'`,
       "/bar.js": `export const x = 123`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: DEBUG: Import "foo" will always be undefined because there is no matching export in "foo.js"
+  `, */
   });
   itBundled("importstar/ExportStarDefaultExportCommonJS", {
     // GENERATED
@@ -818,7 +775,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/Issue176", {
     // GENERATED
@@ -831,7 +787,6 @@ describe("bundler", () => {
       "/folders/child/index.js": `export { foo } from './foo'`,
       "/folders/child/foo.js": `export const foo = () => 'hi there'`,
     },
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalIIFE", {
     // GENERATED
@@ -840,7 +795,6 @@ describe("bundler", () => {
     },
     format: "iife",
     globalName: "mod",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalES6", {
     // GENERATED
@@ -848,7 +802,6 @@ describe("bundler", () => {
       "/entry.js": `export * from "foo"`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarExternalCommonJS", {
     // GENERATED
@@ -856,7 +809,6 @@ describe("bundler", () => {
       "/entry.js": `export * from "foo"`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarIIFENoBundle", {
     // GENERATED
@@ -865,7 +817,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarES6NoBundle", {
     // GENERATED
@@ -874,7 +825,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarCommonJSNoBundle", {
     // GENERATED
@@ -883,7 +833,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalIIFE", {
     // GENERATED
@@ -892,7 +841,6 @@ describe("bundler", () => {
     },
     format: "iife",
     globalName: "mod",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalES6", {
     // GENERATED
@@ -900,7 +848,6 @@ describe("bundler", () => {
       "/entry.js": `export * as out from "foo"`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsExternalCommonJS", {
     // GENERATED
@@ -908,7 +855,6 @@ describe("bundler", () => {
       "/entry.js": `export * as out from "foo"`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsIIFENoBundle", {
     // GENERATED
@@ -917,7 +863,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsES6NoBundle", {
     // GENERATED
@@ -926,7 +871,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ReExportStarAsCommonJSNoBundle", {
     // GENERATED
@@ -935,7 +879,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("importstar/ImportDefaultNamespaceComboIssue446", {
     // GENERATED
@@ -1004,8 +947,9 @@ describe("bundler", () => {
       "/internal-default.js",
       "/internal-def.js",
     ],
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `internal-def.js: DEBUG: Import "def" will always be undefined because there is no matching export in "internal.js"
+  internal-ns-def.js: DEBUG: Import "def" will always be undefined because there is no matching export in "internal.js"
+  `, */
   });
   itBundled("importstar/ImportDefaultNamespaceComboNoDefault", {
     // GENERATED
@@ -1024,8 +968,14 @@ describe("bundler", () => {
       "/entry-default.js",
       "/entry-prop.js",
     ],
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry-default-ns-prop.js: ERROR: No matching export in "foo.js" for import "default"
+  entry-default-ns-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
+  entry-default-ns.js: ERROR: No matching export in "foo.js" for import "default"
+  entry-default-prop.js: ERROR: No matching export in "foo.js" for import "default"
+  entry-default-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
+  entry-default.js: ERROR: No matching export in "foo.js" for import "default"
+  entry-prop.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo.js"
+  `, */
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertyEmptyFile", {
     // GENERATED
@@ -1055,8 +1005,11 @@ describe("bundler", () => {
       "/empty.cjs": ``,
     },
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry-default.js: DEBUG: Import "default" will always be undefined because there is no matching export in "empty.mjs"
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.js" has no exports
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.mjs" has no exports
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "empty.cjs" has no exports
+  `, */
   });
   itBundled("importstar/ImportNamespaceUndefinedPropertySideEffectFreeFile", {
     // GENERATED
@@ -1087,8 +1040,11 @@ describe("bundler", () => {
       "/foo/no-side-effects.cjs": `console.log('cjs')`,
     },
     entryPoints: ["/entry-nope.js", "/entry-default.js"],
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry-default.js: DEBUG: Import "default" will always be undefined because there is no matching export in "foo/no-side-effects.mjs"
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.js" has no exports
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.mjs" has no exports
+  entry-nope.js: WARNING: Import "nope" will always be undefined because the file "foo/no-side-effects.cjs" has no exports
+  `, */
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
     // GENERATED
@@ -1101,6 +1057,5 @@ describe("bundler", () => {
       "/inner.js": `export * from 'b'`,
     },
     format: "cjs",
-    snapshot: true,
   });
 });

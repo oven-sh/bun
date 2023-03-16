@@ -1,7 +1,7 @@
-import { test, describe } from "bun:test";
-import { expectBundled, itBundled } from "./expectBundled";
-import { appendFileSync } from "fs";
+import { describe } from "bun:test";
 import dedent from "dedent";
+import { appendFileSync } from "fs";
+import { bundlerTest, expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
@@ -94,8 +94,7 @@ describe("bundler", () => {
         `,
     },
     run: {
-      error:
-        "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
+      error: "TypeError: bar2 is not a function. (In 'bar2()', 'bar2' is undefined)",
       errorLineMatch: /console\.log/,
     },
   });
@@ -208,7 +207,7 @@ describe("bundler", () => {
           strictEqual("abc" in globalName, true, ".abc exists");
           strictEqual(globalName.abc, undefined, ".abc");
           strictEqual(globalName.b.xyz, null, ".xyz");
-        `
+        `,
       );
     },
   });
@@ -272,7 +271,7 @@ describe("bundler", () => {
           await import('./c'),
           function nested() { return import('./c') },
         ]
-
+  
         import { deepEqual } from 'node:assert'
         deepEqual(a, 1, 'a');
         deepEqual(a2, 4, 'a2');
@@ -315,12 +314,10 @@ describe("bundler", () => {
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
     ...importFormsConfig,
-    snapshot: true,
   });
   itBundled("default/ImportFormsWithMinifyIdentifiersAndNoBundle", {
     ...importFormsConfig,
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("default/ExportFormsCommonJS", {
     files: {
@@ -429,53 +426,67 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": [
-        `Detected cycle while resolving import "a"`,
-        `Detected cycle while resolving import "c"`,
-      ],
-      "/foo.js": [
-        `Detected cycle while resolving import "b"`,
-        `Detected cycle while resolving import "d"`,
-      ],
+      "/entry.js": [`Detected cycle while resolving import "a"`, `Detected cycle while resolving import "c"`],
+      "/foo.js": [`Detected cycle while resolving import "b"`, `Detected cycle while resolving import "d"`],
     },
   });
   itBundled("default/JSXImportsCommonJS", {
-    // GENERATED
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import {elem, frag} from './custom-react'
-        console.log(<div/>, <>fragment</>)
-      `,
-      "/custom-react.js": `module.exports = {}`,
-    },
-    jsx: {
-      factory: "elem",
-    },
-    snapshot: true,
-  });
-  itBundled("default/JSXImportsES6", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {elem, frag} from './custom-react'
         console.log(<div/>, <>fragment</>)
       `,
       "/custom-react.js": /* js */ `
-        export function elem() {}
-        export function frag() {}
+        module.exports = {
+          elem: (...args) => console.log('elem', ...args),
+          frag: 'frag',
+        };
       `,
     },
     jsx: {
       factory: "elem",
+      fragment: "frag",
     },
-    snapshot: true,
+    run: {
+      stdout: `
+        elem div null
+        elem frag null fragment
+        undefined undefined
+      `,
+    },
+  });
+  itBundled("default/JSXImportsES6", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import {elem, frag} from './custom-react'
+        console.log(<div/>, <>fragment</>)
+      `,
+      "/custom-react.js": /* js */ `
+        export function elem(...args) {
+          console.log('elem', ...args)
+        }
+        export const frag = "frag";
+      `,
+    },
+    jsx: {
+      factory: "elem",
+      fragment: "frag",
+    },
+    run: {
+      stdout: `
+        elem div null
+        elem frag null fragment
+        undefined undefined
+      `,
+    },
   });
   itBundled("default/JSXSyntaxInJS", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
-    snapshot: true,
+    bundleErrors: {
+      "/entry.js": ["ERROR: The JSX syntax extension is not currently enabled"],
+    },
   });
   itBundled("default/JSXConstantFragments", {
     // GENERATED
@@ -499,8 +510,26 @@ describe("bundler", () => {
       "/string-double-empty.jsx": `console.log(<></>) // @jsxFrag ""`,
       "/string-single-punctuation.jsx": `console.log(<></>) // @jsxFrag '['`,
       "/string-double-punctuation.jsx": `console.log(<></>) // @jsxFrag "["`,
+      "/string-template.jsx": "console.log(<></>) // @jsxFrag ``",
+
+      "/test.js": /* js */ `
+        globalThis.React = {
+          createElement: (x) => x,
+          Fragment: 'frag'
+        }
+        await import('./out.js');
+      `,
     },
-    snapshot: true,
+    jsx: {
+      fragment: "']'",
+    },
+    bundleWarnings: {
+      "/string-template.jsx": ["Invalid JSX fragment: ``"],
+    },
+    run: {
+      file: "/test.js",
+      stdout: "]\nnull\ntrue\n123\n\n\n[\n[\n]",
+    },
   });
   itBundled("default/JSXAutomaticImportsCommonJS", {
     // GENERATED
@@ -511,9 +540,10 @@ describe("bundler", () => {
       `,
       "/custom-react.js": `module.exports = {}`,
     },
-    jsx: {},
+    jsx: {
+      automaticRuntime: true,
+    },
     external: ["react/jsx-runtime"],
-    snapshot: true,
   });
   itBundled("default/JSXAutomaticImportsES6", {
     // GENERATED
@@ -527,18 +557,22 @@ describe("bundler", () => {
         export function Fragment() {}
       `,
     },
-    jsx: {},
+    jsx: {
+      automaticRuntime: true,
+    },
     external: ["react/jsx-runtime"],
-    snapshot: true,
   });
   itBundled("default/JSXAutomaticSyntaxInJS", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
-    jsx: {},
+    jsx: {
+      automaticRuntime: true,
+    },
     external: ["react/jsx-runtime"],
-    snapshot: true,
+    bundleErrors: {
+      "/entry.js": ["The JSX syntax extension is not currently enabled"],
+    },
   });
   itBundled("default/NodeModules", {
     // GENERATED
@@ -553,7 +587,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireChildDirCommonJS", {
     // GENERATED
@@ -561,7 +594,6 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": `console.log(require('./dir'))`,
       "/Users/user/project/src/dir/index.js": `module.exports = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireChildDirES6", {
     // GENERATED
@@ -572,7 +604,6 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/dir/index.js": `export default 123`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireParentDirCommonJS", {
     // GENERATED
@@ -580,7 +611,6 @@ describe("bundler", () => {
       "/Users/user/project/src/dir/entry.js": `console.log(require('..'))`,
       "/Users/user/project/src/index.js": `module.exports = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireParentDirES6", {
     // GENERATED
@@ -591,7 +621,6 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/index.js": `export default 123`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportMissingES6", {
     // GENERATED
@@ -602,7 +631,9 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const x = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "foo.js" for import "default"
+  entry.js: ERROR: No matching export in "foo.js" for import "y"
+  `, */
   });
   itBundled("default/ImportMissingUnusedES6", {
     // GENERATED
@@ -610,7 +641,9 @@ describe("bundler", () => {
       "/entry.js": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "foo.js" for import "default"
+  entry.js: ERROR: No matching export in "foo.js" for import "y"
+  `, */
   });
   itBundled("default/ImportMissingCommonJS", {
     // GENERATED
@@ -621,7 +654,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `exports.x = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
     // GENERATED
@@ -643,15 +675,12 @@ describe("bundler", () => {
       "/import.js": `console.log(import('./foo'))`,
       "/foo.js": `console.log('no exports here')`,
     },
-    entryPoints: [
-      "/named.js",
-      "/star.js",
-      "/star-capture.js",
-      "/bare.js",
-      "/require.js",
-      "/import.js",
-    ],
-    snapshot: true,
+    entryPoints: ["/named.js", "/star.js", "/star-capture.js", "/bare.js", "/require.js", "/import.js"],
+    /* TODO FIX expectedCompileLog: `named.js: WARNING: Import "x" will always be undefined because the file "foo.js" has no exports
+  named.js: WARNING: Import "y" will always be undefined because the file "foo.js" has no exports
+  star.js: WARNING: Import "x" will always be undefined because the file "foo.js" has no exports
+  star.js: WARNING: Import "y" will always be undefined because the file "foo.js" has no exports
+  `, */
   });
   itBundled("default/ExportMissingES6", {
     // GENERATED
@@ -663,7 +692,8 @@ describe("bundler", () => {
       "/foo.js": `export {nope} from './bar'`,
       "/bar.js": `export const yep = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "nope"
+  `, */
   });
   itBundled("default/DotImport", {
     // GENERATED
@@ -674,35 +704,32 @@ describe("bundler", () => {
       `,
       "/index.js": `exports.x = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireWithTemplate", {
     // GENERATED
     files: {
-      "/a.js": /* js */ `
+      "/a.js": `
         console.log(require('./b'))
         console.log(require(\` + "\`./b\`" + \`))
       `,
       "/b.js": `exports.x = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/DynamicImportWithTemplateIIFE", {
     // GENERATED
     files: {
-      "/a.js": /* js */ `
+      "/a.js": `
         import('./b').then(ns => console.log(ns))
         import(\` + "\`./b\`" + \`).then(ns => console.log(ns))
       `,
       "/b.js": `exports.x = 123`,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("default/RequireAndDynamicImportInvalidTemplate", {
     // GENERATED
     files: {
-      "/entry.js": /* js */ `
+      "/entry.js": `
         require(tag\` + "\`./b\`" + \`)
         require(\` + "\`./\$0b}\`" + \`)
   
@@ -728,7 +755,6 @@ describe("bundler", () => {
         })()
       `,
     },
-    snapshot: true,
   });
   itBundled("default/DynamicImportWithExpressionCJS", {
     // GENERATED
@@ -740,7 +766,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/MinifiedDynamicImportWithExpressionCJS", {
     // GENERATED
@@ -752,7 +777,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/ConditionalRequireResolve", {
     // GENERATED
@@ -764,7 +788,6 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/ConditionalRequire", {
     // GENERATED
@@ -775,7 +798,6 @@ describe("bundler", () => {
       `,
       "/b.js": `exports.foo = 213`,
     },
-    snapshot: true,
   });
   itBundled("default/ConditionalImport", {
     // GENERATED
@@ -785,7 +807,6 @@ describe("bundler", () => {
       "/import.js": `exports.foo = 213`,
     },
     entryPoints: ["/a.js", "/b.js"],
-    snapshot: true,
   });
   itBundled("default/RequireBadArgumentCount", {
     // GENERATED
@@ -801,7 +822,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireJson", {
     // GENERATED
@@ -815,7 +835,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireTxt", {
     // GENERATED
@@ -823,7 +842,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.txt'))`,
       "/test.txt": `This is a test.`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireBadExtension", {
     // GENERATED
@@ -831,7 +849,8 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: No loader is configured for ".bad" files: test.bad
+  `, */
   });
   itBundled("default/FalseRequire", {
     // GENERATED
@@ -839,7 +858,6 @@ describe("bundler", () => {
       "/entry.js": `(require => require('/test.txt'))()`,
       "/test.txt": `This is a test.`,
     },
-    snapshot: true,
   });
   itBundled("default/RequireWithoutCall", {
     // GENERATED
@@ -849,7 +867,6 @@ describe("bundler", () => {
         req('./entry')
       `,
     },
-    snapshot: true,
   });
   itBundled("default/NestedRequireWithoutCall", {
     // GENERATED
@@ -861,7 +878,6 @@ describe("bundler", () => {
         })()
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireWithCallInsideTry", {
     // GENERATED
@@ -876,7 +892,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireWithoutCallInsideTry", {
     // GENERATED
@@ -890,7 +905,6 @@ describe("bundler", () => {
         } catch (e) {}
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequirePropertyAccessCommonJS", {
     // GENERATED
@@ -905,7 +919,6 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/AwaitImportInsideTry", {
     // GENERATED
@@ -920,7 +933,6 @@ describe("bundler", () => {
         main('fs')
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ImportInsideTry", {
     // GENERATED
@@ -934,7 +946,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "nope1"
+  NOTE: You can mark the path "nope1" as external to exclude it from the bundle, which will remove this error. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
+  `, */
   });
   itBundled("default/ImportThenCatch", {
     // GENERATED
@@ -945,7 +959,6 @@ describe("bundler", () => {
         import(name).catch(fail)
       `,
     },
-    snapshot: true,
   });
   itBundled("default/SourceMap", {
     // GENERATED
@@ -958,7 +971,6 @@ describe("bundler", () => {
       "/Users/user/project/src/bar.js": `export function bar() { throw new Error('test') }`,
     },
     sourceMap: "linked-with-comment",
-    snapshot: true,
   });
   itBundled("default/NestedScopeBug", {
     // GENERATED
@@ -975,7 +987,6 @@ describe("bundler", () => {
         })()
       `,
     },
-    snapshot: true,
   });
   itBundled("default/HashbangBundle", {
     // GENERATED
@@ -990,7 +1001,6 @@ describe("bundler", () => {
         export const code = 0
       `,
     },
-    snapshot: true,
   });
   itBundled("default/HashbangNoBundle", {
     // GENERATED
@@ -1001,7 +1011,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/HashbangBannerUseStrictOrder", {
     // GENERATED
@@ -1013,14 +1022,15 @@ describe("bundler", () => {
       `,
     },
     banner: "#! from banner",
-    snapshot: true,
   });
   itBundled("default/RequireFSBrowser", {
     // GENERATED
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
+  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
+  `, */
   });
   itBundled("default/RequireFSNode", {
     // GENERATED
@@ -1028,7 +1038,6 @@ describe("bundler", () => {
       "/entry.js": `return require('fs')`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/RequireFSNodeMinify", {
     // GENERATED
@@ -1037,7 +1046,6 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/ImportFSBrowser", {
     // GENERATED
@@ -1050,7 +1058,9 @@ describe("bundler", () => {
         console.log(fs, readFileSync, defaultValue)
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
+  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
+  `, */
   });
   itBundled("default/ImportFSNodeCommonJS", {
     // GENERATED
@@ -1064,7 +1074,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/ImportFSNodeES6", {
     // GENERATED
@@ -1078,7 +1087,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/ExportFSBrowser", {
     // GENERATED
@@ -1088,7 +1096,9 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
+  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
+  `, */
   });
   itBundled("default/ExportFSNode", {
     // GENERATED
@@ -1098,7 +1108,6 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ReExportFSNode", {
     // GENERATED
@@ -1112,7 +1121,6 @@ describe("bundler", () => {
         export {readFileSync} from 'fs'
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ExportFSNodeInCommonJSModule", {
     // GENERATED
@@ -1125,7 +1133,6 @@ describe("bundler", () => {
         exports.foo = 123
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ExportWildcardFSNodeES6", {
     // GENERATED
@@ -1133,7 +1140,6 @@ describe("bundler", () => {
       "/entry.js": `export * from 'fs'`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/ExportWildcardFSNodeCommonJS", {
     // GENERATED
@@ -1141,7 +1147,6 @@ describe("bundler", () => {
       "/entry.js": `export * from 'fs'`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/MinifiedBundleES6", {
     // GENERATED
@@ -1160,7 +1165,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("default/MinifiedBundleCommonJS", {
     // GENERATED
@@ -1179,7 +1183,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("default/MinifiedBundleEndingWithImportantSemicolon", {
     // GENERATED
@@ -1188,7 +1191,6 @@ describe("bundler", () => {
     },
     minifyWhitespace: true,
     format: "iife",
-    snapshot: true,
   });
   itBundled("default/RuntimeNameCollisionNoBundle", {
     // GENERATED
@@ -1199,7 +1201,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
     // GENERATED
@@ -1210,7 +1211,9 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
+  entry.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
+  `, */
   });
   itBundled("default/TopLevelReturnForbiddenExport", {
     // GENERATED
@@ -1221,7 +1224,9 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
+  entry.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/TopLevelReturnForbiddenTLA", {
     // GENERATED
@@ -1229,7 +1234,9 @@ describe("bundler", () => {
       "/entry.js": `return await foo`,
     },
     mode: "passthrough",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
+  entry.js: NOTE: This file is considered to be an ECMAScript module because of the top-level "await" keyword here:
+  `, */
   });
   itBundled("default/ThisOutsideFunction", {
     // GENERATED
@@ -1253,7 +1260,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ThisInsideFunction", {
     // GENERATED
@@ -1285,7 +1291,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ThisWithES6Syntax", {
     // GENERATED
@@ -1361,8 +1366,41 @@ describe("bundler", () => {
       "/es6-ns-export-class.ts": `namespace ns { export class Foo {} } console.log(this)`,
       "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log(this)`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `es6-export-abstract-class.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-abstract-class.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-async-function.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-async-function.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-class.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-class.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-clause-from.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-clause-from.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-clause.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-clause.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-const-enum.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-const-enum.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-default.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-default.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-enum.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-enum.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-function.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-function.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-import-assign.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-import-assign.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-module.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-module.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-namespace.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-namespace.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-star-as.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-star-as.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-star.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-star.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-export-variable.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-export-variable.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  es6-expr-import-meta.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-expr-import-meta.js: NOTE: This file is considered to be an ECMAScript module because of the use of "import.meta" here:
+  es6-import-meta.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  es6-import-meta.js: NOTE: This file is considered to be an ECMAScript module because of the use of "import.meta" here:
+  `, */
   });
   itBundled("default/ArrowFnScope", {
     // GENERATED
@@ -1381,7 +1419,6 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("default/SwitchScopeNoBundle", {
     // GENERATED
@@ -1393,7 +1430,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/ArgumentDefaultValueScopeNoBundle", {
     // GENERATED
@@ -1411,7 +1447,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/ArgumentsSpecialCaseNoBundle", {
     // GENERATED
@@ -1458,7 +1493,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/WithStatementTaintingNoBundle", {
     // GENERATED
@@ -1487,7 +1521,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/DirectEvalTaintingNoBundle", {
     // GENERATED
@@ -1528,7 +1561,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/ImportReExportES6Issue149", {
     // GENERATED
@@ -1549,8 +1581,9 @@ describe("bundler", () => {
         export { h, render }
       `,
     },
-    jsx: {},
-    snapshot: true,
+    jsx: {
+      factory: "h",
+    },
   });
   itBundled("default/ExternalModuleExclusionPackage", {
     // GENERATED
@@ -1562,7 +1595,6 @@ describe("bundler", () => {
         export const dynamodb = new DocumentClient();
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ExternalModuleExclusionScopedPackage", {
     // GENERATED
@@ -1584,7 +1616,19 @@ describe("bundler", () => {
         import '@c1/c2/c3-c4'
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `index.js: ERROR: Could not resolve "@a1-a2"
+  NOTE: You can mark the path "@a1-a2" as external to exclude it from the bundle, which will remove this error.
+  index.js: ERROR: Could not resolve "@b1"
+  NOTE: You can mark the path "@b1" as external to exclude it from the bundle, which will remove this error.
+  index.js: ERROR: Could not resolve "@b1/b2-b3"
+  NOTE: You can mark the path "@b1/b2-b3" as external to exclude it from the bundle, which will remove this error.
+  index.js: ERROR: Could not resolve "@c1"
+  NOTE: You can mark the path "@c1" as external to exclude it from the bundle, which will remove this error.
+  index.js: ERROR: Could not resolve "@c1/c2"
+  NOTE: You can mark the path "@c1/c2" as external to exclude it from the bundle, which will remove this error.
+  index.js: ERROR: Could not resolve "@c1/c2/c3-c4"
+  NOTE: You can mark the path "@c1/c2/c3-c4" as external to exclude it from the bundle, which will remove this error.
+  `, */
   });
   itBundled("default/ScopedExternalModuleExclusion", {
     // GENERATED
@@ -1596,7 +1640,6 @@ describe("bundler", () => {
         export const bar = new Bar();
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ExternalModuleExclusionRelativePath", {
     // GENERATED
@@ -1611,7 +1654,6 @@ describe("bundler", () => {
       `,
     },
     outdir: "/Users/user/project/out",
-    snapshot: true,
   });
   itBundled("default/ImportWithHashInPath", {
     // GENERATED
@@ -1624,7 +1666,6 @@ describe("bundler", () => {
       "/file#foo.txt": `foo`,
       "/file#bar.txt": `bar`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportWithHashParameter", {
     // GENERATED
@@ -1637,7 +1678,6 @@ describe("bundler", () => {
       `,
       "/file.txt": `This is some text`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportWithQueryParameter", {
     // GENERATED
@@ -1650,7 +1690,6 @@ describe("bundler", () => {
       `,
       "/file.txt": `This is some text`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
     // GENERATED
@@ -1663,7 +1702,6 @@ describe("bundler", () => {
       `,
       "/Users/user/project/file.txt": `This is some text`,
     },
-    snapshot: true,
   });
   itBundled("default/ImportAbsPathAsFile", {
     // GENERATED
@@ -1674,12 +1712,11 @@ describe("bundler", () => {
       `,
       "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
     },
-    snapshot: true,
   });
-  test("default/ImportAbsPathAsDir", () => {
+  bundlerTest("default/ImportAbsPathAsDir", () => {
     expectBundled("default/ImportAbsPathAsDirUnix", {
       // GENERATED
-      host: "Unix",
+      host: "unix",
       files: {
         "/Users/user/project/entry.js": /* js */ `
           import pkg from '/Users/user/project/node_modules/pkg'
@@ -1687,11 +1724,10 @@ describe("bundler", () => {
         `,
         "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
       },
-      snapshot: true,
     });
     expectBundled("default/ImportAbsPathAsDirWindows", {
       // GENERATED
-      host: "Windows",
+      host: "windows",
       files: {
         "/Users/user/project/entry.js": /* js */ `
           import pkg from 'C:\\Users\\user\\project\\node_modules\\pkg'
@@ -1699,7 +1735,6 @@ describe("bundler", () => {
         `,
         "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
       },
-      snapshot: true,
     });
   });
   itBundled("default/AutoExternal", {
@@ -1713,7 +1748,6 @@ describe("bundler", () => {
         import "data:application/javascript;base64,ZXhwb3J0IGRlZmF1bHQgMTIz";
       `,
     },
-    snapshot: true,
   });
   itBundled("default/AutoExternalNode", {
     // GENERATED
@@ -1730,7 +1764,6 @@ describe("bundler", () => {
         import "node:what-is-this";
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ExternalWithWildcard", {
     // GENERATED
@@ -1748,14 +1781,16 @@ describe("bundler", () => {
         import "./file.ping";
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "/sassets/images/test.jpg"
+  entry.js: ERROR: Could not resolve "/dir/file.gif"
+  entry.js: ERROR: Could not resolve "./file.ping"
+  `, */
   });
   itBundled("default/ExternalWildcardDoesNotMatchEntryPoint", {
     // GENERATED
     files: {
       "/entry.js": `import "foo"`,
     },
-    snapshot: true,
   });
   itBundled("default/ManyEntryPoints", {
     // GENERATED
@@ -1844,7 +1879,6 @@ describe("bundler", () => {
       "/e38.js",
       "/e39.js",
     ],
-    snapshot: true,
   });
   itBundled("default/RenamePrivateIdentifiersNoBundle", {
     // GENERATED
@@ -1873,7 +1907,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/MinifyPrivateIdentifiersNoBundle", {
     // GENERATED
@@ -1903,7 +1936,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/RenameLabelsNoBundle", {
     // GENERATED
@@ -1930,7 +1962,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/MinifySiblingLabelsNoBundle", {
     // GENERATED
@@ -1958,7 +1989,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/MinifyNestedLabelsNoBundle", {
     // GENERATED
@@ -1995,7 +2025,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     minifySyntax: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/ExportsAndModuleFormatCommonJS", {
     // GENERATED
@@ -2009,7 +2038,6 @@ describe("bundler", () => {
       "/bar/test.js": `export let bar = 123`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/MinifiedExportsAndModuleFormatCommonJS", {
     // GENERATED
@@ -2024,7 +2052,6 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/EmptyExportClauseBundleAsCommonJSIssue910", {
     // GENERATED
@@ -2033,7 +2060,6 @@ describe("bundler", () => {
       "/types.mjs": `export {}`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/UseStrictDirectiveMinifyNoBundle", {
     // GENERATED
@@ -2048,7 +2074,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleIssue1837", {
     // GENERATED
@@ -2065,7 +2090,6 @@ describe("bundler", () => {
     },
     inject: ["/shims.js"],
     platform: "node",
-    snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleIIFEIssue2264", {
     // GENERATED
@@ -2075,7 +2099,6 @@ describe("bundler", () => {
         export let a = 1
       `,
     },
-    snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleCJSIssue2264", {
     // GENERATED
@@ -2085,7 +2108,6 @@ describe("bundler", () => {
         export let a = 1
       `,
     },
-    snapshot: true,
   });
   itBundled("default/UseStrictDirectiveBundleESMIssue2264", {
     // GENERATED
@@ -2095,14 +2117,14 @@ describe("bundler", () => {
         export let a = 1
       `,
     },
-    snapshot: true,
   });
   itBundled("default/NoOverwriteInputFileError", {
     // GENERATED
     files: {
       "/entry.js": `console.log(123)`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `ERROR: Refusing to overwrite input file "entry.js" (use "AllowOverwrite: true" to allow this)
+  `, */
   });
   itBundled("default/DuplicateEntryPoint", {
     // GENERATED
@@ -2110,7 +2132,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(123)`,
     },
     entryPoints: ["/entry.js", "/entry.js"],
-    snapshot: true,
   });
   itBundled("default/RelativeEntryPointError", {
     // GENERATED
@@ -2118,7 +2139,9 @@ describe("bundler", () => {
       "/entry.js": `console.log(123)`,
     },
     entryPoints: ["entry"],
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `ERROR: Could not resolve "entry"
+  NOTE: Use the relative path "./entry" to reference the file "entry.js". Without the leading "./", the path "entry" is being interpreted as a package path instead.
+  `, */
   });
   itBundled("default/MultipleEntryPointsSameNameCollision", {
     // GENERATED
@@ -2128,7 +2151,6 @@ describe("bundler", () => {
       "/common.js": `export let foo = 123`,
     },
     entryPoints: ["/a/entry.js", "/b/entry.js"],
-    snapshot: true,
   });
   itBundled("default/ReExportCommonJSAsES6", {
     // GENERATED
@@ -2136,7 +2158,6 @@ describe("bundler", () => {
       "/entry.js": `export {bar} from './foo'`,
       "/foo.js": `exports.bar = 123`,
     },
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultInternal", {
     // GENERATED
@@ -2148,7 +2169,6 @@ describe("bundler", () => {
       "/foo.js": `export default 'foo'`,
       "/bar.js": `export default 'bar'`,
     },
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultExternalES6", {
     // GENERATED
@@ -2160,7 +2180,6 @@ describe("bundler", () => {
       "/bar.js": `export {default as bar} from 'bar'`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultExternalCommonJS", {
     // GENERATED
@@ -2172,7 +2191,6 @@ describe("bundler", () => {
       "/bar.js": `export {default as bar} from 'bar'`,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundle", {
     // GENERATED
@@ -2183,7 +2201,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundleES6", {
     // GENERATED
@@ -2195,7 +2212,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/ReExportDefaultNoBundleCommonJS", {
     // GENERATED
@@ -2207,7 +2223,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/ImportMetaCommonJS", {
     // GENERATED
@@ -2215,7 +2230,11 @@ describe("bundler", () => {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     format: "cjs",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: WARNING: "import.meta" is not available with the "cjs" output format and will be empty
+  NOTE: You need to set the output format to "esm" for "import.meta" to work correctly.
+  entry.js: WARNING: "import.meta" is not available with the "cjs" output format and will be empty
+  NOTE: You need to set the output format to "esm" for "import.meta" to work correctly.
+  `, */
   });
   itBundled("default/ImportMetaES6", {
     // GENERATED
@@ -2223,7 +2242,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/ImportMetaNoBundle", {
     // GENERATED
@@ -2231,7 +2249,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/LegalCommentsNone", {
     // GENERATED
@@ -2254,7 +2271,6 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsInline", {
     // GENERATED
@@ -2277,7 +2293,6 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsEndOfFile", {
     // GENERATED
@@ -2300,7 +2315,6 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsLinked", {
     // GENERATED
@@ -2323,7 +2337,6 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsExternal", {
     // GENERATED
@@ -2346,7 +2359,6 @@ describe("bundler", () => {
       "/c.css": `c { zoom: 2 } /*! Copyright notice 2 */`,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsModifyIndent", {
     // GENERATED
@@ -2368,7 +2380,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagInline", {
     // GENERATED
@@ -2383,7 +2394,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagEndOfFile", {
     // GENERATED
@@ -2398,7 +2408,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsAvoidSlashTagExternal", {
     // GENERATED
@@ -2413,7 +2422,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/entry.js", "/entry.css"],
-    snapshot: true,
   });
   itBundled("default/LegalCommentsManyEndOfFile", {
     // GENERATED
@@ -2506,7 +2514,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    snapshot: true,
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleEndOfFile", {
     // GENERATED
@@ -2518,7 +2525,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    snapshot: true,
   });
   itBundled("default/LegalCommentsEscapeSlashScriptAndStyleExternal", {
     // GENERATED
@@ -2530,7 +2536,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    snapshot: true,
   });
   itBundled("default/LegalCommentsNoEscapeSlashScriptEndOfFile", {
     // GENERATED
@@ -2543,7 +2548,6 @@ describe("bundler", () => {
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
     legalComments: "eof",
-    snapshot: true,
   });
   itBundled("default/LegalCommentsNoEscapeSlashStyleEndOfFile", {
     // GENERATED
@@ -2556,7 +2560,6 @@ describe("bundler", () => {
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
     legalComments: "eof",
-    snapshot: true,
   });
   itBundled("default/LegalCommentsManyLinked", {
     // GENERATED
@@ -2621,7 +2624,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     minifyWhitespace: true,
-    snapshot: true,
   });
   itBundled("default/IIFE_ES5", {
     // GENERATED
@@ -2630,7 +2632,6 @@ describe("bundler", () => {
     },
     unsupportedJSFeatures: "es5",
     format: "iife",
-    snapshot: true,
   });
   itBundled("default/OutputExtensionRemappingFile", {
     // GENERATED
@@ -2638,7 +2639,6 @@ describe("bundler", () => {
       "/entry.js": `console.log('test');`,
     },
     customOutputExtension: ".notjs",
-    snapshot: true,
   });
   itBundled("default/OutputExtensionRemappingDir", {
     // GENERATED
@@ -2646,7 +2646,6 @@ describe("bundler", () => {
       "/entry.js": `console.log('test');`,
     },
     customOutputExtension: ".notjs",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitIIFE", {
     // GENERATED
@@ -2657,7 +2656,9 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
+  entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
+  `, */
   });
   itBundled("default/TopLevelAwaitIIFEDeadBranch", {
     // GENERATED
@@ -2668,7 +2669,6 @@ describe("bundler", () => {
       `,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitCJS", {
     // GENERATED
@@ -2679,7 +2679,9 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
+  entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
+  `, */
   });
   itBundled("default/TopLevelAwaitCJSDeadBranch", {
     // GENERATED
@@ -2690,7 +2692,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitESM", {
     // GENERATED
@@ -2701,7 +2702,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitESMDeadBranch", {
     // GENERATED
@@ -2712,7 +2712,6 @@ describe("bundler", () => {
       `,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundle", {
     // GENERATED
@@ -2723,7 +2722,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleDeadBranch", {
     // GENERATED
@@ -2734,7 +2732,6 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleESM", {
     // GENERATED
@@ -2746,7 +2743,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleESMDeadBranch", {
     // GENERATED
@@ -2758,7 +2754,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleCommonJS", {
     // GENERATED
@@ -2770,7 +2765,9 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
+  entry.js: ERROR: Top-level await is currently not supported with the "cjs" output format
+  `, */
   });
   itBundled("default/TopLevelAwaitNoBundleCommonJSDeadBranch", {
     // GENERATED
@@ -2782,7 +2779,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitNoBundleIIFE", {
     // GENERATED
@@ -2794,7 +2790,9 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
+  entry.js: ERROR: Top-level await is currently not supported with the "iife" output format
+  `, */
   });
   itBundled("default/TopLevelAwaitNoBundleIIFEDeadBranch", {
     // GENERATED
@@ -2806,7 +2804,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitForbiddenRequire", {
     // GENERATED
@@ -2823,7 +2820,18 @@ describe("bundler", () => {
       "/c.js": `await 0`,
     },
     format: "esm",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: This require call is not allowed because the transitive dependency "c.js" contains a top-level await
+  a.js: NOTE: The file "a.js" imports the file "b.js" here:
+  b.js: NOTE: The file "b.js" imports the file "c.js" here:
+  c.js: NOTE: The top-level await in "c.js" is here:
+  entry.js: ERROR: This require call is not allowed because the transitive dependency "c.js" contains a top-level await
+  b.js: NOTE: The file "b.js" imports the file "c.js" here:
+  c.js: NOTE: The top-level await in "c.js" is here:
+  entry.js: ERROR: This require call is not allowed because the imported file "c.js" contains a top-level await
+  c.js: NOTE: The top-level await in "c.js" is here:
+  entry.js: ERROR: This require call is not allowed because the imported file "entry.js" contains a top-level await
+  entry.js: NOTE: The top-level await in "entry.js" is here:
+  `, */
   });
   itBundled("default/TopLevelAwaitForbiddenRequireDeadBranch", {
     // GENERATED
@@ -2840,7 +2848,6 @@ describe("bundler", () => {
       "/c.js": `if (false) for await (let x of y) await 0`,
     },
     format: "iife",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitAllowedImportWithoutSplitting", {
     // GENERATED
@@ -2857,7 +2864,6 @@ describe("bundler", () => {
       "/c.js": `await 0`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/TopLevelAwaitAllowedImportWithSplitting", {
     // GENERATED
@@ -2875,7 +2881,6 @@ describe("bundler", () => {
     },
     format: "esm",
     splitting: true,
-    snapshot: true,
   });
   itBundled("default/AssignToImport", {
     // GENERATED
@@ -2928,7 +2933,39 @@ describe("bundler", () => {
       "/good4.js": `import x from "foo"; x['y'] = 1`,
       "/good5.js": `import x from "foo"; x['y z'] = 1`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `bad0.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad1.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad10.js: ERROR: Cannot assign to import "y z"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
+  bad11.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
+  bad11.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
+  bad12.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
+  bad12.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
+  bad13.js: ERROR: Cannot assign to import "y"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
+  bad14.js: ERROR: Cannot assign to import "y"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
+  bad15.js: ERROR: Cannot assign to property on import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
+  bad2.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad3.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad4.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad5.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad6.js: ERROR: Cannot assign to import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad7.js: ERROR: Cannot assign to import "y"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
+  bad8.js: ERROR: Cannot assign to property on import "x"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file and then import and call that function here instead.
+  bad9.js: ERROR: Cannot assign to import "y"
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setY") and then import and call that function here instead.
+  `, */
   });
   itBundled("default/AssignToImportNoBundle", {
     // GENERATED
@@ -2981,7 +3018,25 @@ describe("bundler", () => {
       "/good5.js",
     ],
     mode: "passthrough",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `bad0.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad1.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad11.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
+  bad11.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
+  bad12.js: ERROR: Delete of a bare identifier cannot be used in an ECMAScript module
+  bad12.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
+  bad2.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad3.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad4.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad5.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  bad6.js: WARNING: This assignment will throw because "x" is an import
+  NOTE: Imports are immutable in JavaScript. To modify the value of this import, you must export a setter function in the imported file (e.g. "setX") and then import and call that function here instead.
+  `, */
   });
   itBundled("default/MinifyArguments", {
     // GENERATED
@@ -3002,11 +3057,10 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("default/WarningsInsideNodeModules", {
     // GENERATED
-    host: "Unix",
+    host: "unix",
     files: {
       "/entry.js": /* js */ `
         import "./dup-case.js";        import "./node_modules/dup-case.js";        import "@plugin/dup-case.js"
@@ -3055,7 +3109,25 @@ describe("bundler", () => {
       "/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
       "/plugin-dir/node_modules/delete-super.js": `class Foo extends Bar { foo() { delete super.foo } }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `bad-typeof.js: WARNING: The "typeof" operator will never evaluate to "null"
+  NOTE: The expression "typeof x" actually evaluates to "object" in JavaScript, not "null". You need to use "x === null" to test for null.
+  delete-super.js: WARNING: Attempting to delete a property of "super" will throw a ReferenceError
+  dup-case.js: WARNING: This case clause will never be evaluated because it duplicates an earlier case clause
+  dup-case.js: NOTE: The earlier case clause is here:
+  equals-nan.js: WARNING: Comparison with NaN using the "===" operator here is always false
+  NOTE: Floating-point equality is defined such that NaN is never equal to anything, so "x === NaN" always returns false. You need to use "Number.isNaN(x)" instead to test for NaN.
+  equals-neg-zero.js: WARNING: Comparison with -0 using the "===" operator will also match 0
+  NOTE: Floating-point equality is defined such that 0 and -0 are equal, so "x === -0" returns true for both 0 and -0. You need to use "Object.is(x, -0)" instead to test for -0.
+  equals-object.js: WARNING: Comparison using the "===" operator here is always false
+  NOTE: Equality with a new object is always false in JavaScript because the equality operator tests object identity. You need to write code to compare the contents of the object instead. For example, use "Array.isArray(x) && x.length === 0" instead of "x === []" to test for an empty array.
+  not-in.js: WARNING: Suspicious use of the "!" operator inside the "in" operator
+  NOTE: The code "!x in y" is parsed as "(!x) in y". You need to insert parentheses to get "!(x in y)" instead.
+  not-instanceof.js: WARNING: Suspicious use of the "!" operator inside the "instanceof" operator
+  NOTE: The code "!x instanceof y" is parsed as "(!x) instanceof y". You need to insert parentheses to get "!(x instanceof y)" instead.
+  read-setter.js: WARNING: Reading from setter-only property "#foo" will throw
+  return-asi.js: WARNING: The following expression is not returned because of an automatically-inserted semicolon
+  write-getter.js: WARNING: Writing to getter-only property "#foo" will throw
+  `, */
   });
   itBundled("default/RequireResolve", {
     // GENERATED
@@ -3089,24 +3161,28 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: WARNING: "./present-file" should be marked as external for use with "require.resolve"
+  entry.js: WARNING: "./missing-file" should be marked as external for use with "require.resolve"
+  entry.js: WARNING: "missing-pkg" should be marked as external for use with "require.resolve"
+  entry.js: WARNING: "@scope/missing-pkg" should be marked as external for use with "require.resolve"
+  `, */
   });
-  test("default/InjectMissing", () => {
-    expectBundled("default/InjectMissing", {
+  bundlerTest("default/InjectMissing", () => {
+    expectBundled("default/InjectMissingUnix", {
       // GENERATED
-      host: "Unix",
+      host: "unix",
       files: {
         "/entry.js": ``,
       },
-      snapshot: true,
+      /* TODO FIX expectedScanLog: "ERROR: Could not resolve \"/inject.js\"\n", */
     });
-    expectBundled("default/InjectMissing_TODO_LABEL_1", {
+    expectBundled("default/InjectMissingWindows", {
       // GENERATED
-      host: "Windows",
+      host: "windows",
       files: {
         "/entry.js": ``,
       },
-      snapshot: true,
+      /* TODO FIX expectedScanLog: "ERROR: Could not resolve \"C:\\\\inject.js\"\n", */
     });
   });
   itBundled("default/InjectDuplicate", {
@@ -3115,7 +3191,6 @@ describe("bundler", () => {
       "/entry.js": ``,
       "/inject.js": `console.log('injected')`,
     },
-    snapshot: true,
   });
   itBundled("default/Inject", {
     // GENERATED
@@ -3164,7 +3239,7 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    injectPaths: [
+    inject: [
       "/inject.js",
       "/node_modules/unused/index.js",
       "/node_modules/sideEffects-false/index.js",
@@ -3261,7 +3336,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/InjectImportTS", {
     // GENERATED
@@ -3278,7 +3352,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/InjectImportOrder", {
     // GENERATED
@@ -3297,7 +3370,6 @@ describe("bundler", () => {
       `,
     },
     inject: ["/inject-1.js", "/inject-2.js"],
-    snapshot: true,
   });
   itBundled("default/InjectAssign", {
     // GENERATED
@@ -3321,7 +3393,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/InjectWithDefine", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -3349,8 +3420,12 @@ describe("bundler", () => {
       `,
     },
     inject: ["/inject.js"],
-    // TODO: https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go#L4915
-    snapshot: true,
+    define: {
+      "both": '"define"',
+      "bo.th": '"defi.ne"',
+      "first": "second",
+      "fir.st": "seco.nd",
+    },
   });
   itBundled("default/Outbase", {
     // GENERATED
@@ -3359,7 +3434,6 @@ describe("bundler", () => {
       "/a/b/d.js": `console.log('d')`,
     },
     entryPoints: ["/a/b/c.js", "/a/b/d.js"],
-    snapshot: true,
   });
   itBundled("default/AvoidTDZ", {
     // GENERATED
@@ -3374,7 +3448,6 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
-    snapshot: true,
   });
   itBundled("default/AvoidTDZNoBundle", {
     // GENERATED
@@ -3390,10 +3463,8 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/DefineImportMeta", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         console.log(
@@ -3403,17 +3474,20 @@ describe("bundler", () => {
           import.meta.foo.bar,
   
           // Should just substitute "import.meta.foo"
-          import.meta.foo.baz,
+          import.meta.foo.length,
   
           // This should not be substituted
-          import.meta.bar,
+          import.meta.main,
         )
       `,
     },
     define: {
       "import.meta": 1,
-      "import.meta.foo": 2,
+      "import.meta.foo": "bun!",
       "import.meta.foo.bar": 3,
+    },
+    run: {
+      stdout: "1 bun! 3 4 undefined",
     },
   });
   itBundled("default/DefineImportMetaES5", {
@@ -3427,6 +3501,9 @@ describe("bundler", () => {
     define: {
       "import.meta.x": 1,
     },
+    /* TODO FIX expectedScanLog: `dead-code.js: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  kept.js: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  `, */
   });
   itBundled("default/InjectImportMeta", {
     // GENERATED
@@ -3456,7 +3533,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/DefineThis", {
     // GENERATED
@@ -3615,7 +3691,6 @@ describe("bundler", () => {
       `,
     },
     keepNames: true,
-    snapshot: true,
   });
   itBundled("default/KeepNamesClassStaticName", {
     // GENERATED
@@ -3644,7 +3719,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/CharFreqIgnoreComments", {
     // GENERATED
@@ -3668,7 +3742,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/a.js", "/b.js"],
-    snapshot: true,
   });
   itBundled("default/ImportRelativeAsPackage", {
     // GENERATED
@@ -3676,7 +3749,9 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": `import 'some/other/file'`,
       "/Users/user/project/src/some/other/file.js": ``,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.js: ERROR: Could not resolve "some/other/file"
+  NOTE: Use the relative path "./some/other/file" to reference the file "Users/user/project/src/some/other/file.js". Without the leading "./", the path "some/other/file" is being interpreted as a package path instead.
+  `, */
   });
   itBundled("default/ForbidConstAssignWhenBundling", {
     // GENERATED
@@ -3686,7 +3761,9 @@ describe("bundler", () => {
         x = 2
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: Cannot assign to "x" because it is a constant
+  entry.js: NOTE: The symbol "x" was declared a constant here:
+  `, */
   });
   itBundled("default/ConstWithLet", {
     // GENERATED
@@ -3700,7 +3777,6 @@ describe("bundler", () => {
         for (const e of x) console.log(e)
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ConstWithLetNoBundle", {
     // GENERATED
@@ -3715,7 +3791,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ConstWithLetNoMangle", {
     // GENERATED
@@ -3728,7 +3803,6 @@ describe("bundler", () => {
         for (const e of x) console.log(e)
       `,
     },
-    snapshot: true,
   });
   itBundled("default/RequireMainCacheCommonJS", {
     // GENERATED
@@ -3741,7 +3815,6 @@ describe("bundler", () => {
       "/is-main.js": `module.exports = require.main === module`,
     },
     platform: "node",
-    snapshot: true,
   });
   itBundled("default/ExternalES6ConvertedToCommonJS", {
     // GENERATED
@@ -3766,7 +3839,6 @@ describe("bundler", () => {
       "/e.js": `export * from 'x'`,
     },
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/CallImportNamespaceWarning", {
     // GENERATED
@@ -3817,16 +3889,23 @@ describe("bundler", () => {
         <div/>
       `,
     },
-    entryPoints: [
-      "/js.js",
-      "/ts.ts",
-      "/jsx-components.jsx",
-      "/jsx-a.jsx",
-      "/jsx-b.jsx",
-      "/jsx-c.jsx",
-    ],
+    entryPoints: ["/js.js", "/ts.ts", "/jsx-components.jsx", "/jsx-a.jsx", "/jsx-b.jsx", "/jsx-c.jsx"],
     mode: "convertformat",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `js.js: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
+  js.js: NOTE: Consider changing "a" to a default import instead:
+  js.js: WARNING: Constructing "a" will crash at run-time because it's an import namespace object, not a constructor
+  js.js: NOTE: Consider changing "a" to a default import instead:
+  jsx-a.jsx: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
+  jsx-a.jsx: NOTE: Consider changing "a" to a default import instead:
+  jsx-components.jsx: WARNING: Using "A" in a JSX expression will crash at run-time because it's an import namespace object, not a component
+  jsx-components.jsx: NOTE: Consider changing "A" to a default import instead:
+  ts.ts: WARNING: Calling "a" will crash at run-time because it's an import namespace object, not a function
+  ts.ts: NOTE: Consider changing "a" to a default import instead:
+  NOTE: Make sure to enable TypeScript's "esModuleInterop" setting so that TypeScript's type checker generates an error when you try to do this. You can read more about this setting here: https://www.typescriptlang.org/tsconfig#esModuleInterop
+  ts.ts: WARNING: Constructing "a" will crash at run-time because it's an import namespace object, not a constructor
+  ts.ts: NOTE: Consider changing "a" to a default import instead:
+  NOTE: Make sure to enable TypeScript's "esModuleInterop" setting so that TypeScript's type checker generates an error when you try to do this. You can read more about this setting here: https://www.typescriptlang.org/tsconfig#esModuleInterop
+  `, */
   });
   itBundled("default/JSXThisValueCommonJS", {
     // GENERATED
@@ -3859,8 +3938,8 @@ describe("bundler", () => {
     entryPoints: ["/factory.jsx", "/fragment.jsx"],
     jsx: {
       factory: "this",
+      fragment: "this",
     },
-    snapshot: true,
   });
   itBundled("default/JSXThisValueESM", {
     // GENERATED
@@ -3895,9 +3974,13 @@ describe("bundler", () => {
     entryPoints: ["/factory.jsx", "/fragment.jsx"],
     jsx: {
       factory: "this",
+      fragment: "this",
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/JSXThisPropertyCommonJS", {
     // GENERATED
@@ -3930,8 +4013,8 @@ describe("bundler", () => {
     entryPoints: ["/factory.jsx", "/fragment.jsx"],
     jsx: {
       factory: "this.factory",
+      fragment: "this.fragment",
     },
-    snapshot: true,
   });
   itBundled("default/JSXThisPropertyESM", {
     // GENERATED
@@ -3966,9 +4049,13 @@ describe("bundler", () => {
     entryPoints: ["/factory.jsx", "/fragment.jsx"],
     jsx: {
       factory: "this.factory",
+      fragment: "this.fragment",
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `factory.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  factory.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  fragment.jsx: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  fragment.jsx: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/JSXImportMetaValue", {
     // GENERATED
@@ -4004,8 +4091,15 @@ describe("bundler", () => {
     unsupportedJSFeatures: "ImportMeta",
     jsx: {
       factory: "import.meta",
+      fragment: "import.meta",
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  `, */
   });
   itBundled("default/JSXImportMetaProperty", {
     // GENERATED
@@ -4041,8 +4135,15 @@ describe("bundler", () => {
     unsupportedJSFeatures: "ImportMeta",
     jsx: {
       factory: "import.meta.factory",
+      fragment: "import.meta.fragment",
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  factory.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  fragment.jsx: WARNING: "import.meta" is not available in the configured target environment and will be empty
+  `, */
   });
   itBundled("default/BundlingFilesOutsideOfOutbase", {
     // GENERATED
@@ -4052,7 +4153,6 @@ describe("bundler", () => {
     splitting: true,
     format: "esm",
     outbase: "/some/nested/directory",
-    snapshot: true,
   });
   const relocateFiles = {
     "/top-level.js": /* js */ `
@@ -4122,20 +4222,13 @@ describe("bundler", () => {
   		x()
   	`,
   };
-  const relocateEntries = [
-    "/top-level.js",
-    "/nested.js",
-    "/let.js",
-    "/function.js",
-    "/function-nested.js",
-  ];
+  const relocateEntries = ["/top-level.js", "/nested.js", "/let.js", "/function.js", "/function-nested.js"];
 
   itBundled("default/VarRelocatingBundle", {
     // GENERATED
     files: relocateFiles,
     entryPoints: relocateEntries,
     format: "esm",
-    snapshot: true,
   });
   itBundled("default/VarRelocatingNoBundle", {
     // GENERATED
@@ -4143,7 +4236,6 @@ describe("bundler", () => {
     entryPoints: relocateEntries,
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/ImportNamespaceThisValue", {
     // GENERATED
@@ -4164,7 +4256,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/ThisUndefinedWarningESM", {
     // GENERATED
@@ -4177,8 +4268,11 @@ describe("bundler", () => {
       "/file1.js": `export default [this, this]`,
       "/node_modules/pkg/file2.js": `export default [this, this]`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `file1.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  file1.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  node_modules/pkg/file2.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  node_modules/pkg/file2.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/QuotedProperty", {
     // GENERATED
@@ -4189,7 +4283,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/QuotedPropertyMangle", {
     // GENERATED
@@ -4201,7 +4294,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     minifySyntax: true,
-    snapshot: true,
   });
   itBundled("default/DuplicatePropertyWarning", {
     // GENERATED
@@ -4215,7 +4307,13 @@ describe("bundler", () => {
       "/node_modules/inside-node-modules/index.jsx": `console.log({ c: 1, c: 2 }, <div c2 c2={3}/>)`,
       "/node_modules/inside-node-modules/package.json": `{ "d": 1, "d": 2 }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `outside-node-modules/index.jsx: WARNING: Duplicate key "a" in object literal
+  outside-node-modules/index.jsx: NOTE: The original key "a" is here:
+  outside-node-modules/index.jsx: WARNING: Duplicate "a2" attribute in JSX element
+  outside-node-modules/index.jsx: NOTE: The original "a2" attribute is here:
+  outside-node-modules/package.json: WARNING: Duplicate key "b" in object literal
+  outside-node-modules/package.json: NOTE: The original key "b" is here:
+  `, */
   });
   itBundled("default/RequireShimSubstitution", {
     // GENERATED
@@ -4239,14 +4337,11 @@ describe("bundler", () => {
       "/example.json": `{ "works": true }`,
     },
     external: ["some-path"],
-    snapshot: true,
   });
-  itBundled(
-    "default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552",
-    {
-      // GENERATED
-      files: {
-        "/entry.js": /* js */ `
+  itBundled("default/StrictModeNestedFnDeclKeepNamesVariableInliningIssue1552", {
+    // GENERATED
+    files: {
+      "/entry.js": /* js */ `
         export function outer() {
           {
             function inner() {
@@ -4258,12 +4353,10 @@ describe("bundler", () => {
         }
         outer();
       `,
-      },
-      keepNames: true,
-      mode: "passthrough",
-      snapshot: true,
-    }
-  );
+    },
+    keepNames: true,
+    mode: "passthrough",
+  });
   itBundled("default/BuiltInNodeModulePrecedence", {
     // GENERATED
     files: {
@@ -4285,7 +4378,6 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/EntryNamesNoSlashAfterDir", {
     // GENERATED
@@ -4294,33 +4386,28 @@ describe("bundler", () => {
       "/src/app2/main.ts": `console.log(2)`,
       "/src/app3/main.ts": `console.log(3)`,
     },
-    /* TODO FIX entryPathsAdvanced: []bundler.EntryPoint{
-  			{InputPath: "/src/app1/main.ts"},
-  			{InputPath: "/src/app2/main.ts"},
-  			{InputPath: "/src/app3/main.ts", OutputPath: "customPath"},
-  		}, */ /* TODO: 
-        EntryPathTemplate -- []config.PathTemplate{
-  				// "[dir]-[name]"
-  				{Data: "./", Placeholder: config.DirPlaceholder},
-  				{Data: "-", Placeholder: config.NamePlaceholder},
-  			}, */
+    entryPointsAdvanced: [
+      { input: "/src/app1/main.ts" },
+      { input: "/src/app2/main.ts" },
+      { input: "/src/app3/main.ts", output: "customPath" },
+    ],
+    entryNames: "[dir]-[name]",
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/EntryNamesNonPortableCharacter", {
     // GENERATED
+    // TODO: I think this is impossible with the CLI. and also very unsafe with paths.
     files: {
       "/entry1-*.ts": `console.log(1)`,
       "/entry2-*.ts": `console.log(2)`,
     },
-    /* TODO FIX entryPathsAdvanced: []bundler.EntryPoint{
-  			// The "*" should turn into "_" for cross-platform Windows portability
-  			{InputPath: "/entry1-*.ts"},
-  
-  			// The "*" should be preserved since the user _really_ wants it
-  			{InputPath: "/entry2-*.ts", OutputPath: "entry2-*"},
-  		}, */ mode: "passthrough",
-    snapshot: true,
+    entryPointsAdvanced: [
+      // The "*" should turn into "_" for cross-platform Windows portability
+      { input: "/entry1-*.ts" },
+      // The "*" should be preserved since the user _really_ wants it
+      { input: "/entry2-*.ts", output: "entry2-*" },
+    ],
+    mode: "passthrough",
   });
   itBundled("default/EntryNamesChunkNamesExtPlaceholder", {
     // GENERATED
@@ -4334,13 +4421,7 @@ describe("bundler", () => {
     entryPoints: ["/src/entries/entry1.js", "/src/entries/entry2.js"],
     outbase: "/src",
     splitting: true,
-    /* TODO: 
-        EntryPathTemplate -- []config.PathTemplate{
-  				{Data: "main/", Placeholder: config.ExtPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    entryNames: "main/[ext]/[name]-[hash]",
   });
   itBundled("default/MinifyIdentifiersImportPathFrequencyAnalysis", {
     // GENERATED
@@ -4358,7 +4439,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/import.js", "/require.js"],
     minifyWhitespace: true,
-    snapshot: true,
   });
   itBundled("default/ToESMWrapperOmission", {
     // GENERATED
@@ -4397,7 +4477,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/NamedFunctionExpressionArgumentCollision", {
     // GENERATED
@@ -4410,7 +4489,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/NoWarnCommonJSExportsInESMPassThrough", {
     // GENERATED
@@ -4427,13 +4505,8 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: [
-      "/cjs-in-esm.js",
-      "/import-in-cjs.js",
-      "/no-warnings-here.js",
-    ],
+    entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/WarnCommonJSExportsInESMConvert", {
     // GENERATED
@@ -4455,14 +4528,15 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: [
-      "/cjs-in-esm.js",
-      "/cjs-in-esm2.js",
-      "/import-in-cjs.js",
-      "/no-warnings-here.js",
-    ],
+    entryPoints: ["/cjs-in-esm.js", "/cjs-in-esm2.js", "/import-in-cjs.js", "/no-warnings-here.js"],
     mode: "convertformat",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `cjs-in-esm.js: WARNING: The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  cjs-in-esm2.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  cjs-in-esm2.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/WarnCommonJSExportsInESMBundle", {
     // GENERATED
@@ -4479,13 +4553,13 @@ describe("bundler", () => {
       `,
       "/no-warnings-here.js": `console.log(module, exports)`,
     },
-    entryPoints: [
-      "/cjs-in-esm.js",
-      "/import-in-cjs.js",
-      "/no-warnings-here.js",
-    ],
+    entryPoints: ["/cjs-in-esm.js", "/import-in-cjs.js", "/no-warnings-here.js"],
     format: "cjs",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `cjs-in-esm.js: WARNING: The CommonJS "exports" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  cjs-in-esm.js: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  cjs-in-esm.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("default/MangleProps", {
     // GENERATED
@@ -4532,7 +4606,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry1.js", "/entry2.js"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsMinify", {
     // GENERATED
@@ -4581,7 +4654,6 @@ describe("bundler", () => {
     mangleProps: /_$/,
     minifyIdentifiers: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsKeywordPropertyMinify", {
     // GENERATED
@@ -4596,7 +4668,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     minifySyntax: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsOptionalChain", {
     // GENERATED
@@ -4615,7 +4686,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsLoweredOptionalChain", {
     // GENERATED
@@ -4635,7 +4705,6 @@ describe("bundler", () => {
     },
     mangleProps: /_$/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ReserveProps", {
     // GENERATED
@@ -4649,7 +4718,6 @@ describe("bundler", () => {
     },
     mangleProps: /_$/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsImportExport", {
     // GENERATED
@@ -4665,7 +4733,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/esm.js", "/cjs.js"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsImportExportBundled", {
     // GENERATED
@@ -4694,7 +4761,6 @@ describe("bundler", () => {
       "/cjs.js": `exports.cjs_foo_ = 'foo'`,
     },
     entryPoints: ["/entry-esm.js", "/entry-cjs.js"],
-    snapshot: true,
   });
   itBundled("default/ManglePropsJSXTransform", {
     // GENERATED
@@ -4717,7 +4783,6 @@ describe("bundler", () => {
     },
     mangleProps: /_$/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsJSXPreserve", {
     // GENERATED
@@ -4735,7 +4800,6 @@ describe("bundler", () => {
     outfile: "/out.jsx",
     mangleProps: /_$/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsJSXTransformNamespace", {
     // GENERATED
@@ -4749,7 +4813,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsAvoidCollisions", {
     // GENERATED
@@ -4765,7 +4828,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsTypeScriptFeatures", {
     // GENERATED
@@ -4847,13 +4909,8 @@ describe("bundler", () => {
         }
       `,
     },
-    entryPoints: [
-      "/parameter-properties.ts",
-      "/namespace-exports.ts",
-      "/enum-values.ts",
-    ],
+    entryPoints: ["/parameter-properties.ts", "/namespace-exports.ts", "/enum-values.ts"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsShorthand", {
     // GENERATED
@@ -4865,7 +4922,6 @@ describe("bundler", () => {
     },
     mangleProps: /x/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsNoShorthand", {
     // GENERATED
@@ -4878,7 +4934,6 @@ describe("bundler", () => {
     mangleProps: /x/,
     minifyIdentifiers: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsLoweredClassFields", {
     // GENERATED
@@ -4893,7 +4948,6 @@ describe("bundler", () => {
     },
     mangleProps: /_$/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/ManglePropsSuperCall", {
     // GENERATED
@@ -4908,7 +4962,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/MangleNoQuotedProps", {
     // GENERATED
@@ -4930,7 +4983,6 @@ describe("bundler", () => {
     },
     mangleProps: /_/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/MangleNoQuotedPropsMinifySyntax", {
     // GENERATED
@@ -4953,7 +5005,6 @@ describe("bundler", () => {
     mangleProps: /_/,
     mangleQuoted: false,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/MangleQuotedProps", {
     // GENERATED
@@ -4996,7 +5047,6 @@ describe("bundler", () => {
     entryPoints: ["/keep.js", "/mangle.js"],
     mangleProps: /_/,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/MangleQuotedPropsMinifySyntax", {
     // GENERATED
@@ -5040,7 +5090,6 @@ describe("bundler", () => {
     mangleProps: /_/,
     mangleQuoted: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("default/IndirectRequireMessage", {
     // GENERATED
@@ -5051,15 +5100,11 @@ describe("bundler", () => {
       "/dot.js": `let x = require.cache`,
       "/index.js": `let x = require[cache]`,
     },
-    entryPoints: [
-      "/array.js",
-      "/assign.js",
-      "/dot.js",
-      "/ident.js",
-      "/index.js",
-    ],
-    debugLogs: true,
-    snapshot: true,
+    entryPoints: ["/array.js", "/assign.js", "/dot.js", "/ident.js", "/index.js"],
+    /* TODO FIX expectedScanLog: `array.js: DEBUG: Indirect calls to "require" will not be bundled
+  assign.js: DEBUG: Indirect calls to "require" will not be bundled
+  ident.js: DEBUG: Indirect calls to "require" will not be bundled
+  `, */
   });
   itBundled("default/AmbiguousReexportMsg", {
     // GENERATED
@@ -5073,8 +5118,10 @@ describe("bundler", () => {
       "/b.js": `export let b = 3; export { b as x }`,
       "/c.js": `export let c = 4, x = 5`,
     },
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `DEBUG: Re-export of "x" in "entry.js" is ambiguous and has been removed
+  a.js: NOTE: One definition of "x" comes from "a.js" here:
+  b.js: NOTE: Another definition of "x" comes from "b.js" here:
+  `, */
   });
   itBundled("default/NonDeterminismIssue2537", {
     // GENERATED
@@ -5102,7 +5149,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/MinifiedJSXPreserveWithObjectSpread", {
     // GENERATED
@@ -5131,7 +5177,6 @@ describe("bundler", () => {
       `,
     },
     minifySyntax: true,
-    snapshot: true,
   });
   itBundled("default/PackageAlias", {
     // GENERATED
@@ -5163,7 +5208,6 @@ describe("bundler", () => {
       "/node_modules/prefix-foo/index.js": `console.log(10)`,
       "/node_modules/@scope/prefix-foo/index.js": `console.log(11)`,
     },
-    snapshot: true,
   });
   itBundled("default/PackageAliasMatchLongest", {
     // GENERATED
@@ -5216,7 +5260,34 @@ describe("bundler", () => {
       "/foo.copy": `{}`,
     },
     entryPoints: ["/js-entry.js", "/ts-entry.ts"],
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `js-entry.js: ERROR: Cannot use non-default import "unused" with a standard JSON module
+  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "unused" import (which is non-standard behavior).
+  js-entry.js: ERROR: Cannot use non-default import "used" with a standard JSON module
+  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+  js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  js-entry.js: ERROR: Cannot use non-default import "exported" with a standard JSON module
+  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+  js-entry.js: ERROR: The file "foo.text" was loaded with the "text" loader
+  js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
+  NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
+  js-entry.js: ERROR: The file "foo.file" was loaded with the "file" loader
+  js-entry.js: NOTE: This import assertion requires the loader to be "json" instead:
+  NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
+  ts-entry.ts: ERROR: Cannot use non-default import "used" with a standard JSON module
+  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "used" import (which is non-standard behavior).
+  ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  ts-entry.ts: ERROR: Cannot use non-default import "exported" with a standard JSON module
+  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "exported" import (which is non-standard behavior).
+  `, */
   });
   itBundled("default/OutputForAssertTypeJSON", {
     // GENERATED
@@ -5242,7 +5313,13 @@ describe("bundler", () => {
       "/foo.copy": `{}`,
     },
     entryPoints: ["/js-entry.js", "/ts-entry.ts"],
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `js-entry.js: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  js-entry.js: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  ts-entry.ts: WARNING: Non-default import "prop" is undefined with a standard JSON module
+  ts-entry.ts: NOTE: This is considered an import of a standard JSON module because of the import assertion here:
+  NOTE: You can either keep the import assertion and only use the "default" import, or you can remove the import assertion and use the "prop" import (which is non-standard behavior).
+  `, */
   });
   itBundled("default/ExternalPackages", {
     // GENERATED
@@ -5264,7 +5341,6 @@ describe("bundler", () => {
       "/project/node_modules/pkg2/index.js": `console.log('pkg2')`,
       "/project/libs/pkg3.js": `console.log('pkg3')`,
     },
-    snapshot: true,
   });
   itBundled("default/MetafileVariousCases", {
     // GENERATED
@@ -5302,27 +5378,15 @@ describe("bundler", () => {
       "/project/inline.svg": `<svg/>`,
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
-    /* TODO: 
-        ExtensionToLoader -- map[string]config.Loader{
-  				".js":   config.LoaderJS,
-  				".css":  config.LoaderCSS,
-  				".file": config.LoaderFile,
-  				".copy": config.LoaderCopy,
-  				".svg":  config.LoaderDataURL,
-  			}, */
-    /* TODO: 
-        ExternalSettings -- config.ExternalSettings{
-  				PreResolve: config.ExternalMatchers{
-  					Exact: map[string]bool{
-  						"extern-esm": true,
-  						"extern-cjs": true,
-  						"extern.css": true,
-  						"extern.png": true,
-  					},
-  				},
-  			}, */
+    loader: {
+      ".js": "js",
+      ".css": "css",
+      ".file": "file",
+      ".copy": "copy",
+      ".svg": "dataurl",
+    },
+    external: ["extern-esm", "extern-cjs", "extern.css", "extern.png"],
     metafile: true,
-    snapshot: true,
   });
   itBundled("default/MetafileNoBundle", {
     // GENERATED
@@ -5348,7 +5412,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/project/entry.js", "/project/entry.css"],
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("default/MetafileVeryLongExternalPaths", {
     // GENERATED
@@ -5371,14 +5434,12 @@ describe("bundler", () => {
       "/project/bytesInOutput should be at least 99.css",
     ],
     metafile: true,
-    /* TODO: 
-        ExtensionToLoader -- map[string]config.Loader{
-  				".js":   config.LoaderJS,
-  				".css":  config.LoaderCSS,
-  				".file": config.LoaderFile,
-  				".copy": config.LoaderCopy,
-  			}, */
-    snapshot: true,
+    loader: {
+      ".js": "js",
+      ".css": "css",
+      ".file": "file",
+      ".copy": "copy",
+    },
   });
   itBundled("default/CommentPreservation", {
     // GENERATED
@@ -5534,7 +5595,6 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    snapshot: true,
   });
   itBundled("default/CommentPreservationImportAssertions", {
     // GENERATED
@@ -5547,7 +5607,6 @@ describe("bundler", () => {
         import 'foo' assert { type: 'json' /* before */ }
       `,
     },
-    snapshot: true,
   });
   itBundled("default/CommentPreservationTransformJSX", {
     // GENERATED
@@ -5577,7 +5636,6 @@ describe("bundler", () => {
         )
       `,
     },
-    snapshot: true,
   });
   itBundled("default/CommentPreservationPreserveJSX", {
     // GENERATED
@@ -5607,7 +5665,6 @@ describe("bundler", () => {
         )
       `,
     },
-    snapshot: true,
   });
   itBundled("default/ErrorMessageCrashStdinIssue2913", {
     // GENERATED
@@ -5617,9 +5674,11 @@ describe("bundler", () => {
     },
     stdin: {
       contents: `import "node_modules/fflate"`,
-      dir: '/project'
+      resolveDir: "/project",
     },
     platform: "neutral",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `<stdin>: ERROR: Could not resolve "node_modules/fflate"
+  NOTE: You can mark the path "node_modules/fflate" as external to exclude it from the bundle, which will remove this error.
+  `, */
   });
 });

@@ -1,5 +1,5 @@
-import { test, describe } from "bun:test";
-import { expectBundled, itBundled } from "./expectBundled";
+import { describe } from "bun:test";
+import { bundlerTest, expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_tsconfig_test.go
@@ -124,7 +124,6 @@ describe("bundler", () => {
       "/Users/user/project/baseurl_nested/absolute-out-star.ts": `export {default} from '/virtual-out-star/test'`,
       "/Users/user/project/baseurl_nested/nested/actual/test.ts": `export default 'absolute-success'`,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsNoBaseURL", {
     // GENERATED
@@ -222,7 +221,6 @@ describe("bundler", () => {
       "/Users/user/project/extended/absolute.ts": `export {default} from '/virtual/test'`,
       "/Users/user/project/extended/nested/actual/test.ts": `export default 'absolute-success'`,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigBadPathsNoBaseURL", {
     // GENERATED
@@ -260,7 +258,16 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/entry.ts: ERROR: Could not resolve "should-not-be-imported"
+  NOTE: Use the relative path "./should-not-be-imported" to reference the file "Users/user/project/should-not-be-imported.ts". Without the leading "./", the path "should-not-be-imported" is being interpreted as a package path instead.
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "@bad/core" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path ".* /bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "..* /bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "c*:\\bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "c:*\\bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/tsconfig.json: WARNING: Non-relative path "http://bad" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  `, */
   });
   itBundled("tsconfig/TsConfigPathsOverriddenBaseURL", {
     // GENERATED
@@ -288,7 +295,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsOverriddenBaseURLDifferentDir", {
     // GENERATED
@@ -316,7 +322,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsMissingBaseURL", {
     // GENERATED
@@ -343,7 +348,9 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Could not resolve "#/test"
+  NOTE: You can mark the path "#/test" as external to exclude it from the bundle, which will remove this error.
+  `, */
   });
   itBundled("tsconfig/TsConfigPathsTypeOnly", {
     // GENERATED
@@ -373,7 +380,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigJSX", {
     // GENERATED
@@ -388,7 +394,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigNestedJSX", {
     // GENERATED
@@ -425,7 +430,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSX", {
     // GENERATED
@@ -441,7 +445,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSXDev", {
     // GENERATED
@@ -456,7 +459,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigReactJSXWithDevInMainConfig", {
     // GENERATED
@@ -471,8 +473,9 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    jsx: {},
-    snapshot: true,
+    jsx: {
+      development: true,
+    },
   });
   itBundled("tsconfig/TsconfigJsonBaseUrl", {
     // GENERATED
@@ -494,7 +497,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/JsconfigJsonBaseUrl", {
     // GENERATED
@@ -516,7 +518,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonAbsoluteBaseUrl", {
     // GENERATED
@@ -538,7 +539,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonCommentAllowed", {
     // GENERATED
@@ -561,7 +561,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonTrailingCommaAllowed", {
     // GENERATED
@@ -583,7 +582,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonExtends", {
     // GENERATED
@@ -606,12 +604,11 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
-  test("tsconfig/TsconfigJsonExtendsAbsolute", () => {
-    expectBundled("tsconfig/TsconfigJsonExtendsAbsolute", {
+  bundlerTest("tsconfig/TsconfigJsonExtendsAbsolute", () => {
+    expectBundled("tsconfig/TsconfigJsonExtendsAbsoluteUnix", {
       // GENERATED
-      host: "Unix",
+      host: "unix",
       files: {
         "/Users/user/project/entry.jsx": `console.log(<div/>, <></>)`,
         "/Users/user/project/tsconfig.json": /* json */ `
@@ -631,11 +628,10 @@ describe("bundler", () => {
           }
         `,
       },
-      snapshot: true,
     });
-    expectBundled("tsconfig/TsconfigJsonExtendsAbsolute_TODO_LABEL_1", {
+    expectBundled("tsconfig/TsconfigJsonExtendsAbsoluteWindows", {
       // GENERATED
-      host: "Windows",
+      host: "windows",
       files: {
         "/Users/user/project/entry.jsx": `console.log(<div/>, <></>)`,
         "/Users/user/project/tsconfig.json": /* json */ `
@@ -655,7 +651,6 @@ describe("bundler", () => {
           }
         `,
       },
-      snapshot: true,
     });
   });
   itBundled("tsconfig/TsconfigJsonExtendsThreeLevels", {
@@ -692,7 +687,6 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/path2/works/import.js": `console.log('works')`,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonExtendsLoop", {
     // GENERATED
@@ -709,7 +703,8 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `base.json: WARNING: Base config file "./tsconfig" forms cycle
+  `, */
   });
   itBundled("tsconfig/TsconfigJsonExtendsPackage", {
     // GENERATED
@@ -728,7 +723,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideMissing", {
     // GENERATED
@@ -758,7 +752,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideNodeModules", {
     // GENERATED
@@ -789,14 +782,14 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonOverrideInvalid", {
     // GENERATED
     files: {
       "/entry.ts": ``,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `ERROR: Cannot find tsconfig file "this/file/doesn't/exist/tsconfig.json"
+  `, */
   });
   itBundled("tsconfig/TsconfigJsonNodeModulesImplicitFile", {
     // GENERATED
@@ -816,7 +809,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigJsonInsideNodeModules", {
     // GENERATED
@@ -831,7 +823,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigWarningsInsideNodeModules", {
     // GENERATED
@@ -845,7 +836,8 @@ describe("bundler", () => {
       "/Users/user/project/src/node_modules/bar/tsconfig.json": `{ "extends": "extends for bar" }`,
       "/Users/user/project/src/node_modules/bar/index.js": ``,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/foo/tsconfig.json: WARNING: Cannot find base config file "extends for foo"
+  `, */
   });
   itBundled("tsconfig/TsconfigRemoveUnusedImports", {
     // GENERATED
@@ -862,7 +854,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveUnusedImports", {
     // GENERATED
@@ -880,7 +871,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigImportsNotUsedAsValuesPreserve", {
     // GENERATED
@@ -902,7 +892,6 @@ describe("bundler", () => {
     format: "esm",
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveValueImports", {
     // GENERATED
@@ -930,7 +919,6 @@ describe("bundler", () => {
     format: "esm",
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigPreserveValueImportsAndImportsNotUsedAsValuesPreserve", {
     // GENERATED
@@ -959,7 +947,6 @@ describe("bundler", () => {
     format: "esm",
     outfile: "/Users/user/project/out.js",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigTarget", {
     // GENERATED
@@ -1016,7 +1003,8 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/es4/tsconfig.json: WARNING: Unrecognized target environment "ES4"
+  `, */
   });
   itBundled("tsconfig/TsconfigTargetError", {
     // GENERATED
@@ -1031,7 +1019,9 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Big integer literals are not available in the configured target environment ("ES2019")
+  Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "ES2019" here:
+  `, */
   });
   itBundled("tsconfig/TsconfigTargetIgnored", {
     // GENERATED
@@ -1046,7 +1036,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigUseDefineForClassFieldsES2020", {
     // GENERATED
@@ -1064,7 +1053,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigUseDefineForClassFieldsESNext", {
     // GENERATED
@@ -1082,7 +1070,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsconfigUnrecognizedTargetWarning", {
     // GENERATED
@@ -1108,7 +1095,8 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/a/tsconfig.json: WARNING: Unrecognized target environment "es3"
+  `, */
   });
   itBundled("tsconfig/TsconfigTargetWarning", {
     // GENERATED
@@ -1124,7 +1112,9 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
     unsupportedJSFeatures: "es6",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment ("es6")
+  Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "es6" here:
+  `, */
   });
   itBundled("tsconfig/TsconfigOverriddenTargetWarning", {
     // GENERATED
@@ -1140,9 +1130,9 @@ describe("bundler", () => {
     },
     outfile: "/Users/user/project/out.js",
     unsupportedJSFeatures: "es2020",
-    /* TODO: 
-        TargetFromAPI -- config.TargetWasConfigured, */
-    snapshot: true,
+    targetFromAPI: "TargetWasConfigured",
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Top-level await is not available in the configured target environment (es2020)
+  `, */
   });
   itBundled("tsconfig/TsConfigNoBaseURLExtendsPaths", {
     // GENERATED
@@ -1167,7 +1157,10 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/base/defaults.json: WARNING: Non-relative path "lib/*" is not allowed when "baseUrl" is not set (did you forget a leading "./"?)
+  Users/user/project/src/entry.ts: ERROR: Could not resolve "foo"
+  NOTE: You can mark the path "foo" as external to exclude it from the bundle, which will remove this error.
+  `, */
   });
   itBundled("tsconfig/TsConfigBaseURLExtendsPaths", {
     // GENERATED
@@ -1195,7 +1188,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigPathsExtendsBaseURL", {
     // GENERATED
@@ -1223,7 +1215,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesInsert", {
     // GENERATED
@@ -1250,7 +1241,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesNoInsert", {
     // GENERATED
@@ -1275,7 +1265,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigModuleSuffixesNoEmpty", {
     // GENERATED
@@ -1294,7 +1283,8 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: Could not resolve "./bar"
+  `, */
   });
   itBundled("tsconfig/TsConfigWithStatementAlwaysStrictFalse", {
     // GENERATED
@@ -1309,7 +1299,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementAlwaysStrictTrue", {
     // GENERATED
@@ -1323,7 +1312,9 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: With statements cannot be used in strict mode
+  Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was enabled here:
+  `, */
   });
   itBundled("tsconfig/TsConfigWithStatementStrictFalse", {
     // GENERATED
@@ -1338,7 +1329,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigWithStatementStrictTrue", {
     // GENERATED
@@ -1352,7 +1342,9 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: With statements cannot be used in strict mode
+  Users/user/project/tsconfig.json: NOTE: TypeScript's "strict" setting was enabled here:
+  `, */
   });
   itBundled("tsconfig/TsConfigWithStatementStrictFalseAlwaysStrictTrue", {
     // GENERATED
@@ -1367,7 +1359,9 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/entry.ts: ERROR: With statements cannot be used in strict mode
+  Users/user/project/tsconfig.json: NOTE: TypeScript's "alwaysStrict" setting was enabled here:
+  `, */
   });
   itBundled("tsconfig/TsConfigWithStatementStrictTrueAlwaysStrictFalse", {
     // GENERATED
@@ -1383,7 +1377,6 @@ describe("bundler", () => {
       `,
     },
     outfile: "/Users/user/project/out.js",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectivePassThrough", {
     // GENERATED
@@ -1403,7 +1396,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveFormat", {
     // GENERATED
@@ -1423,7 +1415,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleIIFE", {
     // GENERATED
@@ -1443,7 +1434,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleCJS", {
     // GENERATED
@@ -1463,7 +1453,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigAlwaysStrictTrueEmitDirectiveBundleESM", {
     // GENERATED
@@ -1483,7 +1472,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/Users/user/project/src/implicit.ts", "/Users/user/project/src/explicit.ts"],
     outdir: "/Users/user/project/out",
-    snapshot: true,
   });
   itBundled("tsconfig/TsConfigExtendsDotWithoutSlash", {
     // GENERATED
@@ -1504,7 +1492,9 @@ describe("bundler", () => {
     },
     outdir: "/Users/user/project/out",
     format: "esm",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/main.ts: ERROR: Big integer literals are not available in the configured target environment ("ES6")
+  Users/user/project/src/tsconfig.json: NOTE: The target environment was set to "ES6" here:
+  `, */
   });
   itBundled("tsconfig/TsConfigExtendsDotDotWithoutSlash", {
     // GENERATED
@@ -1524,7 +1514,9 @@ describe("bundler", () => {
       `,
     },
     outdir: "/Users/user/project/out",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/main.ts: ERROR: Big integer literals are not available in the configured target environment ("ES6")
+  Users/user/project/tsconfig.json: NOTE: The target environment was set to "ES6" here:
+  `, */
   });
   itBundled("tsconfig/TsConfigExtendsDotWithSlash", {
     // GENERATED
@@ -1545,7 +1537,8 @@ describe("bundler", () => {
     },
     outdir: "/Users/user/project/out",
     format: "esm",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/foo.json: WARNING: Cannot find base config file "./"
+  `, */
   });
   itBundled("tsconfig/TsConfigExtendsDotDotWithSlash", {
     // GENERATED
@@ -1565,6 +1558,7 @@ describe("bundler", () => {
       `,
     },
     outdir: "/Users/user/project/out",
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `Users/user/project/src/tsconfig.json: WARNING: Cannot find base config file "../"
+  `, */
   });
 });

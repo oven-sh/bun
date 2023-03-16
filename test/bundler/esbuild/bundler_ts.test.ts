@@ -19,7 +19,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareLet", {
     // GENERATED
@@ -33,7 +32,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareVar", {
     // GENERATED
@@ -47,7 +45,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareClass", {
     // GENERATED
@@ -61,7 +58,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareClassFields", {
     // GENERATED
@@ -106,7 +102,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareFunction", {
     // GENERATED
@@ -120,7 +115,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareNamespace", {
     // GENERATED
@@ -134,7 +128,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareEnum", {
     // GENERATED
@@ -148,7 +141,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSDeclareConstEnum", {
     // GENERATED
@@ -162,7 +154,6 @@ describe("bundler", () => {
         let foo = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSConstEnumComments", {
     // GENERATED
@@ -192,7 +183,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/foo.ts"],
-    snapshot: true,
   });
   itBundled("ts/TSImportEmptyNamespace", {
     // GENERATED
@@ -204,7 +194,6 @@ describe("bundler", () => {
       `,
       "/ns.ts": `export namespace ns {}`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportMissingES6", {
     // GENERATED
@@ -215,7 +204,9 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const x = 123`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.ts: ERROR: No matching export in "foo.js" for import "default"
+  entry.ts: ERROR: No matching export in "foo.js" for import "y"
+  `, */
   });
   itBundled("ts/TSImportMissingUnusedES6", {
     // GENERATED
@@ -223,7 +214,6 @@ describe("bundler", () => {
       "/entry.ts": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSExportMissingES6", {
     // GENERATED
@@ -235,7 +225,6 @@ describe("bundler", () => {
       "/foo.ts": `export {nope} from './bar'`,
       "/bar.js": `export const yep = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportMissingFile", {
     // GENERATED
@@ -245,7 +234,8 @@ describe("bundler", () => {
         let foo = new Something
       `,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.ts: ERROR: Could not resolve "./doesNotExist.ts"
+  `, */
   });
   itBundled("ts/TSImportTypeOnlyFile", {
     // GENERATED
@@ -256,7 +246,6 @@ describe("bundler", () => {
         let foo: SomeType1 = bar()
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSExportEquals", {
     // GENERATED
@@ -270,7 +259,6 @@ describe("bundler", () => {
         function foo() {}
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSExportNamespace", {
     // GENERATED
@@ -289,7 +277,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSMinifyEnum", {
     // GENERATED
@@ -302,7 +289,6 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnum", {
     // GENERATED
@@ -315,7 +301,6 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnumNoLogicalAssignment", {
     // GENERATED
@@ -329,7 +314,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNestedEnumNoArrow", {
     // GENERATED
@@ -343,7 +327,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNamespace", {
     // GENERATED
@@ -368,7 +351,6 @@ describe("bundler", () => {
     minifyWhitespace: true,
     minifyIdentifiers: true,
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNamespaceNoLogicalAssignment", {
     // GENERATED
@@ -394,7 +376,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyNamespaceNoArrow", {
     // GENERATED
@@ -420,7 +401,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     outdir: "/",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSMinifyDerivedClass", {
     // GENERATED
@@ -440,7 +420,6 @@ describe("bundler", () => {
     minifySyntax: true,
     unsupportedJSFeatures: "es2015",
     mode: "transform",
-    snapshot: true,
   });
   itBundled("ts/TSImportVsLocalCollisionAllTypes", {
     // GENERATED
@@ -456,7 +435,6 @@ describe("bundler", () => {
       `,
       "/other.ts": ``,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportVsLocalCollisionMixed", {
     // GENERATED
@@ -472,7 +450,6 @@ describe("bundler", () => {
       `,
       "/other.ts": `export let real = 123`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportEqualsEliminationTest", {
     // GENERATED
@@ -489,7 +466,6 @@ describe("bundler", () => {
         export let bar = c
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportEqualsTreeShakingFalse", {
     // GENERATED
@@ -502,7 +478,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSImportEqualsTreeShakingTrue", {
     // GENERATED
@@ -515,7 +490,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSImportEqualsBundle", {
     // GENERATED
@@ -527,7 +501,6 @@ describe("bundler", () => {
         export { used }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSMinifiedBundleES6", {
     // GENERATED
@@ -545,7 +518,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("ts/TSMinifiedBundleCommonJS", {
     // GENERATED
@@ -564,7 +536,6 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("ts/TypeScriptDecorators", {
     // GENERATED
@@ -704,7 +675,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TypeScriptDecoratorsKeepNames", {
     // GENERATED
@@ -714,7 +684,6 @@ describe("bundler", () => {
         class Foo {}
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TypeScriptDecoratorScopeIssue2147", {
     // GENERATED
@@ -745,7 +714,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSExportDefaultTypeIssue316", {
     // GENERATED
@@ -867,7 +835,6 @@ describe("bundler", () => {
         export let bar = 123
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImplicitExtensions", {
     // GENERATED
@@ -893,7 +860,6 @@ describe("bundler", () => {
       "/order-jsx.ts": `console.log("correct")`,
       "/order-jsx.tsx": `console.log("wrong")`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImplicitExtensionsMissing", {
     // GENERATED
@@ -911,7 +877,11 @@ describe("bundler", () => {
       "/js.ts.js": ``,
       "/jsx.tsx.jsx": ``,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.ts: ERROR: Could not resolve "./mjs.mjs"
+  entry.ts: ERROR: Could not resolve "./cjs.cjs"
+  entry.ts: ERROR: Could not resolve "./js.js"
+  entry.ts: ERROR: Could not resolve "./jsx.jsx"
+  `, */
   });
   itBundled("ts/ExportTypeIssue379", {
     // GENERATED
@@ -946,7 +916,6 @@ describe("bundler", () => {
       `,
       "/test.ts": `export type Test = Element`,
     },
-    snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTS", {
     // GENERATED
@@ -978,7 +947,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSUseDefineForClassFields", {
     // GENERATED
@@ -1010,7 +978,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSNoBundle", {
     // GENERATED
@@ -1043,7 +1010,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/ThisInsideFunctionTSNoBundleUseDefineForClassFields", {
     // GENERATED
@@ -1076,7 +1042,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineFalse", {
     // GENERATED
@@ -1094,7 +1059,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineTrue", {
     // GENERATED
@@ -1112,7 +1076,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSComputedClassFieldUseDefineTrueLower", {
     // GENERATED
@@ -1129,10 +1092,8 @@ describe("bundler", () => {
         new Foo()
       `,
     },
-    /* TODO: 
-        UseDefineForClassFields -- config.True, */
+    useDefineForClassFields: true,
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSAbstractClassFieldUseAssign", {
     // GENERATED
@@ -1151,7 +1112,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSAbstractClassFieldUseDefine", {
     // GENERATED
@@ -1170,7 +1130,6 @@ describe("bundler", () => {
       `,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSImportMTS", {
     // GENERATED
@@ -1178,7 +1137,6 @@ describe("bundler", () => {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSImportCTS", {
     // GENERATED
@@ -1186,7 +1144,6 @@ describe("bundler", () => {
       "/entry.ts": `require('./required.cjs')`,
       "/required.cjs": `console.log('works')`,
     },
-    snapshot: true,
   });
   itBundled("ts/TSSideEffectsFalseWarningTypeDeclarations", {
     // GENERATED
@@ -1209,7 +1166,11 @@ describe("bundler", () => {
       "/node_modules/empty-dts/package.json": `{ "main": "./foo.d.ts", "sideEffects": false }`,
       "/node_modules/empty-dts/foo.d.ts": `export type Foo = number`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.ts: WARNING: Ignoring this import because "node_modules/some-js/foo.js" was marked as having no side effects
+  node_modules/some-js/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  entry.ts: WARNING: Ignoring this import because "node_modules/some-ts/foo.ts" was marked as having no side effects
+  node_modules/some-ts/package.json: NOTE: "sideEffects" is false in the enclosing "package.json" file:
+  `, */
   });
   itBundled("ts/TSSiblingNamespace", {
     // GENERATED
@@ -1237,7 +1198,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/let.ts", "/function.ts", "/class.ts", "/namespace.ts", "/enum.ts"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSSiblingEnum", {
     // GENERATED
@@ -1314,7 +1274,6 @@ describe("bundler", () => {
       "/nested-propagation.ts",
     ],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSEnumTreeShaking", {
     // GENERATED
@@ -1366,7 +1325,6 @@ describe("bundler", () => {
       "/namespace-before.ts",
       "/namespace-after.ts",
     ],
-    snapshot: true,
   });
   itBundled("ts/TSEnumJSX", {
     // GENERATED
@@ -1390,7 +1348,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/element.tsx", "/fragment.tsx", "/nested-element.tsx", "/nested-fragment.tsx"],
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSEnumDefine", {
     // GENERATED
@@ -1398,7 +1355,6 @@ describe("bundler", () => {
       "/entry.ts": `enum a { b = 123, c = d }`,
     },
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("ts/TSEnumSameModuleInliningAccess", {
     // GENERATED
@@ -1418,7 +1374,6 @@ describe("bundler", () => {
         ])
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningAccess", {
     // GENERATED
@@ -1441,7 +1396,6 @@ describe("bundler", () => {
         export enum e { x = 123 }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningDefinitions", {
     // GENERATED
@@ -1464,7 +1418,6 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleInliningReExport", {
     // GENERATED
@@ -1487,7 +1440,6 @@ describe("bundler", () => {
         export enum c { x = 'c' }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSEnumCrossModuleTreeShaking", {
     // GENERATED
@@ -1533,7 +1485,6 @@ describe("bundler", () => {
         export let e_keep = {}           // non-enum properties should be kept
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSEnumExportClause", {
     // GENERATED
@@ -1561,7 +1512,6 @@ describe("bundler", () => {
           export { B, D as d }
       `,
     },
-    snapshot: true,
   });
   itBundled("ts/TSThisIsUndefinedWarning", {
     // GENERATED
@@ -1573,8 +1523,13 @@ describe("bundler", () => {
       "/silent2.ts": `export var foo = this && (() => this.foo)`,
     },
     entryPoints: ["/warning1.ts", "/warning2.ts", "/warning3.ts", "/silent1.ts", "/silent2.ts"],
-    debugLogs: true,
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `warning1.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  warning1.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  warning2.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  warning2.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  warning3.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
+  warning3.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
+  `, */
   });
   itBundled("ts/TSCommonJSVariableInESMTypeModule", {
     // GENERATED
@@ -1582,7 +1537,10 @@ describe("bundler", () => {
       "/entry.ts": `module.exports = null`,
       "/package.json": `{ "type": "module" }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.ts: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
+  package.json: NOTE: This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
+  NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension. If you are using TypeScript, you can use the ".cts" file extension with esbuild instead.
+  `, */
   });
   itBundled("ts/EnumRulesFrom_TypeScript_5_0", {
     // GENERATED
@@ -1661,7 +1619,6 @@ describe("bundler", () => {
       `,
     },
     entryPoints: ["/supported.ts", "/not-supported.ts"],
-    snapshot: true,
   });
   itBundled("ts/TSEnumUseBeforeDeclare", {
     // GENERATED
@@ -1676,6 +1633,5 @@ describe("bundler", () => {
         }
       `,
     },
-    snapshot: true,
   });
 });

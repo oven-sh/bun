@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { test, describe } from "bun:test";
+import { expectBundled, itBundled } from "./expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_loader_test.go
@@ -14,7 +14,6 @@ describe("bundler", () => {
       "/test.svg": `<svg></svg>`,
     },
     outdir: "/out/",
-    snapshot: true,
   });
   itBundled("loader/LoaderFileMultipleNoCollision", {
     // GENERATED
@@ -29,14 +28,12 @@ describe("bundler", () => {
       "/b/test.txt": `test`,
     },
     outfile: "/dist/out.js",
-    snapshot: true,
   });
   itBundled("loader/JSXSyntaxInJSWithJSXLoader", {
     // GENERATED
     files: {
       "/entry.js": `console.log(<div/>)`,
     },
-    snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetter", {
     // GENERATED
@@ -47,7 +44,6 @@ describe("bundler", () => {
       `,
       "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
     },
-    snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetterMinify", {
     // GENERATED
@@ -59,7 +55,6 @@ describe("bundler", () => {
       "/foo.js": `export class mustStartWithUpperCaseLetter {}`,
     },
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("loader/JSXPreserveCapitalLetterMinifyNested", {
     // GENERATED
@@ -72,7 +67,6 @@ describe("bundler", () => {
       `,
     },
     minifyIdentifiers: true,
-    snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionString", {
     // GENERATED
@@ -80,7 +74,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.custom'))`,
       "/test.custom": `#include <stdio.h>`,
     },
-    snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionBase64", {
     // GENERATED
@@ -88,7 +81,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.custom'))`,
       "/test.custom": `a\x00b\x80c\xFFd`,
     },
-    snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionDataURL", {
     // GENERATED
@@ -96,7 +88,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.custom'))`,
       "/test.custom": `a\x00b\x80c\xFFd`,
     },
-    snapshot: true,
   });
   itBundled("loader/RequireCustomExtensionPreferLongest", {
     // GENERATED
@@ -105,7 +96,6 @@ describe("bundler", () => {
       "/test.txt": `test.txt`,
       "/test.base64.txt": `test.base64.txt`,
     },
-    snapshot: true,
   });
   itBundled("loader/AutoDetectMimeTypeFromExtension", {
     // GENERATED
@@ -113,7 +103,6 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.svg'))`,
       "/test.svg": `a\x00b\x80c\xFFd`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONCommonJSAndES6", {
     // GENERATED
@@ -134,7 +123,6 @@ describe("bundler", () => {
       }
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONInvalidIdentifierES6", {
     // GENERATED
@@ -147,7 +135,6 @@ describe("bundler", () => {
       "/test.json": `{"invalid-identifier": true}`,
       "/test2.json": `{"invalid-identifier": true}`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONMissingES6", {
     // GENERATED
@@ -155,7 +142,8 @@ describe("bundler", () => {
       "/entry.js": `import {missing} from './test.json'`,
       "/test.json": `{"present": true}`,
     },
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "test.json" for import "missing"
+  `, */
   });
   itBundled("loader/LoaderTextCommonJSAndES6", {
     // GENERATED
@@ -168,7 +156,6 @@ describe("bundler", () => {
       "/x.txt": `x`,
       "/y.txt": `y`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderBase64CommonJSAndES6", {
     // GENERATED
@@ -181,7 +168,6 @@ describe("bundler", () => {
       "/x.b64": `x`,
       "/y.b64": `y`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLCommonJSAndES6", {
     // GENERATED
@@ -194,7 +180,6 @@ describe("bundler", () => {
       "/x.txt": `x`,
       "/y.txt": `y`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderFileCommonJSAndES6", {
     // GENERATED
@@ -207,7 +192,6 @@ describe("bundler", () => {
       "/x.txt": `x`,
       "/y.txt": `y`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathJS", {
     // GENERATED
@@ -219,7 +203,6 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathCSS", {
     // GENERATED
@@ -232,7 +215,6 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    snapshot: true,
   });
   itBundled("loader/LoaderFileRelativePathAssetNamesJS", {
     // GENERATED
@@ -244,13 +226,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        AssetPathTemplate -- []config.PathTemplate{
-  				{Data: "", Placeholder: config.DirPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    assetNames: "[dir]/[name]-[hash]",
   });
   itBundled("loader/LoaderFileExtPathAssetNamesJS", {
     // GENERATED
@@ -264,13 +240,7 @@ describe("bundler", () => {
       "/src/uploads/file.txt": `y`,
     },
     outbase: "/src",
-    /* TODO: 
-        AssetPathTemplate -- []config.PathTemplate{
-  				{Data: "", Placeholder: config.ExtPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    assetNames: "[ext]/[name]-[hash]",
   });
   itBundled("loader/LoaderFileRelativePathAssetNamesCSS", {
     // GENERATED
@@ -283,13 +253,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        AssetPathTemplate -- []config.PathTemplate{
-  				{Data: "", Placeholder: config.DirPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    assetNames: "[dir]/[name]-[hash]",
   });
   itBundled("loader/LoaderFilePublicPathJS", {
     // GENERATED
@@ -301,9 +265,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        PublicPath -- "https://example.com", */
-    snapshot: true,
+    publicPath: "https://example.com",
   });
   itBundled("loader/LoaderFilePublicPathCSS", {
     // GENERATED
@@ -316,9 +278,7 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        PublicPath -- "https://example.com", */
-    snapshot: true,
+    publicPath: "https://example.com",
   });
   itBundled("loader/LoaderFilePublicPathAssetNamesJS", {
     // GENERATED
@@ -330,15 +290,8 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        PublicPath -- "https://example.com", */
-    /* TODO: 
-        AssetPathTemplate -- []config.PathTemplate{
-  				{Data: "", Placeholder: config.DirPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    publicPath: "https://example.com",
+    assetNames: "[dir]/[name]-[hash]",
   });
   itBundled("loader/LoaderFilePublicPathAssetNamesCSS", {
     // GENERATED
@@ -351,15 +304,8 @@ describe("bundler", () => {
       "/src/images/image.png": `x`,
     },
     outbase: "/src",
-    /* TODO: 
-        PublicPath -- "https://example.com", */
-    /* TODO: 
-        AssetPathTemplate -- []config.PathTemplate{
-  				{Data: "", Placeholder: config.DirPlaceholder},
-  				{Data: "/", Placeholder: config.NamePlaceholder},
-  				{Data: "-", Placeholder: config.HashPlaceholder},
-  			}, */
-    snapshot: true,
+    publicPath: "https://example.com",
+    assetNames: "[dir]/[name]-[hash]",
   });
   itBundled("loader/LoaderFileOneSourceTwoDifferentOutputPathsJS", {
     // GENERATED
@@ -374,7 +320,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/src/entries/entry.js", "/src/entries/other/entry.js"],
     outbase: "/src",
-    snapshot: true,
   });
   itBundled("loader/LoaderFileOneSourceTwoDifferentOutputPathsCSS", {
     // GENERATED
@@ -390,7 +335,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/src/entries/entry.css", "/src/entries/other/entry.css"],
     outbase: "/src",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundle", {
     // GENERATED
@@ -398,7 +342,6 @@ describe("bundler", () => {
       "/test.json": `{"test": 123, "invalid-identifier": true}`,
     },
     mode: "transform",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleES6", {
     // GENERATED
@@ -408,7 +351,6 @@ describe("bundler", () => {
     format: "esm",
     unsupportedJSFeatures: "ArbitraryModuleNamespaceNames",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleES6ArbitraryModuleNamespaceNames", {
     // GENERATED
@@ -417,7 +359,6 @@ describe("bundler", () => {
     },
     format: "esm",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleCommonJS", {
     // GENERATED
@@ -426,7 +367,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONNoBundleIIFE", {
     // GENERATED
@@ -435,7 +375,6 @@ describe("bundler", () => {
     },
     format: "iife",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/LoaderJSONSharedWithMultipleEntriesIssue413", {
     // GENERATED
@@ -452,7 +391,6 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js"],
     format: "esm",
-    snapshot: true,
   });
   itBundled("loader/LoaderFileWithQueryParameter", {
     // GENERATED
@@ -465,7 +403,6 @@ describe("bundler", () => {
       `,
       "/file.txt": `This is some text`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderFromExtensionWithQueryParameter", {
     // GENERATED
@@ -476,7 +413,6 @@ describe("bundler", () => {
       `,
       "/file.abc": `This should not be base64 encoded`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextCSS", {
     // GENERATED
@@ -488,7 +424,6 @@ describe("bundler", () => {
         @import "data:text/css;charset=UTF-8;base64,Ym9keXtiYWNrZ3JvdW5kOmJsdWV9";
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextCSSCannotImport", {
     // GENERATED
@@ -496,7 +431,8 @@ describe("bundler", () => {
       "/entry.css": `@import "data:text/css,@import './other.css';";`,
       "/other.css": `div { should-not-be-imported: true }`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `<data:text/css,@import './other.css';>: ERROR: Could not resolve "./other.css"
+  `, */
   });
   itBundled("loader/LoaderDataURLTextJavaScript", {
     // GENERATED
@@ -508,7 +444,6 @@ describe("bundler", () => {
         import "data:text/javascript;charset=UTF-8;base64,Y29uc29sZS5sb2coMjM0KQ==";
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLTextJavaScriptCannotImport", {
     // GENERATED
@@ -516,14 +451,14 @@ describe("bundler", () => {
       "/entry.js": `import "data:text/javascript,import './other.js'"`,
       "/other.js": `shouldNotBeImported = true`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `<data:text/javascript,import './other.js'>: ERROR: Could not resolve "./other.js"
+  `, */
   });
   itBundled("loader/LoaderDataURLTextJavaScriptPlusCharacter", {
     // GENERATED
     files: {
       "/entry.js": `import "data:text/javascript,console.log(1+2)";`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLApplicationJSON", {
     // GENERATED
@@ -538,7 +473,6 @@ describe("bundler", () => {
         ])
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLUnknownMIME", {
     // GENERATED
@@ -549,7 +483,6 @@ describe("bundler", () => {
         console.log(a, b)
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLExtensionBasedMIME", {
     // GENERATED
@@ -599,7 +532,6 @@ describe("bundler", () => {
       "/example.woff2": `woff2`,
       "/example.xml": `xml`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLBase64VsPercentEncoding", {
     // GENERATED
@@ -621,7 +553,6 @@ describe("bundler", () => {
       "/shouldUseBase64_1.txt": `\n\n\n\n\n`,
       "/shouldUseBase64_2.txt": `\n\n\n\n\n\n`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLBase64InvalidUTF8", {
     // GENERATED
@@ -632,7 +563,6 @@ describe("bundler", () => {
       `,
       "/binary.txt": `\xFF`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderDataURLEscapePercents", {
     // GENERATED
@@ -647,7 +577,6 @@ describe("bundler", () => {
   %, %E, %EE, %EEE
       `,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleFromJS", {
     // GENERATED
@@ -659,7 +588,6 @@ describe("bundler", () => {
       "/Users/user/project/assets/some.file": `stuff`,
     },
     outbase: "/Users/user/project",
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleFromCSS", {
     // GENERATED
@@ -672,7 +600,6 @@ describe("bundler", () => {
       "/Users/user/project/assets/some.file": `stuff`,
     },
     outbase: "/Users/user/project",
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyWithBundleEntryPoint", {
     // GENERATED
@@ -694,7 +621,6 @@ describe("bundler", () => {
       "/Users/user/project/assets/some.file",
     ],
     outbase: "/Users/user/project",
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyWithTransform", {
     // GENERATED
@@ -705,7 +631,6 @@ describe("bundler", () => {
     entryPoints: ["/Users/user/project/src/entry.js", "/Users/user/project/assets/some.file"],
     outbase: "/Users/user/project",
     mode: "passthrough",
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyWithFormat", {
     // GENERATED
@@ -717,7 +642,6 @@ describe("bundler", () => {
     format: "iife",
     outbase: "/Users/user/project",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/JSXAutomaticNoNameCollision", {
     // GENERATED
@@ -729,7 +653,6 @@ describe("bundler", () => {
     },
     format: "cjs",
     mode: "convertformat",
-    snapshot: true,
   });
   itBundled("loader/AssertTypeJSONWrongLoader", {
     // GENERATED
@@ -737,7 +660,10 @@ describe("bundler", () => {
       "/entry.js": `import foo from './foo.json' assert { type: 'json' }`,
       "/foo.json": `{}`,
     },
-    snapshot: true,
+    /* TODO FIX expectedScanLog: `entry.js: ERROR: The file "foo.json" was loaded with the "js" loader
+  entry.js: NOTE: This import assertion requires the loader to be "json" instead:
+  NOTE: You need to either reconfigure esbuild to ensure that the loader for this file is "json" or you need to remove this import assertion.
+  `, */
   });
   itBundled("loader/EmptyLoaderJS", {
     // GENERATED
@@ -754,10 +680,10 @@ describe("bundler", () => {
       "/c.empty": `throw 'FAIL'`,
       "/d.empty": `throw 'FAIL'`,
     },
-    /* TODO: 
-        SourceMap -- config.SourceMapExternalWithoutComment, */
+    sourceMap: "external-without-comment",
     metafile: true,
-    snapshot: true,
+    /* TODO FIX expectedCompileLog: `entry.js: WARNING: Import "named" will always be undefined because the file "d.empty" has no exports
+  `, */
   });
   itBundled("loader/EmptyLoaderCSS", {
     // GENERATED
@@ -769,10 +695,8 @@ describe("bundler", () => {
       "/a.empty": `body { color: fail }`,
       "/b.empty": `fail`,
     },
-    /* TODO: 
-        SourceMap -- config.SourceMapExternalWithoutComment, */
+    sourceMap: "external-without-comment",
     metafile: true,
-    snapshot: true,
   });
   itBundled("loader/ExtensionlessLoaderJS", {
     // GENERATED
@@ -780,7 +704,6 @@ describe("bundler", () => {
       "/entry.js": `import './what'`,
       "/what": `foo()`,
     },
-    snapshot: true,
   });
   itBundled("loader/ExtensionlessLoaderCSS", {
     // GENERATED
@@ -788,7 +711,6 @@ describe("bundler", () => {
       "/entry.css": `@import './what';`,
       "/what": `.foo { color: red }`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyEntryPointAdvanced", {
     // GENERATED
@@ -811,14 +733,13 @@ describe("bundler", () => {
   				OutputPath:               "copy/input/path",
   				InputPathInFileNamespace: true,
   			},
-  		}, */ snapshot: true,
+  		}, */
   });
   itBundled("loader/LoaderCopyUseIndex", {
     // GENERATED
     files: {
       "/Users/user/project/src/index.copy": `some stuff`,
     },
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyExplicitOutputFile", {
     // GENERATED
@@ -826,7 +747,6 @@ describe("bundler", () => {
       "/project/TEST FAILED.copy": `some stuff`,
     },
     outfile: "/out/this.worked",
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyStartsWithDotAbsPath", {
     // GENERATED
@@ -836,7 +756,6 @@ describe("bundler", () => {
       "/project/src/.ts": `foo as number`,
     },
     entryPoints: ["/project/src/.htaccess", "/project/src/entry.js", "/project/src/.ts"],
-    snapshot: true,
   });
   itBundled("loader/LoaderCopyStartsWithDotRelPath", {
     // GENERATED
@@ -846,7 +765,6 @@ describe("bundler", () => {
       "/project/src/.ts": `foo as number`,
     },
     entryPoints: ["./.htaccess", "./entry.js", "./.ts"],
-    // TODO FIX absWorkingDir
-    snapshot: true,
+    /* TODO FIX absWorkingDir: "/project/src", */
   });
 });

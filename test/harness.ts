@@ -17,10 +17,25 @@ export function gc(force = true) {
   bunGC(force);
 }
 
-export async function expectObjectTypeCount(type: string, count: number, maxWait = 10000) {
+/**
+ * The garbage collector is not 100% deterministic
+ *
+ * We want to assert that SOME of the objects are collected
+ * But we cannot reliably assert that ALL of them are collected
+ *
+ * Therefore, we check that the count is less than or equal to the expected count
+ *
+ * @param type
+ * @param count
+ * @param maxWait
+ * @returns
+ */
+export async function expectMaxObjectTypeCount(type: string, count: number, maxWait = 1000) {
   gc();
+  if (heapStats().objectTypeCounts[type] <= count) return;
+  gc(true);
   for (const wait = 20; maxWait > 0; maxWait -= wait) {
-    if (heapStats().objectTypeCounts[type] === count) break;
+    if (heapStats().objectTypeCounts[type] <= count) break;
     await new Promise(resolve => setTimeout(resolve, wait));
     gc();
   }

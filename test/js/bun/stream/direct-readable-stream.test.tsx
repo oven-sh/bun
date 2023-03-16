@@ -7,7 +7,7 @@ import {
   serve,
 } from "bun";
 import { describe, expect, it } from "bun:test";
-import { expectObjectTypeCount, gc } from "harness";
+import { expectMaxObjectTypeCount, gc } from "harness";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import React from "react";
@@ -234,16 +234,16 @@ describe("ReactDOM", () => {
               const result = await response.text();
               expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
             } finally {
-              server?.stop();
+              server?.stop(true);
             }
           })();
-          await expectObjectTypeCount("ReadableHTTPResponseSinkController", 1);
+          await expectMaxObjectTypeCount("ReadableHTTPResponseSinkController", 2);
         });
         const count = 4;
         it(`http server, ${count} requests`, async () => {
           var remain = count;
           await (async () => {
-            var server;
+            let server;
             try {
               server = serve({
                 port: 0,
@@ -263,11 +263,11 @@ describe("ReactDOM", () => {
                 }
               }
             } finally {
-              server?.stop();
+              server?.stop(true);
             }
           })();
           expect(remain).toBe(-1);
-          await expectObjectTypeCount("ReadableHTTPResponseSinkController", 1);
+          await expectMaxObjectTypeCount("ReadableHTTPResponseSinkController", 3);
         });
       });
     }

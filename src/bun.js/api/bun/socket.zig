@@ -1037,6 +1037,7 @@ fn NewSocket(comptime ssl: bool) type {
                 const err_ = err.toErrorInstance(globalObject);
                 promise.rejectOnNextTickAsHandled(globalObject, err_);
                 this.has_pending_activity.store(false, .Release);
+                this.poll_ref.unref(handlers.vm);
             }
         }
 

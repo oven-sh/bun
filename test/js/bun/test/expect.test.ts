@@ -8,7 +8,7 @@ describe("expect()", () => {
       {
         label: "string",
         value: new String(""),
-        instanceOf: Number,
+        instanceOf: String,
       },
       {
         label: "number",

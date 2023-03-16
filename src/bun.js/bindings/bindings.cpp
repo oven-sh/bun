@@ -3807,13 +3807,11 @@ bool JSC__JSValue__isInstanceOf(JSC__JSValue JSValue0, JSC__JSGlobalObject* glob
         return false;
     }
     JSObject* jsConstructor = JSC::asObject(jsValue1);
-    if (!jsConstructor->structure()->typeInfo().implementsHasInstance())
+    if (UNLIKELY(!jsConstructor->structure()->typeInfo().implementsHasInstance()))
         return false;
     bool result = jsConstructor->hasInstance(globalObject, jsValue);
-    if (scope.exception()) {
-        scope.clearException();
-        return false;
-    }
+    
+    RETURN_IF_EXCEPTION(scope, false); 
 
     return result;
 }

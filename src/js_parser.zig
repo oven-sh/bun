@@ -7499,15 +7499,32 @@ fn NewParser_(
                                 }
 
                                 const import_record_index = p.addImportRecord(.stmt, parsedPath.loc, parsedPath.text);
-                                var path_name = fs.PathName.init(strings.append(p.allocator, "import_", parsedPath.text) catch unreachable);
-                                const namespace_ref = p.storeNameInRef(path_name.nonUniqueNameString(p.allocator) catch unreachable) catch unreachable;
+                                const path_name = fs.PathName.init(parsedPath.text);
+                                const namespace_ref = p.storeNameInRef(
+                                    std.fmt.allocPrint(
+                                        p.allocator,
+                                        "import_{any}",
+                                        .{
+                                            path_name.fmtIdentifier(),
+                                        },
+                                    ) catch unreachable,
+                                ) catch unreachable;
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
                                     p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                                 }
+                                p.current_scope.is_after_const_local_prefix = true;
 
-                                return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
+                                return p.s(
+                                    S.ExportFrom{
+                                        .items = export_clause.clauses,
+                                        .is_single_line = export_clause.is_single_line,
+                                        .namespace_ref = namespace_ref,
+                                        .import_record_index = import_record_index,
+                                    },
+                                    loc,
+                                );
                             }
                             try p.lexer.expectOrInsertSemicolon();
 

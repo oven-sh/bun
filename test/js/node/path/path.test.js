@@ -77,6 +77,61 @@ it("path.basename", () => {
   strictEqual(path.posix.basename(`/a/b/${controlCharFilename}`), controlCharFilename);
 });
 
+it("path.parse().name", () => {
+  strictEqual(path.parse(file).name, "path.test");
+  strictEqual(path.parse(".js").name, ".js");
+  strictEqual(path.parse("..js").name, ".");
+  strictEqual(path.parse("").name, "");
+  strictEqual(path.parse(".").name, ".");
+  strictEqual(path.parse("dir/name.ext").name, "name");
+  strictEqual(path.parse("/dir/name.ext").name, "name");
+  strictEqual(path.parse("/name.ext").name, "name");
+  strictEqual(path.parse("name.ext").name, "name");
+  strictEqual(path.parse("name.ext/").name, "name");
+  strictEqual(path.parse("name.ext//").name, "name");
+  strictEqual(path.parse("aaa/bbb").name, "bbb");
+  strictEqual(path.parse("aaa/bbb/").name, "bbb");
+  strictEqual(path.parse("aaa/bbb//").name, "bbb");
+  strictEqual(path.parse("/aaa/bbb").name, "bbb");
+  strictEqual(path.parse("/aaa/bbb/").name, "bbb");
+  strictEqual(path.parse("/aaa/bbb//").name, "bbb");
+  strictEqual(path.parse("//aaa/bbb").name, "bbb");
+  strictEqual(path.parse("//aaa/bbb/").name, "bbb");
+  strictEqual(path.parse("//aaa/bbb//").name, "bbb");
+  strictEqual(path.parse("///aaa").name, "aaa");
+  strictEqual(path.parse("//aaa").name, "aaa");
+  strictEqual(path.parse("/aaa").name, "aaa");
+  strictEqual(path.parse("aaa.").name, "aaa");
+
+  // On Windows a backslash acts as a path separator.
+  strictEqual(path.win32.parse("\\dir\\name.ext").name, "name");
+  strictEqual(path.win32.parse("\\name.ext").name, "name");
+  strictEqual(path.win32.parse("name.ext").name, "name");
+  strictEqual(path.win32.parse("name.ext\\").name, "name");
+  strictEqual(path.win32.parse("name.ext\\\\").name, "name");
+  strictEqual(path.win32.parse("name").name, "name");
+  strictEqual(path.win32.parse(".name").name, ".name");
+  strictEqual(path.win32.parse("C:").name, "");
+  strictEqual(path.win32.parse("C:.").name, ".");
+  strictEqual(path.win32.parse("C:\\").name, "");
+  strictEqual(path.win32.parse("C:\\.").name, ".");
+  strictEqual(path.win32.parse("C:\\.ext").name, ".ext");
+  strictEqual(path.win32.parse("C:\\dir\\name.ext").name, "name");
+  strictEqual(path.win32.parse("C:name.ext").name, "name");
+  strictEqual(path.win32.parse("C:name.ext\\").name, "name");
+  strictEqual(path.win32.parse("C:name.ext\\\\").name, "name");
+  strictEqual(path.win32.parse("C:foo").name, "foo");
+  strictEqual(path.win32.parse("C:.foo").name, ".foo");
+  strictEqual(path.win32.parse("file:stream").name, "file:stream");
+
+  // On unix a backslash is just treated as any other character.
+  strictEqual(path.posix.parse("\\dir\\name.ext").name, "\\dir\\name");
+  strictEqual(path.posix.parse("\\name.ext").name, "\\name");
+  strictEqual(path.posix.parse("name.ext").name, "name");
+  strictEqual(path.posix.parse("name.ext\\").name, "name");
+  strictEqual(path.posix.parse("name.ext\\\\").name, "name");
+});
+
 it("path.join", () => {
   const failures = [];
   const backslashRE = /\\/g;

@@ -1129,11 +1129,14 @@ pub const PathName = struct {
     pub fn init(_path: string) PathName {
         var path = _path;
         var base = path;
-        var ext = path;
+
+        // By default extension is empty
+        var ext: []const u8 = "";
         var dir = path;
         var is_absolute = true;
 
         var _i = strings.lastIndexOfChar(path, '/');
+        
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len) {
@@ -1152,8 +1155,69 @@ pub const PathName = struct {
         // Strip off the extension
         var _dot = strings.lastIndexOfChar(base, '.');
         if (_dot) |dot| {
-            ext = base[dot..];
-            base = base[0..dot];
+            // If base starts with a dot then the base is ".ext" and the ext remains empty.
+            // Otherwise ext is the right part of it (dot included) and the base is the left part.
+            if (dot != 0) {
+                ext = base[dot..];
+                base = base[0..dot];
+            }
+        }
+
+        if (is_absolute) {
+            dir = &([_]u8{});
+        }
+
+        return PathName{
+            .dir = dir,
+            .base = base,
+            .ext = ext,
+            .filename = if (dir.len > 0) _path[dir.len + 1 ..] else _path,
+        };
+    }
+
+    // Same as init but consider '\\' characters
+    pub fn init_win32(_path: string) PathName {
+        var path = _path;
+        var base = path;
+
+        // By default extension is empty
+        var ext: []const u8 = "";
+        var dir = path;
+        var is_absolute = true;
+
+        // Check both windows and linux formats
+        var _i = strings.lastIndexOfChar(path, '/');
+        if (strings.lastIndexOfChar(path, '\\')) |win32_i| {
+            _i = if (_i) |posix_i| @max(posix_i, win32_i) else win32_i;
+        }
+        
+        while (_i) |i| {
+            // Stop if we found a non-trailing slash
+            if (i + 1 != path.len) {
+                base = path[i + 1 ..];
+                dir = path[0..i];
+                is_absolute = false;
+                break;
+            }
+
+            // Ignore trailing slashes
+            path = path[0..i];
+
+            _i = strings.lastIndexOfChar(path, '/');
+            if (strings.lastIndexOfChar(path, '\\')) |win32_i| {
+                _i = if (_i) |posix_i| @max(posix_i, win32_i) else win32_i;
+            }
+        }
+
+        // Strip off the extension
+        var _dot = strings.lastIndexOfChar(base, '.');
+        if (_dot) |dot| {
+            // If base starts with a dot then the base is ".ext" and the ext remains empty.
+            // Otherwise ext is the right part of it (dot included) and the base is the left part.
+            if (dot != 0) {
+                ext = base[dot..];
+                base = base[0..dot];
+            }
         }
 
         if (is_absolute) {

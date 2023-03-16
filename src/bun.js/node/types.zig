@@ -1684,7 +1684,7 @@ pub const Path = struct {
         return JSC.JSValue.jsBoolean(isAbsoluteString(zig_str, isWindows));
     }
     fn isZigStringAbsoluteWindows(zig_str: JSC.ZigString) bool {
-        if (zig_str.is16Bit()) {
+        if (zig_str.len > 0 and zig_str.is16Bit()) {
             var buf = [4]u16{ 0, 0, 0, 0 };
             var u16_slice = zig_str.utf16Slice();
 
@@ -1775,19 +1775,56 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        var path_name = Fs.PathName.init(path);
+        var path_name = if (isWindows) Fs.PathName.init_win32(path) else Fs.PathName.init(path);
         var root = JSC.ZigString.init(path_name.dir);
         const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
+    
+        // Build root for windows in any case
+        if (isWindows) {
+            if (path.len > 1 and path[1] == ':') {
+                // Windows root can be like "C:", "C:/" and "C:\\", but only the last two patterns
+                // are for absolute paths.
+                if (path.len > 2 and (path[2] == '/' or path[2] == '\\')) {
+                    
+                    // Fix the dir if the path is absolute.
+                    if (is_absolute)
+                        path_name.dir = path[0..3];
 
-        var dir = JSC.ZigString.init(path_name.dir);
-        if (is_absolute) {
+                    if (path_name.filename.len == path.len) {
+                        root = JSC.ZigString.init(path_name.base[0..]);
+                        path_name.base = path_name.base[3..];
+                    }
+                } else {
+
+                    // Fix the dir if the path is absolute.
+                    if (is_absolute)
+                        path_name.dir = path[0..2];
+
+                    if (path_name.filename.len == path.len) {
+                        root = JSC.ZigString.init(path_name.base[0..2]);
+                        path_name.base = path_name.base[2..];
+                    }
+                }
+            } else if (is_absolute and path_name.dir.len > 0) {
+                // Find '\\' or '/', the base is already filled correctly.
+                root = JSC.ZigString.init(path_name.dir[0..1]);
+            }
+
+            // If the base is empty but the extension is not, swap the two variables
+            // to fix the base for windows.
+            if (path_name.base.len == 0 and path_name.ext.len > 0) {
+                path_name.base = path_name.ext;
+                path_name.ext = "";
+            }
+        } else if (is_absolute) {
             root = JSC.ZigString.Empty;
             if (path_name.dir.len == 0)
-                dir = JSC.ZigString.init(if (isWindows) std.fs.path.sep_str_windows else std.fs.path.sep_str_posix);
+                path_name.dir = std.fs.path.sep_str_posix;
         }
 
-        var base = JSC.ZigString.init(path_name.base);
-        var name_ = JSC.ZigString.init(path_name.filename);
+        var dir = JSC.ZigString.init(path_name.dir);
+        var base = JSC.ZigString.init(path_name.filename);
+        var name_ = JSC.ZigString.init(path_name.base);
         var ext = JSC.ZigString.init(path_name.ext);
         dir.setOutputEncoding();
         root.setOutputEncoding();

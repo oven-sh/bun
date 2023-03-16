@@ -2694,7 +2694,7 @@ declare module "bun" {
          */
         builder: PluginBuilder,
       ): void | Promise<void>;
-    }): ReturnType<typeof options["setup"]>;
+    }): ReturnType<(typeof options)["setup"]>;
 
     /**
      * Deactivate all plugins

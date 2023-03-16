@@ -1,10 +1,9 @@
 import { test, describe, expect, it } from "bun:test";
-import fs from "node:fs";
-
+import { heapStats } from "bun:jsc";
+import { expectObjectTypeCount, gc } from "harness";
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
 import EventEmitter, { getEventListeners, captureRejectionSymbol } from "node:events";
-import { heapStats } from "bun:jsc";
 
 describe("EventEmitter", () => {
   it("captureRejectionSymbol", () => {
@@ -91,15 +90,15 @@ const waysOfCreating = [
     return foo;
   },
   () => {
-    const FakeEmitter = function FakeEmitter() {
+    function FakeEmitter(this: any) {
       return EventEmitter.call(this);
-    };
+    }
     Object.setPrototypeOf(FakeEmitter.prototype, EventEmitter.prototype);
     Object.setPrototypeOf(FakeEmitter, EventEmitter);
-    return new FakeEmitter();
+    return new (FakeEmitter as any)();
   },
   () => {
-    const FakeEmitter = function FakeEmitter() {
+    const FakeEmitter: any = function FakeEmitter(this: any) {
       EventEmitter.call(this);
     };
     Object.assign(FakeEmitter.prototype, EventEmitter.prototype);
@@ -117,9 +116,9 @@ for (let create of waysOfCreating) {
   it(`${create.toString().slice(10, 40).replaceAll("\n", "\\n").trim()} should work`, () => {
     var myEmitter = create();
     var called = false;
-    myEmitter.once("event", function () {
+    (myEmitter as EventEmitter).once("event", function () {
       called = true;
-      expect(this as any).toBe(myEmitter);
+      expect(this).toBe(myEmitter);
     });
     var firstEvents = myEmitter._events;
     expect(myEmitter.listenerCount("event")).toBe(1);
@@ -143,13 +142,11 @@ test("EventEmitter.off", () => {
 });
 
 // Internally, EventEmitter has a JSC::Weak with the thisValue of the listener
-test("EventEmitter GCs", () => {
-  Bun.gc(true);
+test("EventEmitter GCs", async () => {
+  gc();
 
-  const startCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
+  const startCount = heapStats().objectTypeCounts["EventEmitter"] ?? 0;
   (function () {
-    Bun.gc(true);
-
     function EventEmitterSubclass(this: any) {
       EventEmitter.call(this);
     }
@@ -157,13 +154,10 @@ test("EventEmitter GCs", () => {
     Object.setPrototypeOf(EventEmitterSubclass.prototype, EventEmitter.prototype);
     Object.setPrototypeOf(EventEmitterSubclass, EventEmitter);
 
-    var myEmitter = new EventEmitterSubclass();
+    var myEmitter = new (EventEmitterSubclass as any)();
     myEmitter.on("foo", () => {});
     myEmitter.emit("foo");
-    Bun.gc(true);
   })();
-  Bun.gc(true);
 
-  const endCount = heapStats().objectTypeCounts["EventEmitter"] || 0;
-  expect(endCount).toBe(startCount);
+  await expectObjectTypeCount("EventEmitter", startCount);
 });

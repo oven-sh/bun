@@ -366,7 +366,7 @@ pub const Binding = struct {
     }
 
     pub fn toExpr(binding: *const Binding, wrapper: anytype) Expr {
-        var loc = binding.loc;
+        const loc = binding.loc;
 
         switch (binding.data) {
             .b_missing => {
@@ -399,24 +399,26 @@ pub const Binding = struct {
                 var properties = wrapper
                     .allocator
                     .alloc(G.Property, b.properties.len) catch unreachable;
-                var i: usize = 0;
-                while (i < properties.len) : (i += 1) {
-                    const item = b.properties[i];
-                    properties[i] = G.Property{
+                for (properties, b.properties) |*property, item| {
+                    property.* = .{
                         .flags = item.flags,
                         .key = item.key,
                         .kind = if (item.flags.contains(.is_spread))
-                            G.Property.Kind.spread
+                            .spread
                         else
-                            G.Property.Kind.normal,
+                            .normal,
                         .value = toExpr(&item.value, wrapper),
                         .initializer = item.default_value,
                     };
                 }
-                return Expr.init(E.Object, E.Object{
-                    .properties = G.Property.List.init(properties),
-                    .is_single_line = b.is_single_line,
-                }, loc);
+                return Expr.init(
+                    E.Object,
+                    E.Object{
+                        .properties = G.Property.List.init(properties),
+                        .is_single_line = b.is_single_line,
+                    },
+                    loc,
+                );
             },
             else => {
                 Global.panic("Interanl error", .{});

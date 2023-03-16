@@ -3791,6 +3791,27 @@ bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0)
     return value.isConstructor();
 }
 
+bool JSC__JSValue__isInstanceOf(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
+{
+    VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue jsValue = JSValue::decode(JSValue0);
+    JSValue jsValue1 = JSValue::decode(JSValue1);
+    if (UNLIKELY(!jsValue1.isObject())) {
+        return false;
+    }
+    JSObject* jsConstructor = JSC::asObject(jsValue1);
+    if (UNLIKELY(!jsConstructor->structure()->typeInfo().implementsHasInstance()))
+        return false;
+    bool result = jsConstructor->hasInstance(globalObject, jsValue);
+    
+    RETURN_IF_EXCEPTION(scope, false); 
+
+    return result;
+}
+
 extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
     return JSValue::encode(JSC::jsString(globalObject, JSC::JSValue::decode(JSValue0).toString(globalObject), JSC::JSValue::decode(JSValue1).toString(globalObject)));

@@ -2942,7 +2942,6 @@ const LinkerContext = struct {
                 js_ast.Expr.initIdentifier(exports_ref, loc),
                 js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
             };
-            // the end incase we somehow get into a state where needs_export_variable is false but properties.len > 0
             remaining_stmts[0] = js_ast.Stmt.allocate(
                 allocator_,
                 js_ast.S.SExpr,
@@ -5392,13 +5391,6 @@ const LinkerContext = struct {
                                     .binding = Binding.alloc(
                                         w.allocator,
                                         B.Identifier{
-                                            .ref = ref,
-                                        },
-                                        loc,
-                                    ),
-                                    .value = Expr.init(
-                                        E.Identifier,
-                                        E.Identifier{
                                             .ref = ref,
                                         },
                                         loc,

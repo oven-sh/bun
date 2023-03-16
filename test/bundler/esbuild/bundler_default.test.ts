@@ -489,7 +489,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/JSXConstantFragments", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './default'
@@ -532,35 +531,47 @@ describe("bundler", () => {
     },
   });
   itBundled("default/JSXAutomaticImportsCommonJS", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {jsx, Fragment} from './custom-react'
         console.log(<div jsx={jsx}/>, <><Fragment/></>)
       `,
-      "/custom-react.js": `module.exports = {}`,
+      "/custom-react.js": `module.exports = { jsx: 'jsx', Fragment: 'fragment2' }`,
     },
     jsx: {
       automaticRuntime: true,
     },
     external: ["react/jsx-runtime"],
+    run: {
+      stdout: `
+        <div jsx="jsx" /> <>
+          <fragment2 />
+        </>
+      `,
+    },
   });
   itBundled("default/JSXAutomaticImportsES6", {
-    // GENERATED
     files: {
       "/entry.jsx": /* jsx */ `
         import {jsx, Fragment} from './custom-react'
         console.log(<div jsx={jsx}/>, <><Fragment/></>)
       `,
       "/custom-react.js": /* js */ `
-        export function jsx() {}
-        export function Fragment() {}
+        export const jsx = 'jsx function'
+        export const Fragment = 'fragment'
       `,
     },
     jsx: {
       automaticRuntime: true,
     },
     external: ["react/jsx-runtime"],
+    run: {
+      stdout: `
+        <div jsx="jsx function" /> <>
+          <fragment />
+        </>
+      `,
+    },
   });
   itBundled("default/JSXAutomaticSyntaxInJS", {
     files: {
@@ -575,7 +586,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/NodeModules", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import fn from 'demo-pkg'
@@ -587,16 +597,20 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/RequireChildDirCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": `console.log(require('./dir'))`,
       "/Users/user/project/src/dir/index.js": `module.exports = 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/RequireChildDirES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import value from './dir'
@@ -604,16 +618,20 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/dir/index.js": `export default 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/RequireParentDirCommonJS", {
-    // GENERATED
     files: {
       "/Users/user/project/src/dir/entry.js": `console.log(require('..'))`,
       "/Users/user/project/src/index.js": `module.exports = 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/RequireParentDirES6", {
-    // GENERATED
     files: {
       "/Users/user/project/src/dir/entry.js": /* js */ `
         import value from '..'
@@ -621,9 +639,11 @@ describe("bundler", () => {
       `,
       "/Users/user/project/src/index.js": `export default 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/ImportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -631,32 +651,38 @@ describe("bundler", () => {
       `,
       "/foo.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "foo.js" for import "default"
-  entry.js: ERROR: No matching export in "foo.js" for import "y"
-  `, */
+    bundleErrors: {
+      "/entry.js": [
+        `No matching export "default" in "foo.js" for import "default"`,
+        `No matching export "y" in "foo.js" for import "y"`,
+      ],
+    },
   });
   itBundled("default/ImportMissingUnusedES6", {
-    // GENERATED
     files: {
       "/entry.js": `import fn, {x as a, y as b} from './foo'`,
       "/foo.js": `export const x = 123`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "foo.js" for import "default"
-  entry.js: ERROR: No matching export in "foo.js" for import "y"
-  `, */
+    bundleErrors: {
+      "/entry.js": [
+        `No matching export "default" in "foo.js" for import "default"`,
+        `No matching export "y" in "foo.js" for import "y"`,
+      ],
+    },
   });
   itBundled("default/ImportMissingCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
-        console.log(fn(a, b))
+        console.log(fn.x, a, b);
       `,
       "/foo.js": `exports.x = 123`,
     },
+    run: {
+      stdout: "123 123 undefined",
+    },
   });
   itBundled("default/ImportMissingNeitherES6NorCommonJS", {
-    // GENERATED
     files: {
       "/named.js": /* js */ `
         import fn, {x as a, y as b} from './foo'
@@ -676,14 +702,19 @@ describe("bundler", () => {
       "/foo.js": `console.log('no exports here')`,
     },
     entryPoints: ["/named.js", "/star.js", "/star-capture.js", "/bare.js", "/require.js", "/import.js"],
-    /* TODO FIX expectedCompileLog: `named.js: WARNING: Import "x" will always be undefined because the file "foo.js" has no exports
-  named.js: WARNING: Import "y" will always be undefined because the file "foo.js" has no exports
-  star.js: WARNING: Import "x" will always be undefined because the file "foo.js" has no exports
-  star.js: WARNING: Import "y" will always be undefined because the file "foo.js" has no exports
-  `, */
+    // TODO: warnings
+    bundleWarnings: {
+      "/named.js": [
+        'Import "x" will always be undefined because the file "foo.js" has no exports',
+        'Import "y" will always be undefined because the file "foo.js" has no exports',
+      ],
+      "/star.js": [
+        'Import "x" will always be undefined because the file "foo.js" has no exports',
+        'Import "y" will always be undefined because the file "foo.js" has no exports',
+      ],
+    },
   });
   itBundled("default/ExportMissingES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as ns from './foo'
@@ -692,11 +723,11 @@ describe("bundler", () => {
       "/foo.js": `export {nope} from './bar'`,
       "/bar.js": `export const yep = 123`,
     },
-    /* TODO FIX expectedCompileLog: `foo.js: ERROR: No matching export in "bar.js" for import "nope"
-  `, */
+    bundleErrors: {
+      "/foo.js": [`No matching export "nope" in "bar.js" for import "nope"`],
+    },
   });
   itBundled("default/DotImport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {x} from '.'
@@ -704,15 +735,20 @@ describe("bundler", () => {
       `,
       "/index.js": `exports.x = 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/RequireWithTemplate", {
-    // GENERATED
     files: {
       "/a.js": `
         console.log(require('./b'))
         console.log(require(\` + "\`./b\`" + \`))
       `,
       "/b.js": `exports.x = 123`,
+    },
+    run: {
+      stdout: "123",
     },
   });
   itBundled("default/DynamicImportWithTemplateIIFE", {

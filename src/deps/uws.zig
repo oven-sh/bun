@@ -588,8 +588,13 @@ pub const us_bun_socket_context_options_t = extern struct {
     ca_file_name: [*c]const u8 = null,
     ssl_ciphers: [*c]const u8 = null,
     ssl_prefer_low_memory_usage: i32 = 0,
-    key: [*c]const u8 = null,
-    cert: [*c]const u8 = null,
+    key: [*c][*c]const u8 = null,
+    key_count: u32 = 0,
+    cert: [*c][*c]const u8 = null,
+    cert_count: u32 = 0,
+    ca: [*c][*c]const u8 = null,
+    ca_count: u32 = 0,
+    secure_options: u32 = 0
 };
 
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;

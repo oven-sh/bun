@@ -109,6 +109,7 @@ export const Socket = (function (InternalSocket) {
       },
       error(socket, error) {
         const self = socket.data;
+        console.log(error);
         const callback = self.#writeCallback;
         if (callback) {
           self.#writeCallback = null;
@@ -618,7 +619,7 @@ class Server extends EventEmitter {
       if (typeof bunTLS === "function") {
         [tls, TLSSocketClass] = bunTLS.call(this, port, hostname);
       }
-
+      
       this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;
 
       this.#server = Bun.listen(

@@ -443,7 +443,7 @@ pub const Listener = struct {
 
         defer if (ssl != null) ssl.?.deinit();
         globalObject.bunVM().eventLoop().ensureWaker();
-
+        log("creating context", .{});
         var socket_context = uws.us_create_bun_socket_context(
             @boolToInt(ssl_enabled),
             uws.Loop.get().?,
@@ -467,7 +467,7 @@ pub const Listener = struct {
             exception.* = err.asObjectRef();
             return .zero;
         };
-
+        log("context created", .{});
         if (ssl_enabled) {
             uws.NewSocketHandler(true).configure(
                 socket_context,

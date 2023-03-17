@@ -871,6 +871,7 @@ const ParseTask = struct {
                 opts.transform_require_to_import = false;
                 opts.can_import_from_bundle = false;
                 opts.features.allow_runtime = !source.index.isRuntime();
+                opts.features.dynamic_require = bundler.options.platform.isBun();
                 opts.warn_about_unbundled_modules = false;
                 opts.macro_context = &this.data.macro_context;
                 opts.bundle = true;
@@ -1850,7 +1851,7 @@ const LinkerContext = struct {
         try this.findAllImportedPartsInJSOrder(temp_allocator, chunks);
 
         const unique_key_item_len = std.fmt.count("{any}C{d:8}", .{ bun.fmt.hexIntLower(unique_key), chunks.len });
-        var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len);
+        var unique_key_builder = try bun.StringBuilder.initCapacity(this.allocator, unique_key_item_len * chunks.len);
         this.unique_key_buf = unique_key_builder.allocatedSlice();
         errdefer {
             unique_key_builder.deinit(this.allocator);

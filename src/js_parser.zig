@@ -191,9 +191,15 @@ pub fn ExpressionTransposer(
         pub fn maybeTransposeIf(self: *This, arg: Expr, state: anytype) Expr {
             switch (arg.data) {
                 .e_if => |ex| {
-                    ex.yes = self.maybeTransposeIf(ex.yes, state);
-                    ex.no = self.maybeTransposeIf(ex.no, state);
-                    return arg;
+                    return Expr.init(
+                        E.If,
+                        E.If{
+                            .yes = self.maybeTransposeIf(ex.yes, state),
+                            .no = self.maybeTransposeIf(ex.no, state),
+                            .test_ = ex.test_,
+                        },
+                        arg.loc,
+                    );
                 },
                 else => {
                     return visitor(self.context, arg, state);
@@ -4237,7 +4243,19 @@ fn NewParser_(
                     // require(import_object_assign)
                     return p.callRuntime(arg.loc, "__require", args);
                 },
-                else => {},
+                else => {
+                    if (p.options.bundle) {
+                        const args = p.allocator.alloc(Expr, 1) catch unreachable;
+                        args[0] = arg;
+                        return p.newExpr(
+                            E.Call{
+                                .target = p.valueForRequire(arg.loc),
+                                .args = ExprNodeList.init(args),
+                            },
+                            arg.loc,
+                        );
+                    }
+                },
             }
 
             return arg;
@@ -14940,7 +14958,9 @@ fn NewParser_(
                         }
                     }
 
-                    if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and e_.target.data.e_identifier.ref.eql(p.require_ref)) {
+                    if (e_.optional_chain == null and @as(Expr.Tag, e_.target.data) == .e_identifier and
+                        e_.target.data.e_identifier.ref.eql(p.require_ref))
+                    {
                         e_.can_be_unwrapped_if_unused = false;
 
                         // Heuristic: omit warnings inside try/catch blocks because presumably
@@ -14971,16 +14991,6 @@ fn NewParser_(
                             }
 
                             p.ignoreUsage(p.require_ref);
-                            return p.newExpr(
-                                E.Call{
-                                    .target = p.importMetaRequire(expr.loc),
-                                    .args = e_.args,
-                                    .close_paren_loc = e_.close_paren_loc,
-                                    .optional_chain = e_.optional_chain,
-                                    .can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused,
-                                },
-                                expr.loc,
-                            );
                         }
 
                         if (p.options.warn_about_unbundled_modules) {
@@ -14997,7 +15007,7 @@ fn NewParser_(
                             return p.newExpr(E.Null{}, expr.loc);
                         }
 
-                        if (p.options.features.dynamic_require) {
+                        if (p.options.features.dynamic_require and !p.options.bundle) {
                             p.ignoreUsage(p.require_ref);
                             // require.resolve(FOO) => import.meta.resolveSync(FOO)
                             // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
@@ -15146,6 +15156,14 @@ fn NewParser_(
                 else => {},
             }
             return expr;
+        }
+
+        fn valueForRequire(p: *P, loc: logger.Loc) Expr {
+            if (p.options.features.dynamic_require) {
+                return p.importMetaRequire(loc);
+            } else {
+                return p.runtimeIdentifier(loc, "__require");
+            }
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -18280,7 +18298,7 @@ fn NewParser_(
             }, loc);
         }
 
-        pub fn callRuntime(p: *P, loc: logger.Loc, comptime name: string, args: []Expr) Expr {
+        fn runtimeIdentifier(p: *P, loc: logger.Loc, comptime name: string) Expr {
             var ref: Ref = undefined;
             p.has_called_runtime = true;
 
@@ -18301,12 +18319,22 @@ fn NewParser_(
             }
 
             p.recordUsage(ref);
-            return p.newExpr(E.Call{
-                .target = p.newExpr(E.Identifier{
+            return p.newExpr(
+                E.ImportIdentifier{
                     .ref = ref,
-                }, loc),
-                .args = ExprNodeList.init(args),
-            }, loc);
+                },
+                loc,
+            );
+        }
+
+        fn callRuntime(p: *P, loc: logger.Loc, comptime name: string, args: []Expr) Expr {
+            return p.newExpr(
+                E.Call{
+                    .target = p.runtimeIdentifier(loc, name),
+                    .args = ExprNodeList.init(args),
+                },
+                loc,
+            );
         }
 
         // Try separating the list for appending, so that it's not a pointer.

@@ -867,7 +867,9 @@ describe("bundler", () => {
       "/b.js": `throw new Error("Did not bundle b.js")`,
       "/c.js": `exports.foo = 532`,
       "/node_modules/a/index.js": `exports.foo = 852`,
+      "/node_modules/a/package.json": `{"main": "index.js", "name": "a"}`,
       "/node_modules/c/index.js": `exports.foo = 123`,
+      "/node_modules/c/package.json": `{"main": "index.js", "name": "c"}`,
     },
     run: [
       {

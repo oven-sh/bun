@@ -2818,9 +2818,7 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass: bool = brk: {
             if (expected_value.isString()) {
-                const value_string = value.getZigString(globalObject);
-                const expected_string = expected_value.getZigString(globalObject);
-                break :brk value_string.contains(expected_string);
+                break :brk value.stringIncludes(globalObject, expected_value);
             } else if (expected_value.isRegExp()) {
                 break :brk expected_value.toMatch(globalObject, value);
             }

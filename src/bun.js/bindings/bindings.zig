@@ -188,10 +188,6 @@ pub const ZigString = extern struct {
         return strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
     }
 
-    pub fn contains(this: ZigString, other: ZigString) bool {
-        return strings.contains(this.slice(), other.slice());
-    }
-
     pub fn isAllASCII(this: ZigString) bool {
         if (this.is16Bit()) {
             return strings.firstNonASCII16([]const u16, this.utf16SliceAligned()) == null;
@@ -3991,6 +3987,10 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("stringIncludes", .{ this, globalObject, other });
+    }
+
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
         return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
     }
@@ -4132,6 +4132,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toMatch",
         "isConstructor",
         "isInstanceOf",
+        "stringIncludes",
     };
 };
 

@@ -2856,6 +2856,20 @@ bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global,
     return !!regexObject->match(global, JSC::asString(str));
 }
 
+bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globalObject, JSC__JSValue other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    WTF::String stringToSearchIn = JSC::JSValue::decode(value).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    WTF::String searchString = JSC::JSValue::decode(other).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return stringToSearchIn.find(searchString, 0) != WTF::notFound;
+}
+
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
     frame->source_url = Zig::toZigString(stackFrame->sourceURL(vm));

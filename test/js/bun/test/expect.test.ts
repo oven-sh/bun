@@ -67,7 +67,12 @@ describe("expect()", () => {
         label: "substring emojis",
         value: "👍👎",
         matched: "👍"
-      }
+      },
+      {
+        label: "substring UTF-16",
+        value: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂",
+        matched: "🥲 ☺️ 😊"
+      },
     ];
     for (const { label, value, matched } of tests) {
       test(label, () => expect(value).toMatch(matched));

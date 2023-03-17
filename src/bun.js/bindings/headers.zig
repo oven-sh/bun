@@ -266,6 +266,7 @@ pub extern fn JSC__JSValue__put(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobal
 pub extern fn JSC__JSValue__putIndex(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u32, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSValue__putRecord(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn JSC__JSValue__strictDeepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: *bindings.JSGlobalObject) bool;
+pub extern fn JSC__JSValue__stringIncludes(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__symbolFor(arg0: *bindings.JSGlobalObject, arg1: [*c]ZigString) JSC__JSValue;
 pub extern fn JSC__JSValue__symbolKeyFor(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString) bool;
 pub extern fn JSC__JSValue__toBoolean(JSValue0: JSC__JSValue) bool;

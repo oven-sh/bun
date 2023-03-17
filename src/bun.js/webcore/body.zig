@@ -1073,10 +1073,8 @@ pub fn BodyMixin(comptime Type: type) type {
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
                 const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    err,
-                );
+                globalObject.throwValue(err);
+                return .zero;
             };
 
             if (value.* == .Locked) {

@@ -1277,6 +1277,7 @@ JSC:
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isRaw"_s)), JSC::JSFunction::create(vm, globalObject, 0, "isRaw"_s, jsFunctionInternalTty_isRaw, ImplementationVisibility::Public), 0);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setRawMode"_s)), JSC::JSFunction::create(vm, globalObject, 0, "setRawMode"_s, jsFunctionInternalTty_setRawMode, ImplementationVisibility::Public), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setAsyncIoMode"_s)), JSC::JSFunction::create(vm, globalObject, 0, "setAsyncIoMode"_s, jsFunctionInternalTty_setAsyncIoMode, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 

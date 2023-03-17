@@ -2645,6 +2645,16 @@ pub const Parser = struct {
 
         var did_import_fast_refresh = false;
 
+        if (p.commonjs_named_exports.count() > 0) {
+            const export_refs = p.commonjs_named_exports.values();
+
+            if (!p.commonjs_named_exports_deoptimized and p.es6_export_keyword.len == 0) {
+                p.es6_export_keyword.loc = export_refs[0].loc_ref.loc;
+                p.es6_export_keyword.len = 5;
+            }
+        } else if (p.options.bundle and parts.items.len == 1) {
+        }
+
         // Analyze cross-part dependencies for tree shaking and code splitting
         var exports_kind = js_ast.ExportsKind.none;
         const uses_exports_ref = p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0;
@@ -3796,6 +3806,10 @@ fn NewParser_(
         declared_symbols: DeclaredSymbol.List = .{},
         declared_symbols_for_reuse: DeclaredSymbol.List = .{},
         runtime_imports: RuntimeImports = RuntimeImports{},
+
+        commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
+        commonjs_named_exports_deoptimized: bool = false,
+        commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
         // duplicate_case_checker: void,
@@ -12763,6 +12777,9 @@ fn NewParser_(
                                             .e_import_identifier => |ident| {
                                                 break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
                                             },
+                                            .e_commonjs_export_identifier => |ident| {
+                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                            },
                                             .e_identifier => |ident| {
                                                 break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
                                             },
@@ -13295,6 +13312,11 @@ fn NewParser_(
             return func;
         }
 
+        fn deoptimizeCommonJSNamedExports(p: *P) void {
+            // exists for debugging
+            p.commonjs_named_exports_deoptimized = true;
+        }
+
         fn maybeKeepExprSymbolName(p: *P, expr: Expr, original_name: string, was_anonymous_named_expr: bool) Expr {
             return if (was_anonymous_named_expr) p.keepExprSymbolName(expr, original_name) else expr;
         }
@@ -13318,6 +13340,7 @@ fn NewParser_(
                     // Instead of doing this at runtime using "fn.call(module.exports)", we
                     // do it at compile time using expression substitution here.
                     p.recordUsage(p.exports_ref);
+                    p.deoptimizeCommonJSNamedExports();
                     return p.newExpr(E.Identifier{ .ref = p.exports_ref }, loc);
                 }
             }
@@ -14308,7 +14331,6 @@ fn NewParser_(
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,
                     });
                     e_.target = target;
-
                     switch (e_.index.data) {
                         .e_private_identifier => |_private| {
                             var private = _private;
@@ -14578,6 +14600,7 @@ fn NewParser_(
                     }
 
                     e_.target = p.visitExpr(e_.target);
+
                     if (e_.optional_chain == null) {
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
@@ -14586,6 +14609,7 @@ fn NewParser_(
                             e_.name_loc,
                             .{
                                 .is_call_target = is_call_target,
+                                .assign_target = in.assign_target,
                                 // .is_template_tag = p.template_tag != null,
                             },
                         )) |_expr| {
@@ -15229,7 +15253,7 @@ fn NewParser_(
                         return true;
                     }
                 },
-                .e_import_identifier => {
+                .e_commonjs_export_identifier, .e_import_identifier => {
 
                     // References to an ES6 import item are always side-effect free in an
                     // ECMAScript environment.
@@ -15760,13 +15784,80 @@ fn NewParser_(
                         }
                     }
 
-                    // Rewrite "module.require()" to "require()" for Webpack compatibility.
-                    // See https://github.com/webpack/webpack/pull/7750 for more info.
-                    // This also makes correctness a little easier.
-                    if (identifier_opts.is_call_target and id.ref.eql(p.module_ref) and strings.eqlComptime(name, "require")) {
-                        p.ignoreUsage(p.module_ref);
-                        p.recordUsage(p.require_ref);
-                        return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);
+                    if (!p.is_control_flow_dead and id.ref.eql(p.module_ref)) {
+                        // Rewrite "module.require()" to "require()" for Webpack compatibility.
+                        // See https://github.com/webpack/webpack/pull/7750 for more info.
+                        // This also makes correctness a little easier.
+                        if (identifier_opts.is_call_target and strings.eqlComptime(name, "require")) {
+                            p.ignoreUsage(p.module_ref);
+                            p.recordUsage(p.require_ref);
+                            return p.newExpr(E.Identifier{ .ref = p.require_ref }, name_loc);
+                        } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
+                            // Deoptimizations:
+                            //      delete module.exports
+                            //      module.exports();
+
+                            if (identifier_opts.is_call_target or identifier_opts.is_delete_target or identifier_opts.assign_target != .none) {
+                                p.deoptimizeCommonJSNamedExports();
+                                return null;
+                            }
+
+                            // rewrite `module.exports` to `exports`
+                            return p.newExpr(E.Identifier{ .ref = p.exports_ref }, name_loc);
+                        } else if (strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
+                            // inline module.id
+                            p.ignoreUsage(p.module_ref);
+                            return p.newExpr(E.String.init(p.source.path.text), name_loc);
+                        } else if (strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
+                            // inline module.filename
+                            p.ignoreUsage(p.module_ref);
+                            return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
+                        } else if (strings.eqlComptime(name, "path") and identifier_opts.assign_target == .none) {
+                            // inline module.path
+                            p.ignoreUsage(p.module_ref);
+                            return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
+                        }
+                    }
+
+                    if (!p.is_control_flow_dead and id.ref.eql(p.exports_ref) and !p.commonjs_named_exports_deoptimized) {
+                        if (identifier_opts.is_delete_target) {
+                            p.deoptimizeCommonJSNamedExports();
+                            return null;
+                        }
+
+                        var named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                        if (!named_export_entry.found_existing) {
+                            const new_ref = p.newSymbol(
+                                .other,
+                                if (p.options.bundle)
+                                    MutableString.ensureValidIdentifier(
+                                        name,
+                                        p.allocator,
+                                    ) catch unreachable
+                                else
+                                    std.fmt.allocPrint(p.allocator, "exports_{any}", .{strings.fmtIdentifier(name)}) catch unreachable,
+                            ) catch unreachable;
+                            named_export_entry.value_ptr.* = .{
+                                .loc_ref = LocRef{
+                                    .loc = name_loc,
+                                    .ref = new_ref,
+                                },
+                                .needs_decl = true,
+                            };
+                            if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                p.commonjs_named_exports_needs_conversion = @truncate(u32, p.commonjs_named_exports.count() - 1);
+                        }
+
+                        const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                        p.ignoreUsage(id.ref);
+                        p.recordUsage(ref);
+
+                        return p.newExpr(
+                            E.CommonJSExportIdentifier{
+                                .ref = ref,
+                            },
+                            name_loc,
+                        );
                     }
 
                     // If this is a known enum value, inline the value of the enum
@@ -16343,9 +16434,54 @@ fn NewParser_(
                 },
                 .s_expr => |data| {
                     p.stmt_expr_value = data.value.data;
+                    const is_top_level = p.current_scope == p.module_scope;
+
+                    p.commonjs_named_exports_needs_conversion = if (is_top_level)
+                        std.math.maxInt(u32)
+                    else
+                        p.commonjs_named_exports_needs_conversion;
+
                     data.value = p.visitExpr(data.value);
+
                     // simplify unused
                     data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse data.value.toEmpty();
+
+                    if (is_top_level) {
+                        if (data.value.data == .e_binary) {
+                            const to_convert = p.commonjs_named_exports_needs_conversion;
+                            if (to_convert != std.math.maxInt(u32)) {
+                                p.commonjs_named_exports_needs_conversion = std.math.maxInt(u32);
+                                convert: {
+                                    const bin: *E.Binary = data.value.data.e_binary;
+                                    if (bin.op == .bin_assign and bin.left.data == .e_commonjs_export_identifier) {
+                                        var last = &p.commonjs_named_exports.values()[to_convert];
+                                        if (!last.needs_decl) break :convert;
+                                        last.needs_decl = false;
+
+                                        var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                                        const ref = bin.left.data.e_commonjs_export_identifier.ref;
+                                        decls[0] = .{
+                                            .binding = p.b(B.Identifier{ .ref = ref }, bin.left.loc),
+                                            .value = bin.right,
+                                        };
+                                        p.module_scope.generated.push(p.allocator, ref) catch unreachable;
+                                        p.recordDeclaredSymbol(ref) catch unreachable;
+                                        p.ignoreUsage(ref);
+                                        p.es6_export_keyword.loc = stmt.loc;
+                                        p.es6_export_keyword.len = 5;
+                                        const new_stmt = p.s(S.Local{
+                                            .kind = .k_var,
+                                            .is_export = true,
+                                            .decls = decls,
+                                        }, stmt.loc);
+                                        stmts.append(new_stmt) catch unreachable;
+
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 .s_throw => |data| {
                     data.value = p.visitExpr(data.value);
@@ -19257,6 +19393,7 @@ fn NewParser_(
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .bun_plugin = p.bun_plugin,
+                .commonjs_named_exports = p.commonjs_named_exports,
             };
         }
 
@@ -19312,6 +19449,9 @@ fn NewParser_(
                 .scopes_in_order = scope_order,
                 .needs_jsx_import = if (comptime only_scan_imports_and_do_not_visit) false else NeedsJSXType{},
                 .lexer = lexer,
+
+                // Only enable during bundling
+                .commonjs_named_exports_deoptimized = !opts.bundle,
             };
 
             this.symbols = std.ArrayList(Symbol).init(allocator);

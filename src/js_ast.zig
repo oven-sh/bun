@@ -1283,32 +1283,36 @@ pub const E = struct {
         }
     };
 
-    // This is similar to an EIdentifier but it represents a reference to an ES6
-    // import item.
-    //
-    // Depending on how the code is linked, the file containing this EImportIdentifier
-    // may or may not be in the same module group as the file it was imported from.
-    //
-    // If it's the same module group than we can just merge the import item symbol
-    // with the corresponding symbol that was imported, effectively renaming them
-    // to be the same thing and statically binding them together.
-    //
-    // But if it's a different module group, then the import must be dynamically
-    // evaluated using a property access off the corresponding namespace symbol,
-    // which represents the result of a require() call.
-    //
-    // It's stored as a separate type so it's not easy to confuse with a plain
-    // identifier. For example, it'd be bad if code trying to convert "{x: x}" into
-    // "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
-    // "{x: importedNamespace.x}". This separate type forces code to opt-in to
-    // doing this instead of opt-out.
+    /// This is similar to an `Identifier` but it represents a reference to an ES6
+    /// import item.
+    ///
+    /// Depending on how the code is linked, the file containing this EImportIdentifier
+    /// may or may not be in the same module group as the file it was imported from.
+    ///
+    /// If it's the same module group than we can just merge the import item symbol
+    /// with the corresponding symbol that was imported, effectively renaming them
+    /// to be the same thing and statically binding them together.
+    ///
+    /// But if it's a different module group, then the import must be dynamically
+    /// evaluated using a property access off the corresponding namespace symbol,
+    /// which represents the result of a require() call.
+    ///
+    /// It's stored as a separate type so it's not easy to confuse with a plain
+    /// identifier. For example, it'd be bad if code trying to convert "{x: x}" into
+    /// "{x}" shorthand syntax wasn't aware that the "x" in this case is actually
+    /// "{x: importedNamespace.x}". This separate type forces code to opt-in to
+    /// doing this instead of opt-out.
     pub const ImportIdentifier = struct {
         ref: Ref = Ref.None,
 
-        // If true, this was originally an identifier expression such as "foo". If
-        // false, this could potentially have been a member access expression such
-        // as "ns.foo" off of an imported namespace object.
+        /// If true, this was originally an identifier expression such as "foo". If
+        /// false, this could potentially have been a member access expression such
+        /// as "ns.foo" off of an imported namespace object.
         was_originally_identifier: bool = false,
+    };
+
+    pub const CommonJSExportIdentifier = struct {
+        ref: Ref = Ref.None,
     };
 
     // This is similar to EIdentifier but it represents class-private fields and
@@ -2999,6 +3003,17 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.CommonJSExportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_commonjs_export_identifier = .{
+                            .ref = st.ref,
+                        },
+                    },
+                };
+            },
+
             E.PrivateIdentifier => {
                 return Expr{
                     .loc = loc,
@@ -3371,6 +3386,16 @@ pub const Expr = struct {
                     },
                 };
             },
+            E.CommonJSExportIdentifier => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_commonjs_export_identifier = .{
+                            .ref = st.ref,
+                        },
+                    },
+                };
+            },
             E.PrivateIdentifier => {
                 return Expr{
                     .loc = loc,
@@ -3561,6 +3586,8 @@ pub const Expr = struct {
         e_this,
         e_class,
         e_require,
+
+        e_commonjs_export_identifier,
 
         // This should never make it to the printer
         inline_identifier,
@@ -4204,6 +4231,7 @@ pub const Expr = struct {
         e_identifier: E.Identifier,
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
+        e_commonjs_export_identifier: E.CommonJSExportIdentifier,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -5148,7 +5176,7 @@ pub const Ast = struct {
 
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
-    runtime_imports: Runtime.Imports,
+    runtime_imports: Runtime.Imports = .{},
 
     runtime_import_record_id: ?u32 = null,
     needs_runtime: bool = false,
@@ -5202,6 +5230,16 @@ pub const Ast = struct {
 
     allocator: std.mem.Allocator,
     top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
+    commonjs_named_exports: CommonJSNamedExports = .{},
+
+    redirect_import_record_index: ?u32 = null,
+
+    pub const CommonJSNamedExport = struct {
+        loc_ref: LocRef,
+        needs_decl: bool = true,
+    };
+    pub const CommonJSNamedExports = bun.StringArrayHashMapUnmanaged(CommonJSNamedExport);
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);

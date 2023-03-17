@@ -489,6 +489,9 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
+    commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
+    commonjs_named_exports_ref: Ref = Ref.None,
+
     minify_whitespace: bool = false,
 
     require_or_import_meta_for_source_callback: RequireOrImportMeta.Callback = .{},
@@ -1809,6 +1812,23 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
                     p.print("import.meta");
+                },
+                .e_commonjs_export_identifier => |id| {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
+                        if (value.loc_ref.ref.?.eql(id.ref)) {
+                            if (value.needs_decl) {
+                                p.printSymbol(p.options.commonjs_named_exports_ref);
+                                p.print(".");
+                                p.print(key);
+                            } else {
+                                p.printSymbol(value.loc_ref.ref.?);
+                            }
+                            break;
+                        }
+                    }
                 },
                 .e_new => |e| {
                     const has_pure_comment = e.can_be_unwrapped_if_unused;

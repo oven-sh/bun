@@ -2586,6 +2586,28 @@ pub const Parser = struct {
                             try p.appendPart(&parts, sliced.items);
                         }
                     },
+                    .s_import, .s_export_from, .s_export_star => {
+                        var parts_list = if (p.options.bundle)
+                            // Move imports (and import-like exports) to the top of the file to
+                            // ensure that if they are converted to a require() call, the effects
+                            // will take place before any other statements are evaluated.
+                            &before
+                        else
+                            // If we aren't doing any format conversion, just keep these statements
+                            // inline where they were. Exports are sorted so order doesn't matter:
+                            // https://262.ecma-international.org/6.0/#sec-module-namespace-exotic-objects.
+                            // However, this is likely an aesthetic issue that some people will
+                            // complain about. In addition, there are code transformation tools
+                            // such as TypeScript and Babel with bugs where the order of exports
+                            // in the file is incorrectly preserved instead of sorted, so preserving
+                            // the order of exports ourselves here may be preferable.
+                            &parts;
+
+                        var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
+                        sliced.items.len = 1;
+                        sliced.items[0] = stmt;
+                        try p.appendPart(parts_list, sliced.items);
+                    },
                     else => {
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
                         sliced.items.len = 1;

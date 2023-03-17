@@ -18,7 +18,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
-
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { fileURLToPath } from "bun";
@@ -128,24 +127,7 @@ export interface BundlerTestInput {
    * Setting to true or an object will cause the file to be run with bun.
    * Options passed can customize and assert behavior about the bundle.
    */
-  run?:
-    | boolean
-    | {
-        /** Override file to run, instead of `options.absOutputFile` */
-        file?: string;
-        /** match exact stdout */
-        stdout?: string;
-        /** match exact error message, example "ReferenceError: Can't find variable: bar" */
-        error?: string;
-        /**
-         * for extra confidence the error is correctly tested for, a regex for the line it was
-         * thrown on can be passed. this should be replaced with a source map lookup when that's
-         * available to us.
-         */
-        errorLineMatch?: RegExp;
-        /** Utility */
-        fakeJSXRuntime?: boolean;
-      };
+  run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
 
   // hooks
 
@@ -157,6 +139,27 @@ export interface BundlerTestEventAPI {
   root: string;
   outfile: string;
   outdir: string;
+  readFile(file: string): string;
+  expectFile(file: string): Expect;
+}
+
+export interface BundlerTestRunOptions {
+  /** Override file to run, instead of `options.absOutputFile` */
+  file?: string;
+  /** Pass args to the program */
+  args?: string[];
+  /** Pass args to bun itself (before the filename) */
+  bunArgs?: string[];
+  /** match exact stdout */
+  stdout?: string;
+  /** match exact error message, example "ReferenceError: Can't find variable: bar" */
+  error?: string;
+  /**
+   * for extra confidence the error is correctly tested for, a regex for the line it was
+   * thrown on can be passed. this should be replaced with a source map lookup when that's
+   * available to us.
+   */
+  errorLineMatch?: RegExp;
 }
 
 var testFiles = new Map();
@@ -279,7 +282,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           mode === "bundle" && "--bundle",
           outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
           `--format=${format}`,
-          `--platform=${platform === "bun" ? "node" : format}`,
+          `--platform=${platform === "bun" ? "node" : platform}`,
           minifyIdentifiers && `--minify-identifiers`,
           minifySyntax && `--minify-synatax`,
           minifyWhitespace && `--minify-whitespace`,
@@ -416,60 +419,62 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   }
 
   // Check for warnings
-  const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
-  const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
-    const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
-    const file = fullFilename.slice(id.length);
-    return { error, file, line, col };
-  });
-  const expectedWarnings = bundleWarnings
-    ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
-    : null;
+  if (!ESBUILD) {
+    const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
+    const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
+      const [_str2, fullFilename, line, col] = source.match(/bun-bundler-tests\/(.*):(\d+):(\d+)/)!;
+      const file = fullFilename.slice(id.length);
+      return { error, file, line, col };
+    });
+    const expectedWarnings = bundleWarnings
+      ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
+      : null;
 
-  if (DEBUG && allWarnings.length) {
-    console.log("REFERENCE WARNINGS OBJECT");
-    console.log("bundleWarnings: {");
-    const files: any = {};
-    for (const err of allWarnings) {
-      files[err.file] ??= [];
-      files[err.file].push(err);
-    }
-    for (const [file, errs] of Object.entries(files)) {
-      console.log('  "' + file + '": [');
-      for (const err of errs as any) {
-        console.log("    `" + err.error + "`");
+    if (DEBUG && allWarnings.length) {
+      console.log("REFERENCE WARNINGS OBJECT");
+      console.log("bundleWarnings: {");
+      const files: any = {};
+      for (const err of allWarnings) {
+        files[err.file] ??= [];
+        files[err.file].push(err);
       }
-      console.log("  ],");
-    }
-    console.log("},");
-  }
-
-  if (allWarnings.length > 0 && !expectedWarnings) {
-    throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
-  } else if (expectedWarnings) {
-    const warningsLeft = [...expectedWarnings];
-    let unexpectedWarnings = [];
-
-    for (const error of allWarnings) {
-      const i = warningsLeft.findIndex(item => error.file === item.file && item.error === error.error);
-      if (i === -1) {
-        unexpectedWarnings.push(error);
-      } else {
-        warningsLeft.splice(i, 1);
+      for (const [file, errs] of Object.entries(files)) {
+        console.log('  "' + file + '": [');
+        for (const err of errs as any) {
+          console.log("    `" + err.error + "`");
+        }
+        console.log("  ],");
       }
+      console.log("},");
     }
 
-    if (unexpectedWarnings.length) {
-      throw new Error(
-        "Unexpected errors reported while bundling:\n" +
-          [...unexpectedWarnings].map(formatError).join("\n") +
-          "\n\nExpected errors:\n" +
-          expectedWarnings.map(formatError).join("\n"),
-      );
-    }
+    if (allWarnings.length > 0 && !expectedWarnings) {
+      throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
+    } else if (expectedWarnings) {
+      const warningsLeft = [...expectedWarnings];
+      let unexpectedWarnings = [];
 
-    if (warningsLeft.length) {
-      throw new Error("Errors were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
+      for (const error of allWarnings) {
+        const i = warningsLeft.findIndex(item => error.file === item.file && item.error === error.error);
+        if (i === -1) {
+          unexpectedWarnings.push(error);
+        } else {
+          warningsLeft.splice(i, 1);
+        }
+      }
+
+      if (unexpectedWarnings.length) {
+        throw new Error(
+          "Unexpected warnings reported while bundling:\n" +
+            [...unexpectedWarnings].map(formatError).join("\n") +
+            "\n\nExpected warnings:\n" +
+            expectedWarnings.map(formatError).join("\n"),
+        );
+      }
+
+      if (warningsLeft.length) {
+        throw new Error("Warnings were expected while bundling:\n" + warningsLeft.map(formatError).join("\n"));
+      }
     }
   }
 
@@ -500,82 +505,100 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
 
   // Write runtime files to disk as well as run the post bundle hook.
   for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), dedent(contents));
   }
+
+  const readCache: Record<string, string> = {};
+  const readFile = (file: string) =>
+    readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
   if (onAfterBundle) {
-    onAfterBundle({ root, outfile: outfile!, outdir: outdir! });
+    onAfterBundle({
+      root,
+      outfile: outfile!,
+      outdir: outdir!,
+      readFile,
+      expectFile: file => expect(readFile(file)),
+    });
   }
 
   // Runtime checks!
   if (run) {
-    if (run.file) {
-      run.file = path.join(root, run.file);
-    } else if (entryPaths.length === 1) {
-      run.file = outfile;
-    } else {
-      throw new Error("run.file is required when there is more than one entrypoint.");
-    }
+    const runs = Array.isArray(run) ? run : [run];
+    let i = 0;
+    for (const run of runs) {
+      let prefix = runs.length === 1 ? "" : `[run ${i++}] `;
 
-    const { success, stdout, stderr } = Bun.spawnSync({
-      cmd: [
-        bunExe(),
-        ...(run.fakeJSXRuntime ? ["-r", path.join(import.meta.dir, "fake-jsx-runtime.ts")] : []),
-        run.file,
-      ] as [string, ...string[]],
-      env: bunEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    if (run.error) {
-      if (success) {
-        throw new Error(
-          "Bundle should have thrown at runtime\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"),
-        );
+      let file = run.file;
+      if (file) {
+        file = path.join(root, file);
+      } else if (entryPaths.length === 1) {
+        file = outfile;
+      } else {
+        throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
       }
 
-      if (run.errorLineMatch) {
-        // in order to properly analyze the error, we have to look backwards on stderr. this approach
-        // most definetly can be improved but it works fine here.
-        const stack = [];
-        let error;
-        const lines = stderr!
-          .toString("utf-8")
-          .split("\n")
-          .filter(Boolean)
-          .map(x => x.trim())
-          .reverse();
-        for (const line of lines) {
-          if (line.startsWith("at")) {
-            stack.push(line);
-          } else {
-            error = line;
-            break;
-          }
+      const { success, stdout, stderr } = Bun.spawnSync({
+        cmd: [bunExe(), ...(run.bunArgs ?? []), file, ...(run.args ?? [])] as [string, ...string[]],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      if (run.error) {
+        if (success) {
+          throw new Error(
+            prefix +
+              "Bundle should have thrown at runtime\n" +
+              stdout!.toString("utf-8") +
+              "\n" +
+              stderr!.toString("utf-8"),
+          );
         }
-        if (!error) {
-          throw new Error(`Runtime failed with no error. Expecting "${run.error}"`);
-        }
-        expect(error).toBe(run.error);
 
         if (run.errorLineMatch) {
-          const stackTraceLine = stack.pop()!;
-          const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
-          if (match) {
-            const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
-            if (!run.errorLineMatch.test(line)) {
-              throw new Error(`Source code "${line}" does not match expression ${run.errorLineMatch}`);
+          // in order to properly analyze the error, we have to look backwards on stderr. this approach
+          // most definetly can be improved but it works fine here.
+          const stack = [];
+          let error;
+          const lines = stderr!
+            .toString("utf-8")
+            .split("\n")
+            .filter(Boolean)
+            .map(x => x.trim())
+            .reverse();
+          for (const line of lines) {
+            if (line.startsWith("at")) {
+              stack.push(line);
+            } else {
+              error = line;
+              break;
             }
-          } else {
-            throw new Error("Could not trace error.");
+          }
+          if (!error) {
+            throw new Error(`${prefix}Runtime failed with no error. Expecting "${run.error}"`);
+          }
+          expect(error).toBe(run.error);
+
+          if (run.errorLineMatch) {
+            const stackTraceLine = stack.pop()!;
+            const match = /at (.*):(\d+):(\d+)$/.exec(stackTraceLine);
+            if (match) {
+              const line = readFileSync(match[1], "utf-8").split("\n")[+match[2] - 1];
+              if (!run.errorLineMatch.test(line)) {
+                throw new Error(`${prefix}Source code "${line}" does not match expression ${run.errorLineMatch}`);
+              }
+            } else {
+              throw new Error(prefix + "Could not trace error.");
+            }
           }
         }
+      } else if (!success) {
+        throw new Error(prefix + "Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
       }
-    } else if (!success) {
-      throw new Error("Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
-    }
 
-    if (run.stdout !== undefined) {
-      expect(stdout!.toString("utf-8").trim()).toBe(dedent(run.stdout).trim());
+      if (run.stdout !== undefined) {
+        expect(stdout!.toString("utf-8").trim()).toBe(dedent(run.stdout).trim());
+      }
     }
   }
 }

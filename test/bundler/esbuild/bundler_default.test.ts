@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import { appendFileSync } from "fs";
+import { appendFileSync, readFileSync, writeFileSync } from "fs";
 import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -297,7 +297,7 @@ describe("bundler", () => {
         export default 3;
         export const a2 = 4;
       `,
-      "./test.js": String.raw/* js */ `
+      "/test.js": String.raw/* js */ `
         import './out.js';
         if (!globalThis.aWasImported) {
           throw new Error('"import \'./a\'" was tree-shaken when it should not have been.')
@@ -309,7 +309,7 @@ describe("bundler", () => {
     },
     mode: "transform",
     run: {
-      file: "./test.js",
+      file: "/test.js",
     },
   } as const;
   itBundled("default/ImportFormsWithNoBundle", {
@@ -335,6 +335,7 @@ describe("bundler", () => {
         assert.deepEqual(commonjs.l, 345, "commonjs.l");
         assert.deepEqual(commonjs.c, 456, "commonjs.c");
         commonjs.Fn();
+        new commonjs.C();
         new commonjs.Class();
         new commonjs.C();
         assert("abc" in commonjs, "commonjs.abc");
@@ -742,58 +743,69 @@ describe("bundler", () => {
   itBundled("default/RequireWithTemplate", {
     files: {
       "/a.js": `
-        console.log(require('./b'))
-        console.log(require(\` + "\`./b\`" + \`))
+        console.log(require('./b').x)
+        console.log(require(\`./b\`).x)
       `,
       "/b.js": `exports.x = 123`,
     },
     run: {
-      stdout: "123",
+      stdout: "123\n123",
     },
   });
   itBundled("default/DynamicImportWithTemplateIIFE", {
-    // GENERATED
     files: {
       "/a.js": `
-        import('./b').then(ns => console.log(ns))
-        import(\` + "\`./b\`" + \`).then(ns => console.log(ns))
+        import('./b').then(ns => console.log(ns.x))
+        import(\`./b\`).then(ns => console.log(ns.x))
       `,
       "/b.js": `exports.x = 123`,
     },
     format: "iife",
+    run: {
+      stdout: "123\n123",
+    },
   });
   itBundled("default/RequireAndDynamicImportInvalidTemplate", {
-    // GENERATED
     files: {
       "/entry.js": `
-        require(tag\` + "\`./b\`" + \`)
-        require(\` + "\`./\$0b}\`" + \`)
+        require(tag\`./b\`)
+        require(\`./\${b}\`)
   
         try {
-          require(tag\` + "\`./b\`" + \`)
-          require(\` + "\`./\$0b}\`" + \`)
+          require(tag\`./b\`)
+          require(\`./\${b}\`)
         } catch {
         }
   
         (async () => {
-          import(tag\` + "\`./b\`" + \`)
-          import(\` + "\`./\$0b}\`" + \`)
-          await import(tag\` + "\`./b\`" + \`)
-          await import(\` + "\`./\$0b}\`" + \`)
+          import(tag\`./b\`)
+          import(\`./\${b}\`)
+          await import(tag\`./b\`)
+          await import(\`./\${b}\`)
   
           try {
-            import(tag\` + "\`./b\`" + \`)
-            import(\` + "\`./\$0b}\`" + \`)
-            await import(tag\` + "\`./b\`" + \`)
-            await import(\` + "\`./\$0b}\`" + \`)
+            import(tag\`./b\`)
+            import(\`./\${b}\`)
+            await import(tag\`./b\`)
+            await import(\`./\${b}\`)
           } catch {
           }
         })()
       `,
+
+      "/test.js": `
+        globalThis.tag = () => './c.js';
+        globalThis.b = 'c.js';
+        import('./out');
+      `,
+      "/c.js": `console.log("c")`,
+    },
+    run: {
+      file: "/test.js",
+      stdout: "c",
     },
   });
   itBundled("default/DynamicImportWithExpressionCJS", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import('foo')
@@ -801,10 +813,13 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    mode: "convertformat",
+    mode: "transform",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('import("foo")');
+      api.expectFile("/out.js").toContain("import(foo())");
+    },
   });
   itBundled("default/MinifiedDynamicImportWithExpressionCJS", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import('foo')
@@ -812,40 +827,113 @@ describe("bundler", () => {
       `,
     },
     format: "cjs",
-    mode: "convertformat",
+    mode: "transform",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('import("foo")');
+      api.expectFile("/out.js").toContain("import(foo())");
+    },
   });
   itBundled("default/ConditionalRequireResolve", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         require.resolve(x ? 'a' : y ? 'b' : 'c')
-        require.resolve(x ? y ? 'a' : 'b' : c)
+        require.resolve(v ? y ? 'a' : 'b' : c)
       `,
     },
     platform: "node",
     format: "cjs",
+    // esbuild seems to not need externals for require.resolve, but it should be specified
+    external: ["a", "b", "c"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('x ? require.resolve("a") : y ? require.resolve("b") : require.resolve("c")');
+      api.expectFile("/out.js").toContain('v ? y ? require.resolve("a") : require.resolve("b") : require.resolve(c)');
+    },
   });
   itBundled("default/ConditionalRequire", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
-        require(x ? 'a' : y ? './b' : 'c')
-        require(x ? y ? 'a' : './b' : c)
+        const x = process.argv[2] === 'true';
+        const y = process.argv[3] === 'true';
+        const c = process.argv[4];
+        
+        console.log(require(x ? 'a' : y ? './b' : 'c').foo)
+        console.log(require(x ? y ? 'a' : './b' : c).foo)
       `,
       "/b.js": `exports.foo = 213`,
     },
+    external: ["a", "c"],
+    runtimeFiles: {
+      "/b.js": `throw new Error("Did not bundle b.js")`,
+      "/c.js": `exports.foo = 532`,
+      "/node_modules/a/index.js": `exports.foo = 852`,
+      "/node_modules/c/index.js": `exports.foo = 123`,
+    },
+    run: [
+      {
+        args: ["true", "true", "./c.js"],
+        stdout: "852\n852",
+      },
+      {
+        args: ["true", "false", "./c.js"],
+        stdout: "852\n213",
+      },
+      {
+        args: ["false", "true", "./c.js"],
+        stdout: "213\n532",
+      },
+      {
+        args: ["false", "false", "./c.js"],
+        stdout: "123\n532",
+      },
+    ],
   });
   itBundled("default/ConditionalImport", {
-    // GENERATED
     files: {
-      "/a.js": `import(x ? 'a' : y ? './import' : 'c')`,
-      "/b.js": `import(x ? y ? 'a' : './import' : c)`,
+      "/a.js": `console.log('a', (await import(x ? 'a' : y ? './import' : 'c')).foo)`,
+      "/b.js": `console.log('b', (await import(x ? y ? 'a' : './import' : c)).foo)`,
       "/import.js": `exports.foo = 213`,
     },
+    runtimeFiles: {
+      "/node_modules/a/index.js": "export const foo = 'a'",
+      "/node_modules/b/index.js": "export const foo = 'b'",
+      "/node_modules/c/index.js": "export const foo = 'c'",
+      "/node_modules/d/index.js": "export const foo = 'd'",
+
+      "/test.js": /* js */ `
+        globalThis.x = process.argv[2] === 'true';
+        globalThis.y = process.argv[3] === 'true';
+        globalThis.c = process.argv[4];
+        await import('./out/a');
+        await import('./out/b');
+      `,
+    },
     entryPoints: ["/a.js", "/b.js"],
+    external: ["a", "b", "c"],
+    run: [
+      {
+        file: "/test.js",
+        args: ["true", "true", "d"],
+        stdout: "a a\nb a",
+      },
+      {
+        file: "/test.js",
+        args: ["true", "false", "d"],
+        stdout: "a a\nb 213",
+      },
+      {
+        file: "/test.js",
+        args: ["false", "true", "d"],
+        stdout: "a 213\nb d",
+      },
+      {
+        file: "/test.js",
+        args: ["false", "false", "d"],
+        stdout: "a c\nb d",
+      },
+    ],
   });
   itBundled("default/RequireBadArgumentCount", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         require()
@@ -858,11 +946,24 @@ describe("bundler", () => {
         }
       `,
     },
+    onAfterBundle({ outfile }) {
+      const prefix = dedent/* js */ `
+        const require = (...args) => console.log('require:' + args.join(','));
+      `;
+      writeFileSync(outfile, prefix + readFileSync(outfile, "utf8"));
+    },
+    run: {
+      stdout: `
+        require:
+        require:a,b
+        require:
+        require:a,b
+      `,
+    },
   });
   itBundled("default/RequireJson", {
-    // GENERATED
     files: {
-      "/entry.js": `console.log(require('./test.json'))`,
+      "/entry.js": `console.log(JSON.stringify(require('./test.json')))`,
       "/test.json": /* json */ `
         {
           "a": true,
@@ -871,12 +972,17 @@ describe("bundler", () => {
         }
       `,
     },
+    run: {
+      stdout: '{"a":true,"b":123,"c":[null]}',
+    },
   });
   itBundled("default/RequireTxt", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.txt'))`,
       "/test.txt": `This is a test.`,
+    },
+    run: {
+      stdout: "This is a test.",
     },
   });
   itBundled("default/RequireBadExtension", {
@@ -885,27 +991,31 @@ describe("bundler", () => {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: No loader is configured for ".bad" files: test.bad
-  `, */
+    bundleErrors: {
+      "/entry.js": ['No loader is configured for ".bad" files: test.bad'],
+    },
   });
   itBundled("default/FalseRequire", {
-    // GENERATED
     files: {
-      "/entry.js": `(require => require('/test.txt'))()`,
-      "/test.txt": `This is a test.`,
+      "/entry.js": `(require => require('./test.txt'))(console.log)`,
+      "/test.txt": `Failed.`,
+    },
+    run: {
+      stdout: "./test.txt",
     },
   });
   itBundled("default/RequireWithoutCall", {
-    // GENERATED
+    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         const req = require
         req('./entry')
       `,
     },
+    platform: "neutral",
   });
   itBundled("default/NestedRequireWithoutCall", {
-    // GENERATED
+    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -914,13 +1024,13 @@ describe("bundler", () => {
         })()
       `,
     },
+    platform: "neutral",
   });
   itBundled("default/RequireWithCallInsideTry", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         try {
-          const supportsColor = require('supports-color');
+          const supportsColor = require('not-supports-color'); // bun overrides supports-color
           if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
             exports.colors = [];
           }
@@ -928,9 +1038,28 @@ describe("bundler", () => {
         }
       `,
     },
+    runtimeFiles: {
+      "/test1.js": /* js */ `
+        globalThis.requireThrows = false;
+        import assert from 'assert';
+        assert.deepEqual((await import('./out')).default, { colors: [] })
+      `,
+      "/test2.js": /* js */ `
+        globalThis.requireThrows = true;
+        import assert from 'assert';
+        assert.deepEqual((await import('./out')).default, { })
+      `,
+      "/node_modules/not-supports-color/index.js": /* js */ `
+        if (requireThrows) {
+          throw new Error('This should have been caught!');
+        }
+        module.exports = { stderr: { level: 9001 } }
+      `,
+    },
+    run: [{ file: "/test1.js" }, { file: "/test2.js" }],
   });
   itBundled("default/RequireWithoutCallInsideTry", {
-    // GENERATED
+    // TODO: MANUAL CHECK: `require` on line one has to be renamed to `__require`
     files: {
       "/entry.js": /* js */ `
         try {
@@ -941,7 +1070,9 @@ describe("bundler", () => {
         } catch (e) {}
       `,
     },
+    platform: "neutral",
   });
+  // return;
   itBundled("default/RequirePropertyAccessCommonJS", {
     // GENERATED
     files: {

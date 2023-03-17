@@ -17,6 +17,8 @@ const JSC = @import("bun").JSC;
 const Shimmer = JSC.Shimmer;
 const FFI = @import("./FFI.zig");
 const NullableAllocator = @import("../../nullable_allocator.zig").NullableAllocator;
+const MutableString = bun.MutableString;
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -2442,6 +2444,18 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, this.createErrorInstance(fmt, args));
     }
 
+    pub fn throwPretty(
+        this: *JSGlobalObject,
+        comptime fmt: string,
+        args: anytype,
+    ) void {
+        if (Output.enable_ansi_colors) {
+            this.vm().throwError(this, this.createErrorInstance(Output.prettyFmt(fmt, true), args));
+        } else {
+            this.vm().throwError(this, this.createErrorInstance(Output.prettyFmt(fmt, false), args));
+        }
+    }
+
     pub fn queueMicrotask(
         this: *JSGlobalObject,
         function: JSValue,
@@ -3028,7 +3042,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (!this.isCell())
             return false;
 
-        return JSC.C.JSValueIsInstanceOfConstructor(global, this.asObjectRef(), constructor.asObjectRef(), null);
+        return cppFn("isInstanceOf", .{ this, global, constructor });
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
@@ -3173,6 +3187,93 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn createBufferFromLength(globalObject: *JSGlobalObject, len: usize) JSValue {
         JSC.markBinding(@src());
         return JSBuffer__bufferFromLength(globalObject, @intCast(i64, len));
+    }
+
+    pub fn jestSnapshotPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+        var buffered_writer = MutableString.BufferedWriter{ .context = out };
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        const fmt_options = JestPrettyFormat.FormatOptions{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+            .quote_strings = true,
+        };
+
+        JestPrettyFormat.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &this),
+            1,
+            Writer,
+            Writer,
+            writer,
+            fmt_options,
+        );
+
+        try buffered_writer.flush();
+
+        const count: usize = brk: {
+            var total: usize = 0;
+            var remain = out.list.items;
+            while (strings.indexOfChar(remain, '`')) |i| {
+                total += 1;
+                remain = remain[i + 1 ..];
+            }
+            break :brk total;
+        };
+
+        if (count > 0) {
+            var result = try out.allocator.alloc(u8, count + out.list.items.len);
+            var input = out.list.items;
+
+            var input_i: usize = 0;
+            var result_i: usize = 0;
+            while (strings.indexOfChar(input[input_i..], '`')) |i| {
+                bun.copy(u8, result[result_i..], input[input_i .. input_i + i]);
+                result_i += i;
+                result[result_i] = '\\';
+                result[result_i + 1] = '`';
+                result_i += 2;
+                input_i += i + 1;
+            }
+
+            if (result_i != result.len) {
+                bun.copy(u8, result[result_i..], input[input_i..]);
+            }
+
+            out.deinit();
+            out.list.items = result;
+            out.list.capacity = result.len;
+        }
+    }
+
+    pub fn jestPrettyFormat(this: JSValue, out: *MutableString, globalObject: *JSGlobalObject) !void {
+        var buffered_writer = MutableString.BufferedWriter{ .context = out };
+        var writer = buffered_writer.writer();
+        const Writer = @TypeOf(writer);
+
+        const fmt_options = JSC.ZigConsoleClient.FormatOptions{
+            .enable_colors = false,
+            .add_newline = false,
+            .flush = false,
+            .ordered_properties = true,
+            .quote_strings = true,
+        };
+
+        JSC.ZigConsoleClient.format(
+            .Debug,
+            globalObject,
+            @ptrCast([*]const JSValue, &this),
+            1,
+            Writer,
+            Writer,
+            writer,
+            fmt_options,
+        );
+
+        try buffered_writer.flush();
     }
 
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
@@ -3496,6 +3597,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isClass", .{ this, global });
     }
 
+    pub fn isConstructor(this: JSValue) bool {
+        if (!this.isCell()) return false;
+        return cppFn("isConstructor", .{this});
+    }
+
     pub fn getNameProperty(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void {
         if (this.isEmptyOrUndefinedOrNull()) {
             return;
@@ -3543,6 +3649,10 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void {
         return cppFn("toZigString", .{ this, out, global });
+    }
+
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("toMatch", .{ this, global, other });
     }
 
     pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
@@ -3877,6 +3987,10 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("stringIncludes", .{ this, globalObject, other });
+    }
+
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
         return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
     }
@@ -4015,6 +4129,10 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "toMatch",
+        "isConstructor",
+        "isInstanceOf",
+        "stringIncludes",
     };
 };
 

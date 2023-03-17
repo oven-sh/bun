@@ -113,7 +113,7 @@ pub const Response = struct {
 
     pub const Props = struct {};
 
-    pub fn writeFormat(this: *const Response, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *const Response, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
         try writer.print("Response ({}) {{\n", .{bun.fmt.size(this.body.len())});
         {
@@ -145,7 +145,7 @@ pub const Response = struct {
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
             formatter.resetLine();
-            try this.body.writeFormat(formatter, writer, enable_ansi_colors);
+            try this.body.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);

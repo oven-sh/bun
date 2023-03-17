@@ -1268,6 +1268,8 @@ pub const ZigConsoleClient = struct {
             JSX,
             Event,
 
+            Getter,
+
             pub fn isPrimitive(this: Tag) bool {
                 return switch (this) {
                     .String,
@@ -1426,14 +1428,13 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.Float64Array,
                         JSValue.JSType.BigInt64Array,
                         JSValue.JSType.BigUint64Array,
+                        .DataView,
                         => .TypedArray,
 
                         .HeapBigInt => .BigInt,
 
                         // None of these should ever exist here
                         // But we're going to check anyway
-                        .GetterSetter,
-                        .CustomGetterSetter,
                         .APIValueWrapper,
                         .NativeExecutable,
                         .ProgramExecutable,
@@ -1459,6 +1460,8 @@ pub const ZigConsoleClient = struct {
                         => .NativeCode,
 
                         .Event => .Event,
+
+                        .GetterSetter, .CustomGetterSetter => .Getter,
 
                         else => .JSON,
                     },
@@ -1598,11 +1601,11 @@ pub const ZigConsoleClient = struct {
             comptime Writer: type,
             writer: Writer,
         ) !void {
-            const indent = @min(this.indent, 8);
-            var buf = [_]u8{' '} ** 32;
+            const indent = @min(this.indent, 32);
+            var buf = [_]u8{' '} ** 64;
             var total_remain: usize = indent;
             while (total_remain > 0) {
-                const written = @min(16, total_remain);
+                const written = @min(32, total_remain);
                 try writer.writeAll(buf[0 .. written * 2]);
                 total_remain -|= written;
             }
@@ -1752,14 +1755,14 @@ pub const ZigConsoleClient = struct {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.utf16SliceAligned()), key.utf16SliceAligned())) {
                             this.addForNewLine(key.len + 1);
 
                             writer.print(
-                                comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
+                                comptime Output.prettyFmt("\"{}\"<d>:<r> ", enable_ansi_colors),
                                 .{key},
                             );
                         } else if (key.is16Bit()) {
@@ -1941,6 +1944,30 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
+                    if (value.isCell()) {
+                        var number_name = ZigString.Empty;
+                        value.getClassName(this.globalThis, &number_name);
+
+                        var number_value = ZigString.Empty;
+                        value.toZigString(&number_value, this.globalThis);
+
+                        if (!strings.eqlComptime(number_name.slice(), "Number")) {
+                            this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
+                            writer.print(comptime Output.prettyFmt("<r><yellow>[Number ({s}): {s}]<r>", enable_ansi_colors), .{
+                                number_name,
+                                number_value,
+                            });
+                            return;
+                        }
+
+                        this.addForNewLine(number_name.len + number_value.len + 4);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[{s}: {s}]<r>", enable_ansi_colors), .{
+                            number_name,
+                            number_value,
+                        });
+                        return;
+                    }
+
                     const num = value.asNumber();
 
                     if (std.math.isPositiveInf(num)) {
@@ -1981,7 +2008,6 @@ pub const ZigConsoleClient = struct {
                         value,
                         null,
                         null,
-
                         Writer,
                         writer_,
                         enable_ansi_colors,
@@ -2007,6 +2033,9 @@ pub const ZigConsoleClient = struct {
                     } else {
                         writer.print(comptime Output.prettyFmt("<cyan>[Function<d>:<r> <cyan>{}]<r>", enable_ansi_colors), .{printable});
                     }
+                },
+                .Getter => {
+                    writer.print(comptime Output.prettyFmt("<cyan>[Getter]<r>", enable_ansi_colors), .{});
                 },
                 .Array => {
                     const len = @truncate(u32, value.getLengthOfArray(this.globalThis));
@@ -2091,13 +2120,13 @@ pub const ZigConsoleClient = struct {
                 },
                 .Private => {
                     if (value.as(JSC.WebCore.Response)) |response| {
-                        response.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        response.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.WebCore.Request)) |request| {
-                        request.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        request.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.WebCore.Blob)) |blob| {
-                        blob.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        blob.writeFormat(ZigConsoleClient.Formatter, this, writer_, enable_ansi_colors) catch {};
                         return;
                     } else if (value.as(JSC.DOMFormData) != null) {
                         const toJSONFunction = value.get(this.globalThis, "toJSON").?;
@@ -2162,6 +2191,7 @@ pub const ZigConsoleClient = struct {
                         writer.writeAll("\n");
                         this.writeIndent(Writer, writer_) catch {};
                     }
+
                     writer.writeAll("Promise { " ++ comptime Output.prettyFmt("<r><cyan>", enable_ansi_colors));
 
                     switch (JSPromise.status(@ptrCast(*JSPromise, value.asObjectRef().?), this.globalThis.vm())) {
@@ -2179,16 +2209,36 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors) ++ " }");
                 },
                 .Boolean => {
+                    if (value.isCell()) {
+                        var bool_name = ZigString.Empty;
+                        value.getClassName(this.globalThis, &bool_name);
+                        var bool_value = ZigString.Empty;
+                        value.toZigString(&bool_value, this.globalThis);
+
+                        if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
+                            this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
+                            writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean ({s}): {s}]<r>", enable_ansi_colors), .{
+                                bool_name,
+                                bool_value,
+                            });
+                            return;
+                        }
+                        this.addForNewLine(bool_value.len + "[Boolean: ]".len);
+                        writer.print(comptime Output.prettyFmt("<r><yellow>[Boolean: {s}]<r>", enable_ansi_colors), .{bool_value});
+                        return;
+                    }
                     if (value.toBoolean()) {
-                        this.addForNewLine(5);
+                        this.addForNewLine(4);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>true<r>", enable_ansi_colors));
                     } else {
-                        this.addForNewLine(4);
+                        this.addForNewLine(5);
                         writer.writeAll(comptime Output.prettyFmt("<r><yellow>false<r>", enable_ansi_colors));
                     }
                 },
                 .GlobalObject => {
-                    writer.writeAll(comptime Output.prettyFmt("<cyan>[this.globalThis]<r>", enable_ansi_colors));
+                    const fmt = "[this.globalThis]";
+                    this.addForNewLine(fmt.len);
+                    writer.writeAll(comptime Output.prettyFmt("<cyan>" ++ fmt ++ "<r>", enable_ansi_colors));
                 },
                 .Map => {
                     const length_value = value.get(this.globalThis, "size") orelse JSC.JSValue.jsNumberFromInt32(0);
@@ -2198,11 +2248,13 @@ pub const ZigConsoleClient = struct {
                     this.quote_strings = true;
                     defer this.quote_strings = prev_quote_strings;
 
+                    const map_name = if (value.jsType() == .JSWeakMap) "WeakMap" else "Map";
+
                     if (length == 0) {
-                        return writer.writeAll("Map {}");
+                        return writer.print("{s} {{}}", .{map_name});
                     }
 
-                    writer.print("Map({d}) {{\n", .{length});
+                    writer.print("{s}({d}) {{\n", .{ map_name, length });
                     {
                         this.indent += 1;
                         defer this.indent -|= 1;
@@ -2224,10 +2276,14 @@ pub const ZigConsoleClient = struct {
                     defer this.quote_strings = prev_quote_strings;
 
                     this.writeIndent(Writer, writer_) catch {};
+
+                    const set_name = if (value.jsType() == .JSWeakSet) "WeakSet" else "Set";
+
                     if (length == 0) {
-                        return writer.writeAll("Set {}");
+                        return writer.print("{s} {{}}", .{set_name});
                     }
-                    writer.print("Set({d}) {{\n", .{length});
+
+                    writer.print("{s}({d}) {{\n", .{ set_name, length });
                     {
                         this.indent += 1;
                         defer this.indent -|= 1;
@@ -2590,9 +2646,6 @@ pub const ZigConsoleClient = struct {
                     } else {
                         if (iter.always_newline) {
                             this.indent -|= 1;
-                        }
-
-                        if (iter.always_newline) {
                             writer.writeAll("\n");
                             this.writeIndent(Writer, writer_) catch {};
                             writer.writeAll("}");
@@ -2605,11 +2658,11 @@ pub const ZigConsoleClient = struct {
                 },
                 .TypedArray => {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
-
                     const slice = arrayBuffer.byteSlice();
-                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
 
+                    writer.writeAll(bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)));
                     writer.print("({d}) [ ", .{arrayBuffer.len});
+
                     if (slice.len > 0) {
                         switch (jsType) {
                             .Int8Array => this.writeTypedArray(
@@ -2668,13 +2721,15 @@ pub const ZigConsoleClient = struct {
                                 @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
                                 enable_ansi_colors,
                             ),
-                            .BigUint64Array => this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                u64,
-                                @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
-                                enable_ansi_colors,
-                            ),
+                            .BigUint64Array => {
+                                this.writeTypedArray(
+                                    *@TypeOf(writer),
+                                    &writer,
+                                    u64,
+                                    @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
+                                    enable_ansi_colors,
+                                );
+                            },
 
                             // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                             else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
@@ -2687,7 +2742,7 @@ pub const ZigConsoleClient = struct {
             }
         }
 
-        fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime Writer: type, writer: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
+        fn writeTypedArray(this: *ZigConsoleClient.Formatter, comptime WriterWrapped: type, writer: WriterWrapped, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
             const fmt_ = if (Number == i64 or Number == u64)
                 "<r><yellow>{d}n<r>"
             else
@@ -2750,6 +2805,7 @@ pub const ZigConsoleClient = struct {
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Getter => this.printAs(.Getter, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };

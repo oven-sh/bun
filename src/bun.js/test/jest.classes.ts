@@ -2,6 +2,18 @@ import { define } from "../scripts/class-definitions";
 
 export default [
   define({
+    name: "ExpectAny",
+    construct: false,
+    noConstructor: true,
+    call: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: ["constructorValue"],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
+  define({
     name: "Expect",
     construct: true,
     call: true,

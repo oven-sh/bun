@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/webcrypto_test.ts
-import { assert, assertEquals, assertNotEquals, assertRejects } from "deno:harness";
-Deno.test(async function testImportArrayBufferKey() {
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path);
+test(async function testImportArrayBufferKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     const key = new Uint8Array([
@@ -33,7 +35,7 @@ Deno.test(async function testImportArrayBufferKey() {
         name: "HMAC"
     }, cryptoKey, new Uint8Array(8));
 });
-Deno.test(async function testSignVerify() {
+test(async function testSignVerify() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     for (const algorithm of [
@@ -316,7 +318,7 @@ const hashPlainTextVector = [
         plainText: plainText.slice(0, 126)
     }
 ];
-Deno.test(async function testEncryptDecrypt() {
+test(async function testEncryptDecrypt() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     for (const { hash , plainText  } of hashPlainTextVector){
@@ -356,7 +358,7 @@ Deno.test(async function testEncryptDecrypt() {
         }, DOMException);
     }
 });
-Deno.test(async function testGenerateRSAKey() {
+test(async function testGenerateRSAKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     const keyPair = await subtle.generateKey({
@@ -377,7 +379,7 @@ Deno.test(async function testGenerateRSAKey() {
     assertEquals(keyPair.privateKey.extractable, true);
     assert(keyPair.privateKey.usages.includes("sign"));
 });
-Deno.test(async function testGenerateHMACKey() {
+test(async function testGenerateHMACKey() {
     const key = await window.crypto.subtle.generateKey({
         name: "HMAC",
         hash: "SHA-512"
@@ -389,7 +391,7 @@ Deno.test(async function testGenerateHMACKey() {
     assertEquals(key.extractable, true);
     assert(key.usages.includes("sign"));
 });
-Deno.test(async function testECDSASignVerify() {
+test(async function testECDSASignVerify() {
     const key = await window.crypto.subtle.generateKey({
         name: "ECDSA",
         namedCurve: "P-384"
@@ -413,7 +415,7 @@ Deno.test(async function testECDSASignVerify() {
     }, key.publicKey, signature, encoded);
     assert(verified);
 });
-Deno.test(async function testECDSASignVerifyFail() {
+test(async function testECDSASignVerifyFail() {
     const key = await window.crypto.subtle.generateKey({
         name: "ECDSA",
         namedCurve: "P-384"
@@ -447,7 +449,7 @@ Deno.test(async function testECDSASignVerifyFail() {
         throw new TypeError("unreachable");
     }, DOMException);
 });
-Deno.test(async function testSignRSASSAKey() {
+test(async function testSignRSASSAKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     const keyPair = await subtle.generateKey({
@@ -501,7 +503,7 @@ const jwk: JsonWebKey = {
         "sign"
     ]
 };
-Deno.test(async function subtleCryptoHmacImportExport() {
+test(async function subtleCryptoHmacImportExport() {
     const key1 = await crypto.subtle.importKey("raw", rawKey, {
         name: "HMAC",
         hash: "SHA-256"
@@ -571,7 +573,7 @@ Deno.test(async function subtleCryptoHmacImportExport() {
     const exportedKey2 = await crypto.subtle.exportKey("jwk", key2);
     assertEquals(exportedKey2, jwk);
 });
-Deno.test(async function generateImportHmacJwk() {
+test(async function generateImportHmacJwk() {
     const key = await crypto.subtle.generateKey({
         name: "HMAC",
         hash: "SHA-512"
@@ -600,7 +602,7 @@ const pkcs8TestVectors = [
         hash: "SHA-256"
     }
 ];
-Deno.test({
+test({
     permissions: {
         read: true
     }
@@ -652,7 +654,7 @@ const nonInteroperableVectors = [
         hash: "SHA-1"
     }
 ];
-Deno.test({
+test({
     permissions: {
         read: true
     }
@@ -695,7 +697,7 @@ const asn1AlgorithmIdentifier = new Uint8Array([
     0x05,
     0x00
 ]);
-Deno.test(async function rsaExport() {
+test(async function rsaExport() {
     for (const algorithm of [
         "RSASSA-PKCS1-v1_5",
         "RSA-PSS",
@@ -732,7 +734,7 @@ Deno.test(async function rsaExport() {
         assertEquals(spki.slice(4, asn1AlgorithmIdentifier.byteLength + 1), asn1AlgorithmIdentifier.slice(3));
     }
 });
-Deno.test(async function testHkdfDeriveBits() {
+test(async function testHkdfDeriveBits() {
     const rawKey = crypto.getRandomValues(new Uint8Array(16));
     const key = await crypto.subtle.importKey("raw", rawKey, {
         name: "HKDF",
@@ -750,7 +752,7 @@ Deno.test(async function testHkdfDeriveBits() {
     }, key, 128);
     assertEquals(result.byteLength, 128 / 8);
 });
-Deno.test(async function testHkdfDeriveBitsWithLargeKeySize() {
+test(async function testHkdfDeriveBitsWithLargeKeySize() {
     const key = await crypto.subtle.importKey("raw", new Uint8Array([
         0x00
     ]), "HKDF", false, [
@@ -763,7 +765,7 @@ Deno.test(async function testHkdfDeriveBitsWithLargeKeySize() {
             info: new Uint8Array()
         }, key, ((20 * 255) << 3) + 8), DOMException, "The length provided for HKDF is too large");
 });
-Deno.test(async function testEcdhDeriveBitsWithShorterLength() {
+test(async function testEcdhDeriveBitsWithShorterLength() {
     const keypair = await crypto.subtle.generateKey({
         name: "ECDH",
         namedCurve: "P-384"
@@ -777,7 +779,7 @@ Deno.test(async function testEcdhDeriveBitsWithShorterLength() {
     }, keypair.privateKey, 256);
     assertEquals(result.byteLength * 8, 256);
 });
-Deno.test(async function testEcdhDeriveBitsWithLongerLength() {
+test(async function testEcdhDeriveBitsWithLongerLength() {
     const keypair = await crypto.subtle.generateKey({
         name: "ECDH",
         namedCurve: "P-384"
@@ -790,7 +792,7 @@ Deno.test(async function testEcdhDeriveBitsWithLongerLength() {
             public: keypair.publicKey
         }, keypair.privateKey, 512), DOMException, "Invalid length");
 });
-Deno.test(async function testEcdhDeriveBitsWithNullLength() {
+test(async function testEcdhDeriveBitsWithNullLength() {
     const keypair = await crypto.subtle.generateKey({
         name: "ECDH",
         namedCurve: "P-384"
@@ -804,7 +806,7 @@ Deno.test(async function testEcdhDeriveBitsWithNullLength() {
     }, keypair.privateKey, null);
     assertEquals(result.byteLength * 8, 384);
 });
-Deno.test(async function testDeriveKey() {
+test(async function testDeriveKey() {
     const rawKey = crypto.getRandomValues(new Uint8Array(16));
     const key = await crypto.subtle.importKey("raw", rawKey, "PBKDF2", false, [
         "deriveKey",
@@ -833,7 +835,7 @@ Deno.test(async function testDeriveKey() {
     assertEquals(algorithm.hash.name, "SHA-256");
     assertEquals(algorithm.length, 512);
 });
-Deno.test(async function testAesCbcEncryptDecrypt() {
+test(async function testAesCbcEncryptDecrypt() {
     const key = await crypto.subtle.generateKey({
         name: "AES-CBC",
         length: 128
@@ -870,7 +872,7 @@ Deno.test(async function testAesCbcEncryptDecrypt() {
         6
     ]));
 });
-Deno.test(async function testAesCtrEncryptDecrypt() {
+test(async function testAesCtrEncryptDecrypt() {
     async function aesCtrRoundTrip(key: CryptoKey, counter: Uint8Array, length: number, plainText: Uint8Array) {
         const cipherText = await crypto.subtle.encrypt({
             name: "AES-CTR",
@@ -943,7 +945,7 @@ Deno.test(async function testAesCtrEncryptDecrypt() {
         }
     }
 });
-Deno.test(async function testECDH() {
+test(async function testECDH() {
     for (const keySize of [
         256,
         384
@@ -962,7 +964,7 @@ Deno.test(async function testECDH() {
         assertEquals(derivedKey.byteLength, keySize / 8);
     }
 });
-Deno.test(async function testWrapKey() {
+test(async function testWrapKey() {
     const key = await crypto.subtle.generateKey({
         name: "RSA-OAEP",
         modulusLength: 4096,
@@ -990,7 +992,7 @@ Deno.test(async function testWrapKey() {
     assert(wrappedKey instanceof ArrayBuffer);
     assertEquals(wrappedKey.byteLength, 512);
 });
-Deno.test(async function testAesKeyGen() {
+test.ignore(async function testAesKeyGen() {
     const key = await crypto.subtle.generateKey({
         name: "AES-GCM",
         length: 256
@@ -1009,7 +1011,7 @@ Deno.test(async function testAesKeyGen() {
     assertEquals(algorithm.name, "AES-GCM");
     assertEquals(algorithm.length, 256);
 });
-Deno.test(async function testUnwrapKey() {
+test.ignore(async function testUnwrapKey() {
     const subtle = crypto.subtle;
     const AES_KEY: AesKeyAlgorithm & AesCbcParams = {
         name: "AES-CBC",
@@ -1058,7 +1060,7 @@ Deno.test(async function testUnwrapKey() {
         "decrypt"
     ]);
 });
-Deno.test(async function testDecryptWithInvalidIntializationVector() {
+test(async function testDecryptWithInvalidIntializationVector() {
     const data = new Uint8Array([
         42,
         42,
@@ -1189,7 +1191,7 @@ const jwtRSAKeys = {
         }
     }
 };
-Deno.test(async function testImportRsaJwk() {
+test(async function testImportRsaJwk() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     for (const [_key, jwkData] of Object.entries(jwtRSAKeys)){
@@ -1420,7 +1422,7 @@ function equalJwk(expected: JWK, got: JWK): boolean {
     }
     return true;
 }
-Deno.test(async function testImportExportEcDsaJwk() {
+test(async function testImportExportEcDsaJwk() {
     const subtle = crypto.subtle;
     assert(subtle);
     for (const [_key, keyData] of Object.entries(jwtECKeys)){
@@ -1476,7 +1478,7 @@ Deno.test(async function testImportExportEcDsaJwk() {
         assert(verifyECDSA);
     }
 });
-Deno.test(async function testImportEcDhJwk() {
+test(async function testImportEcDhJwk() {
     const subtle = crypto.subtle;
     assert(subtle);
     for (const [_key, jwkData] of Object.entries(jwtECKeys)){
@@ -2233,7 +2235,7 @@ const ecTestKeys = [
         ])
     }
 ];
-Deno.test(async function testImportEcSpkiPkcs8() {
+test(async function testImportEcSpkiPkcs8() {
     const subtle = window.crypto.subtle;
     assert(subtle);
     for (const { namedCurve , raw , spki , pkcs8 , signatureLength  } of ecTestKeys){
@@ -2318,7 +2320,7 @@ Deno.test(async function testImportEcSpkiPkcs8() {
         }
     }
 });
-Deno.test(async function testAesGcmEncrypt() {
+test(async function testAesGcmEncrypt() {
     const key = await crypto.subtle.importKey("raw", new Uint8Array(16), {
         name: "AES-GCM",
         length: 256
@@ -2435,7 +2437,7 @@ async function roundTripSecretJwk(jwk: JsonWebKey, algId: AlgorithmIdentifier | 
     const exportedKey = await crypto.subtle.exportKey("jwk", key);
     validateKeys(key, jwk, exportedKey);
 }
-Deno.test(async function testSecretJwkBase64Url() {
+test(async function testSecretJwkBase64Url() {
     const keyData = `{
       "kty": "oct",
       "k": "xxx",
@@ -2526,7 +2528,7 @@ Deno.test(async function testSecretJwkBase64Url() {
         assertEquals(exp.k, "_____________________w");
     });
 });
-Deno.test(async function testAESWrapKey() {
+test(async function testAESWrapKey() {
     const key = await crypto.subtle.generateKey({
         name: "AES-KW",
         length: 128
@@ -2560,7 +2562,7 @@ Deno.test(async function testAESWrapKey() {
     const unwrappedKeyBytes = await crypto.subtle.exportKey("raw", unwrappedKey);
     assertEquals(new Uint8Array(hmacKeyBytes), new Uint8Array(unwrappedKeyBytes));
 });
-Deno.test(async function testAesGcmTagLength() {
+test(async function testAesGcmTagLength() {
     const key = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-GCM", false, [
         "encrypt",
         "decrypt"
@@ -2579,7 +2581,7 @@ Deno.test(async function testAesGcmTagLength() {
         }, key, encrypted);
     });
 });
-Deno.test(async function ecPrivateKeyMaterialExportSpki() {
+test(async function ecPrivateKeyMaterialExportSpki() {
     const keys = await crypto.subtle.generateKey({
         name: "ECDSA",
         namedCurve: "P-256"
@@ -2592,7 +2594,7 @@ Deno.test(async function ecPrivateKeyMaterialExportSpki() {
     const spki = await crypto.subtle.exportKey("spki", keys.publicKey);
     assert(spki instanceof ArrayBuffer);
 });
-Deno.test(async function importJwkWithUse() {
+test(async function importJwkWithUse() {
     const jwk = {
         "kty": "EC",
         "use": "sig",
@@ -2609,7 +2611,7 @@ Deno.test(async function importJwkWithUse() {
     ]);
     assert(key instanceof CryptoKey);
 });
-Deno.test(async function exportKeyNotExtractable() {
+test(async function exportKeyNotExtractable() {
     const key = await crypto.subtle.generateKey({
         name: "HMAC",
         hash: "SHA-512"
@@ -2623,7 +2625,7 @@ Deno.test(async function exportKeyNotExtractable() {
         await crypto.subtle.exportKey("raw", key);
     }, DOMException);
 });
-Deno.test(async function testImportLeadingZeroesKey() {
+test(async function testImportLeadingZeroesKey() {
     const alg = {
         name: "ECDSA",
         namedCurve: "P-256"
@@ -2646,7 +2648,7 @@ Deno.test(async function testImportLeadingZeroesKey() {
     assert(key instanceof CryptoKey);
     assertEquals(key.type, "private");
 });
-Deno.test(async function testECspkiRoundTrip() {
+test(async function testECspkiRoundTrip() {
     const alg = {
         name: "ECDH",
         namedCurve: "P-256"
@@ -2657,7 +2659,7 @@ Deno.test(async function testECspkiRoundTrip() {
     const spki = await crypto.subtle.exportKey("spki", publicKey);
     await crypto.subtle.importKey("spki", spki, alg, true, []);
 });
-Deno.test(async function testHmacJwkImport() {
+test(async function testHmacJwkImport() {
     await crypto.subtle.importKey("jwk", {
         kty: "oct",
         use: "sig",

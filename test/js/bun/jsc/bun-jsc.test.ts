@@ -35,34 +35,39 @@ describe("bun:jsc", () => {
   }
 
   it("describe", () => {
-    jscDescribe([]);
+    expect(jscDescribe([])).toBeDefined();
   });
   it("describeArray", () => {
-    describeArray([1, 2, 3]);
+    expect(describeArray([1, 2, 3])).toBeDefined();
   });
   it("gcAndSweep", () => {
-    gcAndSweep();
+    expect(gcAndSweep()).toBeGreaterThan(0);
   });
   it("fullGC", () => {
-    fullGC();
+    expect(fullGC()).toBeGreaterThan(0);
   });
   it("edenGC", () => {
-    edenGC();
+    expect(edenGC()).toBeGreaterThan(0);
   });
   it("heapSize", () => {
-    expect(heapSize() > 0).toBe(true);
+    expect(heapSize()).toBeGreaterThan(0);
   });
   it("heapStats", () => {
-    heapStats();
+    const stats = heapStats();
+    expect(stats.heapCapacity).toBeGreaterThan(0);
+    expect(stats.heapSize).toBeGreaterThan(0);
+    expect(stats.objectCount).toBeGreaterThan(0);
   });
   it("memoryUsage", () => {
-    memoryUsage();
+    const usage = memoryUsage();
+    expect(usage.current).toBeGreaterThan(0);
+    expect(usage.peak).toBeGreaterThan(0);
   });
   it("getRandomSeed", () => {
-    getRandomSeed(2);
+    expect(getRandomSeed()).toBeDefined();
   });
   it("setRandomSeed", () => {
-    setRandomSeed(2);
+    expect(setRandomSeed(2)).toBeUndefined();
   });
   it("isRope", () => {
     expect(isRope("a" + 123 + "b")).toBe(true);
@@ -75,23 +80,23 @@ describe("bun:jsc", () => {
   it("noOSRExitFuzzing", () => {});
   it("optimizeNextInvocation", () => {
     count();
-    optimizeNextInvocation(count);
+    expect(optimizeNextInvocation(count)).toBeUndefined();
     count();
   });
   it("numberOfDFGCompiles", () => {
-    expect(numberOfDFGCompiles(count) > 0).toBe(true);
+    expect(numberOfDFGCompiles(count)).toBeGreaterThan(0);
   });
   it("releaseWeakRefs", () => {
-    releaseWeakRefs();
+    expect(releaseWeakRefs()).toBeUndefined();
   });
   it("totalCompileTime", () => {
-    totalCompileTime(count);
+    expect(totalCompileTime(count)).toBeGreaterThanOrEqual(0);
   });
   it("reoptimizationRetryCount", () => {
-    reoptimizationRetryCount(count);
+    expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
   });
   it("drainMicrotasks", () => {
-    drainMicrotasks();
+    expect(drainMicrotasks()).toBeUndefined();
   });
   it("startRemoteDebugger", () => {
     // try {
@@ -103,6 +108,6 @@ describe("bun:jsc", () => {
     // }
   });
   it("getProtectedObjects", () => {
-    expect(getProtectedObjects().length > 0).toBe(true);
+    expect(getProtectedObjects().length).toBeGreaterThan(0);
   });
 });

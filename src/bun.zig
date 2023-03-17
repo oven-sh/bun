@@ -30,6 +30,23 @@ pub const path = @import("./resolver/resolve_path.zig");
 pub const fmt = struct {
     pub usingnamespace std.fmt;
 
+    pub fn formatIp(address: std.net.Address, into: []u8) ![]u8 {
+        // std.net.Address.format includes `:<port>` and square brackets (IPv6)
+        //  while Node does neither.  This uses format then strips these to bring
+        //  the result into conformance with Node.
+        var result = try std.fmt.bufPrint(into, "{}", .{address});
+
+        // Strip `:<port>`
+        if (std.mem.lastIndexOfScalar(u8, result, ':')) |colon| {
+            result = result[0..colon];
+        }
+        // Strip brackets
+        if (result[0] == '[' and result[result.len - 1] == ']') {
+            result = result[1 .. result.len - 1];
+        }
+        return result;
+    }
+
     // https://lemire.me/blog/2021/06/03/computing-the-number-of-digits-of-an-integer-even-faster/
     pub fn fastDigitCount(x: u64) u64 {
         const table = [_]u64{

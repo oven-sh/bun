@@ -9,12 +9,12 @@ Bun is written mostly in Zig, but WebKit & JavaScriptCore (the JavaScript engine
 Today (Feburary 2023), Bun's codebase has five distinct parts:
 
 - JavaScript, JSX, & TypeScript transpiler, module resolver, and related code
-- JavaScript runtime (`src/bun.js/`)
-- JavaScript runtime bindings (`src/bun.zig/bindings/**/*.cpp`)
-- Package manager (`src/install/`)
-- Shared utilities (`src/string_immutable.zig`)
+- JavaScript runtime ([`src/bun.js/`](src/bun.js/))
+- JavaScript runtime bindings ([`src/bun.zig/bindings/**/*.cpp`](src/bun.zig/bindings/))
+- Package manager ([`src/install/`](src/install/))
+- Shared utilities ([`src/string_immutable.zig`](src/string_immutable.zig))
 
-The JavaScript transpiler & module resolver is mostly independent from the runtime. It predates the runtime and is entirely in Zig. The JavaScript parser is mostly in `src/js_parser.zig`. The JavaScript AST data structures are mostly in `src/js_ast.zig`. The JavaScript lexer is in `src/js_lexer.zig`. A lot of this code started as a port of esbuild's equivalent code from Go to Zig, but has had many small changes since then.
+The JavaScript transpiler & module resolver is mostly independent from the runtime. It predates the runtime and is entirely in Zig. The JavaScript parser is mostly in [`src/js_parser.zig`](src/js_parser.zig). The JavaScript AST data structures are mostly in [`src/js_ast.zig`](src/js_ast.zig). The JavaScript lexer is in [`src/js_lexer.zig`](src/js_lexer.zig). A lot of this code started as a port of esbuild's equivalent code from Go to Zig, but has had many small changes since then.
 
 ## Memory management in Bun
 
@@ -29,16 +29,16 @@ The JavaScript transpiler has special-handling for memory management. The parser
 
 ## JavaScript runtime
 
-Most of Bun's JavaScript runtime code lives in `src/bun.js`.
+Most of Bun's JavaScript runtime code lives in [`src/bun.js`](src/bun.js).
 
 ### Calling C++ from Zig & Zig from C++
 
-TODO: document this (see bindings.zig and bindings.cpp for now)
+TODO: document this (see [`bindings.zig`](src/bun.js/bindings/bindings.zig) and [`bindings.cpp`](src/bun.js/bindings/bindings.cpp) for now)
 
 ### Adding a new JavaScript class
 
-1. Add a new file in `src/bun.js/*.classes.ts` to define the instance and static methods for the class.
-2. Add a new file in `src/bun.js/**/*.zig` and expose the struct in `src/bun.js/generated_classes_list.zig`
+1. Add a new file in [`src/bun.js/*.classes.ts`](src/bun.js) to define the instance and static methods for the class.
+2. Add a new file in [`src/bun.js/**/*.zig`](src/bun.js) and expose the struct in [`src/bun.js/generated_classes_list.zig`](src/bun.js/generated_classes_list.zig)
 3. Run `make codegen`
 
 Copy from examples like `Subprocess` or `Response`.
@@ -49,13 +49,13 @@ Bun implements ESM modules in a mix of native code and JavaScript.
 
 Several Node.js modules are implemented in JavaScript and loosely based on browserify polyfills.
 
-The ESM modules in Bun are located in `src/bun.js/*.exports.js`. Unlike other code in Bun, these files are NOT transpiled. They are loaded directly into the JavaScriptCore VM. That means `require` does not work in these files. Instead, you must use `import.meta.require`, or ideally, not use require/import other files at all.
+The ESM modules in Bun are located in [`src/bun.js/*.exports.js`](src/bun.js/). Unlike other code in Bun, these files are NOT transpiled. They are loaded directly into the JavaScriptCore VM. That means `require` does not work in these files. Instead, you must use `import.meta.require`, or ideally, not use require/import other files at all.
 
-The module loader is in `src/bun.js/module_loader.zig`.
+The module loader is in [`src/bun.js/module_loader.zig`](src/bun.js/module_loader.zig).
 
 ### JavaScript Builtins
 
-JavaScript builtins are located in `src/bun.js/builtins/*.js`.
+JavaScript builtins are located in [`src/bun.js/builtins/*.js`](src/bun.js/builtins).
 
 These files support a JavaScriptCore-only syntax for internal slots. `@` is used to access an internal slot. For example: `new @Array(123)` will create a new `Array` similar to `new Array(123)`, except if a library modifies the `Array` global, it will not affect the internal slot (`@Array`). These names must be allow-listed in `BunBuiltinNames.h` (though JavaScriptCore allowlists some names by default).
 
@@ -83,4 +83,4 @@ Do not copy from examples leveraging the JavaScriptCore C API. Please do not use
 
 ## Testing
 
-See `../test/README.md` for information on how to run tests.
+See [`test/README.md`](test/README.md) for information on how to run tests.

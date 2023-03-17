@@ -2845,6 +2845,31 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     return value.toStringOrNull(arg1);
 }
 
+bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value) {
+    JSC::JSValue regex = JSC::JSValue::decode(regexValue);
+    JSC::JSValue str = JSC::JSValue::decode(value);
+    if (regex.asCell()->type() != RegExpObjectType || !str.isString()) {
+        return false;
+    }
+    JSC::RegExpObject* regexObject = jsDynamicCast<JSC::RegExpObject*>(regex);
+
+    return !!regexObject->match(global, JSC::asString(str));
+}
+
+bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globalObject, JSC__JSValue other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    WTF::String stringToSearchIn = JSC::JSValue::decode(value).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    WTF::String searchString = JSC::JSValue::decode(other).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return stringToSearchIn.find(searchString, 0) != WTF::notFound;
+}
+
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
     frame->source_url = Zig::toZigString(stackFrame->sourceURL(vm));
@@ -3227,7 +3252,8 @@ void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
 static auto function_string_view = MAKE_STATIC_STRING_IMPL("Function");
 void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
-    JSC::JSCell* cell = JSC::JSValue::decode(JSValue0).asCell();
+    JSValue value = JSValue::decode(JSValue0);
+    JSC::JSCell* cell = value.asCell();
     if (cell == nullptr) {
         arg2->len = 0;
         return;
@@ -3240,12 +3266,16 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     if (view.length() == 0 || StringView(String(function_string_view)) == view) {
         JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
         return;
-    } else {
-        *arg2 = Zig::toZigString(view);
+    }
+
+    JSObject* obj = value.toObject(arg1);
+    StringView calculated = StringView(JSObject::calculatedClassName(obj));
+    if (calculated.length() > 0) {
+        *arg2 = Zig::toZigString(calculated);
         return;
     }
 
-    arg2->len = 0;
+    *arg2 = Zig::toZigString(view);
 }
 
 void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
@@ -3600,10 +3630,6 @@ restart:
         bool anyHits = false;
         JSC::JSObject* objectToUse = prototypeObject.getObject();
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-            if ((entry.attributes() & PropertyAttribute::Accessor) != 0) {
-                return true;
-            }
-
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
             }
@@ -3629,7 +3655,7 @@ restart:
                 return true;
 
             JSC::JSValue propertyValue = objectToUse == object ? objectToUse->getDirect(entry.offset()) : JSValue();
-            if (!propertyValue || propertyValue.isGetterSetter()) {
+            if (!propertyValue || propertyValue.isGetterSetter() && !((entry.attributes() & PropertyAttribute::Accessor) != 0)) {
                 propertyValue = objectToUse->get(globalObject, prop);
             }
 
@@ -3688,10 +3714,6 @@ restart:
                 if (!object->getPropertySlot(globalObject, property, slot))
                     continue;
 
-                if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-                    continue;
-                }
-
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == vm.propertyNames->length
                         || property == vm.propertyNames->underscoreProto
@@ -3711,7 +3733,9 @@ restart:
                 JSC::JSValue propertyValue = jsUndefined();
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
+                    if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                        propertyValue = slot.getPureResult();
+                    } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
                         propertyValue = slot.getValue(globalObject, property);
                     } else if (slot.isCustom()) {
                         propertyValue = slot.getValue(globalObject, property);
@@ -3720,6 +3744,8 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         propertyValue = slot.getValue(globalObject, property);
                     }
+                } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+                    propertyValue = slot.getPureResult();
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
                 }
@@ -3782,6 +3808,33 @@ void JSC__JSValue__forEachPropertyOrdered(JSC__JSValue JSValue0, JSC__JSGlobalOb
         JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
         iter(globalObject, arg2, &key, JSC::JSValue::encode(propertyValue), propertyValue.isSymbol());
     }
+}
+
+bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0)
+{
+    JSValue value = JSValue::decode(JSValue0);
+    return value.isConstructor();
+}
+
+bool JSC__JSValue__isInstanceOf(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
+{
+    VM& vm = globalObject->vm();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue jsValue = JSValue::decode(JSValue0);
+    JSValue jsValue1 = JSValue::decode(JSValue1);
+    if (UNLIKELY(!jsValue1.isObject())) {
+        return false;
+    }
+    JSObject* jsConstructor = JSC::asObject(jsValue1);
+    if (UNLIKELY(!jsConstructor->structure()->typeInfo().implementsHasInstance()))
+        return false;
+    bool result = jsConstructor->hasInstance(globalObject, jsValue);
+    
+    RETURN_IF_EXCEPTION(scope, false); 
+
+    return result;
 }
 
 extern "C" JSC__JSValue JSC__JSValue__createRopeString(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)

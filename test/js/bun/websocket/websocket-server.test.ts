@@ -3,6 +3,36 @@ import { gcTick } from "harness";
 import { serve } from "bun";
 
 describe("websocket server", () => {
+  it("remoteAddress works", done => {
+    let server = Bun.serve({
+      websocket: {
+        message() {},
+        open(ws) {
+          try {
+            expect(ws.remoteAddress).toBe("127.0.0.1");
+            done();
+          } catch (e) {
+            done(e);
+          }
+        },
+        close() {},
+      },
+      fetch(req, server) {
+        if (!server.upgrade(req)) {
+          return new Response(null, { status: 404 });
+        }
+      },
+      port: 0,
+    });
+
+    let z = new WebSocket(`ws://${server.hostname}:${server.port}`);
+    z.addEventListener("open", () => {
+      setTimeout(() => z.close(), 0);
+    });
+    z.addEventListener("close", () => {
+      server.stop();
+    });
+  });
   it("can do publish()", async done => {
     var server = serve({
       port: 0,

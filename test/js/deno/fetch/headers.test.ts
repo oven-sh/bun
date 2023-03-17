@@ -1,11 +1,13 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/headers_test.ts
-import { assert, assertEquals, assertThrows } from "deno:harness";
+import { createDenoTest } from "deno:harness";
+const { test, assert, assertEquals, assertThrows } = createDenoTest(import.meta.path);
 const { inspectArgs  } = Deno[Deno.internal];
-Deno.test(function headersHasCorrectNameProp() {
+test(function headersHasCorrectNameProp() {
     assertEquals(Headers.name, "Headers");
 });
-Deno.test(function newHeaderTest() {
+test(function newHeaderTest() {
     new Headers();
     new Headers(undefined);
     new Headers({});
@@ -29,48 +31,48 @@ for (const [name, value] of Object.entries(headerDict)){
         value
     ]);
 }
-Deno.test(function newHeaderWithSequence() {
+test(function newHeaderWithSequence() {
     const headers = new Headers(headerSeq);
     for (const [name, value] of Object.entries(headerDict)){
         assertEquals(headers.get(name), String(value));
     }
     assertEquals(headers.get("length"), null);
 });
-Deno.test(function newHeaderWithRecord() {
+test(function newHeaderWithRecord() {
     const headers = new Headers(headerDict);
     for (const [name, value] of Object.entries(headerDict)){
         assertEquals(headers.get(name), String(value));
     }
 });
-Deno.test(function newHeaderWithHeadersInstance() {
+test(function newHeaderWithHeadersInstance() {
     const headers = new Headers(headerDict);
     const headers2 = new Headers(headers);
     for (const [name, value] of Object.entries(headerDict)){
         assertEquals(headers2.get(name), String(value));
     }
 });
-Deno.test(function headerAppendSuccess() {
+test(function headerAppendSuccess() {
     const headers = new Headers();
     for (const [name, value] of Object.entries(headerDict)){
         headers.append(name, value);
         assertEquals(headers.get(name), String(value));
     }
 });
-Deno.test(function headerSetSuccess() {
+test(function headerSetSuccess() {
     const headers = new Headers();
     for (const [name, value] of Object.entries(headerDict)){
         headers.set(name, value);
         assertEquals(headers.get(name), String(value));
     }
 });
-Deno.test(function headerHasSuccess() {
+test(function headerHasSuccess() {
     const headers = new Headers(headerDict);
     for (const name of Object.keys(headerDict)){
         assert(headers.has(name), "headers has name " + name);
         assert(!headers.has("nameNotInHeaders"), "headers do not have header: nameNotInHeaders");
     }
 });
-Deno.test(function headerDeleteSuccess() {
+test(function headerDeleteSuccess() {
     const headers = new Headers(headerDict);
     for (const name of Object.keys(headerDict)){
         assert(headers.has(name), "headers have a header: " + name);
@@ -78,14 +80,14 @@ Deno.test(function headerDeleteSuccess() {
         assert(!headers.has(name), "headers do not have anymore a header: " + name);
     }
 });
-Deno.test(function headerGetSuccess() {
+test(function headerGetSuccess() {
     const headers = new Headers(headerDict);
     for (const [name, value] of Object.entries(headerDict)){
         assertEquals(headers.get(name), String(value));
         assertEquals(headers.get("nameNotInHeaders"), null);
     }
 });
-Deno.test(function headerEntriesSuccess() {
+test(function headerEntriesSuccess() {
     const headers = new Headers(headerDict);
     const iterators = headers.entries();
     for (const it of iterators){
@@ -95,14 +97,14 @@ Deno.test(function headerEntriesSuccess() {
         assertEquals(value, headers.get(key));
     }
 });
-Deno.test(function headerKeysSuccess() {
+test(function headerKeysSuccess() {
     const headers = new Headers(headerDict);
     const iterators = headers.keys();
     for (const it of iterators){
         assert(headers.has(it));
     }
 });
-Deno.test(function headerValuesSuccess() {
+test(function headerValuesSuccess() {
     const headers = new Headers(headerDict);
     const iterators = headers.values();
     const entries = headers.entries();
@@ -122,7 +124,7 @@ const headerEntriesDict: Record<string, string> = {
     "Content-Typ": "value5",
     "Content-Types": "value6"
 };
-Deno.test(function headerForEachSuccess() {
+test(function headerForEachSuccess() {
     const headers = new Headers(headerEntriesDict);
     const keys = Object.keys(headerEntriesDict);
     keys.forEach((key)=>{
@@ -138,7 +140,7 @@ Deno.test(function headerForEachSuccess() {
     });
     assertEquals(callNum, keys.length);
 });
-Deno.test(function headerSymbolIteratorSuccess() {
+test(function headerSymbolIteratorSuccess() {
     assert(Symbol.iterator in Headers.prototype);
     const headers = new Headers(headerEntriesDict);
     for (const header of headers){
@@ -148,14 +150,14 @@ Deno.test(function headerSymbolIteratorSuccess() {
         assertEquals(value, headers.get(key));
     }
 });
-Deno.test(function headerTypesAvailable() {
+test(function headerTypesAvailable() {
     function newHeaders(): Headers {
         return new Headers();
     }
     const headers = newHeaders();
     assert(headers instanceof Headers);
 });
-Deno.test(function headerIllegalReject() {
+test(function headerIllegalReject() {
     let errorCount = 0;
     try {
         new Headers({
@@ -214,7 +216,7 @@ Deno.test(function headerIllegalReject() {
         "He-y": "o k"
     });
 });
-Deno.test(function headerParamsShouldThrowTypeError() {
+test(function headerParamsShouldThrowTypeError() {
     let hasThrown = 0;
     try {
         new Headers(([
@@ -232,7 +234,7 @@ Deno.test(function headerParamsShouldThrowTypeError() {
     }
     assertEquals(hasThrown, 2);
 });
-Deno.test(function headerParamsArgumentsCheck() {
+test(function headerParamsArgumentsCheck() {
     const methodRequireOneParam = [
         "delete",
         "get",
@@ -286,7 +288,7 @@ Deno.test(function headerParamsArgumentsCheck() {
         assertEquals(hasThrown, 2);
     });
 });
-Deno.test(function headersInitMultiple() {
+test(function headersInitMultiple() {
     const headers = new Headers([
         [
             "Set-Cookie",
@@ -323,7 +325,7 @@ Deno.test(function headersInitMultiple() {
         ]
     ]);
 });
-Deno.test(function headerInitWithPrototypePollution() {
+test(function headerInitWithPrototypePollution() {
     const originalExec = RegExp.prototype.exec;
     try {
         RegExp.prototype.exec = ()=>{
@@ -343,7 +345,7 @@ Deno.test(function headerInitWithPrototypePollution() {
         RegExp.prototype.exec = originalExec;
     }
 });
-Deno.test(function headersAppendMultiple() {
+test(function headersAppendMultiple() {
     const headers = new Headers([
         [
             "Set-Cookie",
@@ -374,7 +376,7 @@ Deno.test(function headersAppendMultiple() {
         ]
     ]);
 });
-Deno.test(function headersAppendDuplicateSetCookieKey() {
+test(function headersAppendDuplicateSetCookieKey() {
     const headers = new Headers([
         [
             "Set-Cookie",
@@ -401,7 +403,7 @@ Deno.test(function headersAppendDuplicateSetCookieKey() {
         ]
     ]);
 });
-Deno.test(function headersGetSetCookie() {
+test(function headersGetSetCookie() {
     const headers = new Headers([
         [
             "Set-Cookie",
@@ -414,14 +416,14 @@ Deno.test(function headersGetSetCookie() {
     ]);
     assertEquals(headers.get("SET-COOKIE"), "foo=bar, bar=qat");
 });
-Deno.test(function toStringShouldBeWebCompatibility() {
+test(function toStringShouldBeWebCompatibility() {
     const headers = new Headers();
     assertEquals(headers.toString(), "[object Headers]");
 });
 function stringify(...args: unknown[]): string {
     return inspectArgs(args).replace(/\n$/, "");
 }
-Deno.test.ignore(function customInspectReturnsCorrectHeadersFormat() {
+test.ignore(function customInspectReturnsCorrectHeadersFormat() {
     const blankHeaders = new Headers();
     assertEquals(stringify(blankHeaders), "Headers {}");
     const singleHeader = new Headers([
@@ -443,7 +445,7 @@ Deno.test.ignore(function customInspectReturnsCorrectHeadersFormat() {
     ]);
     assertEquals(stringify(multiParamHeader), `Headers { "content-length": "1337", "content-type": "application/json" }`);
 });
-Deno.test(function invalidHeadersFlaky() {
+test(function invalidHeadersFlaky() {
     assertThrows(()=>new Headers([
             [
                 "x",

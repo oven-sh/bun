@@ -75,7 +75,7 @@ pub const Body = struct {
         };
     }
 
-    pub fn writeFormat(this: *const Body, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *const Body, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
         try formatter.writeIndent(Writer, writer);
@@ -98,7 +98,7 @@ pub const Body = struct {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try formatter.writeIndent(Writer, writer);
-            try this.value.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+            try this.value.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
         } else if (this.value == .InternalBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");

@@ -428,35 +428,64 @@ pub const ServerConfig = struct {
 
             if (args.base_url.protocol.len == 0) {
                 const protocol: string = if (args.ssl_config != null) "https" else "http";
-
-                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
-                        protocol,
-                        args.base_url.hostname,
-                        strings.trimLeadingChar(args.base_url.pathname, '/'),
-                    })
-                else
-                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
-                        protocol,
-                        args.base_url.hostname,
-                        args.port,
-                        strings.trimLeadingChar(args.base_url.pathname, '/'),
-                    })) catch unreachable;
+                const hostname = args.base_url.hostname;
+                const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
+                if (needsBrackets) {
+                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                        std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/{s}", .{
+                            protocol,
+                            hostname,
+                            strings.trimLeadingChar(args.base_url.pathname, '/'),
+                        })
+                    else
+                        std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/{s}", .{
+                            protocol,
+                            hostname,
+                            args.port,
+                            strings.trimLeadingChar(args.base_url.pathname, '/'),
+                        })) catch unreachable;
+                } else {
+                    args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                        std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
+                            protocol,
+                            hostname,
+                            strings.trimLeadingChar(args.base_url.pathname, '/'),
+                        })
+                    else
+                        std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
+                            protocol,
+                            hostname,
+                            args.port,
+                            strings.trimLeadingChar(args.base_url.pathname, '/'),
+                        })) catch unreachable;
+                }
 
                 args.base_url = URL.parse(args.base_uri);
             }
         } else {
             const hostname: string =
                 if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
-            const protocol: string = if (args.ssl_config != null) "https" else "http";
 
-            args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
-                    protocol,
-                    hostname,
-                })
-            else
-                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+            const needsBrackets: bool = strings.isIPV6Address(hostname) and hostname[0] != '[';
+
+            const protocol: string = if (args.ssl_config != null) "https" else "http";
+            if (needsBrackets) {
+                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]/", .{
+                        protocol,
+                        hostname,
+                    })
+                else
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://[{s}]:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+            } else {
+                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
+                        protocol,
+                        hostname,
+                    })
+                else
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+            }
 
             if (!strings.isAllASCII(hostname)) {
                 JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global, exception);
@@ -3918,13 +3947,18 @@ pub const ServerWebSocket = struct {
             return JSValue.jsUndefined();
         }
 
-        var buf: [512]u8 = undefined;
-        const address = this.websocket.getRemoteAddress(&buf);
-        if (address.len == 0) {
-            return JSValue.jsUndefined();
-        }
+        var buf: [64]u8 = [_]u8{0} ** 64;
+        var text_buf: [512]u8 = undefined;
 
-        return ZigString.init(address).toValueGC(globalThis);
+        const address_bytes = this.websocket.getRemoteAddress(&buf);
+        const address: std.net.Address = switch (address_bytes.len) {
+            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
+            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
+            else => return JSValue.jsUndefined(),
+        };
+
+        const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
+        return ZigString.init(text).toValueGC(globalThis);
     }
 };
 
@@ -4851,13 +4885,21 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             const hostname = bun.span(this.config.hostname);
+
             // When "localhost" is specified, we omit the hostname entirely
             // Otherwise, "curl http://localhost:3000" doesn't actually work due to IPV6 vs IPV4 issues
             // This prints a spurious log si_destination_compare on macOS but only when debugger is connected
-            const host: [*:0]const u8 = if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost")))
-                ""
-            else
-                this.config.hostname;
+            var host: [*:0]const u8 = undefined;
+            var host_buff: [1024:0]u8 = undefined;
+
+            if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost"))) {
+                host = "";
+            } else if (hostname.len > 2 and hostname[0] == '[') {
+                // remove "[" and "]" from hostname
+                host = std.fmt.bufPrintZ(&host_buff, "{s}", .{hostname[1 .. hostname.len - 1]}) catch unreachable;
+            } else {
+                host = this.config.hostname;
+            }
 
             this.ref();
 

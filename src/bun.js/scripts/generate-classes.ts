@@ -292,9 +292,7 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
   //     { "CLOSED"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
   // };
   return `
-  static const HashTableValue ${nameToUse}TableValues[] = {
-${rows.join("  ,\n")}
-  };
+  static const HashTableValue ${nameToUse}TableValues[] = {${rows.length > 0 ? "\n" + rows.join("  ,\n") + "\n" : ""}};
 `;
 }
 
@@ -348,7 +346,11 @@ ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || []
 void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);${specialSymbols}
+    ${
+      Object.keys(protoFields).length > 0
+        ? `reifyStaticProperties(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
+        : ""
+    }${specialSymbols}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -1144,9 +1146,9 @@ function generateImpl(typeName, obj) {
   return [
     generatePrototypeHeader(typeName),
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
-    Object.keys(proto).length > 0 && generatePrototype(typeName, obj).trim(),
+    generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
-    Object.keys(proto).length > 0 && generateClassImpl(typeName, obj).trim(),
+    generateClassImpl(typeName, obj).trim(),
   ]
     .filter(Boolean)
     .join("\n\n");

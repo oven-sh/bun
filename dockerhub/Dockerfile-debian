@@ -1,8 +1,4 @@
-# https://hub.docker.com/_/debian
-# https://hub.docker.com/_/ubuntu
-ARG IMAGE=debian:bullseye-slim
-
-FROM $IMAGE AS base
+FROM debian:bullseye-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -25,7 +21,7 @@ RUN apt-get update -qq \
     esac \
     && version="$BUN_VERSION" \
     && case "$version" in \
-      latest | canary | bun-v*) tag="$version"; ;; \ 
+      latest | canary | bun-v*) tag="$version"; ;; \
       v*)                       tag="bun-$version"; ;; \
       *)                        tag="bun-v$version"; ;; \
     esac \
@@ -62,7 +58,7 @@ RUN apt-get update -qq \
     && which bunx \
     && bun --version
 
-FROM $IMAGE
+FROM debian:bullseye-slim
 
 RUN groupadd bun \
       --gid 1000 \
@@ -72,12 +68,10 @@ RUN groupadd bun \
       --shell /bin/sh \
       --create-home
 
-COPY --from=base /usr/local/bin/bun /usr/local/bin
-COPY --from=base /usr/local/bin/bunx /usr/local/bin
-
-RUN which bun \
-    && which bunx \
-    && bun --version
+COPY docker-entrypoint.sh /usr/local/bin
+COPY --from=build /usr/local/bin/bun /usr/local/bin
+COPY --from=build /usr/local/bin/bunx /usr/local/bin
 
 WORKDIR /home/bun/app
-CMD ["bun"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/bun"]

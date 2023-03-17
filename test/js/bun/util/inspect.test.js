@@ -1,5 +1,29 @@
 import { it, expect, describe } from "bun:test";
 
+it("getters", () => {
+  const obj = {
+    get foo() {
+      return 42;
+    },
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  var called = false;
+  const objWithThrowingGetter = {
+    get foo() {
+      called = true;
+      throw new Error("Test failed!");
+    },
+    set foo(v) {
+      called = true;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + '  "foo": [Getter]' + "\n" + "}");
+  expect(called).toBe(false);
+});
+
 it("Timeout", () => {
   const id = setTimeout(() => {}, 0);
   expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);
@@ -15,7 +39,7 @@ it("when prototype defines the same property, don't print the same property twic
   };
   var obj = Object.create(base);
   obj.foo = "456";
-  expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456"\n}'.trim());
+  expect(Bun.inspect(obj).trim()).toBe('{\n  "foo": "456"\n}'.trim());
 });
 
 it("Blob inspect", () => {
@@ -194,10 +218,10 @@ it("inspect", () => {
   expect(Bun.inspect(1, "hi")).toBe("1 hi");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{}");
-  expect(Bun.inspect({ hello: 1 })).toBe("{\n  hello: 1\n}");
-  expect(Bun.inspect({ hello: 1, there: 2 })).toBe("{\n  hello: 1,\n  there: 2\n}");
-  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  hello: "1",\n  there: 2\n}');
-  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  there: 2\n}');
+  expect(Bun.inspect({ hello: 1 })).toBe('{\n  "hello": 1\n}');
+  expect(Bun.inspect({ hello: 1, there: 2 })).toBe('{\n  "hello": 1,\n  "there": 2\n}');
+  expect(Bun.inspect({ hello: "1", there: 2 })).toBe('{\n  "hello": "1",\n  "there": 2\n}');
+  expect(Bun.inspect({ 'hello-"there': "1", there: 2 })).toBe('{\n  "hello-\\"there": "1",\n  "there": 2\n}');
   var str = "123";
   while (str.length < 4096) {
     str += "123";

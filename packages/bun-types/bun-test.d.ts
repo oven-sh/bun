@@ -32,10 +32,7 @@ declare module "bun:test" {
    * @param fn the function that defines the tests
    */
   export type Describe = {
-    (
-      label: string,
-      fn: () => void
-    ): void;
+    (label: string, fn: () => void): void;
   };
   /**
    * Describes a group of related tests.
@@ -71,8 +68,9 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function beforeAll(
-    fn: (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void)
+    fn:
+      | (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void),
   ): void;
   /**
    * Runs a function before each test.
@@ -85,8 +83,9 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function beforeEach(
-    fn: (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void)
+    fn:
+      | (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void),
   ): void;
   /**
    * Runs a function, once, after all the tests.
@@ -105,8 +104,9 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterAll(
-    fn: (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void)
+    fn:
+      | (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void),
   ): void;
   /**
    * Runs a function after each test.
@@ -117,8 +117,9 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(
-    fn: (() => void | Promise<unknown>)
-      | ((done: (err?: unknown) => void) => void)
+    fn:
+      | (() => void | Promise<unknown>)
+      | ((done: (err?: unknown) => void) => void),
   ): void;
   /**
    * Runs a test.
@@ -139,8 +140,9 @@ declare module "bun:test" {
   export type Test = {
     (
       label: string,
-      fn: (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void)
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
      * Skips all other tests, except this test.
@@ -151,8 +153,9 @@ declare module "bun:test" {
      */
     only(
       label: string,
-      fn: (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void)
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
     ): void;
     /**
      * Skips this test.
@@ -162,10 +165,11 @@ declare module "bun:test" {
      */
     skip(
       label: string,
-      fn: (() => void | Promise<unknown>)
-        | ((done: (err?: unknown) => void) => void)
+      fn:
+        | (() => void | Promise<unknown>)
+        | ((done: (err?: unknown) => void) => void),
     ): void;
-  }
+  };
   /**
    * Runs a test.
    *
@@ -337,6 +341,14 @@ declare module "bun:test" {
      * expect(undefined).toBeDefined(); // fail
      */
     toBeDefined(): void;
+     /**
+     * Asserts that the expected value is an instance of value
+     *
+     * @example
+     * expect([]).toBeInstanceOf(Array);
+     * expect(null).toBeInstanceOf(Array); // fail
+     */
+    toBeInstanceOf(value: unknown): void;
     /**
      * Asserts that a value is `undefined`.
      *
@@ -428,6 +440,28 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      */
     toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
+    /**
+     * Asserts that a value matches a regular expression or includes a substring.
+     *
+     * @example
+     * expect("dog").toMatch(/dog/);
+     * expect("dog").toMatch("og");
+     *
+     * @param expected the expected substring or pattern.
+     */
+    toMatch(expected: string | RegExp): void;
+    /**
+     * Asserts that a value matches the most recent snapshot.
+     *
+     * @example
+     * expect([1, 2, 3]).toMatchSnapshot();
+     * expect({ a: 1, b: 2 }).toMatchSnapshot({ a: 1 });
+     * expect({ c: new Date() }).toMatchSnapshot({ c: expect.any(Date) });
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param hint Hint used to identify the snapshot in the snapshot file.
+     */
+    toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
   }
 }
 

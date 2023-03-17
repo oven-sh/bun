@@ -1,7 +1,9 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/request_test.ts
-import { assertEquals, assertStringIncludes } from "deno:harness";
-Deno.test(async function fromInit() {
+import { createDenoTest } from "deno:harness";
+const { test, assertEquals, assertStringIncludes } = createDenoTest(import.meta.path);
+test(async function fromInit() {
     const req = new Request("http://foo/", {
         body: "ahoyhoy",
         method: "POST",
@@ -13,7 +15,7 @@ Deno.test(async function fromInit() {
     assertEquals(req.url, "http://foo/");
     assertEquals(req.headers.get("test-header"), "value");
 });
-Deno.test(function requestNonString() {
+test(function requestNonString() {
     const nonString = {
         toString () {
             return "http://foo/";
@@ -21,15 +23,15 @@ Deno.test(function requestNonString() {
     };
     assertEquals(new Request(nonString).url, "http://foo/");
 });
-Deno.test(function methodNonString() {
+test(function methodNonString() {
     assertEquals(new Request("http://foo/", {
         method: undefined
     }).method, "GET");
 });
-Deno.test.ignore(function requestRelativeUrl() {
+test.ignore(function requestRelativeUrl() {
     assertEquals(new Request("relative-url").url, "http://js-unit-tests/foo/relative-url");
 });
-Deno.test(async function cloneRequestBodyStream() {
+test(async function cloneRequestBodyStream() {
     const stream = new Request("http://foo/", {
         body: "a test body",
         method: "POST"
@@ -43,7 +45,7 @@ Deno.test(async function cloneRequestBodyStream() {
     const b2 = await r2.text();
     assertEquals(b1, b2);
 });
-Deno.test.ignore(function customInspectFunction() {
+test.ignore(function customInspectFunction() {
     const request = new Request("https://example.com");
     assertEquals(Deno.inspect(request), `Request {
   bodyUsed: false,
@@ -54,6 +56,6 @@ Deno.test.ignore(function customInspectFunction() {
 }`);
     assertStringIncludes(Deno.inspect(Request.prototype), "Request");
 });
-Deno.test(function requestConstructorTakeURLObjectAsParameter() {
+test(function requestConstructorTakeURLObjectAsParameter() {
     assertEquals(new Request(new URL("http://foo/")).url, "http://foo/");
 });

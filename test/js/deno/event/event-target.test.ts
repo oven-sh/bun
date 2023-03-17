@@ -1,13 +1,15 @@
+// GENERATED - DO NOT EDIT
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/event_target_test.ts
-import { assertEquals, assertThrows } from "deno:harness";
-Deno.test(function addEventListenerTest() {
+import { createDenoTest } from "deno:harness";
+const { test, assertEquals, assertThrows } = createDenoTest(import.meta.path);
+test(function addEventListenerTest() {
     const document = new EventTarget();
     assertEquals(document.addEventListener("x", null, false), undefined);
     assertEquals(document.addEventListener("x", null, true), undefined);
     assertEquals(document.addEventListener("x", null), undefined);
 });
-Deno.test(function constructedEventTargetCanBeUsedAsExpected() {
+test(function constructedEventTargetCanBeUsedAsExpected() {
     const target = new EventTarget();
     const event = new Event("foo", {
         bubbles: true,
@@ -27,7 +29,7 @@ Deno.test(function constructedEventTargetCanBeUsedAsExpected() {
     target.dispatchEvent(event);
     assertEquals(callCount, 2);
 });
-Deno.test(function anEventTargetCanBeSubclassed() {
+test(function anEventTargetCanBeSubclassed() {
     class NicerEventTarget extends EventTarget {
         on(type: string, callback: ((e: Event) => void) | null, options?: AddEventListenerOptions) {
             this.addEventListener(type, callback, options);
@@ -50,13 +52,13 @@ Deno.test(function anEventTargetCanBeSubclassed() {
     target.off("foo", listener);
     assertEquals(callCount, 0);
 });
-Deno.test(function removingNullEventListenerShouldSucceed() {
+test(function removingNullEventListenerShouldSucceed() {
     const document = new EventTarget();
     assertEquals(document.removeEventListener("x", null, false), undefined);
     assertEquals(document.removeEventListener("x", null, true), undefined);
     assertEquals(document.removeEventListener("x", null), undefined);
 });
-Deno.test(function constructedEventTargetUseObjectPrototype() {
+test(function constructedEventTargetUseObjectPrototype() {
     const target = new EventTarget();
     const event = new Event("toString", {
         bubbles: true,
@@ -76,11 +78,11 @@ Deno.test(function constructedEventTargetUseObjectPrototype() {
     target.dispatchEvent(event);
     assertEquals(callCount, 2);
 });
-Deno.test(function toStringShouldBeWebCompatible() {
+test(function toStringShouldBeWebCompatible() {
     const target = new EventTarget();
     assertEquals(target.toString(), "[object EventTarget]");
 });
-Deno.test(function dispatchEventShouldNotThrowError() {
+test(function dispatchEventShouldNotThrowError() {
     let hasThrown = false;
     try {
         const target = new EventTarget();
@@ -96,7 +98,7 @@ Deno.test(function dispatchEventShouldNotThrowError() {
     }
     assertEquals(hasThrown, false);
 });
-Deno.test(function eventTargetThisShouldDefaultToWindow() {
+test.ignore(function eventTargetThisShouldDefaultToWindow() {
     const { addEventListener , dispatchEvent , removeEventListener  } = EventTarget.prototype;
     let n = 1;
     const event = new Event("hello");
@@ -118,7 +120,7 @@ Deno.test(function eventTargetThisShouldDefaultToWindow() {
     dispatchEvent(event);
     assertEquals(n, 1);
 });
-Deno.test(function eventTargetShouldAcceptEventListenerObject() {
+test(function eventTargetShouldAcceptEventListenerObject() {
     const target = new EventTarget();
     const event = new Event("foo", {
         bubbles: true,
@@ -140,7 +142,7 @@ Deno.test(function eventTargetShouldAcceptEventListenerObject() {
     target.dispatchEvent(event);
     assertEquals(callCount, 2);
 });
-Deno.test(function eventTargetShouldAcceptAsyncFunction() {
+test(function eventTargetShouldAcceptAsyncFunction() {
     const target = new EventTarget();
     const event = new Event("foo", {
         bubbles: true,
@@ -160,7 +162,7 @@ Deno.test(function eventTargetShouldAcceptAsyncFunction() {
     target.dispatchEvent(event);
     assertEquals(callCount, 2);
 });
-Deno.test(function eventTargetShouldAcceptAsyncFunctionForEventListenerObject() {
+test(function eventTargetShouldAcceptAsyncFunctionForEventListenerObject() {
     const target = new EventTarget();
     const event = new Event("foo", {
         bubbles: true,
@@ -182,14 +184,14 @@ Deno.test(function eventTargetShouldAcceptAsyncFunctionForEventListenerObject() 
     target.dispatchEvent(event);
     assertEquals(callCount, 2);
 });
-Deno.test(function eventTargetDispatchShouldSetTargetNoListener() {
+test(function eventTargetDispatchShouldSetTargetNoListener() {
     const target = new EventTarget();
     const event = new Event("foo");
     assertEquals(event.target, null);
     target.dispatchEvent(event);
     assertEquals(event.target, target);
 });
-Deno.test(function eventTargetDispatchShouldSetTargetInListener() {
+test(function eventTargetDispatchShouldSetTargetInListener() {
     const target = new EventTarget();
     const event = new Event("foo");
     assertEquals(event.target, null);
@@ -201,7 +203,7 @@ Deno.test(function eventTargetDispatchShouldSetTargetInListener() {
     target.dispatchEvent(event);
     assertEquals(called, true);
 });
-Deno.test(function eventTargetAddEventListenerGlobalAbort() {
+test(function eventTargetAddEventListenerGlobalAbort() {
     return new Promise((resolve)=>{
         const c = new AbortController();
         c.signal.addEventListener("abort", ()=>resolve());
@@ -211,7 +213,7 @@ Deno.test(function eventTargetAddEventListenerGlobalAbort() {
         c.abort();
     });
 });
-Deno.test(function eventTargetBrandChecking() {
+test(function eventTargetBrandChecking() {
     const self = {};
     assertThrows(()=>{
         EventTarget.prototype.addEventListener.call(self, "test", null);

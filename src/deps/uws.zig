@@ -111,7 +111,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 this.socket,
             );
         }
-        pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: [*c]i32) void {
+        pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
             return us_socket_remote_address(
                 comptime ssl_int,
                 this.socket,
@@ -809,8 +809,8 @@ pub const AnyWebSocket = union(enum) {
 
     pub fn getRemoteAddress(this: AnyWebSocket, buf: []u8) []u8 {
         return switch (this) {
-            .ssl => this.ssl.getRemoteAddressAsText(buf),
-            .tcp => this.tcp.getRemoteAddressAsText(buf),
+            .ssl => this.ssl.getRemoteAddress(buf),
+            .tcp => this.tcp.getRemoteAddress(buf),
         };
     }
 };
@@ -992,7 +992,7 @@ pub const ListenSocket = opaque {
         us_listen_socket_close(@boolToInt(ssl), this);
     }
     pub fn getLocalPort(this: *ListenSocket, ssl: bool) i32 {
-        return us_socket_local_port(@boolToInt(ssl), this);
+        return us_socket_local_port(@boolToInt(ssl), @ptrCast(*uws.Socket, this));
     }
 };
 extern fn us_listen_socket_close(ssl: i32, ls: *ListenSocket) void;
@@ -1614,12 +1614,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_ws_get_buffered_amount(ssl_flag, this.raw());
             }
             pub fn getRemoteAddress(this: *WebSocket, buf: []u8) []u8 {
-                return buf[0..uws_ws_get_remote_address(ssl_flag, this.raw(), &buf.ptr)];
-            }
-
-            pub fn getRemoteAddressAsText(this: *WebSocket, buf: []u8) []u8 {
-                var copy = buf;
-                return buf[0..uws_ws_get_remote_address_as_text(ssl_flag, this.raw(), &copy.ptr)];
+                var ptr: [*]u8 = undefined;
+                const len = uws_ws_get_remote_address(ssl_flag, this.raw(), &ptr);
+                bun.copy(u8, buf, ptr[0..len]);
+                return buf[0..len];
             }
         };
     };

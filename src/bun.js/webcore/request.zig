@@ -116,7 +116,7 @@ pub const Request = struct {
         };
     }
 
-    pub fn writeFormat(this: *Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
         try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.slice().len)});
         {
@@ -139,12 +139,12 @@ pub const Request = struct {
             if (this.body == .Blob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                try this.body.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+                try this.body.Blob.writeFormat(Formatter, formatter, writer, enable_ansi_colors);
             } else if (this.body == .InternalBlob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
                 if (this.body.size() == 0) {
-                    try Blob.initEmpty(undefined).writeFormat(formatter, writer, enable_ansi_colors);
+                    try Blob.initEmpty(undefined).writeFormat(Formatter, formatter, writer, enable_ansi_colors);
                 } else {
                     try Blob.writeFormatForSize(this.body.size(), writer, enable_ansi_colors);
                 }

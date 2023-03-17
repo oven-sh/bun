@@ -223,10 +223,15 @@ it("should receive data", done => {
         hostname: address.address,
         port: address.port,
         socket: {
+          drain(socket) {
+            socket.write("Hello");
+            socket.end();
+          },
           data(socket) {},
           open(socket) {
-            socket.end("Hello");
-            // socket.end();
+            if(socket.write("Hello")) {
+              socket.end();
+            }
           },
           connectError: closeAndFail, // connection failed
         },
@@ -476,6 +481,9 @@ it("should echo data", done => {
         hostname: address.address,
         port: address.port,
         socket: {
+          drain(socket) {
+            socket.write("Hello");
+          },
           data(socket, data) {
             clearTimeout(timeout);
             server.close();

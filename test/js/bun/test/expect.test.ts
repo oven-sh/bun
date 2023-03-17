@@ -45,4 +45,37 @@ describe("expect()", () => {
       test(label, () => expect(value).toBeInstanceOf(instanceOf));
     }
   });
+
+  describe("toMatch()", () => {
+    const tests = [
+      {
+        label: "reguler expression",
+        value: "123",
+        matched: /123/,
+      },
+      {
+        label: "reguler expression object",
+        value: "123",
+        matched: new RegExp("123"),
+      },
+      {
+        label: "substring",
+        value: "123",
+        matched: "12",
+      },
+      {
+        label: "substring emojis",
+        value: "👍👎",
+        matched: "👍"
+      },
+      {
+        label: "substring UTF-16",
+        value: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂",
+        matched: "🥲 ☺️ 😊"
+      },
+    ];
+    for (const { label, value, matched } of tests) {
+      test(label, () => expect(value).toMatch(matched));
+    }
+  });
 });

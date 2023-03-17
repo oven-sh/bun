@@ -2759,7 +2759,7 @@ pub const Expect = struct {
         if (not) {
             const expected_line = "Expected constructor: not <green>{any}<r>\n";
             const received_line = "Received value: <red>{any}<r>\n";
-            const fmt = comptime getSignature("toBeInstanceOf", "", true) ++ "\n\n" ++ expected_line ++ received_line;
+            const fmt = comptime getSignature("toBeInstanceOf", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
             if (Output.enable_ansi_colors) {
                 globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
                 return .zero;
@@ -2771,13 +2771,79 @@ pub const Expect = struct {
 
         const expected_line = "Expected constructor: <green>{any}<r>\n";
         const received_line = "Received value: <red>{any}<r>\n";
-        const fmt = comptime getSignature("toBeInstanceOf", "", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
+        const fmt = comptime getSignature("toBeInstanceOf", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
+        return .zero;
+    }
+
+    pub fn toMatch(this: *Expect, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        defer this.postMatch(globalObject);
+
+        const thisValue = callFrame.this();
+        const _arguments = callFrame.arguments(1);
+        const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
+
+        if (arguments.len < 1) {
+            globalObject.throwInvalidArguments("toMatch() requires 1 argument", .{});
             return .zero;
         }
 
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        if (this.scope.tests.items.len <= this.test_id) {
+            globalObject.throw("toMatch() must be called in a test", .{});
+            return .zero;
+        }
+
+        active_test_expectation_counter.actual += 1;
+
+        var formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = globalObject, .quote_strings = true };
+
+        const expected_value = arguments[0];
+        if (!expected_value.isString() and !expected_value.isRegExp()) {
+            globalObject.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+        expected_value.ensureStillAlive();
+
+        const value = Expect.capturedValueGetCached(thisValue) orelse {
+            globalObject.throw("Internal consistency error: the expect(value) was garbage collected but it should not have been!", .{});
+            return .zero;
+        };
+        value.ensureStillAlive();
+
+        if (!value.isString()) {
+            globalObject.throw("Received value must be a string: {any}", .{value.toFmt(globalObject, &formatter)});
+            return .zero;
+        }
+
+        const not = this.op.contains(.not);
+        var pass: bool = brk: {
+            if (expected_value.isString()) {
+                break :brk value.stringIncludes(globalObject, expected_value);
+            } else if (expected_value.isRegExp()) {
+                break :brk expected_value.toMatch(globalObject, value);
+            }
+            unreachable;
+        };
+        
+        if (not) pass = !pass;
+        if (pass) return thisValue;
+
+        // handle failure
+        const expected_fmt = expected_value.toFmt(globalObject, &formatter);
+        const value_fmt = value.toFmt(globalObject, &formatter);
+
+        if (not) {
+            const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";
+            const received_line = "Received: <red>{any}<r>\n";
+            const fmt = comptime getSignature("toMatch", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
+            return .zero;
+        }
+
+        const expected_line = "Expected substring or pattern: <green>{any}<r>\n";
+        const received_line = "Received: <red>{any}<r>\n";
+        const fmt = comptime getSignature("toMatch", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -2791,7 +2857,6 @@ pub const Expect = struct {
     pub const toHaveNthReturnedWith = notImplementedJSCFn;
     pub const toBeCloseTo = notImplementedJSCFn;
     pub const toContainEqual = notImplementedJSCFn;
-    pub const toMatch = notImplementedJSCFn;
     pub const toMatchObject = notImplementedJSCFn;
     pub const toMatchInlineSnapshot = notImplementedJSCFn;
     pub const toThrowErrorMatchingSnapshot = notImplementedJSCFn;

@@ -172,7 +172,7 @@ const Socket = (function (InternalSocket) {
         const options = self[bunSocketServerOptions];
         const { pauseOnConnect, connectionListener, InternalSocketClass } = options;
         const _socket = new InternalSocketClass({});
-        
+
         _socket.#attach(this.localPort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
           const data = {

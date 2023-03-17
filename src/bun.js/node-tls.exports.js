@@ -156,7 +156,7 @@ class Server extends NetServer {
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
-    if(options) {
+    if (options) {
       if (options.key) {
         this.key = (options.key instanceof Array ? options.key : [options.key]).map(mapStringArray);
       } else this.key = undefined;
@@ -177,10 +177,8 @@ class Server extends NetServer {
       if (secureOptions) this.secureOptions = secureOptions;
       else this.secureOptions = undefined;
     }
-
-
   }
-  
+
   getTicketKeys() {
     throw Error("Not implented in Bun yet");
   }

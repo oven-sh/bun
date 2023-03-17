@@ -680,7 +680,7 @@ describe("bundler", () => {
       "/c.empty": `throw 'FAIL'`,
       "/d.empty": `throw 'FAIL'`,
     },
-    sourceMap: "external-without-comment",
+    sourceMap: "external",
     metafile: true,
     /* TODO FIX expectedCompileLog: `entry.js: WARNING: Import "named" will always be undefined because the file "d.empty" has no exports
   `, */
@@ -695,7 +695,7 @@ describe("bundler", () => {
       "/a.empty": `body { color: fail }`,
       "/b.empty": `fail`,
     },
-    sourceMap: "external-without-comment",
+    sourceMap: "external",
     metafile: true,
   });
   itBundled("loader/ExtensionlessLoaderJS", {

@@ -21,6 +21,7 @@ import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { fileURLToPath } from "bun";
+import type { Expect } from "bun:test";
 
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
@@ -30,7 +31,7 @@ export function testForFile(file: string): BunTestExports {
 
   var testFile = testFiles.get(file);
   if (!testFile) {
-    testFile = Bun.jest(file);
+    testFile = (Bun as any).jest(file);
     testFiles.set(file, testFile);
   }
   return testFile;
@@ -90,8 +91,8 @@ export interface BundlerTestInput {
   outfile?: string;
   /** Defaults to `/out` */
   outdir?: string;
-  /** Defaults to "bun" */
-  platform?: string;
+  /** Defaults to "browser". "bun" is set to "node" when using esbuild. */
+  platform?: "bun" | "node" | "neutral" | "browser";
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: undefined | "eof";
@@ -109,7 +110,7 @@ export interface BundlerTestInput {
   unsupportedCSSFeatures?: string;
   unsupportedJSFeatures?: string;
   useDefineForClassFields?: boolean;
-  sourceMap?: false | "linked-with-comment" | "external-without-comment";
+  sourceMap?: boolean | "inline" | "external";
 
   // assertion options
 
@@ -129,6 +130,12 @@ export interface BundlerTestInput {
    */
   run?: boolean | BundlerTestRunOptions | BundlerTestRunOptions[];
 
+  /**
+   * Shorthand for testing dead code elimination cases.
+   * Checks source code for REMOVE, FAIL, DROP, which will fail the test.
+   */
+  dce?: boolean;
+
   // hooks
 
   /** Run after bundle happens but before runtime. */
@@ -140,7 +147,11 @@ export interface BundlerTestEventAPI {
   outfile: string;
   outdir: string;
   readFile(file: string): string;
+  writeFile(file: string, contents: string): void;
+  prependFile(file: string, contents: string): void;
+  appendFile(file: string, contents: string): void;
   expectFile(file: string): Expect;
+  assertFileExists(file: string): void;
 }
 
 export interface BundlerTestRunOptions {
@@ -193,6 +204,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     entryNames,
     run,
     runtimeFiles,
+    sourceMap,
+    banner,
     ...unknownProps
   } = opts;
 
@@ -206,19 +219,29 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     throw new Error(`expectBundled("${id}", ...) was called twice. Check your tests for bad copy+pasting.`);
   }
 
-  if (dryRun) {
-    return;
-  }
-
   // Resolve defaults for options and some related things
   mode ??= "bundle";
-  platform ??= "bun";
+  platform ??= "browser";
   format ??= "esm";
   entryPoints ??= [Object.keys(files)[0]];
   if (run === true) run = {};
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
+
+  if (!ESBUILD && jsx.automaticRuntime) {
+    throw new Error("jsx.automaticRuntime not implemented");
+  }
+  if (!ESBUILD && format !== "esm") {
+    throw new Error("formats besides esm not implemented in bun bun");
+  }
+  if (!ESBUILD && metafile) {
+    throw new Error("metafile not implemented in bun bun");
+  }
+
+  if (dryRun) {
+    return;
+  }
 
   const root = path.join(outBase, id.replaceAll("/", path.sep));
   if (DEBUG) console.log(root);
@@ -247,12 +270,6 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   }
 
   // Run bun bun cli. In the future we can move to using `Bun.Bundler`
-  if (!ESBUILD && jsx.automaticRuntime) {
-    throw new Error("jsx.automaticRuntime not implemented");
-  }
-  if (!ESBUILD && format !== "esm") {
-    throw new Error("formats besides esm not implemented in bun bun");
-  }
   const cmd = (
     !ESBUILD
       ? [
@@ -264,7 +281,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
           `--platform=${platform}`,
           minifyIdentifiers && `--minify-identifiers`,
-          minifySyntax && `--minify-synatax`,
+          minifySyntax && `--minify-syntax`,
           minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
           external && external.map(x => ["--external", x]),
@@ -273,7 +290,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           jsx.factory && `--jsx-factory=${jsx.factory}`,
           jsx.fragment && `--jsx-fragment=${jsx.fragment}`,
           jsx.development && `--jsx-dev`,
-          metafile && `--metafile=${metafile}`,
+          // metafile && `--metafile=${metafile}`,
+          sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
           // entryNames && `--entry-names=${entryNames}`,
           // `--format=${format}`,
         ]
@@ -284,7 +302,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           `--format=${format}`,
           `--platform=${platform === "bun" ? "node" : platform}`,
           minifyIdentifiers && `--minify-identifiers`,
-          minifySyntax && `--minify-synatax`,
+          minifySyntax && `--minify-syntax`,
           minifyWhitespace && `--minify-whitespace`,
           globalName && `--global-name=${globalName}`,
           external && external.map(x => `--external:${x}`),
@@ -296,6 +314,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
           jsx.development && `--jsx-dev`,
           entryNames && `--entry-names=${entryNames}`,
           metafile && `--metafile=${metafile}`,
+          sourceMap && `--sourcemap${sourceMap !== true ? `=${sourceMap}` : ""}`,
+          banner && `--banner:js=${banner}`,
           ...entryPaths,
         ]
   )
@@ -512,13 +532,25 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   const readCache: Record<string, string> = {};
   const readFile = (file: string) =>
     readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
+  const writeFile = (file: string, contents: string) => {
+    readCache[file] = contents;
+    writeFileSync(path.join(root, file), contents);
+  };
   if (onAfterBundle) {
     onAfterBundle({
       root,
       outfile: outfile!,
       outdir: outdir!,
       readFile,
+      writeFile,
       expectFile: file => expect(readFile(file)),
+      prependFile: (file, contents) => writeFile(file, dedent(contents) + "\n" + readFile(file)),
+      appendFile: (file, contents) => writeFile(file, readFile(file) + "\n" + dedent(contents)),
+      assertFileExists: file => {
+        if (!existsSync(path.join(root, file))) {
+          throw new Error("Expected file to be written: " + file);
+        }
+      },
     });
   }
 
@@ -606,17 +638,17 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(id: string, opts: BundlerTestInput) {
-  var { expect, it, test } = testForFile(callerSourceOrigin());
+  const { it } = testForFile(callerSourceOrigin());
 
   if (FILTER && id !== FILTER) {
     return;
-  }
-
-  try {
-    expectBundled(id, opts, true);
-  } catch (error) {
-    it.skip(id, () => {});
-    return;
+  } else if (!FILTER) {
+    try {
+      expectBundled(id, opts, true);
+    } catch (error) {
+      it.skip(id, () => {});
+      return;
+    }
   }
 
   it(id, () => expectBundled(id, opts));
@@ -627,15 +659,15 @@ export function bundlerTest(id: string, cb: () => void) {
   if (FILTER && id !== FILTER) {
     return;
   }
-  var { expect, it, test } = testForFile(callerSourceOrigin());
-
+  const { it } = testForFile(callerSourceOrigin());
   it(id, cb);
 }
 bundlerTest.skip = (id: string, cb: any) => {
-  var { expect, it, test } = testForFile(callerSourceOrigin());
+  const { it } = testForFile(callerSourceOrigin());
 
   return it.skip(id, cb);
 };
+
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {
   return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
 }

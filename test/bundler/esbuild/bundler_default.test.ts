@@ -1,5 +1,5 @@
+import assert from "assert";
 import dedent from "dedent";
-import { appendFileSync, readFileSync, writeFileSync } from "fs";
 import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
 
@@ -193,9 +193,9 @@ describe("bundler", () => {
     format: "iife",
     globalName: "globalName",
     run: true,
-    onAfterBundle({ outfile }) {
-      appendFileSync(
-        outfile,
+    onAfterBundle(api) {
+      api.appendFile(
+        "/out.js",
         dedent/* js */ `
           import { strictEqual } from "node:assert";
           strictEqual(globalName.default, 123, ".default");
@@ -948,11 +948,13 @@ describe("bundler", () => {
         }
       `,
     },
-    onAfterBundle({ outfile }) {
-      const prefix = dedent/* js */ `
-        const require = (...args) => console.log('require:' + args.join(','));
-      `;
-      writeFileSync(outfile, prefix + readFileSync(outfile, "utf8"));
+    onAfterBundle(api) {
+      api.prependFile(
+        "/out.js",
+        /* js */ `
+          const require = (...args) => console.log('require:' + args.join(','));
+        `,
+      );
     },
     run: {
       stdout: `
@@ -988,7 +990,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/RequireBadExtension", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(require('./test.bad'))`,
       "/test.bad": `This is a test.`,
@@ -1074,9 +1075,7 @@ describe("bundler", () => {
     },
     platform: "neutral",
   });
-  // return;
   itBundled("default/RequirePropertyAccessCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These shouldn't warn since the format is CommonJS
@@ -1088,9 +1087,19 @@ describe("bundler", () => {
     },
     platform: "node",
     format: "cjs",
+    onAfterBundle(api) {
+      api.prependFile(
+        "/out.js",
+        /* js */ `
+          const require = { cache: { fs: 'hello' }, extensions: { '.json': 'json' } };
+        `,
+      );
+    },
+    run: {
+      stdout: '[ "fs" ]\n[ ".json" ]',
+    },
   });
   itBundled("default/AwaitImportInsideTry", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         async function main(name) {
@@ -1102,9 +1111,9 @@ describe("bundler", () => {
         main('fs')
       `,
     },
+    run: true,
   });
   itBundled("default/ImportInsideTry", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         let x
@@ -1115,12 +1124,11 @@ describe("bundler", () => {
         }
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "nope1"
-  NOTE: You can mark the path "nope1" as external to exclude it from the bundle, which will remove this error. You can also add ".catch()" here to handle this failure at run-time instead of bundle-time.
-  `, */
+    bundleErrors: {
+      "/entry.js": ['Could not resolve "nope1"'],
+    },
   });
   itBundled("default/ImportThenCatch", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import(name).then(pass, fail)
@@ -1128,21 +1136,52 @@ describe("bundler", () => {
         import(name).catch(fail)
       `,
     },
+    onAfterBundle(api) {
+      // Define pass, fail, and replace `import` with a mock function. This allows for a single run
+      // and no reliance on any `import` calls, since bundler should have left it alone anyways.
+      const content = api.readFile("/out.js");
+      api.writeFile(
+        "/out.js",
+        dedent`
+          const pass = 'pass';
+          const fail = 'fail';
+          const _fn = (name) => (...args) => {
+            console.log(name, ...args);
+            return { then: _fn('then'), "catch": _fn('catch') };
+          };
+          const _import = _fn('import');
+        ` + content.replace(/import\(name\)/g, "_import()"),
+      );
+    },
+    run: {
+      stdout: "import\nthen pass fail\nimport\nthen pass\ncatch fail\nimport\ncatch fail",
+    },
   });
   itBundled("default/SourceMap", {
-    // GENERATED
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {bar} from './bar'
         function foo() { bar() }
         foo()
       `,
-      "/Users/user/project/src/bar.js": `export function bar() { throw new Error('test') }`,
+      "/Users/user/project/src/bar.js": `export function bar() { console.log('hi') }`,
     },
-    sourceMap: "linked-with-comment",
+    outfile: "/Users/user/project/out.js",
+    sourceMap: true,
+    onAfterBundle(api) {
+      api.assertFileExists("/Users/user/project/out.js.map");
+      api.expectFile("/Users/user/project/out.js").toContain("//# sourceMappingURL=out.js.map");
+    },
+    run: {
+      stdout: "hi",
+    },
   });
+  // This test covers a bug where a "var" in a nested scope did not correctly
+  // bind with references to that symbol in sibling scopes. Instead, the
+  // references were incorrectly considered to be unbound even though the symbol
+  // should be hoisted. This caused the renamer to name them different things to
+  // avoid a collision, which changed the meaning of the code.
   itBundled("default/NestedScopeBug", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -1156,9 +1195,9 @@ describe("bundler", () => {
         })()
       `,
     },
+    run: true,
   });
   itBundled("default/HashbangBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #!/usr/bin/env a
@@ -1170,9 +1209,11 @@ describe("bundler", () => {
         export const code = 0
       `,
     },
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").startsWith("#!/usr/bin/env a"), "hashbang exists on bundle");
+    },
   });
   itBundled("default/HashbangNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #!/usr/bin/env node
@@ -1180,9 +1221,11 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").startsWith("#!/usr/bin/env node"), "hashbang exists on bundle");
+    },
   });
   itBundled("default/HashbangBannerUseStrictOrder", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         #! in file
@@ -1191,33 +1234,41 @@ describe("bundler", () => {
       `,
     },
     banner: "#! from banner",
+    onAfterBundle(api) {
+      assert(api.readFile("/out.js").startsWith("#! in file"), "hashbang from banner does not override file hashbang");
+    },
   });
   itBundled("default/RequireFSBrowser", {
-    // GENERATED
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
-  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
-  `, */
+    platform: "browser",
+    bundleErrors: {
+      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    },
   });
   itBundled("default/RequireFSNode", {
-    // GENERATED
     files: {
-      "/entry.js": `return require('fs')`,
+      "/entry.js": `console.log('existsSync' in require('fs'))`,
     },
     format: "cjs",
+    platform: "node",
+    run: {
+      stdout: "true",
+    },
   });
   itBundled("default/RequireFSNodeMinify", {
-    // GENERATED
     files: {
-      "/entry.js": `return require('fs')`,
+      "/entry.js": `console.log('existsSync' in require('fs'))`,
     },
     minifyWhitespace: true,
     format: "cjs",
+    platform: "node",
+    run: {
+      stdout: "true",
+    },
   });
   itBundled("default/ImportFSBrowser", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
@@ -1227,59 +1278,75 @@ describe("bundler", () => {
         console.log(fs, readFileSync, defaultValue)
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
-  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
-  `, */
+    bundleErrors: {
+      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    },
+    platform: "browser",
   });
   itBundled("default/ImportFSNodeCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
         import * as fs from 'fs'
         import defaultValue from 'fs'
         import {readFileSync} from 'fs'
-        console.log(fs, readFileSync, defaultValue)
+        console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
+    platform: "node",
     format: "cjs",
+    run: {
+      stdout: "true [Function: readFileSync] true",
+    },
   });
   itBundled("default/ImportFSNodeES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import 'fs'
         import * as fs from 'fs'
         import defaultValue from 'fs'
         import {readFileSync} from 'fs'
-        console.log(fs, readFileSync, defaultValue)
+        console.log('writeFileSync' in fs, readFileSync, 'writeFileSync' in defaultValue)
       `,
     },
-    format: "esm",
+    platform: "node",
+    run: {
+      stdout: "true [Function: readFileSync] true",
+    },
   });
   itBundled("default/ExportFSBrowser", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * as fs from 'fs'
         export {readFileSync} from 'fs'
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "fs"
-  NOTE: The package "fs" wasn't found on the file system but is built into node. Are you trying to bundle for node? You can use "Platform: api.PlatformNode" to do that, which will remove this error.
-  `, */
+    platform: "browser",
+    bundleErrors: {
+      "/entry.js": ['ERROR: Could not resolve "fs"'],
+    },
   });
   itBundled("default/ExportFSNode", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export * as fs from 'fs'
         export {readFileSync} from 'fs'
       `,
+
+      "/test.js": /* js */ `
+        import fs from "fs";
+        import assert from "assert";
+        import * as module from './out.js';
+        assert(module.fs === fs, 'export * as fs from "fs"; works')
+        assert(module.readFileSync === fs.readFileSync, 'export {readFileSync} from "fs"; works')
+      `,
+    },
+    platform: "node",
+    run: {
+      file: "/test.js",
     },
   });
   itBundled("default/ReExportFSNode", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export {fs as f} from './foo'
@@ -1289,10 +1356,21 @@ describe("bundler", () => {
         export * as fs from 'fs'
         export {readFileSync} from 'fs'
       `,
+
+      "/test.js": /* js */ `
+        import fs from "fs";
+        import assert from "assert";
+        import * as module from './out.js';
+        assert(module.f === fs, 'export {fs as f} works')
+        assert(module.rfs === fs.readFileSync, 'export {rfs} works')
+      `,
+    },
+    platform: "node",
+    run: {
+      file: "/test.js",
     },
   });
   itBundled("default/ExportFSNodeInCommonJSModule", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as fs from 'fs'
@@ -1301,24 +1379,54 @@ describe("bundler", () => {
         exports.readFileSync = readFileSync
         exports.foo = 123
       `,
+
+      "/test.js": /* js */ `
+        import fs from "fs";
+        import assert from "assert";
+        import module from './out.js';
+        assert(module.fs === fs, 'exports.fs')
+        assert(module.readFileSync === fs.readFileSync, 'exports.readFileSync')
+        assert(module.foo === 123, 'exports.foo')
+      `,
+    },
+    platform: "node",
+    run: {
+      file: "/test.js",
     },
   });
   itBundled("default/ExportWildcardFSNodeES6", {
-    // GENERATED
     files: {
       "/entry.js": `export * from 'fs'`,
+      "/test.js": /* js */ `
+        import assert from 'assert';
+        import * as fs from 'fs';
+        import * as fs2 from './out.js';
+        assert(fs, fs2);
+      `,
     },
     format: "esm",
+    platform: "node",
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("default/ExportWildcardFSNodeCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": `export * from 'fs'`,
+      "/test.js": /* js */ `
+        import assert from 'assert';
+        import * as fs from 'fs';
+        import * as fs2 from './out.js';
+        assert(fs, fs2);
+      `,
     },
     format: "cjs",
+    platform: "node",
+    run: {
+      file: "/test.js",
+    },
   });
   itBundled("default/MinifiedBundleES6", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import {foo} from './a'
@@ -1326,6 +1434,7 @@ describe("bundler", () => {
       `,
       "/a.js": /* js */ `
         export function foo() {
+          console.log('call');
           return 123
         }
         foo()
@@ -1334,13 +1443,19 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
+    run: {
+      stdout: `
+        call
+        call
+        123
+      `,
+    },
   });
   itBundled("default/MinifiedBundleCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         const {foo} = require('./a')
-        console.log(foo(), require('./j.json'))
+        console.log(foo(), JSON.stringify(require('./j.json')))
       `,
       "/a.js": /* js */ `
         exports.foo = function() {
@@ -1352,17 +1467,31 @@ describe("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
+    run: {
+      stdout: '123 {"test":true}',
+    },
   });
   itBundled("default/MinifiedBundleEndingWithImportantSemicolon", {
-    // GENERATED
     files: {
       "/entry.js": `while(foo()); // This semicolon must not be stripped`,
+
+      "/test.js": /* js */ `
+        let i = 0;
+        globalThis.foo = () => {
+          console.log(i++);
+          return i === 1;
+        };
+        await import('./out.js')
+      `,
     },
     minifyWhitespace: true,
     format: "iife",
+    run: {
+      file: "/test.js",
+      stdout: "0\n1",
+    },
   });
   itBundled("default/RuntimeNameCollisionNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function __require() { return 123 }
@@ -1370,66 +1499,88 @@ describe("bundler", () => {
       `,
     },
     mode: "transform",
+    run: {
+      stdout: "123",
+    },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         return
         import 'foo'
       `,
     },
-    mode: "passthrough",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
-  entry.js: NOTE: This file is considered to be an ECMAScript module because of the "import" keyword here:
-  `, */
+    mode: "transform",
+    bundleErrors: {
+      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
+    },
   });
   itBundled("default/TopLevelReturnForbiddenExport", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         return
         export var foo
       `,
     },
-    mode: "passthrough",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
-  entry.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  `, */
+    mode: "transform",
+    bundleErrors: {
+      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
+    },
   });
   itBundled("default/TopLevelReturnForbiddenTLA", {
-    // GENERATED
     files: {
       "/entry.js": `return await foo`,
     },
-    mode: "passthrough",
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Top-level return cannot be used inside an ECMAScript module
-  entry.js: NOTE: This file is considered to be an ECMAScript module because of the top-level "await" keyword here:
-  `, */
-  });
-  itBundled("default/ThisOutsideFunction", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        if (shouldBeExportsNotThis) {
-          console.log(this)
-          console.log((x = this) => this)
-          console.log({x: this})
-          console.log(class extends this.foo {})
-          console.log(class { [this.foo] })
-          console.log(class { [this.foo]() {} })
-          console.log(class { static [this.foo] })
-          console.log(class { static [this.foo]() {} })
-        }
-        if (shouldBeThisNotExports) {
-          console.log(class { foo = this })
-          console.log(class { foo() { this } })
-          console.log(class { static foo = this })
-          console.log(class { static foo() { this } })
-        }
-      `,
+    mode: "transform",
+    bundleErrors: {
+      "/entry.js": ["Top-level return cannot be used inside an ECMAScript module"],
     },
   });
+  itBundled("default/ThisOutsideFunctionRenamedToExports", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(this)
+        console.log((x = this) => this)
+        console.log({x: this})
+        console.log(class extends this.foo {})
+        console.log(class { [this.foo] })
+        console.log(class { [this.foo]() {} })
+        console.log(class { static [this.foo] })
+        console.log(class { static [this.foo]() {} })
+      `,
+    },
+    onAfterBundle(api) {
+      if (api.readFile("/out.js").includes("this")) {
+        throw new Error("All cases of `this` should have been rewritten to `exports`");
+      }
+    },
+  });
+  itBundled("default/ThisOutsideFunctionNotRenamed", {
+    files: {
+      "/entry.js": /* js */ `
+        class C1 { foo = this };
+        class C2 { foo() { return this } };
+        class C3 { static foo = this };
+        class C4 { static foo() { return this } };
+
+        const c1 = new C1();
+        const c2 = new C2();
+        globalThis.assert(c1 === c1.foo, 'c1.foo');
+        globalThis.assert(c2 === c2.foo(), 'c2.foo()');
+        globalThis.assert(C3.foo === C3, 'C3.foo');
+        globalThis.assert(C4.foo() === C4, 'C4.foo()');
+      `,
+
+      "/test.js": /* js */ `
+        globalThis.assert = (await import('assert')).default;
+        import('./out.js')
+      `,
+    },
+    run: {
+      file: "/test.js",
+    },
+  });
+  return;
   itBundled("default/ThisInsideFunction", {
     // GENERATED
     files: {

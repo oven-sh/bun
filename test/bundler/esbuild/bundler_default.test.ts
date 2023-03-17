@@ -330,13 +330,13 @@ describe("bundler", () => {
         const g = require("./g").default;
         const h = require("./h").default;
         
-        assert.deepEqual(commonjs.varName, 234, "commonjs.default");
-        assert.deepEqual(commonjs.letName, 345, "commonjs.letName");
-        assert.deepEqual(commonjs.constName, 456, "commonjs.constName");
-        commonjs.Fn2();
-        new commonjs.Cls();
-        new commonjs.Cls2();
+        assert.deepEqual(commonjs.default, 123, "commonjs.default");
+        assert.deepEqual(commonjs.v, 234, "commonjs.default");
+        assert.deepEqual(commonjs.l, 345, "commonjs.l");
+        assert.deepEqual(commonjs.c, 456, "commonjs.c");
+        commonjs.Fn();
         new commonjs.Class();
+        new commonjs.C();
         assert("abc" in commonjs, "commonjs.abc");
         assert.deepEqual(commonjs.abc, undefined, "commonjs.abc");
         assert.deepEqual(commonjs.b, { xyz: null }, "commonjs.b");
@@ -348,7 +348,7 @@ describe("bundler", () => {
         assert.deepEqual(f.prop, 678, "f.prop");
         assert(g() instanceof Promise, "g");
         assert(h() instanceof Promise, "h");
-        assert.deepEqual(h.prop, 678, "h.prop");
+        assert.deepEqual(h.prop, 789, "h.prop");
       `,
       "/commonjs.js": /* js */ `
         export default 123
@@ -372,7 +372,7 @@ describe("bundler", () => {
 
       // assert bundles weird as of writing
       "/test.js": /* js */ `
-        globalThis.assert = require('assert');
+        globalThis.assert = import.meta.require('assert');
         require('./out.js');
       `,
     },

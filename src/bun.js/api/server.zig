@@ -131,6 +131,8 @@ pub const ServerConfig = struct {
         ca_count: u32 = 0,
 
         secure_options: u32 = 0,
+        request_cert: i32 = 0,
+        reject_unauthorized: i32 = 0,
 
         const log = Output.scoped(.SSLConfig, false);
 
@@ -163,7 +165,8 @@ pub const ServerConfig = struct {
                     ctx_opts.ca = ssl_config.ca;
                     ctx_opts.ca_count = ssl_config.ca_count;
                 }
-                ctx_opts.secure_options = ssl_config.secure_options;
+                ctx_opts.request_cert = ssl_config.request_cert;
+                ctx_opts.reject_unauthorized = ssl_config.reject_unauthorized;
             }
 
             return ctx_opts;
@@ -316,6 +319,15 @@ pub const ServerConfig = struct {
                         result.secure_options = secure_options.toU32();
                     }
                 }
+
+                if (obj.getTruthy(global, "requestCert")) |_| {
+                    result.request_cert = 1;
+                }
+
+                if (obj.getTruthy(global, "rejectUnauthorized")) |_| {
+                    result.reject_unauthorized = 1;
+                }
+
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
                     var sliced = key_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();

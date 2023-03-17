@@ -118,12 +118,12 @@ const Socket = (function (InternalSocket) {
         socket.ref();
         self.#socket = socket;
         self.connecting = false;
-        self.emit("connect");
+        self.emit("connect", self);
         Socket.#Drain(socket);
       },
       timeout(socket) {
         const self = socket.data;
-        self.emit("timeout");
+        self.emit("timeout", self);
       },
       binaryType: "buffer",
     };

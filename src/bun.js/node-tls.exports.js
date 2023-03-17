@@ -146,12 +146,20 @@ class Server extends NetServer {
   ca;
   passphrase;
   secureOptions;
+  rejectUnauthorized;
+  requestCert;
 
   constructor(options, secureConnectionListener) {
     super(options, secureConnectionListener);
     this.setSecureContext(options);
   }
+  emit(event, args) {
+    super.emit(event, args);
 
+    if (event === "connection") {
+      super.emit("secureConnection", args);
+    }
+  }
   setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
       options = options.context;
@@ -176,6 +184,16 @@ class Server extends NetServer {
 
       if (secureOptions) this.secureOptions = secureOptions;
       else this.secureOptions = undefined;
+
+      const requestCert = options.requestCert || false;
+
+      if (requestCert) this.requestCert = requestCert;
+      else this.requestCert = undefined;
+
+      const rejectUnauthorized = options.rejectUnauthorized || false;
+
+      if (rejectUnauthorized) this.rejectUnauthorized = rejectUnauthorized;
+      else this.rejectUnauthorized = undefined;
     }
   }
 
@@ -196,6 +214,8 @@ class Server extends NetServer {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
+        rejectUnauthorized: this.rejectUnauthorized,
+        requestCert: this.requestCert,
       },
       SocketClass,
     ];

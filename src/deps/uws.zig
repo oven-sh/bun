@@ -595,7 +595,9 @@ pub const us_bun_socket_context_options_t = extern struct {
     cert_count: u32 = 0,
     ca: [*c][*c]const u8 = null,
     ca_count: u32 = 0,
-    secure_options: u32 = 0
+    secure_options: u32 = 0,
+    request_cert: i32 = 0,
+    reject_unauthorized: i32 = 0,
 };
 
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;

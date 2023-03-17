@@ -138,13 +138,13 @@ pub const Body = struct {
             return that;
         }
 
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue, js_type: JSC.JSValue.JSType) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
 
             if (!response_init.isCell())
                 return null;
 
-            if (js_type == .DOMWrapper) {
+            if (response_init.jsType() == .DOMWrapper) {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
                 if (response_init.as(Request)) |req| {
@@ -911,7 +911,6 @@ pub const Body = struct {
             value,
             false,
             JSValue.zero,
-            .Cell,
         );
     }
 
@@ -919,14 +918,12 @@ pub const Body = struct {
         globalThis: *JSGlobalObject,
         value: JSValue,
         init: JSValue,
-        init_type: JSValue.JSType,
     ) ?Body {
         return extractBody(
             globalThis,
             value,
             true,
             init,
-            init_type,
         );
     }
 
@@ -936,7 +933,6 @@ pub const Body = struct {
         value: JSValue,
         comptime has_init: bool,
         init: JSValue,
-        init_type: JSC.JSValue.JSType,
     ) ?Body {
         var body = Body{
             .value = Value{ .Empty = {} },
@@ -945,7 +941,7 @@ pub const Body = struct {
         var allocator = getAllocator(globalThis);
 
         if (comptime has_init) {
-            if (Init.init(allocator, globalThis, init, init_type)) |maybeInit| {
+            if (Init.init(allocator, globalThis, init)) |maybeInit| {
                 if (maybeInit) |init_| {
                     body.init = init_;
                 }

@@ -406,7 +406,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                 }
             }
@@ -452,7 +452,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                     response.body.init.status_code = 302;
                 }
@@ -502,16 +502,13 @@ pub const Response = struct {
                 },
                 else => {
                     if (arguments[1].isUndefinedOrNull()) break :brk Body.extract(globalThis, arguments[0]);
-                    switch (arguments[1].jsType()) {
-                        .Object, .FinalObject, .DOMWrapper => |js_type| {
-                            break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1], js_type);
-                        },
-                        else => {
-                            const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
-                            globalThis.throwValue(err);
-                            break :brk null;
-                        },
+                    if (arguments[1].isObject()) {
+                        break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
                     }
+
+                    const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
+                    globalThis.throwValue(err);
+                    break :brk null;
                 },
             }
             unreachable;

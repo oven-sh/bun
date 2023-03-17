@@ -1,7 +1,7 @@
-import { describe } from "bun:test";
 import dedent from "dedent";
 import { appendFileSync } from "fs";
-import { bundlerTest, expectBundled, itBundled } from "./expectBundled";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go

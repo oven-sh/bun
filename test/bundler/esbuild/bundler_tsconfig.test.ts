@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { bundlerTest, expectBundled, itBundled } from "./expectBundled";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_tsconfig_test.go

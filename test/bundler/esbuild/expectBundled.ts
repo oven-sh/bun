@@ -18,8 +18,24 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
-import { expect, it } from "bun:test";
+
 import { tmpdir } from "os";
+import { callerSourceOrigin } from "bun:jsc";
+import { fileURLToPath } from "bun";
+
+type BunTestExports = typeof import("bun:test");
+export function testForFile(file: string): BunTestExports {
+  if (file.startsWith("file://")) {
+    file = fileURLToPath(new URL(file));
+  }
+
+  var testFile = testFiles.get(file);
+  if (!testFile) {
+    testFile = Bun.jest(file);
+    testFiles.set(file, testFile);
+  }
+  return testFile;
+}
 
 /** Use `esbuild` instead of `bun bun` */
 const ESBUILD = process.env.BUN_BUNDLER_TEST_USE_ESBUILD;
@@ -143,7 +159,10 @@ export interface BundlerTestEventAPI {
   outdir: string;
 }
 
+var testFiles = new Map();
+
 export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boolean) {
+  var { expect, it, test } = testForFile(callerSourceOrigin());
   if (FILTER && id !== FILTER) {
     return;
   }
@@ -234,6 +253,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   const cmd = (
     !ESBUILD
       ? [
+          ...(process.env.BUN_DEBUGGER ? ["lldb-server", "g:1234", "--"] : []),
           tempPathToBunDebug,
           "bun",
           ...entryPaths,
@@ -285,6 +305,34 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       path.join(root, "run.sh"),
       "#!/bin/sh\n" + cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
     );
+    try {
+      mkdirSync(path.join(root, ".vscode"), { recursive: true });
+    } catch (e) {}
+
+    writeFileSync(
+      path.join(root, ".vscode", "launch.json"),
+      JSON.stringify(
+        {
+          "version": "0.2.0",
+          "configurations": [
+            {
+              "type": "lldb",
+              "request": "launch",
+              "name": "bun test",
+              "program": cmd[0],
+              "args": cmd.slice(1),
+              "cwd": root,
+              "env": {
+                "FORCE_COLOR": "1",
+              },
+              "console": "internalConsole",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+    );
   }
 
   const { stdout, stderr, success } = Bun.spawnSync({
@@ -307,6 +355,10 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         const file = fullFilename.slice(id.length);
         return { error, file, line, col };
       });
+
+      if (allErrors.length === 0) {
+        console.log(stderr!.toString("utf-8"));
+      }
 
       if (DEBUG && allErrors.length) {
         console.log("REFERENCE ERRORS OBJECT");
@@ -531,6 +583,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(id: string, opts: BundlerTestInput) {
+  var { expect, it, test } = testForFile(callerSourceOrigin());
+
   if (FILTER && id !== FILTER) {
     return;
   }
@@ -550,11 +604,15 @@ export function bundlerTest(id: string, cb: () => void) {
   if (FILTER && id !== FILTER) {
     return;
   }
+  var { expect, it, test } = testForFile(callerSourceOrigin());
 
   it(id, cb);
 }
-bundlerTest.skip = it.skip;
+bundlerTest.skip = (id: string, cb: any) => {
+  var { expect, it, test } = testForFile(callerSourceOrigin());
 
+  return it.skip(id, cb);
+};
 function formatError(err: { file: string; error: string; line?: string; col?: string }) {
   return `${err.file}${err.line ? " :" + err.line : ""}${err.col ? ":" + err.col : ""}: ${err.error}`;
 }

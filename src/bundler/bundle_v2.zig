@@ -339,6 +339,7 @@ pub const BundleV2 = struct {
         path.* = try path.dupeAlloc(this.graph.allocator);
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(this.graph.allocator, js_ast.Ast.empty) catch unreachable;
+
         try this.graph.input_files.append(this.graph.allocator, .{
             .source = .{
                 .path = path.*,
@@ -5470,7 +5471,7 @@ const LinkerContext = struct {
                                         stmt.loc,
                                     );
                                 },
-                                .s_function => {
+                                .s_class, .s_function => {
                                     stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
                                     continue;
                                 },
@@ -5975,7 +5976,7 @@ const LinkerContext = struct {
 
                 .dynamic_fallback => {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
-                    const named_import: js_ast.NamedImport = named_imports[other_id].get(tracker.import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (result.kind == .normal) {
                             result.kind = .normal_and_namespace;
@@ -5994,8 +5995,8 @@ const LinkerContext = struct {
                     // Report mismatched imports and exports
                     const symbol = c.graph.symbols.get(prev_import_ref).?;
                     const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
-
                     const source = c.source_(prev_source_index);
+
                     const next_source = c.source_(next_tracker.source_index.get());
                     const r = source.rangeOfIdentifier(named_import.alias_loc.?);
 
@@ -6273,7 +6274,7 @@ const LinkerContext = struct {
         var import_records = c.graph.ast.items(.import_records)[id];
         const exports_kind: []js_ast.ExportsKind = c.graph.ast.items(.exports_kind);
 
-        const named_import = named_imports.get(tracker.import_ref) orelse
+        const named_import: js_ast.NamedImport = named_imports.get(tracker.import_ref) orelse
             // TODO: investigate if this is a bug
             // It implies there are imports being added without being resolved
             return .{
@@ -6283,7 +6284,7 @@ const LinkerContext = struct {
         };
 
         // Is this an external file?
-        const record = import_records.at(named_import.import_record_index);
+        const record: *const ImportRecord = import_records.at(named_import.import_record_index);
         if (!record.source_index.isValid()) {
             return .{
                 .value = .{},

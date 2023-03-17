@@ -2500,7 +2500,10 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
         if (this.content_type.len > 0) {
-            return ZigString.init(this.content_type).toValue(globalThis);
+            if (this.content_type_allocated) {
+                return ZigString.init(this.content_type).toValue(globalThis);
+            }
+            return ZigString.init(this.content_type).toValueGC(globalThis);
         }
 
         if (this.store) |store| {

@@ -1123,8 +1123,8 @@ pub fn BodyMixin(comptime Type: type) type {
             if (blob.content_type.len == 0 and blob.store != null) {
                 if (this.getFetchHeaders()) |_fetch_headers| {
                     var fetch_headers = _fetch_headers;
-                    if (fetch_headers.get("content-type", globalObject)) |content_type| {
-                        blob.store.?.mime_type = MimeType.init(content_type);
+                    if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                        blob.store.?.mime_type = MimeType.init(content_type.slice());
                     }
                 } else {
                     blob.store.?.mime_type = MimeType.text;

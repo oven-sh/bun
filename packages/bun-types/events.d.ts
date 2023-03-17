@@ -56,13 +56,13 @@ declare module "events" {
   interface StaticEventEmitterOptions {
     signal?: AbortSignal | undefined;
   }
-  interface EventEmitter {
+  interface EventEmitter<Events extends Record<string | symbol, any>> {
     /**
      * Alias for `emitter.on(eventName, listener)`.
      */
-    addListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
+    addListener<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
     ): this;
     /**
      * Adds the `listener` function to the end of the listeners array for the
@@ -93,7 +93,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    on(eventName: string | symbol, listener: (...args: any[]) => void): this;
+    on<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
     /**
      * Adds a **one-time**`listener` function for the event named `eventName`. The
      * next time `eventName` is triggered, this listener is removed and then invoked.
@@ -121,7 +121,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    once(eventName: string | symbol, listener: (...args: any[]) => void): this;
+    once<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
     /**
      * Removes the specified `listener` from the listener array for the event named`eventName`.
      *
@@ -200,14 +200,14 @@ declare module "events" {
      *
      * Returns a reference to the `EventEmitter`, so that calls can be chained.
      */
-    removeListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
+    removeListener<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
     ): this;
     /**
      * Alias for `emitter.removeListener()`.
      */
-    off(eventName: string | symbol, listener: (...args: any[]) => void): this;
+    off<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
     /**
      * Removes all listeners, or those of the specified `eventName`.
      *
@@ -217,7 +217,7 @@ declare module "events" {
      *
      * Returns a reference to the `EventEmitter`, so that calls can be chained.
      */
-    removeAllListeners(event?: string | symbol): this;
+    removeAllListeners<K extends keyof Events>(event?: keyof Events): this;
     /**
      * By default `EventEmitter`s will print a warning if more than `10` listeners are
      * added for a particular event. This is a useful default that helps finding
@@ -243,7 +243,7 @@ declare module "events" {
      * // Prints: [ [Function] ]
      * ```
      */
-    listeners(eventName: string | symbol): Function[];
+    listeners(eventName: keyof Events): Function[];
     /**
      * Returns a copy of the array of listeners for the event named `eventName`,
      * including any wrappers (such as those created by `.once()`).
@@ -272,7 +272,7 @@ declare module "events" {
      * emitter.emit('log');
      * ```
      */
-    rawListeners(eventName: string | symbol): Function[];
+    rawListeners(eventName: K): Function[];
     /**
      * Synchronously calls each of the listeners registered for the event named`eventName`, in the order they were registered, passing the supplied arguments
      * to each.
@@ -312,12 +312,12 @@ declare module "events" {
      * // event with parameters 1, 2, 3, 4, 5 in third listener
      * ```
      */
-    emit(eventName: string | symbol, ...args: any[]): boolean;
+    emit<K extends keyof Events>(eventName: K, ...args: Events[K]): boolean;
     /**
      * Returns the number of listeners listening to the event named `eventName`.
      * @param eventName The name of the event being listened for
      */
-    listenerCount(eventName: string | symbol): number;
+    listenerCount(eventName: K): number;
     /**
      * Adds the `listener` function to the _beginning_ of the listeners array for the
      * event named `eventName`. No checks are made to see if the `listener` has
@@ -334,9 +334,9 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    prependListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
+    prependListener<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
     ): this;
     /**
      * Adds a **one-time**`listener` function for the event named `eventName` to the_beginning_ of the listeners array. The next time `eventName` is triggered, this
@@ -352,9 +352,9 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    prependOnceListener(
-      eventName: string | symbol,
-      listener: (...args: any[]) => void,
+    prependOnceListener<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
     ): this;
     /**
      * Returns an array listing the events for which the emitter has registered
@@ -387,7 +387,7 @@ declare module "events" {
    *
    * It supports the following option:
    */
-  class EventEmitter {
+  class EventEmitter<Events extends Record<string | symbol, any>> {
     constructor(options?: EventEmitterOptions);
     /**
      * Creates a `Promise` that is fulfilled when the `EventEmitter` emits the given

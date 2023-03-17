@@ -183,9 +183,6 @@ pub const ThreadPool = struct {
             this.heap = ThreadlocalArena.init() catch unreachable;
             this.allocator = this.heap.allocator();
             var allocator = this.allocator;
-            if (Environment.isDebug) {
-                Output.prettyln("Thread started.\n", .{});
-            }
 
             // Ensure we're using the same allocator for the worker's data.
             js_ast.Expr.Data.Store.deinit();
@@ -235,6 +232,8 @@ pub const BundleV2 = struct {
             reachable: std.ArrayList(Index),
             visited: bun.bit_set.DynamicBitSet = undefined,
             all_import_records: []ImportRecord.List,
+            redirects: []?u32,
+            redirect_map: PathToSourceIndexMap,
 
             // Find all files reachable from all entry points. This order should be
             // deterministic given that the entry point order is deterministic, since the
@@ -250,11 +249,24 @@ pub const BundleV2 = struct {
                 const import_record_list_id = source_index;
                 // when there are no import records, v index will be invalid
                 if (import_record_list_id.get() < v.all_import_records.len) {
-                    for (v.all_import_records[import_record_list_id.get()].slice()) |*import_record| {
+                    var import_records = v.all_import_records[import_record_list_id.get()].slice();
+                    for (import_records) |*import_record| {
                         const other_source = import_record.source_index;
                         if (other_source.isValid()) {
-                            v.visit(other_source);
+                            if (v.redirects[other_source.get()]) |redirect_id| {
+                                var other_import_records = v.all_import_records[other_source.get()].slice();
+                                import_record.source_index = other_import_records[redirect_id].source_index;
+                            }
+
+                            v.visit(import_record.source_index);
                         }
+                    }
+
+                    // Redirects replace the source file with another file
+                    if (v.redirects[source_index.get()]) |redirect_id| {
+                        const redirect_source_index = v.all_import_records[source_index.get()].slice()[redirect_id].source_index.get();
+                        v.visit(Index.source(redirect_source_index));
+                        return;
                     }
                 }
 
@@ -266,7 +278,9 @@ pub const BundleV2 = struct {
         var visitor = Visitor{
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
+            .redirects = this.graph.ast.items(.redirect_import_record_index),
             .all_import_records = this.graph.ast.items(.import_records),
+            .redirect_map = this.graph.path_to_source_index_map,
         };
         defer visitor.visited.deinit();
 
@@ -274,9 +288,9 @@ pub const BundleV2 = struct {
             visitor.visit(entry_point);
         }
 
-        if (comptime Environment.allow_assert) {
-            Output.prettyln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
-        }
+        // if (comptime Environment.allow_assert) {
+        //     Output.prettyln("Reachable count: {d} / {d}", .{ visitor.reachable.items.len, this.graph.input_files.len });
+        // }
 
         return visitor.reachable.toOwnedSlice();
     }
@@ -609,14 +623,25 @@ pub const BundleV2 = struct {
                         graph.input_files.append(graph.allocator, new_input_file) catch unreachable;
                         graph.ast.append(graph.allocator, js_ast.Ast.empty) catch unreachable;
                         batch.push(ThreadPoolLib.Batch.from(&entry.value_ptr.task));
+
                         diff += 1;
                     }
                 }
 
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
-                for (import_records.slice()) |*record| {
+                for (import_records.slice(), 0..) |*record, i| {
                     if (graph.path_to_source_index_map.get(wyhash(0, record.path.text))) |source_index| {
                         record.source_index.value = source_index;
+
+                        if (result.ast.redirect_import_record_index) |compare| {
+                            if (compare == @truncate(u32, i)) {
+                                graph.path_to_source_index_map.put(
+                                    graph.allocator,
+                                    bun.hash(result.source.path.text),
+                                    source_index,
+                                ) catch unreachable;
+                            }
+                        }
                     }
                 }
                 result.ast.import_records = import_records;
@@ -1245,7 +1270,7 @@ pub const Graph = struct {
     source_index_map: std.AutoArrayHashMapUnmanaged(Index.Int, Ref.Int) = .{},
 
     /// Stable source index mapping
-    path_to_source_index_map: std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80) = .{},
+    path_to_source_index_map: PathToSourceIndexMap = .{},
 
     pub const InputFile = struct {
         source: Logger.Source,
@@ -1255,6 +1280,8 @@ pub const Graph = struct {
         pub const List = MultiArrayList(InputFile);
     };
 };
+
+const PathToSourceIndexMap = std.HashMapUnmanaged(u64, Index.Int, IdentityContext(u64), 80);
 
 const EntryPoint = struct {
     // This may be an absolute path or a relative path. If absolute, it will
@@ -5548,6 +5575,9 @@ const LinkerContext = struct {
         const print_options = js_printer.Options{
             // TODO: IIFE
             .indent = 0,
+
+            .commonjs_named_exports = ast.commonjs_named_exports,
+            .commonjs_named_exports_ref = ast.exports_ref,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,

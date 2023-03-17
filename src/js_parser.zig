@@ -2653,6 +2653,69 @@ pub const Parser = struct {
                 p.es6_export_keyword.len = 5;
             }
         } else if (p.options.bundle and parts.items.len == 1) {
+            // Specially handle modules shaped like this:
+            //   CommonJS:
+            //
+            //    if (process.env.NODE_ENV === 'production')
+            //        module.exports = require('./foo.prod.js')
+            //     else
+            //         module.exports = require('./foo.dev.js')
+            //
+            //   ESM:
+            //
+            //     export * from 'react';
+            //
+            var part = &parts.items[0];
+            if (part.stmts.len == 1) {
+                var stmt: Stmt = part.stmts[0];
+                if (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate == 1) {
+                    if (stmt.data == .s_expr) {
+                        const value: Expr = stmt.data.s_expr.value;
+
+                        if (value.data == .e_binary) {
+                            const bin = value.data.e_binary;
+                            const left = bin.left;
+                            const right = bin.right;
+                            if (bin.op == .bin_assign and
+                                right.data == .e_require and
+                                left.data == .e_dot and
+                                strings.eqlComptime(left.data.e_dot.name, "exports") and
+                                left.data.e_dot.target.data == .e_identifier and
+                                left.data.e_dot.target.data.e_identifier.ref.eql(p.module_ref))
+                            {
+                                return js_ast.Result{
+                                    .ok = true,
+                                    .ast = js_ast.Ast{
+                                        .allocator = p.allocator,
+                                        .import_records = ImportRecord.List.init(p.import_records.items),
+                                        .redirect_import_record_index = right.data.e_require.import_record_index,
+                                        .named_imports = p.named_imports,
+                                        .named_exports = p.named_exports,
+                                    },
+                                };
+                            }
+                        }
+                    }
+                } else if (p.es6_export_keyword.len > 0) {
+                    switch (stmt.data) {
+                        .s_export_star => |star| {
+                            if (star.alias == null) {
+                                return js_ast.Result{
+                                    .ok = true,
+                                    .ast = .{
+                                        .allocator = p.allocator,
+                                        .import_records = ImportRecord.List.init(p.import_records.items),
+                                        .redirect_import_record_index = star.import_record_index,
+                                        .named_imports = p.named_imports,
+                                        .named_exports = p.named_exports,
+                                    },
+                                };
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
         }
 
         // Analyze cross-part dependencies for tree shaking and code splitting
@@ -9597,11 +9660,11 @@ fn NewParser_(
                                         isDirectivePrologue = true;
 
                                         if (str.eqlComptime("use strict")) {
-                                            skip = p.options.features.dynamic_require or skip;
+                                            skip = true;
                                             // Track "use strict" directives
                                             p.current_scope.strict_mode = .explicit_strict_mode;
                                         } else if (str.eqlComptime("use asm")) {
-                                            skip = p.options.features.dynamic_require or skip;
+                                            skip = true;
                                             stmt.data = Prefill.Data.SEmpty;
                                         }
                                     }

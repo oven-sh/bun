@@ -294,6 +294,8 @@ pub const Runtime = struct {
 
         inject_jest_globals: bool = false,
 
+        commonjs_named_exports: bool = true,
+
         /// Instead of jsx("div", {}, void 0)
         /// ->
         /// {

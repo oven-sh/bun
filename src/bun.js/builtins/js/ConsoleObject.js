@@ -27,12 +27,14 @@
 function asyncIterator() {
     "use strict";
 
-    const { TextDecoder, Symbol, process: { stdin }} = globalThis;
+    const { TextDecoder, Symbol, process: { stdin }, console } = globalThis;
 
     const Iterator = async function* ConsoleAsyncIterator() {
         "use strict";
 
-        stdin.setRawMode(true);
+        // console.log("testing");
+        // stdin.setRawMode(true);
+        console.log("isRaw", stdin.isRaw);
         const stream = @Bun.stdin.stream();
         var reader = stream.getReader();
 
@@ -84,7 +86,7 @@ function asyncIterator() {
           deferredError = e;
         } finally {
           reader.releaseLock();
-          stdin.setRawMode(false);
+        //   stdin.setRawMode(false);
           if (deferredError) {
             throw deferredError;
           }

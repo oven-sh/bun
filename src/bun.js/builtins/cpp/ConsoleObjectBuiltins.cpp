@@ -51,20 +51,25 @@ namespace WebCore {
 const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_consoleObjectAsyncIteratorCodeLength = 2004;
+const int s_consoleObjectAsyncIteratorCodeLength = 2135;
 static const JSC::Intrinsic s_consoleObjectAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_consoleObjectAsyncIteratorCode =
     "(function () {\n" \
     "    \"use strict\";\n" \
     "\n" \
+    "    const { TextDecoder, Symbol, process: { stdin }, console } = globalThis;\n" \
+    "\n" \
     "    const Iterator = async function* ConsoleAsyncIterator() {\n" \
     "        \"use strict\";\n" \
     "\n" \
+    "        //\n" \
+    "        //\n" \
+    "        console.log(\"isRaw\", stdin.isRaw);\n" \
     "        const stream = @Bun.stdin.stream();\n" \
     "        var reader = stream.getReader();\n" \
     "\n" \
     "         //\n" \
-    "        var decoder = new globalThis.TextDecoder(\"utf-8\", { fatal: false });\n" \
+    "        var decoder = new TextDecoder(\"utf-8\", { fatal: false });\n" \
     "        var deferredError;\n" \
     "        var indexOf = @Bun.indexOfLine;\n" \
     "\n" \
@@ -111,14 +116,14 @@ const char* const s_consoleObjectAsyncIteratorCode =
     "          deferredError = e;\n" \
     "        } finally {\n" \
     "          reader.releaseLock();\n" \
-    "\n" \
+    "        //\n" \
     "          if (deferredError) {\n" \
     "            throw deferredError;\n" \
     "          }\n" \
     "        }\n" \
     "    };\n" \
     "\n" \
-    "    const symbol = globalThis.Symbol.asyncIterator;\n" \
+    "    const symbol = Symbol.asyncIterator;\n" \
     "    this[symbol] = Iterator;\n" \
     "    return Iterator();\n" \
     "})\n" \

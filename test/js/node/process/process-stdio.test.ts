@@ -1,10 +1,12 @@
-import { spawn, spawnSync, fs } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test, beforeAll } from "bun:test";
 import { bunExe } from "harness";
 import { isatty } from "tty";
 import { dlopen, FFIType } from "bun:ffi";
 import { existsSync } from "node:fs";
+import { spawnInNewPty } from "../../../openpty.js";
 
+// @ts-ignore
 const bunFs = Bun.fs();
 
 describe("process.{stdin, stdout, stderr}", () => {
@@ -215,7 +217,7 @@ describe("process.{stdin, stdout, stderr}", () => {
     });
 
     // Wait for script to set raw mode and alert us
-    for await (const line of proc.stdout) {
+    for await (const line of proc.stdout!) {
       const msg = new TextDecoder().decode(line);
       if (msg.includes("RAW_MODE_SET")) {
         expect(true).toBeTruthy();
@@ -276,15 +278,52 @@ describe("process.{stdin, stdout, stderr}", () => {
   //   expect(checkIsRaw()).toBe(false);
   // });
 
-  test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", async () => {
+  test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", done => {
     // Check that we're not already in raw mode
     expect(process.stdin.isRaw).toBe(false);
     expect(checkIsRaw()).toBe(false);
 
+    console.log(Bun.stdin.stream());
+
     // Open new pty using openpty.js
-    // Set stdin to slave side of new pty
-    // spawn using Bun.spawn
-    // restore previous stdin
-    // write to master side of pty
+    const {
+      subprocess,
+      stdin,
+      fd: masterFd,
+      cleanup,
+    } = spawnInNewPty({
+      cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.js"],
+      options: {
+        onExit() {
+          cleanup();
+          done();
+        },
+      },
+    });
+
+    Bun.sleep(1000);
+
+    console.log("HERE");
+
+    stdin.write("START\n");
+    stdin.flush();
+
+    // for await (const line of subprocess.stdout) {
+    //   const msg = new TextDecoder().decode(line);
+    //   console.log(msg);
+    //   if (msg.includes("Starting")) {
+    //     expect(true).toBeTruthy();
+    //     continue;
+    //   } else if (msg.includes("RAW_MODE_SET")) {
+    //     expect(checkIsRaw()).toBe(true);
+    //     stdin.write("EXIT");
+    //     stdin.flush(true);
+    //   } else if (msg.includes("RAW_MODE_UNSET")) {
+    //     expect(checkIsRaw()).toBe(false);
+    //     break;
+    //   } else {
+    //     expect(false).toBeTruthy();
+    //   }
+    // }
   });
 });

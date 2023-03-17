@@ -4,10 +4,6 @@
 
 #include "TTYHelper.h"
 
-#ifndef STDIN_FILENO
-#define STDIN_FILENO 0
-#endif
-
 namespace Zig {
 
 static bool tty__orig_set = false;

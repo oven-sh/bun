@@ -121,9 +121,22 @@ pub const ServerConfig = struct {
         passphrase: [*c]const u8 = null,
         low_memory_mode: bool = false,
 
-        pub fn asUSockets(this_: ?SSLConfig) uws.us_socket_context_options_t {
-            var ctx_opts: uws.us_socket_context_options_t = undefined;
-            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_socket_context_options_t));
+        key: [*c][*c]const u8 = null,
+        key_count: u32 = 0,
+
+        cert: [*c][*c]const u8 = null,
+        cert_count: u32 = 0,
+
+        ca: [*c][*c]const u8 = null,
+        ca_count: u32 = 0,
+
+        secure_options: u32 = 0,
+
+        const log = Output.scoped(.SSLConfig, false);
+
+        pub fn asUSockets(this_: ?SSLConfig) uws.us_bun_socket_context_options_t {
+            var ctx_opts: uws.us_bun_socket_context_options_t = undefined;
+            @memset(@ptrCast([*]u8, &ctx_opts), 0, @sizeOf(uws.us_bun_socket_context_options_t));
 
             if (this_) |ssl_config| {
                 if (ssl_config.key_file_name != null)
@@ -137,6 +150,20 @@ pub const ServerConfig = struct {
                 if (ssl_config.passphrase != null)
                     ctx_opts.passphrase = ssl_config.passphrase;
                 ctx_opts.ssl_prefer_low_memory_usage = @boolToInt(ssl_config.low_memory_mode);
+
+                if (ssl_config.key != null) {
+                    ctx_opts.key = ssl_config.key;
+                    ctx_opts.key_count = ssl_config.key_count;
+                }
+                if (ssl_config.cert != null) {
+                    ctx_opts.cert = ssl_config.cert;
+                    ctx_opts.cert_count = ssl_config.cert_count;
+                }
+                if (ssl_config.ca != null) {
+                    ctx_opts.ca = ssl_config.ca;
+                    ctx_opts.ca_count = ssl_config.ca_count;
+                }
+                ctx_opts.secure_options = ssl_config.secure_options;
             }
 
             return ctx_opts;
@@ -155,6 +182,36 @@ pub const ServerConfig = struct {
             inline for (fields) |field| {
                 if (@field(this, field) != null) {
                     const slice = std.mem.span(@field(this, field));
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+            }
+
+            if (this.cert != null) {
+                var i: u32 = 0;
+                while (i < this.cert_count) : (i += 1) {
+                    const slice = std.mem.span(this.cert[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+            }
+
+            if (this.key != null) {
+                var i: u32 = 0;
+                while (i < this.key_count) : (i += 1) {
+                    const slice = std.mem.span(this.key[i]);
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
+                }
+            }
+
+            if (this.ca != null) {
+                var i: u32 = 0;
+                while (i < this.ca_count) : (i += 1) {
+                    const slice = std.mem.span(this.ca[i]);
                     if (slice.len > 0) {
                         bun.default_allocator.free(slice);
                     }
@@ -183,6 +240,34 @@ pub const ServerConfig = struct {
                     any = true;
                 }
             }
+
+            if (obj.getTruthy(global, "key")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        var native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        result.key = native_array.ptr;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+
+                        while (i < count) : (i += 1) {
+                            var item = JSC.JSObject.getIndex(js_obj, global, i);
+
+                            var sliced = item.toSlice(global, bun.default_allocator);
+                            defer sliced.deinit();
+                            if (sliced.len > 0) {
+                                native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                                valid_count += 1;
+                                any = true;
+                            }
+                        }
+
+                        result.key_count = valid_count;
+                    }
+                }
+            }
+
             if (obj.getTruthy(global, "certFile")) |cert_file_name| {
                 var sliced = cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
@@ -197,13 +282,72 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (obj.getTruthy(global, "cert")) |js_obj| {
+                if (js_obj.jsType().isArray()) {
+                    const count = js_obj.getLengthOfArray(global);
+                    if (count > 0) {
+                        var native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        result.cert = native_array.ptr;
+
+                        var i: u32 = 0;
+                        var valid_count: u32 = 0;
+
+                        while (i < count) : (i += 1) {
+                            var item = JSC.JSObject.getIndex(js_obj, global, i);
+
+                            var sliced = item.toSlice(global, bun.default_allocator);
+                            defer sliced.deinit();
+                            if (sliced.len > 0) {
+                                native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                                valid_count += 1;
+                                any = true;
+                            }
+                        }
+
+                        result.cert_count = valid_count;
+                    }
+                }
+            }
+
             // Optional
             if (any) {
+                if (obj.getTruthy(global, "secureOptions")) |secure_options| {
+                    if (secure_options.isNumber()) {
+                        result.secure_options = secure_options.toU32();
+                    }
+                }
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
                     var sliced = key_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
                         result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    }
+                }
+
+                if (obj.getTruthy(global, "ca")) |js_obj| {
+                    if (js_obj.jsType().isArray()) {
+                        const count = js_obj.getLengthOfArray(global);
+                        if (count > 0) {
+                            var native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                            result.ca = native_array.ptr;
+
+                            var i: u32 = 0;
+                            var valid_count: u32 = 0;
+
+                            while (i < count) : (i += 1) {
+                                var item = JSC.JSObject.getIndex(js_obj, global, i);
+
+                                var sliced = item.toSlice(global, bun.default_allocator);
+                                defer sliced.deinit();
+                                if (sliced.len > 0) {
+                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                                    valid_count += 1;
+                                    any = true;
+                                }
+                            }
+
+                            result.ca_count = valid_count;
+                        }
                     }
                 }
 

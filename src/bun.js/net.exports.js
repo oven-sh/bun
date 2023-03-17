@@ -170,8 +170,9 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = this.data;
         const options = self[bunSocketServerOptions];
-        const { pauseOnConnect, connectionListener } = options;
-        const _socket = new Socket(options);
+        const { pauseOnConnect, connectionListener, InternalSocketClass } = options;
+        const _socket = new InternalSocketClass({});
+        
         _socket.#attach(this.localPort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
           const data = {
@@ -612,19 +613,28 @@ class Server extends EventEmitter {
     }
 
     try {
+      var tls = undefined;
+      var TLSSocketClass = undefined;
+      const bunTLS = this[bunTlsSymbol];
+      if (typeof bunTLS === "function") {
+        [tls, TLSSocketClass] = bunTLS.call(this, port, hostname);
+      }
+
+      this[bunSocketServerOptions].InternalSocketClass = TLSSocketClass || SocketClass;
+
       this.#server = Bun.listen(
         path
           ? {
               exclusive,
               unix: path,
-              tls: false,
+              tls,
               socket: SocketClass[bunSocketServerHandlers],
             }
           : {
               exclusive,
               port,
               hostname,
-              tls: false,
+              tls,
               socket: SocketClass[bunSocketServerHandlers],
             },
       );

@@ -2,16 +2,49 @@ function parseCertString() {
   throw Error("Not implemented");
 }
 
-var InternalSecureContext = class SecureContext {};
+function mapStringArray(item) {
+  return item.toString();
+}
+
+var InternalSecureContext = class SecureContext {
+  context;
+
+  constructor(options) {
+    const context = {};
+    if (options) {
+      if (options.key) {
+        context.key = (options.key instanceof Array ? options.key : [options.key]).map(mapStringArray);
+      } else context.key = undefined;
+
+      if (options.passphrase) context.passphrase = options.passphrase;
+      else context.passphrase = undefined;
+
+      if (options.cert) {
+        context.cert = (options.cert instanceof Array ? options.cert : [options.cert]).map(mapStringArray);
+      } else context.cert = undefined;
+
+      if (options.ca) {
+        context.ca = (options.ca instanceof Array ? options.ca : [options.ca]).map(mapStringArray);
+      } else context.ca = undefined;
+
+      const secureOptions = options.secureOptions || 0;
+
+      if (secureOptions) context.secureOptions = secureOptions;
+      else context.secureOptions = undefined;
+    }
+    this.context = context;
+  }
+};
+
 function SecureContext() {
   return new InternalSecureContext();
 }
 
 function createSecureContext(options) {
-  return new SecureContext();
+  return new SecureContext(options);
 }
 
-const { [Symbol.for("::bunternal::")]: InternalTCPSocket } = import.meta.require("net");
+const { [Symbol.for("::bunternal::")]: InternalTCPSocket, Server: NetServer } = import.meta.require("net");
 
 const buntls = Symbol.for("::buntls::");
 
@@ -36,8 +69,10 @@ const TLSSocket = (function (InternalTLSSocket) {
   );
 })(
   class TLSSocket extends InternalTCPSocket {
+    #secureContext;
     constructor(options) {
       super(options);
+      this.#secureContext = options.secureContext || createSecureContext(options);
     }
 
     _secureEstablished = false;
@@ -96,6 +131,7 @@ const TLSSocket = (function (InternalTLSSocket) {
       if (servername) {
         return {
           serverName: typeof servername === "string" ? servername : host,
+          ...this.#secureContext,
         };
       }
 
@@ -103,6 +139,74 @@ const TLSSocket = (function (InternalTLSSocket) {
     }
   },
 );
+
+class Server extends NetServer {
+  key;
+  cert;
+  ca;
+  passphrase;
+  secureOptions;
+
+  constructor(options, secureConnectionListener) {
+    super(options, secureConnectionListener);
+    this.setSecureContext(options);
+  }
+
+  setSecureContext(options) {
+    if (options instanceof InternalSecureContext) {
+      options = options.context;
+    }
+    if(options) {
+      if (options.key) {
+        this.key = (options.key instanceof Array ? options.key : [options.key]).map(mapStringArray);
+      } else this.key = undefined;
+
+      if (options.passphrase) this.passphrase = options.passphrase;
+      else this.passphrase = undefined;
+
+      if (options.cert) {
+        this.cert = (options.cert instanceof Array ? options.cert : [options.cert]).map(mapStringArray);
+      } else this.cert = undefined;
+
+      if (options.ca) {
+        this.ca = (options.ca instanceof Array ? options.ca : [options.ca]).map(mapStringArray);
+      } else this.ca = undefined;
+
+      const secureOptions = options.secureOptions || 0;
+
+      if (secureOptions) this.secureOptions = secureOptions;
+      else this.secureOptions = undefined;
+    }
+
+
+  }
+  
+  getTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+
+  setTicketKeys() {
+    throw Error("Not implented in Bun yet");
+  }
+
+  [buntls](port, host) {
+    return [
+      {
+        serverName: host || "localhost",
+        key: this.key,
+        cert: this.cert,
+        ca: this.ca,
+        passphrase: this.passphrase,
+        secureOptions: this.secureOptions,
+      },
+      SocketClass,
+    ];
+  }
+}
+
+function createServer(options, connectionListener) {
+  return new Server(options, connectionListener);
+}
 export const CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600,
   DEFAULT_ECDH_CURVE = "auto",
@@ -151,6 +255,8 @@ var exports = {
   [Symbol.for("CommonJS")]: 0,
   connect,
   createConnection,
+  Server,
+  createServer,
 };
 
 export default exports;

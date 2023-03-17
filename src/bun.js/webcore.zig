@@ -435,7 +435,7 @@ pub const Crypto = struct {
                 if (N_int < 0 or !N_value.isNumber()) {
                     return throwInvalidParams(
                         globalThis,
-                        .range_error,
+                        .RangeError,
                         "Invalid scrypt params\n\n N must be a positive integer\n",
                         .{},
                     );
@@ -450,7 +450,7 @@ pub const Crypto = struct {
                 if (r_int < 0 or !r_value.isNumber()) {
                     return throwInvalidParams(
                         globalThis,
-                        .range_error,
+                        .RangeError,
                         "Invalid scrypt params\n\n r must be a positive integer\n",
                         .{},
                     );
@@ -465,7 +465,7 @@ pub const Crypto = struct {
                 if (p_int < 0 or !p_value.isNumber()) {
                     return throwInvalidParams(
                         globalThis,
-                        .range_error,
+                        .RangeError,
                         "Invalid scrypt params\n\n p must be a positive integer\n",
                         .{},
                     );
@@ -479,7 +479,7 @@ pub const Crypto = struct {
                 if (p_int < 0 or !value.isNumber()) {
                     return throwInvalidParams(
                         globalThis,
-                        .range_error,
+                        .RangeError,
                         "Invalid scrypt params\n\n N must be a positive integer\n",
                         .{},
                     );
@@ -496,7 +496,7 @@ pub const Crypto = struct {
         if (cost.? < 2 or cost.? > 0x3fffffff) {
             return throwInvalidParams(
                 globalThis,
-                .range_error,
+                .RangeError,
                 "Invalid scrypt params\n\n N must be greater than 1 and less than 2^30\n",
                 .{},
             );
@@ -505,7 +505,7 @@ pub const Crypto = struct {
         if (cost.? == 0 or (cost.? & (cost.? - 1)) != 0) {
             return throwInvalidParams(
                 globalThis,
-                .range_error,
+                .RangeError,
                 "Invalid scrypt params\n\n N must be a power of 2 greater than 1\n",
                 .{},
             );
@@ -524,7 +524,7 @@ pub const Crypto = struct {
                 null,
                 0,
             ) != 1)) {
-                return throwInvalidParams(globalThis, .range_error, "Invalid scrypt params\n", .{});
+                return throwInvalidParams(globalThis, .RangeError, "Invalid scrypt params\n", .{});
             }
 
             return JSC.ArrayBuffer.createEmpty(globalThis, .ArrayBuffer);
@@ -557,7 +557,7 @@ pub const Crypto = struct {
             buf.ptr,
             keylen,
         ) != 1) {
-            return throwInvalidParams(globalThis, .range_error, "Invalid scrypt params\n", .{});
+            return throwInvalidParams(globalThis, .RangeError, "Invalid scrypt params\n", .{});
         }
 
         return JSC.ArrayBuffer.create(globalThis, buf, .ArrayBuffer);
@@ -575,7 +575,7 @@ pub const Crypto = struct {
 
     fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: string, fmt: anytype) JSC.JSValue {
         const err = switch (error_type) {
-            .range_error => globalThis.createRangeErrorInstanceWithCode(
+            .RangeError => globalThis.createRangeErrorInstanceWithCode(
                 .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
                 message,
                 fmt,

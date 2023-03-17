@@ -2845,6 +2845,17 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     return value.toStringOrNull(arg1);
 }
 
+bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value) {
+    JSC::JSValue regex = JSC::JSValue::decode(regexValue);
+    JSC::JSValue str = JSC::JSValue::decode(value);
+    if (regex.asCell()->type() != RegExpObjectType || !str.isString()) {
+        return false;
+    }
+    JSC::RegExpObject* regexObject = jsDynamicCast<JSC::RegExpObject*>(regex);
+
+    return !!regexObject->match(global, JSC::asString(str));
+}
+
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
     frame->source_url = Zig::toZigString(stackFrame->sourceURL(vm));

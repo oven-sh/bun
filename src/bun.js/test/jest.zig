@@ -2772,12 +2772,7 @@ pub const Expect = struct {
         const expected_line = "Expected constructor: <green>{any}<r>\n";
         const received_line = "Received value: <red>{any}<r>\n";
         const fmt = comptime getSignature("toBeInstanceOf", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 
@@ -2823,15 +2818,11 @@ pub const Expect = struct {
         const not = this.op.contains(.not);
         var pass: bool = brk: {
             if (expected_value.isString()) {
-                if (value.getPrototype(globalObject).get(globalObject, "includes")) |includes_fn| {
-                    const result = includes_fn.callWithThis(globalObject, value, &.{expected_value});
-                    break :brk result.toBoolean();
-                }
+                const value_string = value.getZigString(globalObject);
+                const expected_string = expected_value.getZigString(globalObject);
+                break :brk value_string.contains(expected_string);
             } else if (expected_value.isRegExp()) {
-                if (expected_value.get(globalObject, "test")) |test_fn| {
-                    const result = test_fn.callWithThis(globalObject, expected_value, &.{value});
-                    break :brk result.toBoolean();
-                }
+                break :brk expected_value.toMatch(globalObject, value);
             }
             unreachable;
         };
@@ -2847,24 +2838,14 @@ pub const Expect = struct {
             const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
             const fmt = comptime getSignature("toMatch", "<green>expected<r>", true) ++ "\n\n" ++ expected_line ++ received_line;
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-                return .zero;
-            }
-
-            globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+            globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
             return .zero;
         }
 
         const expected_line = "Expected substring or pattern: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
         const fmt = comptime getSignature("toMatch", "<green>expected<r>", false) ++ "\n\n" ++ expected_line ++ received_line;
-        if (Output.enable_ansi_colors) {
-            globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, value_fmt });
-            return .zero;
-        }
-
-        globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, value_fmt });
+        globalObject.throwPretty(fmt, .{ expected_fmt, value_fmt });
         return .zero;
     }
 

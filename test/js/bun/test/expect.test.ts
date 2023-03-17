@@ -63,6 +63,11 @@ describe("expect()", () => {
         value: "123",
         matched: "12",
       },
+      {
+        label: "substring emojis",
+        value: "👍👎",
+        matched: "👍"
+      }
     ];
     for (const { label, value, matched } of tests) {
       test(label, () => expect(value).toMatch(matched));

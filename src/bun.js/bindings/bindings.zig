@@ -188,6 +188,10 @@ pub const ZigString = extern struct {
         return strings.eqlLong(utf16_slice.slice(), latin1_slice.slice(), true);
     }
 
+    pub fn contains(this: ZigString, other: ZigString) bool {
+        return strings.contains(this.slice(), other.slice());
+    }
+
     pub fn isAllASCII(this: ZigString) bool {
         if (this.is16Bit()) {
             return strings.firstNonASCII16([]const u16, this.utf16SliceAligned()) == null;
@@ -3651,6 +3655,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("toMatch", .{ this, global, other });
+    }
+
     pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
         return cppFn("asArrayBuffer_", .{ this, global, out });
     }
@@ -4121,6 +4129,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "toMatch",
         "isConstructor",
         "isInstanceOf",
     };

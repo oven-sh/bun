@@ -360,6 +360,16 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalOb
     return JSC::JSValue(result);
 }
 
+static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
+    JSC::EnsureStillAliveScope ensureAlive(result);
+
+    return JSC::JSValue(result);
+}
+
 }; // namespace Zig
 
 template<typename WebCoreType, typename OutType>

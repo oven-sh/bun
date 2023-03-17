@@ -844,7 +844,7 @@ describe("Response", () => {
       expect(exception instanceof SyntaxError).toBe(true);
     }
   });
-  describe("should consume body", async () => {
+  describe("should consume body correctly", async () => {
     it("with text first", async () => {
       var response = new Response("<div>hello</div>");
       expect(await response.text()).toBe("<div>hello</div>");
@@ -949,8 +949,44 @@ describe("Response", () => {
         await response.blob();
       }).toThrow("Body already used");
     });
+    it("with Bun.file() streams", async () => {
+      var stream = Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+      expect(stream instanceof ReadableStream).toBe(true);
+      var input = new Response((await new Response(stream).blob()).stream()).arrayBuffer();
+      var output = Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer();
+      expect(await input).toEqual(await output);
+    });
+    it("with Bun.file() with request/response", async () => {
+      startServer({
+        async fetch(request: Request) {
+          var text = await request.text();
+          expect(async () => {
+            await request.arrayBuffer();
+          }).toThrow();
+          return (response = new Response((await new Response(text).blob()).stream()));
+        },
+      });
+
+      var response = await fetch(`http://127.0.0.1:${server.port}`, {
+        method: "POST",
+        body: await Bun.file(import.meta.dir + "/fixtures/file.txt").arrayBuffer(),
+      });
+      var input = await response.arrayBuffer();
+      var output = await Bun.file(import.meta.dir + "/fixtures/file.txt").stream();
+      expect(input).toEqual((await output.getReader().read()).value?.buffer);
+    });
   });
 
+  it("should work with bigint", () => {
+    var r = new Response("hello status", { status: 200n });
+    expect(r.status).toBe(200);
+    r = new Response("hello status", { status: 599n });
+    expect(r.status).toBe(599);
+    r = new Response("hello status", { status: BigInt(200) });
+    expect(r.status).toBe(200);
+    r = new Response("hello status", { status: BigInt(599) });
+    expect(r.status).toBe(599);
+  });
   testBlobInterface(data => new Response(data), true);
 });
 

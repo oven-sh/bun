@@ -736,6 +736,8 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(this->vm(), "binding"_s),
         1, Process_functionBinding, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontEnum | 0);
 
+    this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
+
     //   target_defaults:
     //    { cflags: [],
     //      default_configuration: 'Release',

@@ -170,9 +170,24 @@ pub const Body = struct {
             }
 
             if (response_init.fastGet(ctx, .status)) |status_value| {
-                const number = status_value.to(i32);
-                if (100 <= number and number < 1000)
-                    result.status_code = @truncate(u16, @intCast(u32, number));
+                if (status_value.isHeapBigInt()) {
+                    const less_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(600))) {
+                        .less_than => true,
+                        else => false,
+                    };
+                    const greater_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(99))) {
+                        .greater_than => true,
+                        else => false,
+                    };
+
+                    if (less_than and greater_than) {
+                        result.status_code = @truncate(u16, @intCast(u64, status_value.toInt64()));
+                    }
+                } else if (status_value.isNumber()) {
+                    const number = status_value.to(i32);
+                    if (100 <= number and number < 600)
+                        result.status_code = @truncate(u16, @intCast(u32, number));
+                }
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
@@ -934,7 +949,9 @@ pub const Body = struct {
                 if (maybeInit) |init_| {
                     body.init = init_;
                 }
-            } else |_| {}
+            } else |_| {
+                return null;
+            }
         }
 
         body.value = Value.fromJS(globalThis, value) orelse return null;

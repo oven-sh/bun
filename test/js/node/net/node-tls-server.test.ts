@@ -229,7 +229,7 @@ it("should receive data", done => {
           },
           data(socket) {},
           open(socket) {
-            if(socket.write("Hello")) {
+            if (socket.write("Hello")) {
               socket.end();
             }
           },

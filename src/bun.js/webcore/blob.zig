@@ -1011,7 +1011,7 @@ pub const Blob = struct {
     pub const Store = struct {
         data: Data,
 
-        mime_type: MimeType = MimeType.other,
+        mime_type: MimeType = MimeType.none,
         ref_count: u32 = 0,
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
@@ -2499,47 +2499,15 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return ZigString.init(this.content_type).toValue(globalThis);
-    }
-
-    pub fn setType(
-        this: *Blob,
-        globalThis: *JSC.JSGlobalObject,
-        value: JSC.JSValue,
-    ) callconv(.C) bool {
-        var zig_str = if (value.isString())
-            value.getZigString(globalThis)
-        else
-            ZigString.Empty;
-
-        if (!zig_str.isAllASCII()) {
-            zig_str = ZigString.Empty;
+        if (this.content_type.len > 0) {
+            return ZigString.init(this.content_type).toValue(globalThis);
         }
 
-        if (zig_str.eql(ZigString.init(this.content_type))) {
-            return true;
+        if (this.store) |store| {
+            return ZigString.init(store.mime_type.value).toValue(globalThis);
         }
 
-        const prev_content_type = this.content_type;
-        {
-            var slicer = zig_str.toSlice(bun.default_allocator);
-            defer slicer.deinit();
-            const allocated = this.content_type_allocated;
-            defer if (allocated) bun.default_allocator.free(prev_content_type);
-            if (globalThis.bunVM().mimeType(slicer.slice())) |mime| {
-                this.content_type = mime.value;
-                this.content_type_allocated = false;
-                return true;
-            }
-            var content_type_buf = globalThis.allocator().alloc(u8, slicer.len) catch {
-                globalThis.throwOutOfMemory();
-                return false;
-            };
-            this.content_type = strings.copyLowercase(slicer.slice(), content_type_buf);
-        }
-
-        this.content_type_allocated = true;
-        return true;
+        return ZigString.Empty.toValue(globalThis);
     }
 
     pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
@@ -2997,13 +2965,11 @@ pub const Blob = struct {
 
         var view_ = this.sharedView();
 
-        if (view_.len == 0)
-            return ZigString.Empty.toValue(global);
-
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
     pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, buf: []const u8, comptime lifetime: Lifetime) JSValue {
+        if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
         // null == unknown
         // false == can't be
         const could_be_all_ascii = this.is_all_ascii orelse this.store.?.is_all_ascii;

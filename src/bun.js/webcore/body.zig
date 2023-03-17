@@ -233,10 +233,6 @@ pub const Body = struct {
                 // }
                 switch (action) {
                     .getText, .getJSON, .getBlob, .getArrayBuffer => {
-                        switch (readable.ptr) {
-                            .Blob => unreachable,
-                            else => {},
-                        }
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
@@ -726,9 +722,6 @@ pub const Body = struct {
                         bun.default_allocator,
                         JSC.VirtualMachine.get().global,
                     );
-                    if (this.InternalBlob.was_string) {
-                        new_blob.content_type = MimeType.text.value;
-                    }
 
                     this.* = .{ .Used = {} };
                     return new_blob;
@@ -1065,8 +1058,12 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var encoder = this.getFormDataEncoding() orelse {
-                globalObject.throw("Invalid MIME type", .{});
-                return .zero;
+                // TODO: catch specific errors from getFormDataEncoding
+                const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
+                return JSC.JSPromise.rejectedPromiseValue(
+                    globalObject,
+                    err,
+                );
             };
 
             if (value.* == .Locked) {
@@ -1084,7 +1081,7 @@ pub fn BodyMixin(comptime Type: type) type {
             ) catch |err| {
                 return JSC.JSPromise.rejectedPromiseValue(
                     globalObject,
-                    globalObject.createErrorInstance(
+                    globalObject.createTypeErrorInstance(
                         "FormData parse error {s}",
                         .{
                             @errorName(err),
@@ -1122,6 +1119,18 @@ pub fn BodyMixin(comptime Type: type) type {
             var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
             ptr.* = blob;
             blob.allocator = getAllocator(globalObject);
+
+            if (blob.content_type.len == 0 and blob.store != null) {
+                if (this.getFetchHeaders()) |_fetch_headers| {
+                    var fetch_headers = _fetch_headers;
+                    if (fetch_headers.get("content-type", globalObject)) |content_type| {
+                        blob.store.?.mime_type = MimeType.init(content_type);
+                    }
+                } else {
+                    blob.store.?.mime_type = MimeType.text;
+                }
+            }
+
             return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
         }
     };

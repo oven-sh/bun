@@ -760,7 +760,27 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{ "toAtomicValue", "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
+    pub fn toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toTypeErrorInstance", .{ this, global });
+    }
+
+    pub fn toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toSyntaxErrorInstance", .{ this, global });
+    }
+
+    pub const Extern = [_][]const u8{
+        "toAtomicValue",
+        "toValue",
+        "toExternalValue",
+        "to16BitValue",
+        "toValueGC",
+        "toErrorInstance",
+        "toExternalU16",
+        "toExternalValueWithCallback",
+        "external",
+        "toTypeErrorInstance",
+        "toSyntaxErrorInstance",
+    };
 };
 
 pub const DOMURL = opaque {
@@ -2408,6 +2428,34 @@ pub const JSGlobalObject = extern struct {
             return str.toErrorInstance(this);
         } else {
             return ZigString.static(fmt).toErrorInstance(this);
+        }
+    }
+
+    pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toTypeErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toTypeErrorInstance(this);
+        }
+    }
+
+    pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toSyntaxErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toSyntaxErrorInstance(this);
         }
     }
 

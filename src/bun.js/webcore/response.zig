@@ -96,6 +96,12 @@ pub const Response = struct {
         return &this.body.value;
     }
 
+    pub fn getFetchHeaders(
+        this: *Response,
+    ) ?*FetchHeaders {
+        return this.body.init.headers;
+    }
+
     pub inline fn statusCode(this: *const Response) u16 {
         return this.body.init.status_code;
     }
@@ -173,7 +179,7 @@ pub const Response = struct {
             return ZigString.init("error").toValue(globalThis);
         }
 
-        return ZigString.init("basic").toValue(globalThis);
+        return ZigString.init("default").toValue(globalThis);
     }
 
     pub fn getStatusText(

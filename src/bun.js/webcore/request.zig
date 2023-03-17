@@ -494,6 +494,12 @@ pub const Request = struct {
         return &this.body;
     }
 
+    pub fn getFetchHeaders(
+        this: *Request,
+    ) ?*FetchHeaders {
+        return this.headers;
+    }
+
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,

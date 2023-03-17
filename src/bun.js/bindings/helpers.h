@@ -340,6 +340,26 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
     return JSC::JSValue(result);
 }
 
+static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
+    JSC::EnsureStillAliveScope ensureAlive(result);
+
+    return JSC::JSValue(result);
+}
+
+static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
+    JSC::EnsureStillAliveScope ensureAlive(result);
+
+    return JSC::JSValue(result);
+}
+
 }; // namespace Zig
 
 template<typename WebCoreType, typename OutType>

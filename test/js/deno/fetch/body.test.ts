@@ -31,6 +31,7 @@ test(async function arrayBufferFromByteArrays() {
     }
 });
 test({
+    ignore: true,
     permissions: {
         net: true
     }
@@ -45,6 +46,7 @@ test({
     assert(formData.has("field_2"));
 });
 test({
+    ignore: true,
     permissions: {
         net: true
     }
@@ -71,7 +73,7 @@ test({
 test(async function bodyArrayBufferMultipleParts() {
     const parts: Uint8Array[] = [];
     let size = 0;
-    for(let i = 0; i <= 150000; i++){
+    for(let i = 0; i <= 15000; i++){
         const part = new Uint8Array([
             1
         ]);

@@ -47,6 +47,7 @@ pub fn canOpenInEditor(this: MimeType) bool {
 }
 
 pub const Category = enum {
+    none,
     image,
     text,
     html,
@@ -88,6 +89,7 @@ pub const Category = enum {
     }
 };
 
+pub const none = MimeType.initComptime("", .none);
 pub const other = MimeType.initComptime("application/octet-stream", .other);
 pub const css = MimeType.initComptime("text/css", .css);
 pub const javascript = MimeType.initComptime("text/javascript;charset=utf-8", .javascript);

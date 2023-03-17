@@ -512,14 +512,7 @@ function testBlobInterface(blobbyConstructor, hasBlobFn?) {
           if (withGC) gc();
           expect(blobed.size).toBe(size);
           if (withGC) gc();
-          blobed.type = "";
-          if (withGC) gc();
-          expect(blobed.type).toBe("");
-          if (withGC) gc();
-          blobed.type = "application/json";
-          if (withGC) gc();
-          expect(blobed.type).toBe("application/json");
-          if (withGC) gc();
+          expect(blobed.type).toBe("text/plain;charset=utf-8");
           const out = await blobed.text();
           expect(out).toBe(text);
           if (withGC) gc();
@@ -598,6 +591,36 @@ describe("Bun.file", () => {
 
 describe("Blob", () => {
   testBlobInterface(data => new Blob([data]));
+
+  it("should have expected content type", async () => {
+    var response = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "multipart/form-data;boundary=boundary",
+      },
+    });
+    expect((await response.blob()).type).toBe("multipart/form-data;boundary=boundary");
+
+    response = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+      },
+    });
+    expect((await response.blob()).type).toBe("text/html;charset=utf-8");
+
+    response = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "octet/stream",
+      },
+    });
+    expect((await response.blob()).type).toBe("octet/stream");
+
+    response = new Response("<div>hello</div>", {
+      headers: {
+        "content-type": "text/plain;charset=utf-8",
+      },
+    });
+    expect((await response.blob()).type).toBe("text/plain;charset=utf-8");
+  });
 
   var blobConstructorValues = [
     ["123", "456"],
@@ -726,13 +749,13 @@ describe("Response", () => {
     });
     it("sets the content-type header", () => {
       let response = Response.json("hello");
-      expect(response.type).toBe("basic");
+      expect(response.type).toBe("default");
       expect(response.headers.get("content-type")).toBe("application/json;charset=utf-8");
       expect(response.status).toBe(200);
     });
     it("supports number status code", () => {
       let response = Response.json("hello", 407);
-      expect(response.type).toBe("basic");
+      expect(response.type).toBe("default");
       expect(response.headers.get("content-type")).toBe("application/json;charset=utf-8");
       expect(response.status).toBe(407);
     });
@@ -777,7 +800,7 @@ describe("Response", () => {
       expect(response.headers.get("x-hello")).toBe("world");
       expect(response.headers.get("Location")).toBe("https://example.com");
       expect(response.status).toBe(302);
-      expect(response.type).toBe("basic");
+      expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
     });
   });
@@ -820,6 +843,112 @@ describe("Response", () => {
     } catch (exception) {
       expect(exception instanceof SyntaxError).toBe(true);
     }
+  });
+  describe("should consume body", async () => {
+    it("with text first", async () => {
+      var response = new Response("<div>hello</div>");
+      expect(await response.text()).toBe("<div>hello</div>");
+      expect(async () => {
+        await response.text();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.json();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.formData();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.arrayBuffer();
+      }).toThrow("Body already used");
+    });
+    it("with json first", async () => {
+      var response = new Response('{ "hello": "world" }');
+      expect(await response.json()).toEqual({ "hello": "world" });
+      expect(async () => {
+        await response.json();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.text();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.formData();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.arrayBuffer();
+      }).toThrow("Body already used");
+    });
+    it("with formData first", async () => {
+      var response = new Response("--boundary--", {
+        headers: {
+          "content-type": "multipart/form-data;boundary=boundary",
+        },
+      });
+      expect(await response.formData()).toBeInstanceOf(FormData);
+      expect(async () => {
+        await response.formData();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.text();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.json();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.arrayBuffer();
+      }).toThrow("Body already used");
+    });
+    it("with blob first", async () => {
+      var response = new Response("<div>hello</div>");
+      expect(response.body instanceof ReadableStream).toBe(true);
+      expect(response.headers instanceof Headers).toBe(true);
+      expect(response.type).toBe("default");
+      var blob = await response.blob();
+      expect(blob).toBeInstanceOf(Blob);
+      expect(blob.stream()).toBeInstanceOf(ReadableStream);
+      expect(async () => {
+        await response.blob();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.text();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.json();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.formData();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.arrayBuffer();
+      }).toThrow("Body already used");
+    });
+    it("with arrayBuffer first", async () => {
+      var response = new Response("<div>hello</div>");
+      expect(await response.arrayBuffer()).toBeInstanceOf(ArrayBuffer);
+      expect(async () => {
+        await response.arrayBuffer();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.text();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.json();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.formData();
+      }).toThrow("Body already used");
+      expect(async () => {
+        await response.blob();
+      }).toThrow("Body already used");
+    });
   });
 
   testBlobInterface(data => new Response(data), true);

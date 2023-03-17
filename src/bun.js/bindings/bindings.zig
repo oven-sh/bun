@@ -3651,6 +3651,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("toZigString", .{ this, out, global });
     }
 
+    pub fn toMatch(this: JSValue, global: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("toMatch", .{ this, global, other });
+    }
+
     pub fn asArrayBuffer_(this: JSValue, global: *JSGlobalObject, out: *ArrayBuffer) bool {
         return cppFn("asArrayBuffer_", .{ this, global, out });
     }
@@ -3983,6 +3987,10 @@ pub const JSValue = enum(JSValueReprInt) {
         });
     }
 
+    pub fn stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool {
+        return cppFn("stringIncludes", .{ this, globalObject, other });
+    }
+
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
         return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
     }
@@ -4121,8 +4129,10 @@ pub const JSValue = enum(JSValueReprInt) {
         "toWTFString",
         "toZigException",
         "toZigString",
+        "toMatch",
         "isConstructor",
         "isInstanceOf",
+        "stringIncludes",
     };
 };
 

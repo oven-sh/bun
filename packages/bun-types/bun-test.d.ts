@@ -441,6 +441,16 @@ declare module "bun:test" {
      */
     toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
     /**
+     * Asserts that a value matches a regular expression or includes a substring.
+     *
+     * @example
+     * expect("dog").toMatch(/dog/);
+     * expect("dog").toMatch("og");
+     *
+     * @param expected the expected substring or pattern.
+     */
+    toMatch(expected: string | RegExp): void;
+    /**
      * Asserts that a value matches the most recent snapshot.
      *
      * @example

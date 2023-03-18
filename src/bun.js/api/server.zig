@@ -2424,7 +2424,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
                 const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
-
+                defer result.ensureStillAlive();
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.toError()) |err| {
                         this.finishRunningErrorHandler(err, status);
@@ -2707,7 +2707,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = {} };
+                        req.body = .{ .Null = {} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
                     }
@@ -2718,7 +2718,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     if (request.as(Request)) |req| {
                         var old = req.body;
                         old.Locked.onReceiveValue = null;
-                        req.body = .{ .Empty = {} };
+                        req.body = .{ .Null = {} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
                     }
@@ -2735,7 +2735,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (request.as(Request)) |req| {
                     var old = req.body;
                     old.Locked.onReceiveValue = null;
-                    req.body = .{ .Empty = {} };
+                    req.body = .{ .Null = {} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
                 }
@@ -4491,7 +4491,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var url: URL = undefined;
             var first_arg = args.nextEat().?;
-            var body: JSC.WebCore.Body.Value = .{ .Empty = {} };
+            var body: JSC.WebCore.Body.Value = .{ .Null = {} };
             var existing_request: ?WebCore.Request = null;
             // TODO: set Host header
             // TODO: set User-Agent header
@@ -4910,7 +4910,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .uws_request = req,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = {},
+                    .Null = {},
                 },
             };
 
@@ -4994,7 +4994,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .body = .{
-                    .Empty = {},
+                    .Null = {},
                 },
             };
             ctx.upgrade_context = upgrade_ctx;

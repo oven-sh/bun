@@ -59,7 +59,7 @@ pub const Request = struct {
 
     headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    body: Body.Value = Body.Value{ .Empty = {} },
+    body: Body.Value = Body.Value{ .Null = {} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
     https: bool = false,
@@ -164,7 +164,7 @@ pub const Request = struct {
     pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = bun.asByteSlice(ctx.getFullURL()),
-            .body = .{ .Empty = {} },
+            .body = .{ .Null = {} },
             .method = ctx.method,
             .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,

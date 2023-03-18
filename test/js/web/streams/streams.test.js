@@ -1,4 +1,4 @@
-import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText } from "bun";
+import { file, readableStreamToArrayBuffer, readableStreamToArray, readableStreamToText, ArrayBufferSink } from "bun";
 import { expect, it, beforeEach, afterEach, describe } from "bun:test";
 import { mkfifo } from "mkfifo";
 import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -613,7 +613,17 @@ it("Blob.stream() -> new Response(stream).text()", async () => {
 });
 
 it("Bun.file().stream() read text from large file", async () => {
-  const hugely = "HELLO!".repeat(1024 * 1024 * 10);
+  // Guard against reading the same repeating chunks
+  // There were bugs previously where the stream would
+  // repeat the same chunk over and over again
+  var sink = new ArrayBufferSink();
+  sink.start({ highWaterMark: 1024 * 1024 * 10 });
+  var written = 0;
+  var i = 0;
+  while (written < 1024 * 1024 * 10) {
+    written += sink.write(Bun.SHA1.hash((i++).toString(10), "hex"));
+  }
+  const hugely = Buffer.from(sink.end()).toString();
   const tmpfile = join(realpathSync(tmpdir()), "bun-streams-test.txt");
   writeFileSync(tmpfile, hugely);
   try {

@@ -13,6 +13,15 @@ const getByteLength = str => {
   return s;
 };
 
+it("not enough space for replacement character", () => {
+  const encoder = new TextEncoder();
+  const bytes = new Uint8Array(2);
+  const result = encoder.encodeInto("\udc00", bytes);
+  expect(result.read).toBe(0);
+  expect(result.written).toBe(0);
+  expect(Array.from(bytes)).toEqual([0x00, 0x00]);
+});
+
 describe("TextEncoder", () => {
   it("should encode latin1 text with non-ascii latin1 characters", () => {
     var text = "H©ell©o Wor©ld!";

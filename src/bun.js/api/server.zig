@@ -932,6 +932,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             this.response_buf_owned = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
             this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
+            this.setAbortHandler();
         }
 
         pub fn renderResponseBuffer(this: *RequestContext) void {

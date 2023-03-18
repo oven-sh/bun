@@ -14,7 +14,7 @@
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://discord.com/invite/CXdq2DP29u">Discord</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
-  <a href="https://github.com/oven-sh/zod/issues/new">Issues</a>
+  <a href="https://github.com/oven-sh/bun/issues/new">Issues</a>
   <span>&nbsp;&nbsp;•&nbsp;&nbsp;</span>
   <a href="https://github.com/oven-sh/bun/issues/159">Roadmap</a>
   <br />

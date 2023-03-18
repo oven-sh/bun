@@ -57,6 +57,7 @@ const { Bun, createFIFO, Object } = import.meta.primordials;
 const { connect: bunConnect } = Bun;
 const { Duplex } = import.meta.require("node:stream");
 const { EventEmitter } = import.meta.require("node:events");
+var { setTimeout } = globalThis;
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerHandlers = Symbol.for("::bunsocket_serverhandlers::");
@@ -732,7 +733,15 @@ class Server extends EventEmitter {
       this.#server.data = this;
 
       this.#listening = true;
-      process.nextTick(emitListeningNextTick, this, onListen);
+
+      // We must schedule the emitListeningNextTick() only after the next run of
+      // the event loop's IO queue. Otherwise, the server may not actually be listening
+      // when the 'listening' event is emitted.
+      //
+      // That leads to all sorts of confusion.
+      //
+      // process.nextTick() is not sufficient because it will run before the IO queue.
+      setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
       this.#listening = false;
       process.nextTick(emitErrorNextTick, this, err);

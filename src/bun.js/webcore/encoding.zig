@@ -221,10 +221,12 @@ pub const TextEncoder = struct {
     ) u64 {
         var output = buf_ptr[0..buf_len];
         const input = input_ptr[0..input_len];
-        const result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, true);
-        if (result.read == 0 or result.written == 0) {
+        var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, false);
+        if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
             const replacement_char = [_]u8{ 239, 191, 189 };
             @memcpy(buf_ptr, &replacement_char, replacement_char.len);
+            result.read = 1;
+            result.written = 3;
         }
         const sized: [2]u32 = .{ result.read, result.written };
         return @bitCast(u64, sized);
@@ -602,7 +604,22 @@ pub const TextDecoder = struct {
     fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8) JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
-                return ZigString.init(buffer_slice).toValueGC(globalThis);
+                if (strings.isAllASCII(buffer_slice)) {
+                    return ZigString.init(buffer_slice).toValueGC(globalThis);
+                }
+
+                // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
+                // However, this is also what WebKit seems to do.
+                //
+                // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
+                const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
+                var bytes = globalThis.allocator().alloc(u16, out_length) catch {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
+
+                const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+                return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
             },
             EncodingLabel.@"UTF-8" => {
                 if (this.fatal) {

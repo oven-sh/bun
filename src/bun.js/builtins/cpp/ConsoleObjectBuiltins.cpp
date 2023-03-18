@@ -51,20 +51,20 @@ namespace WebCore {
 const JSC::ConstructAbility s_consoleObjectAsyncIteratorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_consoleObjectAsyncIteratorCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_consoleObjectAsyncIteratorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_consoleObjectAsyncIteratorCodeLength = 2135;
+const int s_consoleObjectAsyncIteratorCodeLength = 2182;
 static const JSC::Intrinsic s_consoleObjectAsyncIteratorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_consoleObjectAsyncIteratorCode =
     "(function () {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    const { TextDecoder, Symbol, process: { stdin }, console } = globalThis;\n" \
+    "    const { TextDecoder, Symbol } = globalThis;\n" \
     "\n" \
     "    const Iterator = async function* ConsoleAsyncIterator() {\n" \
     "        \"use strict\";\n" \
     "\n" \
-    "        //\n" \
-    "        //\n" \
-    "        console.log(\"isRaw\", stdin.isRaw);\n" \
+    "        const { setAsyncIoMode } = globalThis[Symbol.for(\"Bun.lazy\")](\"bun:tty\");\n" \
+    "        setAsyncIoMode(0, true);\n" \
+    "\n" \
     "        const stream = @Bun.stdin.stream();\n" \
     "        var reader = stream.getReader();\n" \
     "\n" \
@@ -116,7 +116,7 @@ const char* const s_consoleObjectAsyncIteratorCode =
     "          deferredError = e;\n" \
     "        } finally {\n" \
     "          reader.releaseLock();\n" \
-    "        //\n" \
+    "          setAsyncIoMode(0, false);\n" \
     "          if (deferredError) {\n" \
     "            throw deferredError;\n" \
     "          }\n" \

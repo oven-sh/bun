@@ -27,14 +27,13 @@
 function asyncIterator() {
     "use strict";
 
-    const { TextDecoder, Symbol, console } = globalThis;
+    const { TextDecoder, Symbol } = globalThis;
 
     const Iterator = async function* ConsoleAsyncIterator() {
         "use strict";
 
         const { setAsyncIoMode } = globalThis[Symbol.for("Bun.lazy")]("bun:tty");
-        console.log(setAsyncIoMode);
-        setAsyncIoMode(true);
+        setAsyncIoMode(0, true);
 
         const stream = @Bun.stdin.stream();
         var reader = stream.getReader();
@@ -87,8 +86,7 @@ function asyncIterator() {
           deferredError = e;
         } finally {
           reader.releaseLock();
-          setAsyncIoMode(false);
-        //   stdin.setRawMode(false);
+          setAsyncIoMode(0, false);
           if (deferredError) {
             throw deferredError;
           }

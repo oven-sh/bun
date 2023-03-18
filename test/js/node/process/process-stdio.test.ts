@@ -34,12 +34,15 @@ describe("process.{stdin, stdout, stderr}", () => {
 
     libRawModeTest = dlopen(LIB_RAW_MODE_PATH, {
       tty_is_raw: {
+        args: [FFIType.int],
         returns: FFIType.int,
       },
     });
 
-    checkIsRaw = function checkIsRaw() {
-      return !!libRawModeTest.symbols.tty_is_raw();
+    checkIsRaw = function checkIsRaw(fd: number = 0) {
+      if (typeof fd !== "number") throw new Error("fd must be a number");
+      if (fd < 0) throw new Error("fd must be a number >= 0");
+      return !!libRawModeTest.symbols.tty_is_raw(fd);
     };
   });
 
@@ -202,6 +205,7 @@ describe("process.{stdin, stdout, stderr}", () => {
   });
 
   test("process.stdin.setRawMode - reset termios settings on exit", async () => {
+    if (!libRawModeTest) throw new Error("libRawModeTest not available - likely build failure");
     // Check that we're not already in raw mode
     expect(process.stdin.isRaw).toBe(false);
     expect(checkIsRaw()).toBe(false);
@@ -228,102 +232,85 @@ describe("process.{stdin, stdout, stderr}", () => {
     }
 
     // Check that raw mode was actually set
+    expect(process.stdin.isRaw).toBe(true);
     expect(checkIsRaw()).toBe(true);
 
     await proc.exited;
 
     // Check that raw mode is reset after process exits
+    expect(process.stdin.isRaw).toBe(false);
     expect(checkIsRaw()).toBe(false);
   });
 
-  // TODO: Remove after finishing new version
-  // test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", async () => {
-  //   // Check that we're not already in raw mode
-  //   expect(process.stdin.isRaw).toBe(false);
-  //   expect(checkIsRaw()).toBe(false);
-
-  //   // Inherit stdin, iterate over stdin, then on first iteration, send message to check
-  //   const proc = spawn({
-  //     cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.js"],
-  //     stdin: "inherit",
-  //     // onExit() {
-  //     //   console.log("EXITED");
-  //     // },
-  //   });
-
-  //   // Wait for script to set raw mode and alert us
-  //   // Then wait to get message that raw mode was unset
-  //   let msgNo = 0;
-  //   process.stdin!.write("START\n");
-  //   for await (const line of proc.stdout) {
-  //     const msg = new TextDecoder().decode(line);
-  //     console.log(msg);
-  //     if (msgNo === 0 && msg.includes("Starting")) {
-  //       expect(true).toBeTruthy();
-  //       msgNo += 1;
-  //       console.log("CONFIRMED");
-  //       continue;
-  //     } else if (msgNo === 1 && msg.includes("RAW_MODE_SET")) {
-  //       expect(checkIsRaw()).toBe(true);
-  //       msgNo += 1;
-  //       process.stdin!.write("EXIT\n");
-  //     } else if (msgNo === 2 && msg.includes("RAW_MODE_UNSET")) {
-  //       expect(checkIsRaw()).toBe(false);
-  //       break;
-  //     } else {
-  //       expect(false).toBeTruthy();
-  //     }
-  //   }
-
-  //   expect(checkIsRaw()).toBe(false);
-  // });
-
-  test("process.stdin.setRawMode - set/unset raw mode before/after iterating over console async iterator", done => {
+  test("process.stdin.setRawMode - set/unset (enhanced) raw mode before/after iterating over console async iterator -- normal before", async () => {
+    if (!libRawModeTest) throw new Error("libRawModeTest not available - likely build failure");
     // Check that we're not already in raw mode
     expect(process.stdin.isRaw).toBe(false);
     expect(checkIsRaw()).toBe(false);
 
-    console.log(Bun.stdin.stream());
-
     // Open new pty using openpty.js
-    const {
-      subprocess,
-      stdin,
-      fd: masterFd,
-      cleanup,
-    } = spawnInNewPty({
-      cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.js"],
-      options: {
-        onExit() {
-          cleanup();
-          done();
-        },
-      },
+    const { subprocess, stdin, cleanup } = spawnInNewPty({
+      cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.ts"],
+      // options: {
+      //   onExit() {
+      //     cleanup();
+      //   },
+      // },
     });
 
-    Bun.sleep(1000);
+    await Bun.sleep(250);
 
-    console.log("HERE");
+    stdin.write("Starting\n");
+    // @ts-ignore
+    stdin.flush(true);
 
-    stdin.write("START\n");
-    stdin.flush();
+    const responses = [] as string[];
 
-    // for await (const line of subprocess.stdout) {
-    //   const msg = new TextDecoder().decode(line);
-    //   console.log(msg);
-    //   if (msg.includes("Starting")) {
-    //     expect(true).toBeTruthy();
-    //     continue;
-    //   } else if (msg.includes("RAW_MODE_SET")) {
-    //     expect(checkIsRaw()).toBe(true);
-    //     stdin.write("EXIT");
-    //     stdin.flush(true);
-    //   } else if (msg.includes("RAW_MODE_UNSET")) {
-    //     expect(checkIsRaw()).toBe(false);
-    //     break;
-    //   } else {
-    //     expect(false).toBeTruthy();
-    //   }
-    // }
+    for await (const line of subprocess.stdout as ReadableStream<Uint8Array>) {
+      const msg = new TextDecoder().decode(line);
+      responses.push(...msg.split(" "));
+      break;
+    }
+
+    expect(responses).toEqual(["NOT_RAW", "ASYNC_IO", "NOT_RAW"]);
+
+    cleanup();
+  });
+
+  test("process.stdin.setRawMode - set/unset (enhanced) raw mode before/after iterating over console async iterator -- raw before", async () => {
+    if (!libRawModeTest) throw new Error("libRawModeTest not available - likely build failure");
+    // Check that we're not already in raw mode
+    expect(process.stdin.isRaw).toBe(false);
+    expect(checkIsRaw()).toBe(false);
+
+    process.stdin.setRawMode(true);
+
+    // Open new pty using openpty.js
+    const { subprocess, stdin, cleanup } = spawnInNewPty({
+      cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.ts", "RAW"],
+      // options: {
+      //   onExit() {
+      //     cleanup();
+      //   },
+      // },
+    });
+
+    await Bun.sleep(250);
+
+    stdin.write("Starting\n");
+    // @ts-ignore
+    stdin.flush(true);
+
+    const responses = [] as string[];
+
+    for await (const line of subprocess.stdout as ReadableStream<Uint8Array>) {
+      const msg = new TextDecoder().decode(line);
+      responses.push(...msg.split(" "));
+      break;
+    }
+
+    expect(responses).toEqual(["RAW", "ASYNC_IO", "RAW"]);
+
+    cleanup();
   });
 });

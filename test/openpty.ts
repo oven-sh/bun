@@ -1,4 +1,4 @@
-import { spawn, file as bunFile, SpawnOptions } from "bun";
+import { file as bunFile, SpawnOptions } from "bun";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 
 import type { Subprocess, FileSink } from "bun";
@@ -69,10 +69,11 @@ export function dup2(oldFd: number, newFd: number): number {
   return rc;
 }
 
-export function spawnInNewPty({ cmd, options }: { cmd: string[]; options: SpawnOptions.OptionsObject }): {
+export function spawnInNewPty({ cmd, options }: { cmd: string[]; options?: SpawnOptions.OptionsObject }): {
   subprocess: Subprocess;
   stdin: FileSink;
-  fd: number;
+  masterFd: number;
+  slaveFd: number;
   cleanup: () => void;
 } {
   if (!cmd.length) throw new Error("cmd must be non-empty");
@@ -84,7 +85,7 @@ export function spawnInNewPty({ cmd, options }: { cmd: string[]; options: SpawnO
   const subprocess = Bun.spawn({
     cmd,
     stdin: "inherit",
-    stdout: "inherit",
+    stdout: "pipe",
     stderr: "inherit",
     ...options,
     env: {
@@ -93,11 +94,10 @@ export function spawnInNewPty({ cmd, options }: { cmd: string[]; options: SpawnO
     },
   });
 
-  // Bun.sleep(500);
   dup2(_orig_stdin, 0);
   const masterWriter = bunFile(master).writer();
   const cleanup = () => closepty(master, slave);
-  return { subprocess, stdin: masterWriter, fd: master, cleanup };
+  return { subprocess, stdin: masterWriter, masterFd: master, slaveFd: slave, cleanup };
 }
 
 // NOTE: This should work but probably never need a non-blocking close...

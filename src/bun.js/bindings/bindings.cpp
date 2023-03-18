@@ -2031,6 +2031,21 @@ JSC__JSValue ZigString__toErrorInstance(const ZigString* str, JSC__JSGlobalObjec
     return JSC::JSValue::encode(Zig::getErrorInstance(str, globalObject));
 }
 
+JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(Zig::getTypeErrorInstance(str, globalObject));
+}
+
+JSC__JSValue ZigString__toSyntaxErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(Zig::getSyntaxErrorInstance(str, globalObject));
+}
+
+JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(Zig::getRangeErrorInstance(str, globalObject));
+}
+
 static JSC::EncodedJSValue resolverFunctionCallback(JSC::JSGlobalObject* globalObject,
     JSC::CallFrame* callFrame)
 {
@@ -2845,7 +2860,8 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
     return value.toStringOrNull(arg1);
 }
 
-bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value) {
+bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value)
+{
     JSC::JSValue regex = JSC::JSValue::decode(regexValue);
     JSC::JSValue str = JSC::JSValue::decode(value);
     if (regex.asCell()->type() != RegExpObjectType || !str.isString()) {
@@ -3831,8 +3847,8 @@ bool JSC__JSValue__isInstanceOf(JSC__JSValue JSValue0, JSC__JSGlobalObject* glob
     if (UNLIKELY(!jsConstructor->structure()->typeInfo().implementsHasInstance()))
         return false;
     bool result = jsConstructor->hasInstance(globalObject, jsValue);
-    
-    RETURN_IF_EXCEPTION(scope, false); 
+
+    RETURN_IF_EXCEPTION(scope, false);
 
     return result;
 }

@@ -1096,6 +1096,13 @@ declare class Request implements BlobInterface {
    * @returns Promise<FormData> - The body of the request as a {@link FormData}.
    */
   formData(): Promise<FormData>;
+
+  /**
+   * Has the body of the request been read?
+   *
+   * [Request.bodyUsed](https://developer.mozilla.org/en-US/docs/Web/API/Request/bodyUsed)
+   */
+  readonly bodyUsed: boolean;
 }
 
 declare interface Crypto {

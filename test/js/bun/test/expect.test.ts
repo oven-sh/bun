@@ -66,12 +66,12 @@ describe("expect()", () => {
       {
         label: "substring emojis",
         value: "👍👎",
-        matched: "👍"
+        matched: "👍",
       },
       {
         label: "substring UTF-16",
         value: "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂",
-        matched: "🥲 ☺️ 😊"
+        matched: "🥲 ☺️ 😊",
       },
     ];
     for (const { label, value, matched } of tests) {

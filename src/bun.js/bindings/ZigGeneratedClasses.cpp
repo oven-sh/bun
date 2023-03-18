@@ -138,10 +138,6 @@ extern "C" JSC::EncodedJSValue BlobPrototype__getType(void* ptr, JSC::JSGlobalOb
 JSC_DECLARE_CUSTOM_GETTER(BlobPrototype__typeGetterWrap);
 
 
-extern "C" bool BlobPrototype__setType(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);
-JSC_DECLARE_CUSTOM_SETTER(BlobPrototype__typeSetterWrap);
-
-
 extern "C" EncodedJSValue BlobPrototype__getWriter(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 JSC_DECLARE_HOST_FUNCTION(BlobPrototype__writerCallback);
 
@@ -157,7 +153,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBlobPrototype, JSBlobPrototype::Base);
 { "slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__sliceCallback, 2 } }  ,
 { "stream"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__streamCallback, 1 } }  ,
 { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__textCallback, 0 } }  ,
-{ "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BlobPrototype__typeGetterWrap, BlobPrototype__typeSetterWrap } }  ,
+{ "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, BlobPrototype__typeGetterWrap, 0 } }  ,
 { "writer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, BlobPrototype__writerCallback, 1 } }
 };
 
@@ -308,18 +304,6 @@ JSC_DEFINE_CUSTOM_GETTER(BlobPrototype__typeGetterWrap, (JSGlobalObject * lexica
     RELEASE_AND_RETURN(throwScope, result);
 }
         
-
-JSC_DEFINE_CUSTOM_SETTER(BlobPrototype__typeSetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSBlob* thisObject = jsCast<JSBlob*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    auto result = BlobPrototype__setType(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
-
-    RELEASE_AND_RETURN(throwScope, result);
-}
-
 
     JSC_DEFINE_HOST_FUNCTION(BlobPrototype__writerCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
     {

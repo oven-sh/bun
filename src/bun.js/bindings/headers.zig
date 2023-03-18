@@ -92,6 +92,9 @@ pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: *bindi
 pub extern fn ZigString__toExternalU16(arg0: [*c]const u16, arg1: usize, arg2: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject, ArgFn2: ?*const fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
+pub extern fn ZigString__toRangeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toSyntaxErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;

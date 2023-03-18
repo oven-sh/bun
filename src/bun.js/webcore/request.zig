@@ -399,7 +399,7 @@ pub const Request = struct {
                         .Null = {},
                     };
                 } else {
-                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0], url_or_object_type) catch null) |req_init| {
+                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0]) catch null) |req_init| {
                         request.headers = req_init.headers;
                         request.method = req_init.method;
                     }
@@ -439,7 +439,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1], arguments[1].jsType()) catch null) |req_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1]) catch null) |req_init| {
                     request.headers = req_init.headers;
                     request.method = req_init.method;
                 }
@@ -492,6 +492,12 @@ pub const Request = struct {
         this: *Request,
     ) *Body.Value {
         return &this.body;
+    }
+
+    pub fn getFetchHeaders(
+        this: *Request,
+    ) ?*FetchHeaders {
+        return this.headers;
     }
 
     pub fn doClone(

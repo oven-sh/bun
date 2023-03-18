@@ -96,6 +96,12 @@ pub const Response = struct {
         return &this.body.value;
     }
 
+    pub fn getFetchHeaders(
+        this: *Response,
+    ) ?*FetchHeaders {
+        return this.body.init.headers;
+    }
+
     pub inline fn statusCode(this: *const Response) u16 {
         return this.body.init.status_code;
     }
@@ -173,7 +179,7 @@ pub const Response = struct {
             return ZigString.init("error").toValue(globalThis);
         }
 
-        return ZigString.init("basic").toValue(globalThis);
+        return ZigString.init("default").toValue(globalThis);
     }
 
     pub fn getStatusText(
@@ -400,7 +406,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                 }
             }
@@ -446,7 +452,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @min(@max(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(globalThis), globalThis, init, init.jsType()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                     response.body.init.status_code = 302;
                 }
@@ -484,7 +490,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
-        const args_list = callframe.arguments(4);
+        const args_list = callframe.arguments(2);
         const arguments = args_list.ptr[0..args_list.len];
         const body: Body = @as(?Body, brk: {
             switch (arguments.len) {
@@ -495,14 +501,14 @@ pub const Response = struct {
                     break :brk Body.extract(globalThis, arguments[0]);
                 },
                 else => {
-                    switch (arguments[1].jsType()) {
-                        .Object, .FinalObject, .DOMWrapper => |js_type| {
-                            break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1], js_type);
-                        },
-                        else => {
-                            break :brk Body.extract(globalThis, arguments[0]);
-                        },
+                    if (arguments[1].isUndefinedOrNull()) break :brk Body.extract(globalThis, arguments[0]);
+                    if (arguments[1].isObject()) {
+                        break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
                     }
+
+                    const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
+                    globalThis.throwValue(err);
+                    break :brk null;
                 },
             }
             unreachable;

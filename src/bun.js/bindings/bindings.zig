@@ -760,7 +760,32 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{ "toAtomicValue", "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
+    pub fn toTypeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toTypeErrorInstance", .{ this, global });
+    }
+
+    pub fn toSyntaxErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toSyntaxErrorInstance", .{ this, global });
+    }
+
+    pub fn toRangeErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        return shim.cppFn("toRangeErrorInstance", .{ this, global });
+    }
+
+    pub const Extern = [_][]const u8{
+        "toAtomicValue",
+        "toValue",
+        "toExternalValue",
+        "to16BitValue",
+        "toValueGC",
+        "toErrorInstance",
+        "toExternalU16",
+        "toExternalValueWithCallback",
+        "external",
+        "toTypeErrorInstance",
+        "toSyntaxErrorInstance",
+        "toRangeErrorInstance",
+    };
 };
 
 pub const DOMURL = opaque {
@@ -2409,6 +2434,60 @@ pub const JSGlobalObject = extern struct {
         } else {
             return ZigString.static(fmt).toErrorInstance(this);
         }
+    }
+
+    pub fn createErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
+        var err = this.createErrorInstance(fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        return err;
+    }
+
+    pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toTypeErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toTypeErrorInstance(this);
+        }
+    }
+
+    pub fn createSyntaxErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toSyntaxErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toSyntaxErrorInstance(this);
+        }
+    }
+
+    pub fn createRangeErrorInstance(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
+            var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
+            defer buf.deinit();
+            var writer = buf.writer();
+            writer.print(fmt, args) catch return ZigString.static(fmt).toErrorInstance(this);
+            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+            return str.toRangeErrorInstance(this);
+        } else {
+            return ZigString.static(fmt).toRangeErrorInstance(this);
+        }
+    }
+
+    pub fn createRangeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
+        var err = this.createRangeErrorInstance(fmt, args);
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        return err;
     }
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {

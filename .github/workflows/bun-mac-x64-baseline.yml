@@ -108,7 +108,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
-            runner: macos-11
+            runner: macos-10.15
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: true
@@ -126,7 +126,7 @@ jobs:
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
-            runner: macos-11
+            runner: macos-10.15
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
             dependencies: false
@@ -248,7 +248,7 @@ jobs:
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             package: bun-darwin-x64
-            runner: macos-11
+            runner: macos-10.15
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/feb25/bun-webkit-macos-amd64-lto.tar.gz"
           # - cpu: haswell
@@ -402,7 +402,7 @@ jobs:
       matrix:
         include:
           - tag: bun-darwin-x64-baseline
-            runner: macos-11
+            runner: macos-10.15
     steps:
       - id: checkout
         name: Checkout

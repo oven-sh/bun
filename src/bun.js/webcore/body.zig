@@ -416,7 +416,7 @@ pub const Body = struct {
                     }
 
                     if (drain_result == .empty or drain_result == .aborted) {
-                        this.* = .{ .Empty = void{} };
+                        this.* = .{ .Null = void{} };
                         return JSC.WebCore.ReadableStream.empty(globalThis);
                     }
 
@@ -849,12 +849,12 @@ pub const Body = struct {
 
             if (tag == .InternalBlob) {
                 this.InternalBlob.clearAndFree();
-                this.* = Value{ .Empty = {} }; //Value.empty;
+                this.* = Value{ .Null = {} }; //Value.empty;
             }
 
             if (tag == .Blob) {
                 this.Blob.deinit();
-                this.* = Value{ .Empty = {} }; //Value.empty;
+                this.* = Value{ .Null = {} }; //Value.empty;
             }
 
             if (tag == .Error) {
@@ -882,6 +882,10 @@ pub const Body = struct {
                 return Value{ .Blob = this.Blob.dupe() };
             }
 
+            if (this.* == .Null) {
+                return Value{ .Null = {} };
+            }
+
             return Value{ .Empty = {} };
         }
     };
@@ -892,7 +896,7 @@ pub const Body = struct {
                 .headers = null,
                 .status_code = 404,
             },
-            .value = Value{ .Empty = {} }, //Value.empty,
+            .value = Value{ .Null = {} },
         };
     }
 
@@ -901,7 +905,7 @@ pub const Body = struct {
             .init = Init{
                 .status_code = 200,
             },
-            .value = Value{ .Empty = {} }, //Value.empty,
+            .value = Value{ .Null = {} },
         };
     }
 
@@ -938,7 +942,7 @@ pub const Body = struct {
         init: JSValue,
     ) ?Body {
         var body = Body{
-            .value = Value{ .Empty = {} },
+            .value = Value{ .Null = {} },
             .init = Init{ .headers = null, .status_code = 200 },
         };
         var allocator = getAllocator(globalThis);

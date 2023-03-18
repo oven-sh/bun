@@ -121,12 +121,7 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-<<<<<<< HEAD
-    once<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
-=======
-    once(eventName: string | symbol, listener: (this: this, ...args: any[]) => void): this;
->>>>>>> 43dcf6929f67948b459ccb476141a0d9a2019ad2
-    /**
+    once<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;    /**
      * Removes the specified `listener` from the listener array for the event named`eventName`.
      *
      * ```js

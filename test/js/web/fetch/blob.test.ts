@@ -28,23 +28,6 @@ test("Blob.slice", () => {
   expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
 });
 
-test("Blob.prototype.type setter", () => {
-  var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
-  expect(blob.type).toBe("text/foo");
-  blob.type = "text/bar";
-  expect(blob.type).toBe("text/bar");
-  blob.type = "text/baz";
-  expect(blob.type).toBe("text/baz");
-  blob.type = "text/baz; charset=utf-8";
-  expect(blob.type).toBe("text/baz; charset=utf-8");
-  // @ts-expect-error
-  blob.type = NaN;
-  expect(blob.type).toBe("");
-  // @ts-expect-error
-  blob.type = Symbol();
-  expect(blob.type).toBe("");
-});
-
 test("new Blob", () => {
   var blob = new Blob(["Bun", "Foo"], { type: "text/foo" });
   expect(blob.size).toBe(6);

@@ -138,13 +138,13 @@ pub const Body = struct {
             return that;
         }
 
-        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue, js_type: JSC.JSValue.JSType) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
 
             if (!response_init.isCell())
                 return null;
 
-            if (js_type == .DOMWrapper) {
+            if (response_init.jsType() == .DOMWrapper) {
                 // fast path: it's a Request object or a Response object
                 // we can skip calling JS getters
                 if (response_init.as(Request)) |req| {
@@ -170,9 +170,24 @@ pub const Body = struct {
             }
 
             if (response_init.fastGet(ctx, .status)) |status_value| {
-                const number = status_value.to(i32);
-                if (100 <= number and number < 1000)
-                    result.status_code = @truncate(u16, @intCast(u32, number));
+                if (status_value.isHeapBigInt()) {
+                    const less_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(600))) {
+                        .less_than => true,
+                        else => false,
+                    };
+                    const greater_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(99))) {
+                        .greater_than => true,
+                        else => false,
+                    };
+
+                    if (less_than and greater_than) {
+                        result.status_code = @truncate(u16, @intCast(u64, status_value.toInt64()));
+                    }
+                } else if (status_value.isNumber()) {
+                    const number = status_value.to(i32);
+                    if (100 <= number and number < 600)
+                        result.status_code = @truncate(u16, @intCast(u32, number));
+                }
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {
@@ -233,10 +248,6 @@ pub const Body = struct {
                 // }
                 switch (action) {
                     .getText, .getJSON, .getBlob, .getArrayBuffer => {
-                        switch (readable.ptr) {
-                            .Blob => unreachable,
-                            else => {},
-                        }
                         value.promise = switch (action) {
                             .getJSON => globalThis.readableStreamToJSON(readable.value),
                             .getArrayBuffer => globalThis.readableStreamToArrayBuffer(readable.value),
@@ -726,9 +737,6 @@ pub const Body = struct {
                         bun.default_allocator,
                         JSC.VirtualMachine.get().global,
                     );
-                    if (this.InternalBlob.was_string) {
-                        new_blob.content_type = MimeType.text.value;
-                    }
 
                     this.* = .{ .Used = {} };
                     return new_blob;
@@ -903,7 +911,6 @@ pub const Body = struct {
             value,
             false,
             JSValue.zero,
-            .Cell,
         );
     }
 
@@ -911,14 +918,12 @@ pub const Body = struct {
         globalThis: *JSGlobalObject,
         value: JSValue,
         init: JSValue,
-        init_type: JSValue.JSType,
     ) ?Body {
         return extractBody(
             globalThis,
             value,
             true,
             init,
-            init_type,
         );
     }
 
@@ -928,7 +933,6 @@ pub const Body = struct {
         value: JSValue,
         comptime has_init: bool,
         init: JSValue,
-        init_type: JSC.JSValue.JSType,
     ) ?Body {
         var body = Body{
             .value = Value{ .Empty = {} },
@@ -937,11 +941,13 @@ pub const Body = struct {
         var allocator = getAllocator(globalThis);
 
         if (comptime has_init) {
-            if (Init.init(allocator, globalThis, init, init_type)) |maybeInit| {
+            if (Init.init(allocator, globalThis, init)) |maybeInit| {
                 if (maybeInit) |init_| {
                     body.init = init_;
                 }
-            } else |_| {}
+            } else |_| {
+                return null;
+            }
         }
 
         body.value = Value.fromJS(globalThis, value) orelse return null;
@@ -1065,8 +1071,12 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var encoder = this.getFormDataEncoding() orelse {
-                globalObject.throw("Invalid MIME type", .{});
-                return .zero;
+                // TODO: catch specific errors from getFormDataEncoding
+                const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
+                return JSC.JSPromise.rejectedPromiseValue(
+                    globalObject,
+                    err,
+                );
             };
 
             if (value.* == .Locked) {
@@ -1084,7 +1094,7 @@ pub fn BodyMixin(comptime Type: type) type {
             ) catch |err| {
                 return JSC.JSPromise.rejectedPromiseValue(
                     globalObject,
-                    globalObject.createErrorInstance(
+                    globalObject.createTypeErrorInstance(
                         "FormData parse error {s}",
                         .{
                             @errorName(err),
@@ -1122,6 +1132,17 @@ pub fn BodyMixin(comptime Type: type) type {
             var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
             ptr.* = blob;
             blob.allocator = getAllocator(globalObject);
+
+            if (blob.content_type.len == 0 and blob.store != null) {
+                if (this.getFetchHeaders()) |fetch_headers| {
+                    if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                        blob.store.?.mime_type = MimeType.init(content_type.slice());
+                    }
+                } else {
+                    blob.store.?.mime_type = MimeType.text;
+                }
+            }
+
             return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
         }
     };

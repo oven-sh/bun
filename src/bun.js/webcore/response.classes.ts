@@ -135,7 +135,6 @@ export default [
 
       type: {
         getter: "getType",
-        setter: "setType",
       },
 
       size: {

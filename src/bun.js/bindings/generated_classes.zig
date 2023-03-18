@@ -102,8 +102,6 @@ pub const JSBlob = struct {
         if (@TypeOf(Blob.getType) != GetterType)
             @compileLog("Expected Blob.getType to be a getter");
 
-        if (@TypeOf(Blob.setType) != SetterType)
-            @compileLog("Expected Blob.setType to be a setter");
         if (@TypeOf(Blob.getWriter) != CallbackType)
             @compileLog("Expected Blob.getWriter to be a callback but received " ++ @typeName(@TypeOf(Blob.getWriter)));
         if (!JSC.is_bindgen) {
@@ -118,7 +116,6 @@ pub const JSBlob = struct {
             @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
             @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
             @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
-            @export(Blob.setType, .{ .name = "BlobPrototype__setType" });
         }
     }
 };

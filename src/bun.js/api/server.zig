@@ -4619,6 +4619,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
                     var encoded_str = zig_str.withEncoding();
                     encoded_str.mark();
+
+                    // We shouldn't *need* to do this but it's not entirely clear.
+                    BoringSSL.ERR_clear_error();
                 }
             }
 

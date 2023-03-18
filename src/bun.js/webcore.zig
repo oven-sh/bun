@@ -583,6 +583,7 @@ pub const Crypto = struct {
             else => @compileError("Error type not added!"),
         };
         globalThis.throwValue(err);
+        BoringSSL.ERR_clear_error();
         return .zero;
     }
 

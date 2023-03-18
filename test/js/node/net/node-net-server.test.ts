@@ -336,6 +336,8 @@ it("should call connection and drop", done => {
               socket.end();
             },
           },
+        }).catch(e => {
+          closeAndFail();
         });
       }
       for (let i = 0; i < maxClients; i++) {
@@ -377,7 +379,7 @@ it("should call listening", done => {
 });
 
 it("should call error", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
 
   let timeout;
   const server = createServer();
@@ -386,8 +388,8 @@ it("should call error", done => {
 
   const closeAndFail = mustNotCall("error not called (timeout)", () => {
     clearTimeout(timeout);
+    closeTimers();
     server.close();
-    done();
   });
 
   //should be faster than 100ms
@@ -401,6 +403,7 @@ it("should call error", done => {
       mustCall(err => {
         server.close();
         clearTimeout(timeout);
+        closeTimers();
         expect(err).toBeDefined();
         done();
       }),
@@ -409,7 +412,7 @@ it("should call error", done => {
 });
 
 it("should call abort with signal", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
 
   const controller = new AbortController();
   let timeout;
@@ -420,7 +423,6 @@ it("should call abort with signal", done => {
   const closeAndFail = mustNotCall("close not called (timeout)", () => {
     clearTimeout(timeout);
     server.close();
-    done();
   });
 
   //should be faster than 100ms
@@ -432,7 +434,8 @@ it("should call abort with signal", done => {
     .on(
       "close",
       mustCall(() => {
-        clearImmediate(timeout);
+        clearTimeout(timeout);
+        closeTimers();
         done();
       }),
     )
@@ -442,7 +445,7 @@ it("should call abort with signal", done => {
 });
 
 it("should echo data", done => {
-  const { mustCall, mustNotCall } = createCallCheckCtx(done);
+  const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
   let timeout;
 
   const server = createServer(socket => {
@@ -470,6 +473,7 @@ it("should echo data", done => {
         socket: {
           data(socket, data) {
             clearTimeout(timeout);
+            closeTimers();
             server.close();
             socket.end();
             expect(data.byteLength).toBe(5);

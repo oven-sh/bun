@@ -71,7 +71,8 @@ export function createTest(path: string) {
   // End assert
 
   const createCallCheckCtx = (done: DoneCb) => {
-    const createDone = createDoneDotAll(done);
+    var timers: Timer[] = [];
+    const createDone = createDoneDotAll(done, undefined, timers);
 
     // const mustCallChecks = [];
 
@@ -90,10 +91,17 @@ export function createTest(path: string) {
       return mustCallAtLeast(fn, exact);
     }
 
-    function mustNotCall(reason: string = "function should not have been called") {
+    function closeTimers() {
+      timers.forEach(t => clearTimeout(t));
+    }
+
+    function mustNotCall(reason: string = "function should not have been called", optionalCb?: (err?: any) => void) {
       const localDone = createDone();
-      setTimeout(() => localDone(), 200);
+      timers.push(setTimeout(() => localDone(), 200));
       return () => {
+        closeTimers();
+        if (optionalCb) optionalCb.apply(undefined, reason ? [reason] : []);
+
         done(new Error(reason));
       };
     }
@@ -132,8 +140,10 @@ export function createTest(path: string) {
           const result = fn(...args);
           actual++;
           if (actual >= expected) {
+            closeTimers();
             done();
           }
+
           return result;
         } catch (err) {
           if (err instanceof Error) done(err);
@@ -142,6 +152,7 @@ export function createTest(path: string) {
             console.error("Unknown error", err);
             done(new Error("Unknown error"));
           }
+          closeTimers();
         }
       };
       // Function instances have own properties that may be relevant.
@@ -168,26 +179,33 @@ export function createTest(path: string) {
       mustCall,
       mustCallAtLeast,
       mustNotCall,
+      closeTimers,
     };
   };
 
-  function createDoneDotAll(done: DoneCb, globalTimeout?: number) {
+  function createDoneDotAll(done: DoneCb, globalTimeout?: number, timers: Timer[] = []) {
     let toComplete = 0;
     let completed = 0;
     const globalTimer = globalTimeout
-      ? setTimeout(() => {
-          console.log("Global Timeout");
-          done(new Error("Timed out!"));
-        }, globalTimeout)
+      ? (timers.push(
+          setTimeout(() => {
+            console.log("Global Timeout");
+            done(new Error("Timed out!"));
+          }, globalTimeout),
+        ),
+        timers[timers.length - 1])
       : undefined;
     function createDoneCb(timeout?: number) {
       toComplete += 1;
       const timer =
         timeout !== undefined
-          ? setTimeout(() => {
-              console.log("Timeout");
-              done(new Error("Timed out!"));
-            }, timeout)
+          ? (timers.push(
+              setTimeout(() => {
+                console.log("Timeout");
+                done(new Error("Timed out!"));
+              }, timeout),
+            ),
+            timers[timers.length - 1])
           : timeout;
       return (result?: Error) => {
         if (timer) clearTimeout(timer);

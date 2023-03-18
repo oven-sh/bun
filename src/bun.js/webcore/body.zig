@@ -781,7 +781,10 @@ pub const Body = struct {
                 else => .{ .Blob = Blob.initEmpty(undefined) },
             };
 
-            this.* = .{ .Used = {} };
+            this.* = if (this.* == .Null)
+                .{ .Null = {} }
+            else
+                .{ .Used = {} };
             return any_blob;
         }
 

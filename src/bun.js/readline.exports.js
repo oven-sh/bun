@@ -31,7 +31,8 @@ var { StringDecoder } = import.meta.require("string_decoder");
 var isWritable;
 
 var { inspect } = Bun;
-var debug = process.env.BUN_JS_DEBUG ? console.log : () => {};
+const __DEBUG__ = process.env.BUN_JS_DEBUG;
+var debug = __DEBUG__ ? console.log : () => {};
 
 // ----------------------------------------------------------------------------
 // Section: Preamble
@@ -1375,12 +1376,12 @@ function onError(err) {
 }
 
 function onData(data) {
-  debug("onData");
+  __DEBUG__ && debug("onData");
   this[kNormalWrite](data);
 }
 
 function onEnd() {
-  debug("onEnd");
+  __DEBUG__ && debug("onEnd");
   if (typeof this[kLine_buffer] === "string" && this[kLine_buffer].length > 0) {
     this.emit("line", this[kLine_buffer]);
   }
@@ -1388,7 +1389,7 @@ function onEnd() {
 }
 
 function onTermEnd() {
-  debug("onTermEnd");
+  __DEBUG__ && debug("onTermEnd");
   if (typeof this.line === "string" && this.line.length > 0) {
     this.emit("line", this.line);
   }
@@ -1608,8 +1609,7 @@ var _Interface = class Interface extends InterfaceConstructor {
   [kSetRawMode](mode) {
     var { setRawMode, isRaw: wasInRawMode } = this.input;
 
-    // TODO: Make this work, for now just stub this and print debug
-    debug("setRawMode", mode, "set!");
+    __DEBUG__ && debug("setRawMode", mode, "set!");
     if (typeof setRawMode === "function") {
       setRawMode(mode);
     }

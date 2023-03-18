@@ -288,11 +288,6 @@ describe("process.{stdin, stdout, stderr}", () => {
     // Open new pty using openpty.js
     const { subprocess, stdin, cleanup } = spawnInNewPty({
       cmd: [bunExe(), import.meta.dir + "/process-stdin-console-async-iter.ts", "RAW"],
-      // options: {
-      //   onExit() {
-      //     cleanup();
-      //   },
-      // },
     });
 
     await Bun.sleep(250);

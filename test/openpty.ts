@@ -99,21 +99,3 @@ export function spawnInNewPty({ cmd, options }: { cmd: string[]; options?: Spawn
   const cleanup = () => closepty(master, slave);
   return { subprocess, stdin: masterWriter, masterFd: master, slaveFd: slave, cleanup };
 }
-
-// NOTE: This should work but probably never need a non-blocking close...
-// Also requires fs import which requires stream import...
-// export function closepty(master: number, slave: number, cb: () => void): void {
-//   let count = 0;
-//   close(master, () => {
-//     count++;
-//     if (count === 2) {
-//       cb();
-//     }
-//   });
-//   close(slave, () => {
-//     count++;
-//     if (count === 2) {
-//       cb();
-//     }
-//   });
-// }

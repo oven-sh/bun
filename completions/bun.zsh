@@ -639,7 +639,7 @@ _bun_run_param_script_completion() {
     
     _alternative "scripts:scripts:(($scripts_list))"
     _alternative "bin:bin:(($bins))"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx)'"
+    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
 }
 
 _set_remove() {

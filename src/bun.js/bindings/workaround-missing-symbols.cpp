@@ -215,7 +215,7 @@ extern "C" int posix_spawn_file_actions_addchdir_np(
     }
 
     if (UNLIKELY(posix_spawn_file_actions_addchdir_np_ptr == nullptr))
-        return 0;
+        return 0; // macos-10.15
 
     return ((int (*)(void*, const char*))posix_spawn_file_actions_addchdir_np_ptr)(file_actions, path);
 }

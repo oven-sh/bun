@@ -635,24 +635,11 @@ _bun() {
 _bun_run_param_script_completion() {
     local -a scripts_list
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    scripts="scripts:scripts:(($scripts_list))"
-
-    IFS=$'\n' bunjs=($(SHELL=zsh bun getcompletes j))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
-
-    if [ -n "$bunjs" ] && [ "$bunjs" != " " ]; then
-        if [ -n "$bins" ] && [ "$bins" != " " ]; then
-            _alternative $scripts "files:files:(($bunjs))" "bin:bin:(($bins))"
-            return 1
-        fi
-
-        _alternative $scripts "args:Bun.js:(($bunjs))"
-    fi
-
-    if [ -n "$bins" ] && [ "$bins" != " " ]; then
-        _alternative $scripts "args:bin:(($bins))"
-        return 1
-    fi
+    
+    _alternative "scripts:scripts:(($scripts_list))"
+    _alternative "bin:bin:(($bins))"
+    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx)'"
 }
 
 _set_remove() {

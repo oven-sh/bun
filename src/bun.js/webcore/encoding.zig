@@ -604,7 +604,22 @@ pub const TextDecoder = struct {
     fn decodeSlice(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, buffer_slice: []const u8) JSValue {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
-                return ZigString.init(buffer_slice).toValueGC(globalThis);
+                if (strings.isAllASCII(buffer_slice)) {
+                    return ZigString.init(buffer_slice).toValueGC(globalThis);
+                }
+
+                // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
+                // However, this is also what WebKit seems to do.
+                //
+                // It's not clear why we couldn't jusst use Latin1 here, but tests failures proved it necessary.
+                const out_length = strings.elementLengthLatin1IntoUTF16([]const u8, buffer_slice);
+                var bytes = globalThis.allocator().alloc(u16, out_length) catch {
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
+
+                const out = strings.copyLatin1IntoUTF16([]u16, bytes, []const u8, buffer_slice);
+                return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
             },
             EncodingLabel.@"UTF-8" => {
                 if (this.fatal) {

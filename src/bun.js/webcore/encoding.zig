@@ -221,10 +221,12 @@ pub const TextEncoder = struct {
     ) u64 {
         var output = buf_ptr[0..buf_len];
         const input = input_ptr[0..input_len];
-        const result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, true);
-        if (result.read == 0 or result.written == 0) {
+        var result: strings.EncodeIntoResult = strings.copyUTF16IntoUTF8(output, []const u16, input, false);
+        if (output.len >= 3 and (result.read == 0 or result.written == 0)) {
             const replacement_char = [_]u8{ 239, 191, 189 };
             @memcpy(buf_ptr, &replacement_char, replacement_char.len);
+            result.read = 1;
+            result.written = 3;
         }
         const sized: [2]u32 = .{ result.read, result.written };
         return @bitCast(u64, sized);

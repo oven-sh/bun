@@ -1220,6 +1220,40 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
     return null;
 }
 
+pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement {
+    const c0 = @as(u21, input[0]);
+
+    if (c0 & ~@as(u21, 0x03ff) == 0xd800) {
+        // surrogate pair
+        if (input.len == 1)
+            return .{
+                .len = 1,
+            };
+        //error.DanglingSurrogateHalf;
+        const c1 = @as(u21, input[1]);
+        if (c1 & ~@as(u21, 0x03ff) != 0xdc00)
+            if (input.len == 1) {
+                return .{
+                    .len = 1,
+                };
+            } else {
+                return .{
+                    .fail = true,
+                    .len = 1,
+                    .code_point = unicode_replacement,
+                };
+            };
+        // return error.ExpectedSecondSurrogateHalf;
+
+        return .{ .len = 2, .code_point = 0x10000 + (((c0 & 0x03ff) << 10) | (c1 & 0x03ff)) };
+    } else if (c0 & ~@as(u21, 0x03ff) == 0xdc00) {
+        // return error.UnexpectedSecondSurrogateHalf;
+        return .{ .fail = true, .len = 1, .code_point = unicode_replacement };
+    } else {
+        return .{ .code_point = c0, .len = 1 };
+    }
+}
+
 pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     const c0 = @as(u21, input[0]);
 
@@ -2576,16 +2610,19 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
     var utf16_remaining = utf16;
     var ended_on_non_ascii = false;
 
-    if (comptime Type == []const u16) {
-        if (bun.FeatureFlags.use_simdutf) {
-            log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
+    brk: {
+        if (comptime Type == []const u16) {
+            if (bun.FeatureFlags.use_simdutf) {
+                log("UTF16 {d} -> UTF8 {d}", .{ utf16.len, out_len });
+                if (remaining.len >= out_len) {
+                    const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining);
+                    if (result.status == .surrogate) break :brk;
 
-            if (remaining.len >= out_len) {
-                const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(trimmed, remaining[0..out_len]);
-                return EncodeIntoResult{
-                    .read = @truncate(u32, trimmed.len),
-                    .written = @truncate(u32, result.count),
-                };
+                    return EncodeIntoResult{
+                        .read = @truncate(u32, trimmed.len),
+                        .written = @truncate(u32, result.count),
+                    };
+                }
             }
         }
     }
@@ -2599,7 +2636,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
         if (@min(utf16_remaining.len, remaining.len) == 0)
             break;
 
-        const replacement = utf16Codepoint(Type, utf16_remaining);
+        const replacement = utf16CodepointWithFFFD(Type, utf16_remaining);
 
         const width: usize = replacement.utf8Width();
         if (width > remaining.len) {

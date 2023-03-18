@@ -2679,7 +2679,7 @@ pub fn copyUTF16IntoUTF8WithBuffer(buf: []u8, comptime Type: type, utf16: Type, 
                         3 => {
                             remaining[0] = @truncate(u8, 0xF0 | (replacement.code_point >> 18));
                             remaining[1] = @truncate(u8, 0x80 | (replacement.code_point >> 12) & 0x3F);
-                            remaining[3] = @truncate(u8, 0x80 | (replacement.code_point >> 0) & 0x3F);
+                            remaining[2] = @truncate(u8, 0x80 | (replacement.code_point >> 6) & 0x3F);
                             remaining = remaining[remaining.len..];
                         },
                         else => {},

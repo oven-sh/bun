@@ -35,7 +35,7 @@ These are the recommended `compilerOptions` for a Bun project.
     "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
+    "moduleResolution": "bundler",
 
     // support JSX, CommonJS
     "jsx": "preserve", // support JSX (value doesn't matter)

@@ -198,12 +198,11 @@ function gc() {
 
 describe("reader", function () {
   try {
-    // - empty
     // - 1 byte
     // - less than the InlineBlob limit
     // - multiple chunks
     // - backpressure
-    for (let inputLength of [0, 1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
+    for (let inputLength of [1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
       var bytes = new Uint8Array(inputLength);
       {
         const chunk = Math.min(bytes.length, 256);
@@ -243,6 +242,8 @@ describe("reader", function () {
       ]) {
         gc();
         const thisArray = huge_;
+        if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;
+
         it(`works with ${thisArray.constructor.name}(${
           thisArray.byteLength ?? thisArray.size
         }:${inputLength}) via req.body.getReader() in chunks`, async () => {

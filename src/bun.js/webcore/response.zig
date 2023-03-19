@@ -739,7 +739,13 @@ pub const Fetch = struct {
 
             const fetch_error = JSC.SystemError{
                 .code = ZigString.init(@errorName(this.result.fail)),
-                .message = ZigString.init("fetch() failed"),
+                .message = switch (this.result.fail) {
+                    error.ConnectionClosed => ZigString.init("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.FailedToOpenSocket => ZigString.init("Was there a typo in the url or port?"),
+                    error.TooManyRedirects => ZigString.init("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.ConnectionRefused => ZigString.init("Unable to connect. Is the computer able to access the url?"),
+                    else => ZigString.init("fetch() failed. \n\nFor more information, pass `verbose: true` in the second argument to fetch()"),
+                },
                 .path = ZigString.init(this.http.?.url.href),
             };
 

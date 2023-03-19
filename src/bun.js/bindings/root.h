@@ -69,6 +69,10 @@
 #define WEBCORE_EXPORT JS_EXPORT_PRIVATE
 #endif
 
+#if defined(__APPLE__)
+#include <mach/vm_param.h>
+#endif
+
 #include "wtf/PlatformCallingConventions.h"
 #include "JavaScriptCore/JSCInlines.h"
 #include "wtf/IsoMalloc.h"

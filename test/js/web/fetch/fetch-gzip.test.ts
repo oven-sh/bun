@@ -5,7 +5,7 @@ import { gc, gcTick } from "harness";
 
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
   var server = Bun.serve({
-    port: 6025,
+    port: 0,
 
     async fetch(req) {
       gcTick(true);
@@ -35,7 +35,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
 
 it("fetch() with a redirect that returns a buffered gzip response works (one chunk)", async () => {
   var server = Bun.serve({
-    port: 6020,
+    port: 0,
 
     async fetch(req) {
       if (req.url.endsWith("/redirect"))
@@ -60,7 +60,7 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
 
 it("fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)", async () => {
   const server = Bun.serve({
-    port: 5018,
+    port: 0,
 
     async fetch(req, server) {
       if (req.url.endsWith("/redirect"))
@@ -89,7 +89,7 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
 
 it("fetch() with a gzip response works (one chunk, streamed, with a delay", async () => {
   var server = Bun.serve({
-    port: 6081,
+    port: 0,
 
     fetch(req) {
       return new Response(
@@ -126,7 +126,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server", async done
   const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
   var socketToClose;
   const server = Bun.listen({
-    port: 4024,
+    port: 0,
     hostname: "0.0.0.0",
     socket: {
       async open(socket) {

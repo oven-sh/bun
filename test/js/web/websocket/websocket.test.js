@@ -33,7 +33,7 @@ describe("WebSocket", () => {
 
   it("supports headers", done => {
     const server = Bun.serve({
-      port: 8024,
+      port: 0,
       fetch(req, server) {
         expect(req.headers.get("X-Hello")).toBe("World");
         expect(req.headers.get("content-type")).toBe("lolwut");
@@ -57,7 +57,7 @@ describe("WebSocket", () => {
 
   it("should connect over http", done => {
     const server = Bun.serve({
-      port: 8025,
+      port: 0,
       fetch(req, server) {
         server.stop();
         done();
@@ -132,11 +132,10 @@ describe("WebSocket", () => {
 });
 
 describe("websocket in subprocess", () => {
-  var port = 8765;
   it("should exit", async () => {
     let messageReceived = false;
     const server = Bun.serve({
-      port: port++,
+      port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
           return;
@@ -198,7 +197,7 @@ describe("websocket in subprocess", () => {
     let messageReceived = false;
     let start = 0;
     const server = Bun.serve({
-      port: port++,
+      port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
           return;
@@ -234,7 +233,7 @@ describe("websocket in subprocess", () => {
 
   it("should exit after server stop and 0 messages", async () => {
     const server = Bun.serve({
-      port: port++,
+      port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
           return;

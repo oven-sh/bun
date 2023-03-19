@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-const port = 3009;
-const url = `http://localhost:${port}`;
+let url = `http://localhost:0`;
 let server;
 
 describe("Headers", async () => {
@@ -11,11 +10,12 @@ describe("Headers", async () => {
         const hdr = req.headers.get("x-test");
         return new Response(hdr);
       },
-      port: port,
+      port: 0,
     });
+    url = `http://${server.hostname}:${server.port}`;
   });
   afterAll(() => {
-    server.stop();
+    server.stop(true);
   });
 
   it("Headers should work", async () => {

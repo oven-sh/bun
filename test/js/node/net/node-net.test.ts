@@ -70,7 +70,7 @@ describe("net.Socket read", () => {
                 }
               : {
                   hostname: "localhost",
-                  port: port++,
+                  port: 0,
                   socket: {
                     open(socket) {
                       socket.data.message = message;
@@ -249,7 +249,7 @@ describe("net.Socket write", () => {
       var leaky;
       server = Bun.listen({
         hostname: "0.0.0.0",
-        port: port++,
+        port: 0,
         socket: {
           close,
           data(socket, buffer) {

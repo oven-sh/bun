@@ -335,7 +335,7 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
-            this.package_manager.httpProxy(),
+            this.package_manager.httpProxy(url),
             null,
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
@@ -411,7 +411,7 @@ const NetworkTask = struct {
             "",
             0,
             this.getCompletionCallback(),
-            this.package_manager.httpProxy(),
+            this.package_manager.httpProxy(url),
             null,
         );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
@@ -1559,8 +1559,6 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
-    http_proxy: ?URL = null,
-
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
     root_download_node: std.Progress.Node = undefined,
@@ -1611,17 +1609,8 @@ pub const PackageManager = struct {
         80,
     );
 
-    pub fn httpProxy(this: *PackageManager) ?URL {
-        // Don't do the hash table lookup every time
-        const proxy = this.http_proxy orelse brk: {
-            this.http_proxy = this.env.getHttpProxy() orelse URL{};
-            break :brk this.http_proxy.?;
-        };
-        if (proxy.href.len == 0) {
-            return null;
-        }
-
-        return proxy;
+    pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
+        return this.env.getHttpProxy(url);
     }
 
     pub const WakeHandler = struct {
@@ -6595,11 +6584,14 @@ pub const PackageManager = struct {
             const cwd = std.fs.cwd();
 
             while (iterator.nextNodeModulesFolder()) |node_modules| {
-                try cwd.makePath(bun.span(node_modules.relative_path));
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = try cwd.openIterableDir(node_modules.relative_path, .{});
+                installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
+                    // Avoid extra mkdir() syscall
+                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
+                };
 
                 var remaining = node_modules.dependencies;
 

@@ -1,4 +1,5 @@
 import assert from "assert";
+import exp from "constants";
 import dedent from "dedent";
 import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
 var { describe, test, expect } = testForFile(import.meta.path);
@@ -1580,40 +1581,73 @@ describe("bundler", () => {
       file: "/test.js",
     },
   });
-  return;
   itBundled("default/ThisInsideFunction", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
-        function foo(x = this) { console.log(this) }
+        function foo(x = this) { return [x, this]; }
         const objFoo = {
-          foo(x = this) { console.log(this) }
+          foo(x = this) { return [x, this]; }
         }
         class Foo {
           x = this
-          static y = this.z
-          foo(x = this) { console.log(this) }
-          static bar(x = this) { console.log(this) }
+          static z = 456;
+          static y = this.z;
+          foo(x = this) { return [x, this]; }
+          static bar(x = this) { return [x, this]; }
         }
-        new Foo(foo(objFoo))
+
+        assert.deepEqual(foo('bun'), ['bun', undefined]);
+        assert.deepEqual(foo.call('this'), ['this', 'this']);
+        assert.deepEqual(foo.call('this', 'bun'), ['bun', 'this']);
+        assert.deepEqual(objFoo.foo('bun'), ['bun', objFoo]);
+        assert.deepEqual(objFoo.foo(), [objFoo, objFoo]);
+        const fooInstance = new Foo();
+        assert(fooInstance.x === fooInstance, 'Foo#x');
+        assert(Foo.y === 456, 'Foo.y');
+        assert.deepEqual(Foo.bar('bun'), ['bun', Foo]);
+        assert.deepEqual(Foo.bar(), [Foo, Foo]);
+        assert.deepEqual(fooInstance.foo(), [fooInstance, fooInstance]);
+        assert.deepEqual(fooInstance.foo('bun'), ['bun', fooInstance]);
+
         if (nested) {
-          function bar(x = this) { console.log(this) }
+          function bar(x = this) { return [x, this]; }
           const objBar = {
-            foo(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
           }
           class Bar {
             x = this
+            static z = 456;
             static y = this.z
-            foo(x = this) { console.log(this) }
-            static bar(x = this) { console.log(this) }
+            foo(x = this) { return [x, this]; }
+            static bar(x = this) { return [x, this]; }
           }
-          new Bar(bar(objBar))
+          
+          assert.deepEqual(bar('bun'), ['bun', undefined]);
+          assert.deepEqual(bar.call('this'), ['this', 'this']);
+          assert.deepEqual(bar.call('this', 'bun'), ['bun', 'this']);
+          assert.deepEqual(objBar.foo('bun'), ['bun', objBar]);
+          assert.deepEqual(objBar.foo(), [objBar, objBar]);
+          const barInstance = new Bar();
+          assert(barInstance.x === barInstance, 'Bar#x');
+          assert(Bar.y === 456, 'Bar.y');
+          assert.deepEqual(Bar.bar('bun'), ['bun', Bar]);
+          assert.deepEqual(Bar.bar(), [Bar, Bar]);
+          assert.deepEqual(barInstance.foo(), [barInstance, barInstance]);
+          assert.deepEqual(barInstance.foo('bun'), ['bun', barInstance]);
         }
       `,
+
+      "/test.js": /* js */ `
+        globalThis.nested = true;
+        globalThis.assert = (await import('assert')).default;
+        import('./out')
+      `,
+    },
+    run: {
+      file: "/test.js",
     },
   });
   itBundled("default/ThisWithES6Syntax", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import './cjs'
@@ -1653,77 +1687,46 @@ describe("bundler", () => {
         import './es6-ns-export-abstract-class'
       `,
       "/dummy.js": `export const dummy = 123`,
-      "/cjs.js": `console.log(this)`,
-      "/es6-import-stmt.js": `import './dummy'; console.log(this)`,
-      "/es6-import-assign.ts": `import x = require('./dummy'); console.log(this)`,
-      "/es6-import-dynamic.js": `import('./dummy'); console.log(this)`,
-      "/es6-import-meta.js": `import.meta; console.log(this)`,
-      "/es6-expr-import-dynamic.js": `(import('./dummy')); console.log(this)`,
-      "/es6-expr-import-meta.js": `(import.meta); console.log(this)`,
-      "/es6-export-variable.js": `export const foo = 123; console.log(this)`,
-      "/es6-export-function.js": `export function foo() {} console.log(this)`,
-      "/es6-export-async-function.js": `export async function foo() {} console.log(this)`,
-      "/es6-export-enum.ts": `export enum Foo {} console.log(this)`,
-      "/es6-export-const-enum.ts": `export const enum Foo {} console.log(this)`,
-      "/es6-export-module.ts": `export module Foo {} console.log(this)`,
-      "/es6-export-namespace.ts": `export namespace Foo {} console.log(this)`,
-      "/es6-export-class.js": `export class Foo {} console.log(this)`,
-      "/es6-export-abstract-class.ts": `export abstract class Foo {} console.log(this)`,
-      "/es6-export-default.js": `export default 123; console.log(this)`,
-      "/es6-export-clause.js": `export {}; console.log(this)`,
-      "/es6-export-clause-from.js": `export {} from './dummy'; console.log(this)`,
-      "/es6-export-star.js": `export * from './dummy'; console.log(this)`,
-      "/es6-export-star-as.js": `export * as ns from './dummy'; console.log(this)`,
-      "/es6-export-assign.ts": `export = 123; console.log(this)`,
-      "/es6-export-import-assign.ts": `export import x = require('./dummy'); console.log(this)`,
-      "/es6-ns-export-variable.ts": `namespace ns { export const foo = 123; } console.log(this)`,
-      "/es6-ns-export-function.ts": `namespace ns { export function foo() {} } console.log(this)`,
-      "/es6-ns-export-async-function.ts": `namespace ns { export async function foo() {} } console.log(this)`,
-      "/es6-ns-export-enum.ts": `namespace ns { export enum Foo {} } console.log(this)`,
-      "/es6-ns-export-const-enum.ts": `namespace ns { export const enum Foo {} } console.log(this)`,
-      "/es6-ns-export-module.ts": `namespace ns { export module Foo {} } console.log(this)`,
-      "/es6-ns-export-namespace.ts": `namespace ns { export namespace Foo {} } console.log(this)`,
-      "/es6-ns-export-class.ts": `namespace ns { export class Foo {} } console.log(this)`,
-      "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log(this)`,
+      "/cjs.js": `console.log(JSON.stringify(this))`,
+      "/es6-import-stmt.js": `import './dummy'; console.log(JSON.stringify(this))`,
+      "/es6-import-assign.ts": `import x = require('./dummy'); console.log(JSON.stringify(this))`,
+      "/es6-import-dynamic.js": `import('./dummy'); console.log(JSON.stringify(this))`,
+      "/es6-import-meta.js": `import.meta; console.log(JSON.stringify(this))`,
+      "/es6-expr-import-dynamic.js": `(import('./dummy')); console.log(JSON.stringify(this))`,
+      "/es6-expr-import-meta.js": `(import.meta); console.log(JSON.stringify(this))`,
+      "/es6-export-variable.js": `export const foo = 123; console.log(JSON.stringify(this))`,
+      "/es6-export-function.js": `export function foo() {} console.log(JSON.stringify(this))`,
+      "/es6-export-async-function.js": `export async function foo() {} console.log(JSON.stringify(this))`,
+      "/es6-export-enum.ts": `export enum Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-const-enum.ts": `export const enum Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-module.ts": `export module Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-namespace.ts": `export namespace Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-class.js": `export class Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-abstract-class.ts": `export abstract class Foo {} console.log(JSON.stringify(this))`,
+      "/es6-export-default.js": `export default 123; console.log(JSON.stringify(this))`,
+      "/es6-export-clause.js": `export {}; console.log(JSON.stringify(this))`,
+      "/es6-export-clause-from.js": `export {} from './dummy'; console.log(JSON.stringify(this))`,
+      "/es6-export-star.js": `export * from './dummy'; console.log(JSON.stringify(this))`,
+      "/es6-export-star-as.js": `export * as ns from './dummy'; console.log(JSON.stringify(this))`,
+      "/es6-export-assign.ts": `export = 123; console.log(JSON.stringify(this))`,
+      "/es6-export-import-assign.ts": `export import x = require('./dummy'); console.log(JSON.stringify(this))`,
+      "/es6-ns-export-variable.ts": `namespace ns { export const foo = 123; } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-function.ts": `namespace ns { export function foo() {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-async-function.ts": `namespace ns { export async function foo() {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-enum.ts": `namespace ns { export enum Foo {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-const-enum.ts": `namespace ns { export const enum Foo {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-module.ts": `namespace ns { export module Foo {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-namespace.ts": `namespace ns { export namespace Foo {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-class.ts": `namespace ns { export class Foo {} } console.log(JSON.stringify(this))`,
+      "/es6-ns-export-abstract-class.ts": `namespace ns { export abstract class Foo {} } console.log(JSON.stringify(this))`,
     },
-    /* TODO FIX expectedScanLog: `es6-export-abstract-class.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-abstract-class.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-async-function.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-async-function.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-class.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-class.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-clause-from.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-clause-from.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-clause.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-clause.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-const-enum.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-const-enum.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-default.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-default.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-enum.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-enum.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-function.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-function.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-import-assign.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-import-assign.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-module.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-module.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-namespace.ts: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-namespace.ts: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-star-as.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-star-as.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-star.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-star.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-export-variable.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-export-variable.js: NOTE: This file is considered to be an ECMAScript module because of the "export" keyword here:
-  es6-expr-import-meta.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-expr-import-meta.js: NOTE: This file is considered to be an ECMAScript module because of the use of "import.meta" here:
-  es6-import-meta.js: DEBUG: Top-level "this" will be replaced with undefined since this file is an ECMAScript module
-  es6-import-meta.js: NOTE: This file is considered to be an ECMAScript module because of the use of "import.meta" here:
-  `, */
+    run: {
+      "stdout":
+        "{}\n{}\n{}\n{}\nundefined\n{}\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\nundefined\n{}\nundefined\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
+    },
   });
   itBundled("default/ArrowFnScope", {
-    // GENERATED
+    // TODO: MANUAL CHECK: make sure the snapshot we use works.
     files: {
       "/entry.js": /* js */ `
         tests = {
@@ -1741,7 +1744,6 @@ describe("bundler", () => {
     minifyIdentifiers: true,
   });
   itBundled("default/SwitchScopeNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         switch (foo) { default: var foo }
@@ -1750,9 +1752,16 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
+    onAfterBundle(api) {
+      assert(!api.readFile("/out.js").includes("foo"), 'bundle shouldnt include "foo"');
+      assert(!api.readFile("/out.js").includes("let bar"), 'bundle shouldnt include "let bar"');
+      assert(!api.readFile("/out.js").includes("var bar"), 'bundle shouldnt include "var bar"');
+    },
+    run: {
+      error: "ReferenceError: Can't find variable: bar",
+    },
   });
   itBundled("default/ArgumentDefaultValueScopeNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         export function a(x = foo) { var foo; return x }
@@ -1765,57 +1774,121 @@ describe("bundler", () => {
         ]
       `,
     },
-    minifyIdentifiers: true,
-    mode: "transform",
-  });
-  itBundled("default/ArgumentsSpecialCaseNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        (() => {
-          var arguments;
-  
-          function foo(x = arguments) { return arguments }
-          (function(x = arguments) { return arguments });
-          ({foo(x = arguments) { return arguments }});
-          class Foo { foo(x = arguments) { return arguments } }
-          (class { foo(x = arguments) { return arguments } });
-  
-          function foo(x = arguments) { var arguments; return arguments }
-          (function(x = arguments) { var arguments; return arguments });
-          ({foo(x = arguments) { var arguments; return arguments }});
-  
-          (x => arguments);
-          (() => arguments);
-          (async () => arguments);
-          ((x = arguments) => arguments);
-          (async (x = arguments) => arguments);
-  
-          x => arguments;
-          () => arguments;
-          async () => arguments;
-          (x = arguments) => arguments;
-          async (x = arguments) => arguments;
-  
-          (x => { return arguments });
-          (() => { return arguments });
-          (async () => { return arguments });
-          ((x = arguments) => { return arguments });
-          (async (x = arguments) => { return arguments });
-  
-          x => { return arguments };
-          () => { return arguments };
-          async () => { return arguments };
-          (x = arguments) => { return arguments };
-          async (x = arguments) => { return arguments };
-        })()
-      `,
+    onAfterBundle(api) {
+      assert(
+        [...api.readFile("/out.js").matchAll(/= *foo/g)].length === 6,
+        'foo default argument value should not have been replaced (expected to see exactly 6 instances of "= foo")',
+      );
     },
     minifyIdentifiers: true,
     mode: "transform",
   });
+  itBundled("default/ArgumentsSpecialCaseNoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        (async() => {
+          var arguments = 'var';
+  
+          const f1 = function foo(x = arguments) { return [x, arguments] }
+          const f2 = (function(x = arguments) { return [x, arguments] });
+          const o1 = ({foo(x = arguments) { return [x, arguments] }});
+          const C1 = class Foo { foo(x = arguments) { return [x, arguments] } }
+          const C2 = (class { foo(x = arguments) { return [x, arguments] } });
+  
+          const f3 = function foo(x = arguments) { var arguments; return [x, arguments] }
+          const f4 = (function(x = arguments) { var arguments; return [x, arguments] });
+          const o2 = ({foo(x = arguments) { var arguments; return [x, arguments] }});
+  
+          console.log('marker');
+
+          const a1 = (x => [x, arguments]);
+          const a2 = (() => [arguments]);
+          const a3 = (async () => [arguments]);
+          const a4 = ((x = arguments) => [x, arguments]);
+          const a5 = (async (x = arguments) => [x, arguments]);
+  
+          const a6 = x => [x, arguments];
+          const a7 = () => [arguments];
+          const a8 = async () => [arguments];
+          const a9 = (x = arguments) => [x, arguments];
+          const a10 = async (x = arguments) => [x, arguments];
+  
+          const a11 = (x => { return [x, arguments] });
+          const a12 = (() => { return [arguments] });
+          const a13 = (async () => { return [arguments] });
+          const a14 = ((x = arguments) => { return [x, arguments] });
+          const a15 = (async (x = arguments) => { return [x, arguments] });
+  
+          const a16 = x => { return [x, arguments] };
+          const a17 = () => { return [arguments] };
+          const a18 = async () => { return [arguments] };
+          const a19 = (x = arguments) => { return [x, arguments] };
+          const a20 = async (x = arguments) => { return [x, arguments] };
+
+          // assertions:
+          // we need this helper function to get "Arguments" objects, though this only applies for tests using v8
+          const argumentsFor = new Function('return arguments;');
+          const assert = require('assert');
+          assert.deepEqual(f1(), [argumentsFor(), argumentsFor()], 'f1()');
+          assert.deepEqual(f1(1), [1, argumentsFor(1)], 'f1(1)');
+          assert.deepEqual(f2(), [argumentsFor(), argumentsFor()], 'f2()');
+          assert.deepEqual(f2(1), [1, argumentsFor(1)], 'f2(1)');
+          assert.deepEqual(f3(), [argumentsFor(), argumentsFor()], 'f3()');
+          assert.deepEqual(f3(1), [1, argumentsFor(1)], 'f3(1)');
+          assert.deepEqual(o1.foo(), [argumentsFor(), argumentsFor()], 'o1.foo()');
+          assert.deepEqual(o1.foo(1), [1, argumentsFor(1)], 'o1.foo(1)');
+          assert.deepEqual(o2.foo(), [argumentsFor(), argumentsFor()], 'o2.foo()');
+          assert.deepEqual(o2.foo(1), [1, argumentsFor(1)], 'o2.foo(1)');
+          assert.deepEqual(new C1().foo(), [argumentsFor(), argumentsFor()], 'C1#foo()');
+          assert.deepEqual(new C1().foo(1), [1, argumentsFor(1)], 'C1#foo(1)');
+          assert.deepEqual(new C2().foo(), [argumentsFor(), argumentsFor()], 'C2#foo()');
+          assert.deepEqual(new C2().foo(1), [1, argumentsFor(1)], 'C2#foo(1)');
+          assert.deepEqual(a1(), [undefined, 'var'], 'a1()');
+          assert.deepEqual(a1(1), [1, 'var'], 'a1(1)');
+          assert.deepEqual(a2(), ['var'], 'a2()');
+          assert.deepEqual(await a3(), ['var'], 'a3()');
+          assert.deepEqual(a4(), ['var', 'var'], 'a4()');
+          assert.deepEqual(a4(1), [1, 'var'], 'a4(1)');
+          assert.deepEqual(await a5(), ['var', 'var'], 'a5()');
+          assert.deepEqual(await a5(1), [1, 'var'], 'a5(1)');
+          assert.deepEqual(a6(), [undefined, 'var'], 'a6()');
+          assert.deepEqual(a6(1), [1, 'var'], 'a6(1)');
+          assert.deepEqual(a7(), ['var'], 'a7()');
+          assert.deepEqual(await a8(), ['var'], 'a8()');
+          assert.deepEqual(a9(), ['var', 'var'], 'a9()');
+          assert.deepEqual(a9(1), [1, 'var'], 'a9(1)');
+          assert.deepEqual(await a10(), ['var', 'var'], 'a10()');
+          assert.deepEqual(await a10(1), [1, 'var'], 'a10(1)');
+          assert.deepEqual(a11(), [undefined, 'var'], 'a11()');
+          assert.deepEqual(a11(1), [1, 'var'], 'a11(1)');
+          assert.deepEqual(a12(), ['var'], 'a12()');
+          assert.deepEqual(await a13(), ['var'], 'a13()');
+          assert.deepEqual(a14(), ['var', 'var'], 'a14()');
+          assert.deepEqual(a14(1), [1, 'var'], 'a14(1)');
+          assert.deepEqual(await a15(), ['var', 'var'], 'a15()');
+          assert.deepEqual(await a15(1), [1, 'var'], 'a15(1)');
+          assert.deepEqual(a16(), [undefined, 'var'], 'a16()');
+          assert.deepEqual(a16(1), [1, 'var'], 'a16(1)');
+          assert.deepEqual(a17(), ['var'], 'a17()');
+          assert.deepEqual(await a18(), ['var'], 'a18()');
+          assert.deepEqual(a19(), ['var', 'var'], 'a19()');
+          assert.deepEqual(a19(1), [1, 'var'], 'a19(1)');
+          assert.deepEqual(await a20(), ['var', 'var'], 'a20()');
+          assert.deepEqual(await a20(1), [1, 'var'], 'a20(1)');
+        })();
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.js",
+    minifyIdentifiers: true,
+    mode: "transform",
+    run: {
+      // TODO: use bun here after https://github.com/oven-sh/bun/issues/1724 is fixed
+      runtime: "node",
+    },
+  });
   itBundled("default/WithStatementTaintingNoBundle", {
-    // GENERATED
+    // TODO: MANUAL CHECK: make sure the snapshot we use works.
     files: {
       "/entry.js": /* js */ `
         (() => {
@@ -1839,57 +1912,74 @@ describe("bundler", () => {
         })()
       `,
     },
+    format: "iife",
     minifyIdentifiers: true,
     mode: "transform",
   });
   itBundled("default/DirectEvalTaintingNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         function test1() {
+          let shouldNotBeRenamed1 = 1;
           function add(first, second) {
-            return first + second
+            let renameMe = 1;
+            return first + second;
           }
           eval('add(1, 2)')
         }
   
         function test2() {
+          let renameMe1 = 1;
           function add(first, second) {
+            let renameMe2 = 1;
             return first + second
           }
           (0, eval)('add(1, 2)')
         }
   
         function test3() {
+          let renameMe1 = 1;
           function add(first, second) {
+            let renameMe2 = 1;
             return first + second
           }
         }
   
         function test4(eval) {
+          let shouldNotBeRenamed2 = 1;
           function add(first, second) {
+            let renameMe1 = 1;
             return first + second
           }
           eval('add(1, 2)')
         }
   
         function test5() {
+          let shouldNotBeRenamed3 = 1;
           function containsDirectEval() { eval() }
-          if (true) { var shouldNotBeRenamed }
+          if (true) { var shouldNotBeRenamed4 }
         }
       `,
     },
     minifyIdentifiers: true,
     mode: "transform",
+    format: "cjs",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      assert(text.includes("shouldNotBeRenamed1"), "Should not have renamed `shouldNotBeRenamed1`");
+      assert(text.includes("shouldNotBeRenamed2"), "Should not have renamed `shouldNotBeRenamed2`");
+      assert(text.includes("shouldNotBeRenamed3"), "Should not have renamed `shouldNotBeRenamed3`");
+      assert(text.includes("shouldNotBeRenamed4"), "Should not have renamed `shouldNotBeRenamed4`");
+      assert(!text.includes("renameMe"), "Should have renamed all `renameMe` variabled");
+    },
   });
   itBundled("default/ImportReExportES6Issue149", {
-    // GENERATED
     files: {
       "/app.jsx": /* jsx */ `
         import { p as Part, h, render } from './import';
         import { Internal } from './in2';
         const App = () => <Part> <Internal /> T </Part>;
-        render(<App />, document.getElementById('app'));
+        render(<App />, 'a dom node');
       `,
       "/in2.jsx": /* jsx */ `
         import { p as Part, h } from './import';
@@ -1901,12 +1991,24 @@ describe("bundler", () => {
         export { h, render }
       `,
     },
+    runtimeFiles: {
+      "/node_modules/preact/index.js": /* js */ `
+        export const p = 'part';
+        export const h = () => 'preact element';
+        export const render = (jsx) => {
+          if (jsx !== 'preact element') {
+            throw new Error('Test failed, is bun is applying automatic jsx?');
+          }
+        };
+      `,
+    },
     jsx: {
       factory: "h",
     },
+    external: ["preact"],
+    run: true,
   });
   itBundled("default/ExternalModuleExclusionPackage", {
-    // GENERATED
     files: {
       "/index.js": /* js */ `
         import { S3 } from 'aws-sdk';
@@ -1915,9 +2017,9 @@ describe("bundler", () => {
         export const dynamodb = new DocumentClient();
       `,
     },
+    external: ["aws-sdk"],
   });
   itBundled("default/ExternalModuleExclusionScopedPackage", {
-    // GENERATED
     files: {
       "/index.js": /* js */ `
         import '@a1'
@@ -1936,22 +2038,19 @@ describe("bundler", () => {
         import '@c1/c2/c3-c4'
       `,
     },
-    /* TODO FIX expectedScanLog: `index.js: ERROR: Could not resolve "@a1-a2"
-  NOTE: You can mark the path "@a1-a2" as external to exclude it from the bundle, which will remove this error.
-  index.js: ERROR: Could not resolve "@b1"
-  NOTE: You can mark the path "@b1" as external to exclude it from the bundle, which will remove this error.
-  index.js: ERROR: Could not resolve "@b1/b2-b3"
-  NOTE: You can mark the path "@b1/b2-b3" as external to exclude it from the bundle, which will remove this error.
-  index.js: ERROR: Could not resolve "@c1"
-  NOTE: You can mark the path "@c1" as external to exclude it from the bundle, which will remove this error.
-  index.js: ERROR: Could not resolve "@c1/c2"
-  NOTE: You can mark the path "@c1/c2" as external to exclude it from the bundle, which will remove this error.
-  index.js: ERROR: Could not resolve "@c1/c2/c3-c4"
-  NOTE: You can mark the path "@c1/c2/c3-c4" as external to exclude it from the bundle, which will remove this error.
-  `, */
+    external: ["@a1", "@b1/b2", "@c1/c2/c3"],
+    bundleErrors: {
+      "/index.js": [
+        `Could not resolve: "@a1-a2". Maybe you need to "bun install"?`,
+        `Could not resolve: "@b1". Maybe you need to "bun install"?`,
+        `Could not resolve: "@b1/b2-b3". Maybe you need to "bun install"?`,
+        `Could not resolve: "@c1". Maybe you need to "bun install"?`,
+        `Could not resolve: "@c1/c2". Maybe you need to "bun install"?`,
+        `Could not resolve: "@c1/c2/c3-c4". Maybe you need to "bun install"?`,
+      ],
+    },
   });
   itBundled("default/ScopedExternalModuleExclusion", {
-    // GENERATED
     files: {
       "/index.js": /* js */ `
         import { Foo } from '@scope/foo';
@@ -1960,7 +2059,9 @@ describe("bundler", () => {
         export const bar = new Bar();
       `,
     },
+    external: ["@scope/foo"],
   });
+  return;
   itBundled("default/ExternalModuleExclusionRelativePath", {
     // GENERATED
     files: {

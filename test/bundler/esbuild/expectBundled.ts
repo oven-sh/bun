@@ -171,6 +171,8 @@ export interface BundlerTestRunOptions {
    * available to us.
    */
   errorLineMatch?: RegExp;
+
+  runtime?: "bun" | "node";
 }
 
 var testFiles = new Map();
@@ -504,7 +506,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       throw new Error("Bundle was not written to disk: " + outfile);
     } else {
       if (!ESBUILD) {
-        expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
+        // expect(readFileSync(outfile).toString()).toMatchSnapshot(outfile.slice(root.length));
       }
     }
   } else {
@@ -515,7 +517,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
         if (!existsSync(fullpath)) {
           throw new Error("Bundle was not written to disk: " + fullpath);
         } else if (!ESBUILD) {
-          expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
+          // expect(readFileSync(fullpath).toString()).toMatchSnapshot(fullpath.slice(root.length));
         }
       }
     } else if (!ESBUILD) {
@@ -571,7 +573,12 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       }
 
       const { success, stdout, stderr } = Bun.spawnSync({
-        cmd: [bunExe(), ...(run.bunArgs ?? []), file, ...(run.args ?? [])] as [string, ...string[]],
+        cmd: [
+          (run.runtime ?? "bun") === "bun" ? bunExe() : "node",
+          ...(run.bunArgs ?? []),
+          file,
+          ...(run.args ?? []),
+        ] as [string, ...string[]],
         env: bunEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });

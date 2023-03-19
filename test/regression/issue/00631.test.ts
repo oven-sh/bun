@@ -12,7 +12,7 @@ it("JSON strings escaped properly", async () => {
 
   // Create a directory with our test package file
   mkdirSync(testDir, { recursive: true });
-  writeFileSync(testDir + "package.json", String.raw`{"testRegex":"\\a\n\\b\\"}`);
+  writeFileSync(join(testDir, "package.json"), String.raw`{"testRegex":"\\a\n\\b\\"}`);
 
   // Attempt to add a package, causing the package file to be parsed, modified,
   //  written, and reparsed.  This verifies that escaped backslashes in JSON
@@ -24,8 +24,7 @@ it("JSON strings escaped properly", async () => {
   });
   expect(exitCode).toBe(0);
 
-  console.log(testDir);
-  const packageContents = readFileSync(testDir + "package.json", { encoding: "utf8" });
+  const packageContents = readFileSync(join(testDir, "package.json"), { encoding: "utf8" });
   expect(packageContents).toBe(String.raw`{
   "testRegex": "\\a\n\\b\\",
   "dependencies": {

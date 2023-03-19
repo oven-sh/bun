@@ -676,7 +676,7 @@ build-obj:
 
 .PHONY: dev-build-obj-wasm
 dev-build-obj-wasm:
-	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding
 
 .PHONY: dev-wasm
 dev-wasm: dev-build-obj-wasm
@@ -689,7 +689,7 @@ dev-wasm: dev-build-obj-wasm
 
 .PHONY: build-obj-wasm
 build-obj-wasm:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Doptimize=ReleaseFast -Dtarget=wasm32-freestanding
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
@@ -699,7 +699,7 @@ build-obj-wasm:
 
 .PHONY: build-obj-wasm-small
 build-obj-wasm-small:
-	$(ZIG) build bun-wasm -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding --prominent-compile-errors
+	$(ZIG) build bun-wasm -Doptimize=ReleaseSmall -Dtarget=wasm32-freestanding
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
 		$(BUN_DEPS_DIR)/libmimalloc.a.wasm  \
@@ -1082,7 +1082,7 @@ release-bin-dir:
 
 .PHONY: dev-obj
 dev-obj:
-	$(ZIG) build obj --prominent-compile-errors -freference-trace -Dcpu="$(CPU_TARGET)"
+	$(ZIG) build obj -freference-trace -Dcpu="$(CPU_TARGET)"
 
 .PHONY: dev-obj-linux
 dev-obj-linux:

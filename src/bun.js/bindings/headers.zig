@@ -123,6 +123,7 @@ pub extern fn WebCore__FetchHeaders__fastHas_(arg0: ?*bindings.FetchHeaders, arg
 pub extern fn WebCore__FetchHeaders__fastRemove_(arg0: ?*bindings.FetchHeaders, arg1: u8) void;
 pub extern fn WebCore__FetchHeaders__get_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString, arg3: *bindings.JSGlobalObject) void;
 pub extern fn WebCore__FetchHeaders__has(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) bool;
+pub extern fn WebCore__FetchHeaders__isEmpty(arg0: ?*bindings.FetchHeaders) bool;
 pub extern fn WebCore__FetchHeaders__put_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *bindings.JSGlobalObject) void;
 pub extern fn WebCore__FetchHeaders__remove(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: *bindings.JSGlobalObject) void;
 pub extern fn WebCore__FetchHeaders__toJS(arg0: ?*bindings.FetchHeaders, arg1: *bindings.JSGlobalObject) JSC__JSValue;
@@ -213,6 +214,7 @@ pub extern fn JSC__JSValue__deepEquals(JSValue0: JSC__JSValue, JSValue1: JSC__JS
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]bindings.JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;
+pub extern fn JSC__JSValue__fastGetDirect_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.VM, *bindings.JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__forEachProperty(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;
 pub extern fn JSC__JSValue__forEachPropertyOrdered(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?*const fn (*bindings.JSGlobalObject, ?*anyopaque, [*c]ZigString, JSC__JSValue, bool) callconv(.C) void) void;

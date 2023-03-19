@@ -379,100 +379,242 @@ pub const Request = struct {
         }
     }
 
+    const Fields = enum {
+        method,
+        headers,
+        body,
+        // referrer,
+        // referrerPolicy,
+        // mode,
+        // credentials,
+        // redirect,
+        // integrity,
+        // keepalive,
+        signal,
+        // proxy,
+        // timeout,
+        url,
+    };
+
     pub fn constructInto(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) ?Request {
-        var request = Request{};
+        var req = Request{};
 
-        switch (arguments.len) {
-            0 => {},
-            1 => {
-                const urlOrObject = arguments[0];
-                const url_or_object_type = urlOrObject.jsType();
-                if (url_or_object_type.isStringLike()) {
-                    request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                        return null;
-                    }).slice();
-                    request.url_was_allocated = request.url.len > 0;
-                    request.body = .{
-                        .Null = {},
-                    };
-                } else {
-                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0]) catch null) |req_init| {
-                        request.headers = req_init.headers;
-                        request.method = req_init.method;
-                    }
+        if (arguments.len == 0) {
+            globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
+            return null;
+        } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
+            globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
+            return null;
+        }
 
-                    if (urlOrObject.fastGet(globalThis, .body)) |body_| {
-                        if (Body.Value.fromJS(globalThis, body_)) |body| {
-                            request.body = body;
-                        } else {
-                            request.finalizeWithoutDeinit();
-                            return null;
+        const url_or_object = arguments[0];
+        const url_or_object_type = url_or_object.jsType();
+        var fields = std.EnumSet(Fields).initEmpty();
+
+        const is_first_argument_a_url =
+            // fastest path:
+            url_or_object_type.isStringLike() or
+            // slower path:
+            url_or_object.as(JSC.DOMURL) != null;
+
+        if (is_first_argument_a_url) {
+            const slice = arguments[0].toSliceOrNull(globalThis) orelse {
+                req.finalizeWithoutDeinit();
+                return null;
+            };
+            req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
+                req.finalizeWithoutDeinit();
+                return null;
+            }).slice();
+            req.url_was_allocated = req.url.len > 0;
+            if (req.url.len > 0)
+                fields.insert(.url);
+        } else if (!url_or_object_type.isObject()) {
+            globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
+            return null;
+        }
+
+        const values_to_try_ = [_]JSValue{
+            if (arguments.len > 1 and arguments[1].isObject())
+                arguments[1]
+            else if (is_first_argument_a_url)
+                JSValue.undefined
+            else
+                url_or_object,
+            if (is_first_argument_a_url) JSValue.undefined else url_or_object,
+        };
+        const values_to_try = values_to_try_[0 .. @as(usize, @boolToInt(!is_first_argument_a_url)) +
+            @as(usize, @boolToInt(arguments.len > 1 and arguments[1].isObject()))];
+
+        for (values_to_try) |value| {
+            const value_type = value.jsType();
+
+            if (value_type == .DOMWrapper) {
+                if (value.as(Request)) |request| {
+                    if (values_to_try.len == 1) {
+                        request.cloneInto(&req, globalThis.allocator(), globalThis);
+                        if (req.url_was_allocated) {
+                            req.url = req.url;
+                            req.url_was_allocated = true;
                         }
-                    } else {
-                        request.body = .{
-                            .Null = {},
-                        };
+                        return req;
                     }
 
-                    if (urlOrObject.fastGet(globalThis, .url)) |url| {
-                        request.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                            return null;
-                        }).slice();
-                        request.url_was_allocated = request.url.len > 0;
+                    if (!fields.contains(.method)) {
+                        req.method = request.method;
+                        fields.insert(.method);
+                    }
+
+                    if (!fields.contains(.headers)) {
+                        if (request.cloneHeaders(globalThis)) |headers| {
+                            req.headers = headers;
+                            fields.insert(.headers);
+                        }
+                    }
+
+                    if (!fields.contains(.body)) {
+                        switch (request.body) {
+                            .Null, .Empty, .Used => {},
+                            else => {
+                                req.body = request.body.clone(globalThis);
+                                fields.insert(.body);
+                            },
+                        }
                     }
                 }
-            },
-            else => {
-                if (arguments[1].get(globalThis, "signal")) |signal_| {
+
+                if (value.as(JSC.WebCore.Response)) |response| {
+                    if (!fields.contains(.method)) {
+                        req.method = response.body.init.method;
+                        fields.insert(.method);
+                    }
+
+                    if (!fields.contains(.headers)) {
+                        if (response.body.init.headers) |headers| {
+                            req.headers = headers.cloneThis(globalThis);
+                            fields.insert(.headers);
+                        }
+                    }
+
+                    if (!fields.contains(.url)) {
+                        if (response.url.len > 0) {
+                            req.url = globalThis.allocator().dupe(u8, response.url) catch unreachable;
+                            req.url_was_allocated = true;
+                            fields.insert(.url);
+                        }
+                    }
+
+                    if (!fields.contains(.body)) {
+                        switch (response.body.value) {
+                            .Null, .Empty, .Used => {},
+                            else => {
+                                req.body = response.body.value.clone(globalThis);
+                                fields.insert(.body);
+                            },
+                        }
+                    }
+                }
+            }
+
+            if (!fields.contains(.body)) {
+                if (value.fastGet(globalThis, .body)) |body_| {
+                    fields.insert(.body);
+                    if (Body.Value.fromJS(globalThis, body_)) |body| {
+                        req.body = body;
+                    } else {
+                        req.finalizeWithoutDeinit();
+                        return null;
+                    }
+                }
+            }
+
+            if (!fields.contains(.url)) {
+                if (value.fastGet(globalThis, .url)) |url| {
+                    req.url = (url.toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
+                        return null;
+                    }).slice();
+                    req.url_was_allocated = req.url.len > 0;
+                    if (req.url.len > 0)
+                        fields.insert(.url);
+
+                    // first value
+                } else if (@enumToInt(value) == @enumToInt(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
+                    value.implementsToString(globalThis))
+                {
+                    const slice = value.toSliceOrNull(globalThis) orelse {
+                        req.finalizeWithoutDeinit();
+                        return null;
+                    };
+                    req.url = (slice.cloneIfNeeded(globalThis.allocator()) catch {
+                        req.finalizeWithoutDeinit();
+                        return null;
+                    }).slice();
+                    req.url_was_allocated = req.url.len > 0;
+                    if (req.url.len > 0)
+                        fields.insert(.url);
+                }
+            }
+
+            if (!fields.contains(.signal)) {
+                if (value.get(globalThis, "signal")) |signal_| {
+                    fields.insert(.signal);
+
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
                         signal_.ensureStillAlive();
-                        request.signal = signal.ref();
+                        req.signal = signal.ref();
                     } else {
-                        globalThis.throw("Failed to construct 'Request': member signal is not of type AbortSignal.", .{});
-
-                        request.finalizeWithoutDeinit();
+                        globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                        req.finalizeWithoutDeinit();
                         return null;
                     }
                 }
+            }
 
-                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1]) catch null) |req_init| {
-                    request.headers = req_init.headers;
-                    request.method = req_init.method;
-                }
-
-                if (arguments[1].fastGet(globalThis, .body)) |body_| {
-                    if (Body.Value.fromJS(globalThis, body_)) |body| {
-                        request.body = body;
-                    } else {
-                        request.finalizeWithoutDeinit();
-                        return null;
+            if (!fields.contains(.method) or !fields.contains(.headers)) {
+                if (Body.Init.init(globalThis.allocator(), globalThis, value) catch null) |init| {
+                    if (!fields.contains(.method)) {
+                        req.method = init.method;
+                        fields.insert(.method);
                     }
-                } else {
-                    request.body = .{
-                        .Null = {},
-                    };
-                }
 
-                request.url = (arguments[0].toSlice(globalThis, bun.default_allocator).cloneIfNeeded(bun.default_allocator) catch {
-                    return null;
-                }).slice();
-                request.url_was_allocated = request.url.len > 0;
-            },
+                    if (init.headers) |headers| {
+                        if (!fields.contains(.headers)) {
+                            req.headers = headers;
+                            fields.insert(.headers);
+                        } else {
+                            headers.deref();
+                        }
+                    }
+                }
+            }
         }
 
-        if (request.body == .Blob and
-            request.headers != null and
-            request.body.Blob.content_type.len > 0 and
-            !request.headers.?.fastHas(.ContentType))
+        if (req.url.len == 0) {
+            globalThis.throw("Failed to construct 'Request': url is required.", .{});
+            req.finalizeWithoutDeinit();
+            return null;
+        }
+
+        const parsed_url = ZigURL.parse(req.url);
+        if (parsed_url.hostname.len == 0) {
+            globalThis.throw("Failed to construct 'Request': Invalid URL (missing a hostname)", .{});
+            req.finalizeWithoutDeinit();
+            return null;
+        }
+
+        if (req.body == .Blob and
+            req.headers != null and
+            req.body.Blob.content_type.len > 0 and
+            !req.headers.?.fastHas(.ContentType))
         {
-            request.headers.?.put("content-type", request.body.Blob.content_type, globalThis);
+            req.headers.?.put("content-type", req.body.Blob.content_type, globalThis);
         }
 
-        return request;
+        return req;
     }
 
     pub fn constructor(
@@ -531,6 +673,24 @@ pub const Request = struct {
         return this.headers.?.toJS(globalThis);
     }
 
+    pub fn cloneHeaders(this: *Request, globalThis: *JSGlobalObject) ?*FetchHeaders {
+        if (this.headers == null) {
+            if (this.uws_request) |uws_req| {
+                this.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
+            }
+        }
+
+        if (this.headers) |head| {
+            if (head.isEmpty()) {
+                return null;
+            }
+
+            return head.cloneThis(globalThis);
+        }
+
+        return null;
+    }
+
     pub fn cloneInto(
         this: *Request,
         req: *Request,
@@ -546,14 +706,8 @@ pub const Request = struct {
                 return;
             },
             .method = this.method,
+            .headers = this.cloneHeaders(globalThis),
         };
-
-        if (this.headers) |head| {
-            req.headers = head.cloneThis(globalThis);
-        } else if (this.uws_request) |uws_req| {
-            req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
-            this.headers = req.headers.?.cloneThis(globalThis).?;
-        }
 
         if (this.signal) |signal| {
             req.signal = signal.ref();

@@ -129,7 +129,6 @@ using namespace JSC;
     macro(isAbsolute) \
     macro(isDisturbed) \
     macro(isPaused) \
-    macro(isSecureContext) \
     macro(isWindows) \
     macro(join) \
     macro(kind) \
@@ -183,6 +182,7 @@ using namespace JSC;
     macro(reader) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
+    macro(redirect) \
     macro(relative) \
     macro(releaseLock) \
     macro(removeEventListener) \

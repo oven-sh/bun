@@ -1,5 +1,12 @@
+/**
+ * This file can be directly run
+ *
+ *  PACKAGE_DIR_TO_USE=(realpath .) bun test/cli/install/dummy.registry.ts
+ */
 import { file, Server } from "bun";
-import { expect } from "bun:test";
+
+var expect: typeof import("bun:test")["expect"];
+
 import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
@@ -7,7 +14,7 @@ import { basename, join } from "path";
 type RequestHandler = (request: Request) => Response | Promise<Response>;
 let handler: RequestHandler, server: Server;
 export let package_dir: string, requested: number, root_url: string;
-
+let testCounter = 0;
 export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }): RequestHandler {
   return async request => {
     urls.push(request.url);
@@ -75,10 +82,14 @@ export function dummyAfterAll() {
   server.stop();
 }
 
+var packageDirGetter: () => Promise<string> = async () => {
+  return await realpath(await mkdtemp(join(await realpath(tmpdir()), "bun-install-test-" + testCounter++ + "--")));
+};
 export async function dummyBeforeEach() {
   resetHanlder();
   requested = 0;
-  package_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-install.test"));
+  package_dir = await packageDirGetter();
+
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
@@ -92,4 +103,28 @@ registry = "http://localhost:${server.port}/"
 export async function dummyAfterEach() {
   resetHanlder();
   await rm(package_dir, { force: true, recursive: true });
+}
+
+if (Bun.main === import.meta.path) {
+  // @ts-expect-error
+  expect = value => {
+    return {
+      toBe(expected) {
+        if (value !== expected) {
+          throw new Error(`Expected ${value} to be ${expected}`);
+        }
+      },
+    };
+  };
+  if (process.env.PACKAGE_DIR_TO_USE) {
+    packageDirGetter = () => Promise.resolve(process.env.PACKAGE_DIR_TO_USE!);
+  }
+
+  await dummyBeforeAll();
+  await dummyBeforeEach();
+  setHandler(dummyRegistry([]));
+  console.log("Running dummy registry!\n\n URL: ", root_url!, "\n", "DIR: ", package_dir!);
+} else {
+  // @ts-expect-error
+  ({ expect } = Bun.jest(import.meta.path));
 }

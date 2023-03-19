@@ -490,7 +490,14 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
-        const args_list = callframe.arguments(2);
+        const args_list = brk: {
+            var args = callframe.arguments(2);
+            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
+                args.len = 1;
+            }
+            break :brk args;
+        };
+
         const arguments = args_list.ptr[0..args_list.len];
         const body: Body = @as(?Body, brk: {
             switch (arguments.len) {
@@ -501,10 +508,11 @@ pub const Response = struct {
                     break :brk Body.extract(globalThis, arguments[0]);
                 },
                 else => {
-                    if (arguments[1].isUndefinedOrNull()) break :brk Body.extract(globalThis, arguments[0]);
                     if (arguments[1].isObject()) {
                         break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
                     }
+
+                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);
@@ -731,7 +739,13 @@ pub const Fetch = struct {
 
             const fetch_error = JSC.SystemError{
                 .code = ZigString.init(@errorName(this.result.fail)),
-                .message = ZigString.init("fetch() failed"),
+                .message = switch (this.result.fail) {
+                    error.ConnectionClosed => ZigString.init("The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.FailedToOpenSocket => ZigString.init("Was there a typo in the url or port?"),
+                    error.TooManyRedirects => ZigString.init("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
+                    error.ConnectionRefused => ZigString.init("Unable to connect. Is the computer able to access the url?"),
+                    else => ZigString.init("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
+                },
                 .path = ZigString.init(this.http.?.url.href),
             };
 

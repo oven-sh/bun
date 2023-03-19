@@ -312,20 +312,18 @@ pub const ServerConfig = struct {
                 }
             }
 
+            if (obj.getTruthy(global, "requestCert")) |_| {
+                result.request_cert = 1;
+            }
+            if (obj.getTruthy(global, "rejectUnauthorized")) |_| {
+                result.reject_unauthorized = 1;
+            }
             // Optional
             if (any) {
                 if (obj.getTruthy(global, "secureOptions")) |secure_options| {
                     if (secure_options.isNumber()) {
                         result.secure_options = secure_options.toU32();
                     }
-                }
-
-                if (obj.getTruthy(global, "requestCert")) |_| {
-                    result.request_cert = 1;
-                }
-
-                if (obj.getTruthy(global, "rejectUnauthorized")) |_| {
-                    result.reject_unauthorized = 1;
                 }
 
                 if (obj.getTruthy(global, "serverName")) |key_file_name| {
@@ -375,6 +373,7 @@ pub const ServerConfig = struct {
                         }
                     }
                 }
+
                 if (obj.getTruthy(global, "dhParamsFile")) |dh_params_file_name| {
                     var sliced = dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();

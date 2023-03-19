@@ -92,6 +92,8 @@ const Socket = (function (InternalSocket) {
         self.emit("error", error);
       },
       data({ data: self }, buffer) {
+        console.log("data", self.#socket.verifyError());
+
         self.bytesRead += buffer.length;
         const queue = self.#readQueue;
 
@@ -117,6 +119,9 @@ const Socket = (function (InternalSocket) {
         socket.timeout(self.timeout);
         socket.ref();
         self.#socket = socket;
+        console.log(self.#socket.verifyError());
+        // force collect cert
+        self.#socket.write(" ");
         self.connecting = false;
         self.emit("connect", self);
         Socket.#Drain(socket);
@@ -141,6 +146,8 @@ const Socket = (function (InternalSocket) {
 
     static #Drain(socket) {
       const self = socket.data;
+      console.log("drain", self.#socket.verifyError());
+      
       const callback = self.#writeCallback;
       if (callback) {
         const chunk = self.#writeChunk;
@@ -172,6 +179,7 @@ const Socket = (function (InternalSocket) {
         const options = self[bunSocketServerOptions];
         const { pauseOnConnect, connectionListener, InternalSocketClass } = options;
         const _socket = new InternalSocketClass({});
+        _socket.isServer = true;
 
         _socket.#attach(this.localPort, socket);
         if (self.maxConnections && self[bunSocketServerConnections] >= self.maxConnections) {
@@ -221,6 +229,8 @@ const Socket = (function (InternalSocket) {
     #writeCallback;
     #writeChunk;
     #pendingRead;
+    
+    isServer = false;
 
     constructor(options) {
       const { signal, write, read, allowHalfOpen = false, ...opts } = options || {};
@@ -254,7 +264,9 @@ const Socket = (function (InternalSocket) {
       socket.ref();
       this.#socket = socket;
       this.connecting = false;
-      this.emit("connect");
+
+
+      this.emit("connect", this);
       Socket.#Drain(socket);
     }
 

@@ -1246,6 +1246,34 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn verifyError(
+            this: *This,
+            globalObject: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
+        ) callconv(.C) JSValue {
+            JSC.markBinding(@src());
+
+            if (this.detached) {
+                return JSValue.jsNull();
+            }
+            const ssl_error = this.socket.verifyError();
+            if (ssl_error.error_no == 0) {
+                return JSValue.jsNull();
+            }
+            
+            const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+            
+            const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
+
+
+            const fallback = JSC.SystemError{
+                .code = ZigString.init(code),
+                .message = ZigString.init(reason),
+            };
+
+            return fallback.toErrorInstance(globalObject);
+        }
+
         pub fn write(
             this: *This,
             globalObject: *JSC.JSGlobalObject,

@@ -83,7 +83,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     _SNICallback;
     servername;
     alpnProtocol;
-    authorized = true;
+    authorized = false;
     authorizationError;
 
     encrypted = true;
@@ -192,8 +192,10 @@ class Server extends NetServer {
 
       const rejectUnauthorized = options.rejectUnauthorized || false;
 
-      if (rejectUnauthorized) this.rejectUnauthorized = rejectUnauthorized;
-      else this.rejectUnauthorized = undefined;
+      if (rejectUnauthorized) {
+        this.rejectUnauthorized = rejectUnauthorized;
+        this.requestCert = true;
+      } else this.rejectUnauthorized = undefined;
     }
   }
 
@@ -245,6 +247,7 @@ export const CLIENT_RENEG_LIMIT = 3,
             host: host,
             port: port,
           };
+
     return new TLSSocket(options).connect(options, connectListener);
   },
   connect = createConnection;

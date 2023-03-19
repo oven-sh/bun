@@ -27,6 +27,11 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         socket: *Socket,
         const ThisSocket = @This();
 
+        pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
+            const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, this.socket);
+            return ssl_error;
+        }
+        
         pub fn isEstablished(this: ThisSocket) bool {
             return us_socket_is_established(comptime ssl_int, this.socket) > 0;
         }
@@ -600,6 +605,13 @@ pub const us_bun_socket_context_options_t = extern struct {
     reject_unauthorized: i32 = 0,
 };
 
+pub const us_bun_verify_error_t = extern struct {
+    error_no: i32 = 0,
+    code: [*c]const u8 = null,
+    reason: [*c]const u8 = null,
+};
+
+extern fn us_socket_verify_error(ssl: i32, context: *Socket) us_bun_verify_error_t;
 extern fn SocketContextimestamp(ssl: i32, context: ?*SocketContext) c_ushort;
 pub extern fn us_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_socket_context_options_t, ?*anyopaque) void;
 extern fn us_socket_context_remove_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8) void;

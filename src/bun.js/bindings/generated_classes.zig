@@ -3418,6 +3418,8 @@ pub const JSTCPSocket = struct {
             @compileLog("Expected TCPSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.timeout)));
         if (@TypeOf(TCPSocket.unref) != CallbackType)
             @compileLog("Expected TCPSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.unref)));
+        if (@TypeOf(TCPSocket.verifyError) != CallbackType)
+            @compileLog("Expected TCPSocket.verifyError to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.verifyError)));
         if (@TypeOf(TCPSocket.write) != CallbackType)
             @compileLog("Expected TCPSocket.write to be a callback but received " ++ @typeName(@TypeOf(TCPSocket.write)));
         if (!JSC.is_bindgen) {
@@ -3436,6 +3438,7 @@ pub const JSTCPSocket = struct {
             @export(TCPSocket.shutdown, .{ .name = "TCPSocketPrototype__shutdown" });
             @export(TCPSocket.timeout, .{ .name = "TCPSocketPrototype__timeout" });
             @export(TCPSocket.unref, .{ .name = "TCPSocketPrototype__unref" });
+            @export(TCPSocket.verifyError, .{ .name = "TCPSocketPrototype__verifyError" });
             @export(TCPSocket.write, .{ .name = "TCPSocketPrototype__write" });
         }
     }
@@ -3566,6 +3569,8 @@ pub const JSTLSSocket = struct {
             @compileLog("Expected TLSSocket.timeout to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.timeout)));
         if (@TypeOf(TLSSocket.unref) != CallbackType)
             @compileLog("Expected TLSSocket.unref to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.unref)));
+        if (@TypeOf(TLSSocket.verifyError) != CallbackType)
+            @compileLog("Expected TLSSocket.verifyError to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.verifyError)));
         if (@TypeOf(TLSSocket.write) != CallbackType)
             @compileLog("Expected TLSSocket.write to be a callback but received " ++ @typeName(@TypeOf(TLSSocket.write)));
         if (!JSC.is_bindgen) {
@@ -3584,6 +3589,7 @@ pub const JSTLSSocket = struct {
             @export(TLSSocket.shutdown, .{ .name = "TLSSocketPrototype__shutdown" });
             @export(TLSSocket.timeout, .{ .name = "TLSSocketPrototype__timeout" });
             @export(TLSSocket.unref, .{ .name = "TLSSocketPrototype__unref" });
+            @export(TLSSocket.verifyError, .{ .name = "TLSSocketPrototype__verifyError" });
             @export(TLSSocket.write, .{ .name = "TLSSocketPrototype__write" });
         }
     }

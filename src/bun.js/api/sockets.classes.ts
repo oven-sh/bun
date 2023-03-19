@@ -8,6 +8,10 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     proto: {
+      verifyError: {
+        fn: "verifyError",
+        length: 0,
+      },
       write: {
         fn: "write",
         length: 3,

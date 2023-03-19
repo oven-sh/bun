@@ -149,7 +149,9 @@ pub const Body = struct {
                 // we can skip calling JS getters
                 if (response_init.as(Request)) |req| {
                     if (req.headers) |headers| {
-                        result.headers = headers.cloneThis(ctx);
+                        if (!headers.isEmpty()) {
+                            result.headers = headers.cloneThis(ctx);
+                        }
                     }
 
                     result.method = req.method;
@@ -163,7 +165,9 @@ pub const Body = struct {
 
             if (response_init.fastGet(ctx, .headers)) |headers| {
                 if (headers.as(FetchHeaders)) |orig| {
-                    result.headers = orig.cloneThis(ctx);
+                    if (!orig.isEmpty()) {
+                        result.headers = orig.cloneThis(ctx);
+                    }
                 } else {
                     result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
                 }
@@ -185,7 +189,7 @@ pub const Body = struct {
                     }
                 } else if (status_value.isNumber()) {
                     const number = status_value.to(i32);
-                    if (100 <= number and number < 600)
+                    if (100 <= number and number < 999)
                         result.status_code = @truncate(u16, @intCast(u32, number));
                 }
             }
@@ -849,12 +853,12 @@ pub const Body = struct {
 
             if (tag == .InternalBlob) {
                 this.InternalBlob.clearAndFree();
-                this.* = Value{ .Null = {} }; //Value.empty;
+                this.* = Value{ .Null = {} };
             }
 
             if (tag == .Blob) {
                 this.Blob.deinit();
-                this.* = Value{ .Null = {} }; //Value.empty;
+                this.* = Value{ .Null = {} };
             }
 
             if (tag == .Error) {

@@ -744,7 +744,7 @@ pub const Fetch = struct {
                     error.FailedToOpenSocket => ZigString.init("Was there a typo in the url or port?"),
                     error.TooManyRedirects => ZigString.init("The response redirected too many times. For more information, pass `verbose: true` in the second argument to fetch()"),
                     error.ConnectionRefused => ZigString.init("Unable to connect. Is the computer able to access the url?"),
-                    else => ZigString.init("fetch() failed. \n\nFor more information, pass `verbose: true` in the second argument to fetch()"),
+                    else => ZigString.init("fetch() failed. For more information, pass `verbose: true` in the second argument to fetch()"),
                 },
                 .path = ZigString.init(this.http.?.url.href),
             };

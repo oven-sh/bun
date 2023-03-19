@@ -323,11 +323,21 @@ const NetworkTask = struct {
 
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
-        const env = this.package_manager.env;
 
-        var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = env.getHttpProxy(url);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
+        const url = URL.parse(this.url_buf);
+        this.http = AsyncHTTP.init(
+            allocator,
+            .GET,
+            url,
+            header_builder.entries,
+            header_builder.content.ptr.?[0..header_builder.content.len],
+            &this.response_buffer,
+            "",
+            0,
+            this.getCompletionCallback(),
+            this.package_manager.httpProxy(),
+            null,
+        );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
@@ -389,12 +399,21 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
-        const env = this.package_manager.env;
+        const url = URL.parse(this.url_buf);
 
-        var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = env.getHttpProxy(url);
-
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
+        this.http = AsyncHTTP.init(
+            allocator,
+            .GET,
+            url,
+            header_builder.entries,
+            header_buf,
+            &this.response_buffer,
+            "",
+            0,
+            this.getCompletionCallback(),
+            this.package_manager.httpProxy(),
+            null,
+        );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
@@ -1540,6 +1559,8 @@ pub const PackageManager = struct {
     cpu_count: u32 = 0,
     package_json_updates: []UpdateRequest = &[_]UpdateRequest{},
 
+    http_proxy: ?URL = null,
+
     // progress bar stuff when not stack allocated
     root_progress_node: *std.Progress.Node = undefined,
     root_download_node: std.Progress.Node = undefined,
@@ -1589,6 +1610,19 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn httpProxy(this: *PackageManager) ?URL {
+        // Don't do the hash table lookup every time
+        const proxy = this.http_proxy orelse brk: {
+            this.http_proxy = this.env.getHttpProxy() orelse URL{};
+            break :brk this.http_proxy.?;
+        };
+        if (proxy.href.len == 0) {
+            return null;
+        }
+
+        return proxy;
+    }
 
     pub const WakeHandler = struct {
         // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,

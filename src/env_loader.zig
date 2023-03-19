@@ -451,7 +451,7 @@ pub const Loader = struct {
             }
         }
 
-        //NO_PROXY filter
+        // NO_PROXY filter
         if (http_proxy != null) {
             if (this.map.get("no_proxy") orelse this.map.get("NO_PROXY")) |no_proxy_text| {
                 if (no_proxy_text.len == 0) return http_proxy;

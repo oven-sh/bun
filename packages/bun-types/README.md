@@ -25,7 +25,7 @@ Add this to your `tsconfig.json` or `jsconfig.json`:
     "lib": ["ESNext"],
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "bundler",
     // "bun-types" is the important part
     "types": ["bun-types"]
   }

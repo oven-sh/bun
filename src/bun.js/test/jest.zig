@@ -3434,7 +3434,7 @@ pub const DescribeScope = struct {
                 .test_id = i,
                 .describe = this,
                 .globalThis = ctx,
-                .source = source,
+                .source_file_path = source.path.text,
                 .value = JSC.Strong.create(this_object, ctx),
             };
             runner.ref.ref(ctx.bunVM());
@@ -3539,7 +3539,7 @@ pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
     globalThis: *JSC.JSGlobalObject,
-    source: logger.Source,
+    source_file_path: string = "",
     value: JSC.Strong = .{},
     needs_before_each: bool = true,
     ref: JSC.Ref = JSC.Ref.init(),
@@ -3608,7 +3608,7 @@ pub const TestRunnerTask = struct {
             const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
 
             if (!beforeEach.isEmpty()) {
-                Jest.runner.?.reportFailure(test_id, this.source.path.text, label, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, this.describe);
                 globalThis.bunVM().runErrorHandler(beforeEach, null);
                 return false;
             }
@@ -3685,9 +3685,9 @@ pub const TestRunnerTask = struct {
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
         switch (result) {
-            .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, test_.label, count, describe),
-            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, test_.label, count, describe),
-            .skip => Jest.runner.?.reportSkip(test_id, this.source.path.text, test_.label, describe),
+            .pass => |count| Jest.runner.?.reportPass(test_id, this.source_file_path, test_.label, count, describe),
+            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, count, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
@@ -3704,7 +3704,16 @@ pub const TestRunnerTask = struct {
 
         this.value.deinit();
         this.ref.unref(vm);
-        default_allocator.destroy(this);
+
+        // there is a double free here involving async before/after callbacks
+        //
+        // Fortunately:
+        //
+        // - TestRunnerTask doesn't use much memory.
+        // - we don't have watch mode yet.
+        //
+        // TODO: fix this bug
+        // default_allocator.destroy(this);
     }
 };
 

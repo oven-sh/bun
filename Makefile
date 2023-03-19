@@ -426,8 +426,8 @@ DEBUG_FLAGS=
 
 
 ifeq ($(OS_NAME), darwin)
-	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs
-	DEBUG_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs
+	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs $(MACOS_MIN_FLAG)
+	DEBUG_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs $(MACOS_MIN_FLAG)
 	SHARED_LIB_EXTENSION = .dylib
 endif
 

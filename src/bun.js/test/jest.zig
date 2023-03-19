@@ -2163,18 +2163,11 @@ pub const Expect = struct {
 
             if (expected_value.isEmpty()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
-                if (result.isError()) {
-                    const name = result.getIfPropertyExistsImpl(globalObject, "name", 4);
-                    const message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
+                if (result.toError()) |err| {
+                    const name = err.get(globalObject, "name") orelse JSValue.undefined;
+                    const message = err.get(globalObject, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{
-                            name.toFmt(globalObject, &formatter),
-                            message.toFmt(globalObject, &formatter),
-                        });
-                        return .zero;
-                    }
-                    globalObject.throw(Output.prettyFmt(fmt, false), .{
+                    globalObject.throwPretty(fmt, .{
                         name.toFmt(globalObject, &formatter),
                         message.toFmt(globalObject, &formatter),
                     });
@@ -2183,41 +2176,25 @@ pub const Expect = struct {
 
                 // non error thrown
                 const fmt = signature_no_args ++ "\n\nThrown value: <red>{any}<r>\n";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{result.toFmt(globalObject, &formatter)});
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{result.toFmt(globalObject, &formatter)});
+                globalObject.throwPretty(fmt, .{result.toFmt(globalObject, &formatter)});
                 return .zero;
             }
 
             if (expected_value.isString()) {
                 const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
 
+                // TODO: remove this allocation
                 // partial match
                 {
-                    var expected_string = ZigString.Empty;
-                    var received_string = ZigString.Empty;
-                    expected_value.toZigString(&expected_string, globalObject);
-                    received_message.toZigString(&received_string, globalObject);
-                    const expected_slice = expected_string.toSlice(default_allocator);
-                    const received_slice = received_string.toSlice(default_allocator);
-                    defer {
-                        expected_slice.deinit();
-                        received_slice.deinit();
-                    }
+                    const expected_slice = expected_value.toSliceOrNull(globalObject) orelse return .zero;
+                    defer expected_slice.deinit();
+                    const received_slice = received_message.toSliceOrNull(globalObject) orelse return .zero;
+                    defer received_slice.deinit();
                     if (!strings.contains(received_slice.slice(), expected_slice.slice())) return thisValue;
                 }
 
                 const fmt = signature ++ "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{
-                        expected_value.toFmt(globalObject, &formatter),
-                        received_message.toFmt(globalObject, &formatter),
-                    });
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{
+                globalObject.throwPretty(fmt, .{
                     expected_value.toFmt(globalObject, &formatter),
                     received_message.toFmt(globalObject, &formatter),
                 });
@@ -2227,20 +2204,14 @@ pub const Expect = struct {
             if (expected_value.isRegExp()) {
                 const received_message = result.getIfPropertyExistsImpl(globalObject, "message", 7);
 
+                // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalObject, "test")) |test_fn| {
                     const matches = test_fn.callWithThis(globalObject, expected_value, &.{received_message});
                     if (!matches.toBooleanSlow(globalObject)) return thisValue;
                 }
 
                 const fmt = signature ++ "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{
-                        expected_value.toFmt(globalObject, &formatter),
-                        received_message.toFmt(globalObject, &formatter),
-                    });
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{
+                globalObject.throwPretty(fmt, .{
                     expected_value.toFmt(globalObject, &formatter),
                     received_message.toFmt(globalObject, &formatter),
                 });
@@ -2253,11 +2224,7 @@ pub const Expect = struct {
                 if (!expected_message.isSameValue(received_message, globalObject)) return thisValue;
 
                 const fmt = signature ++ "\n\nExpected message: not <green>{any}<r>\n";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{expected_message.toFmt(globalObject, &formatter)});
-                    return .zero;
-                }
-                globalObject.throw(Output.prettyFmt(fmt, false), .{expected_message.toFmt(globalObject, &formatter)});
+                globalObject.throwPretty(fmt, .{expected_message.toFmt(globalObject, &formatter)});
                 return .zero;
             }
 
@@ -2279,22 +2246,26 @@ pub const Expect = struct {
         if (did_throw) {
             if (expected_value.isEmpty()) return thisValue;
 
-            const result: JSValue = result_.?;
-            const _received_message = result.get(globalObject, "message");
+            const result: JSValue = if (result_.?.toError()) |r|
+                r
+            else
+                result_.?;
+
+            const _received_message: ?JSValue = if (result.isObject())
+                result.get(globalObject, "message")
+            else if (result.toStringOrNull(globalObject)) |js_str|
+                JSC.JSValue.fromCell(js_str)
+            else
+                null;
 
             if (expected_value.isString()) {
                 if (_received_message) |received_message| {
+                    // TODO: remove this allocation
                     // partial match
-                    var expected_string = ZigString.Empty;
-                    var received_string = ZigString.Empty;
-                    expected_value.toZigString(&expected_string, globalObject);
-                    received_message.toZigString(&received_string, globalObject);
-                    const expected_slice = expected_string.toSlice(default_allocator);
-                    const received_slice = received_string.toSlice(default_allocator);
-                    defer {
-                        expected_slice.deinit();
-                        received_slice.deinit();
-                    }
+                    const expected_slice = expected_value.toSliceOrNull(globalObject) orelse return .zero;
+                    defer expected_slice.deinit();
+                    const received_slice = received_message.toSlice(globalObject, globalObject.allocator());
+                    defer received_slice.deinit();
                     if (strings.contains(received_slice.slice(), expected_slice.slice())) return thisValue;
                 }
 
@@ -2305,29 +2276,21 @@ pub const Expect = struct {
                     const expected_value_fmt = expected_value.toFmt(globalObject, &formatter);
                     const received_message_fmt = received_message.toFmt(globalObject, &formatter);
                     const fmt = signature ++ "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived message: <red>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_value_fmt, received_message_fmt });
-                        return .zero;
-                    }
-
-                    globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_value_fmt, received_message_fmt });
+                    globalObject.throwPretty(fmt, .{ expected_value_fmt, received_message_fmt });
                     return .zero;
                 }
 
                 const expected_fmt = expected_value.toFmt(globalObject, &formatter);
                 const received_fmt = result.toFmt(globalObject, &formatter);
                 const fmt = signature ++ "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
-                    return .zero;
-                }
+                globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
 
-                globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt });
                 return .zero;
             }
 
             if (expected_value.isRegExp()) {
                 if (_received_message) |received_message| {
+                    // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalObject, "test")) |test_fn| {
                         const matches = test_fn.callWithThis(globalObject, expected_value, &.{received_message});
                         if (matches.toBooleanSlow(globalObject)) return thisValue;
@@ -2341,26 +2304,20 @@ pub const Expect = struct {
                     const expected_value_fmt = expected_value.toFmt(globalObject, &formatter);
                     const received_message_fmt = received_message.toFmt(globalObject, &formatter);
                     const fmt = signature ++ "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_value_fmt, received_message_fmt });
-                        return .zero;
-                    }
+                    globalObject.throwPretty(fmt, .{ expected_value_fmt, received_message_fmt });
 
-                    globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_value_fmt, received_message_fmt });
                     return .zero;
                 }
 
                 const expected_fmt = expected_value.toFmt(globalObject, &formatter);
                 const received_fmt = result.toFmt(globalObject, &formatter);
                 const fmt = signature ++ "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
-                    return .zero;
-                }
-
-                globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt });
+                globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
                 return .zero;
             }
+
+            // If it's not an object, we are going to crash here.
+            std.debug.assert(expected_value.isObject());
 
             if (expected_value.get(globalObject, "message")) |expected_message| {
                 if (_received_message) |received_message| {
@@ -2374,24 +2331,14 @@ pub const Expect = struct {
                     const expected_fmt = expected_message.toFmt(globalObject, &formatter);
                     const received_fmt = received_message.toFmt(globalObject, &formatter);
                     const fmt = signature ++ "\n\nExpected message: <green>{any}<r>\nReceived message: <red>{any}<r>\n";
-                    if (Output.enable_ansi_colors) {
-                        globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
-                        return .zero;
-                    }
-
-                    globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt });
+                    globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
                     return .zero;
                 }
 
                 const expected_fmt = expected_message.toFmt(globalObject, &formatter);
                 const received_fmt = result.toFmt(globalObject, &formatter);
                 const fmt = signature ++ "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n";
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(fmt, true), .{ expected_fmt, received_fmt });
-                    return .zero;
-                }
-
-                globalObject.throw(Output.prettyFmt(fmt, false), .{ expected_fmt, received_fmt });
+                globalObject.throwPretty(fmt, .{ expected_fmt, received_fmt });
                 return .zero;
             }
 
@@ -2408,16 +2355,8 @@ pub const Expect = struct {
             if (_received_message) |received_message| {
                 const message_fmt = fmt ++ "Received message: <red>{any}<r>\n";
                 const received_message_fmt = received_message.toFmt(globalObject, &formatter);
-                if (Output.enable_ansi_colors) {
-                    globalObject.throw(Output.prettyFmt(message_fmt, true), .{
-                        expected_class,
-                        received_class,
-                        received_message_fmt,
-                    });
-                    return .zero;
-                }
 
-                globalObject.throw(Output.prettyFmt(message_fmt, false), .{
+                globalObject.throwPretty(message_fmt, .{
                     expected_class,
                     received_class,
                     received_message_fmt,
@@ -2427,16 +2366,8 @@ pub const Expect = struct {
 
             const received_fmt = result.toFmt(globalObject, &formatter);
             const value_fmt = fmt ++ "Received value: <red>{any}<r>\n";
-            if (Output.enable_ansi_colors) {
-                globalObject.throw(Output.prettyFmt(value_fmt, true), .{
-                    expected_class,
-                    received_class,
-                    received_fmt,
-                });
-                return .zero;
-            }
 
-            globalObject.throw(Output.prettyFmt(value_fmt, false), .{
+            globalObject.throwPretty(value_fmt, .{
                 expected_class,
                 received_class,
                 received_fmt,
@@ -2824,7 +2755,7 @@ pub const Expect = struct {
             }
             unreachable;
         };
-        
+
         if (not) pass = !pass;
         if (pass) return thisValue;
 
@@ -3503,7 +3434,7 @@ pub const DescribeScope = struct {
                 .test_id = i,
                 .describe = this,
                 .globalThis = ctx,
-                .source = source,
+                .source_file_path = source.path.text,
                 .value = JSC.Strong.create(this_object, ctx),
             };
             runner.ref.ref(ctx.bunVM());
@@ -3608,7 +3539,7 @@ pub const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
     globalThis: *JSC.JSGlobalObject,
-    source: logger.Source,
+    source_file_path: string = "",
     value: JSC.Strong = .{},
     needs_before_each: bool = true,
     ref: JSC.Ref = JSC.Ref.init(),
@@ -3677,7 +3608,7 @@ pub const TestRunnerTask = struct {
             const beforeEach = this.describe.runCallback(globalThis, .beforeEach);
 
             if (!beforeEach.isEmpty()) {
-                Jest.runner.?.reportFailure(test_id, this.source.path.text, label, 0, this.describe);
+                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, this.describe);
                 globalThis.bunVM().runErrorHandler(beforeEach, null);
                 return false;
             }
@@ -3754,9 +3685,9 @@ pub const TestRunnerTask = struct {
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
         switch (result) {
-            .pass => |count| Jest.runner.?.reportPass(test_id, this.source.path.text, test_.label, count, describe),
-            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source.path.text, test_.label, count, describe),
-            .skip => Jest.runner.?.reportSkip(test_id, this.source.path.text, test_.label, describe),
+            .pass => |count| Jest.runner.?.reportPass(test_id, this.source_file_path, test_.label, count, describe),
+            .fail => |count| Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, count, describe),
+            .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .pending => @panic("Unexpected pending test"),
         }
         describe.onTestComplete(globalThis, test_id, result == .skip);
@@ -3773,7 +3704,16 @@ pub const TestRunnerTask = struct {
 
         this.value.deinit();
         this.ref.unref(vm);
-        default_allocator.destroy(this);
+
+        // there is a double free here involving async before/after callbacks
+        //
+        // Fortunately:
+        //
+        // - TestRunnerTask doesn't use much memory.
+        // - we don't have watch mode yet.
+        //
+        // TODO: fix this bug
+        // default_allocator.destroy(this);
     }
 };
 

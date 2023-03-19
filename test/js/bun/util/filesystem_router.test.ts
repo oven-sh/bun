@@ -234,7 +234,7 @@ it("should support Request", async () => {
   });
 
   for (let current of [
-    new Request({ url: "/posts/hello-world" }),
+    new Request({ url: "https://example.com123/posts/hello-world" }),
     new Request({ url: "http://example.com/posts/hello-world" }),
   ]) {
     const {
@@ -261,7 +261,7 @@ it("assetPrefix, src, and origin", async () => {
 
   for (let current of [
     // Reuqest
-    new Request({ url: "/posts/hello-world" }),
+    new Request({ url: "http://helloooo.com/posts/hello-world" }),
     new Request({ url: "https://nextjs.org/posts/hello-world" }),
   ]) {
     const { name, src, filePath, checkThisDoesntCrash } = router.match(current);

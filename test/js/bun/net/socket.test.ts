@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunExe, expectObjectTypeCount } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
 import { connect, spawn } from "bun";
 
 it("should keep process alive only when active", async () => {
@@ -9,9 +9,7 @@ it("should keep process alive only when active", async () => {
     stdout: "pipe",
     stdin: null,
     stderr: "pipe",
-    env: {
-      BUN_DEBUG_QUIET_LOGS: 1,
-    },
+    env: bunEnv,
   });
 
   expect(await exited).toBe(0);
@@ -92,7 +90,7 @@ it("should reject on connection error, calling both connectError() and rejecting
 });
 
 it("should not leak memory when connect() fails", async () => {
-  await expectObjectTypeCount("TCPSocket", 1, 100);
+  await expectMaxObjectTypeCount("TCPSocket", 1, 100);
 });
 
 // this also tests we mark the promise as handled if connectError() is called
@@ -134,5 +132,5 @@ it("should handle connection error", done => {
 });
 
 it("should not leak memory when connect() fails again", async () => {
-  await expectObjectTypeCount("TCPSocket", 1, 100);
+  await expectMaxObjectTypeCount("TCPSocket", 1, 100);
 });

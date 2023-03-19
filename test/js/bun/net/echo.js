@@ -36,7 +36,7 @@ function createOptions(type, message, closeOnDone) {
 
   return {
     hostname: "localhost",
-    port: 12345,
+    port: 0,
     socket: {
       close() {
         report();
@@ -73,4 +73,8 @@ const server = Bun.listen(
     socket.end();
   }),
 );
-Bun.connect(createOptions("[Client]", "request"));
+
+await Bun.connect({
+  ...createOptions("[Client]", "request"),
+  port: server.port,
+});

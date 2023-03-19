@@ -143,7 +143,7 @@ async function runInServer(opts: ServeOptions, cb: (url: string) => void | Promi
   var server;
   const handler = {
     ...opts,
-    port: port++,
+    port: 0,
     fetch(req) {
       try {
         return opts.fetch(req);
@@ -197,256 +197,276 @@ function gc() {
 }
 
 describe("reader", function () {
-  try {
-    // - 1 byte
-    // - less than the InlineBlob limit
-    // - multiple chunks
-    // - backpressure
-    for (let inputLength of [1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
-      var bytes = new Uint8Array(inputLength);
-      {
-        const chunk = Math.min(bytes.length, 256);
-        for (var i = 0; i < chunk; i++) {
-          bytes[i] = 255 - i;
+  for (let withDelay of [false, true]) {
+    try {
+      // - 1 byte
+      // - less than the InlineBlob limit
+      // - multiple chunks
+      // - backpressure
+
+      for (let inputLength of [1, 2, 12, 95, 1024, 1024 * 1024, 1024 * 1024 * 2]) {
+        var bytes = new Uint8Array(inputLength);
+        {
+          const chunk = Math.min(bytes.length, 256);
+          for (var i = 0; i < chunk; i++) {
+            bytes[i] = 255 - i;
+          }
         }
-      }
 
-      if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
+        if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
 
-      for (const huge_ of [
-        bytes,
-        bytes.buffer,
-        new DataView(bytes.buffer),
-        new Int8Array(bytes),
-        new Blob([bytes]),
+        for (const huge_ of [
+          bytes,
+          bytes.buffer,
+          new DataView(bytes.buffer),
+          new Int8Array(bytes),
+          new Blob([bytes]),
 
-        new Uint16Array(bytes),
-        new Uint32Array(bytes),
-        new Float64Array(bytes),
+          new Uint16Array(bytes),
+          new Uint32Array(bytes),
+          new Float64Array(bytes),
 
-        new Int16Array(bytes),
-        new Int32Array(bytes),
-        new Float32Array(bytes),
+          new Int16Array(bytes),
+          new Int32Array(bytes),
+          new Float32Array(bytes),
 
-        // make sure we handle subarray() as expected when reading
-        // typed arrays from native code
-        new Int16Array(bytes).subarray(1),
-        new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
-        new Int32Array(bytes).subarray(1),
-        new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
-        new Float32Array(bytes).subarray(1),
-        new Float32Array(bytes).subarray(0, new Float32Array(bytes).byteLength - 1),
-        new Int16Array(bytes).subarray(0, 1),
-        new Int32Array(bytes).subarray(0, 1),
-        new Float32Array(bytes).subarray(0, 1),
-      ]) {
-        gc();
-        const thisArray = huge_;
-        if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;
-
-        it(`works with ${thisArray.constructor.name}(${
-          thisArray.byteLength ?? thisArray.size
-        }:${inputLength}) via req.body.getReader() in chunks`, async () => {
-          var huge = thisArray;
-          var called = false;
+          // make sure we handle subarray() as expected when reading
+          // typed arrays from native code
+          new Int16Array(bytes).subarray(1),
+          new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
+          new Int32Array(bytes).subarray(1),
+          new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
+          new Float32Array(bytes).subarray(1),
+          new Float32Array(bytes).subarray(0, new Float32Array(bytes).byteLength - 1),
+          new Int16Array(bytes).subarray(0, 1),
+          new Int32Array(bytes).subarray(0, 1),
+          new Float32Array(bytes).subarray(0, 1),
+        ]) {
           gc();
+          const thisArray = huge_;
+          if (Number(thisArray.byteLength ?? thisArray.size) === 0) continue;
 
-          const expectedHash =
-            huge instanceof Blob
-              ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
-              : Bun.SHA1.hash(huge, "base64");
-          const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
-
-          const out = await runInServer(
-            {
-              async fetch(req) {
-                try {
-                  expect(req.headers.get("x-custom")).toBe("hello");
-                  expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
-
-                  gc();
-                  expect(req.headers.get("x-custom")).toBe("hello");
-                  expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
-
-                  var reader = req.body.getReader();
-                  called = true;
-                  var buffers = [];
-                  while (true) {
-                    var { done, value } = await reader.read();
-                    if (done) break;
-                    buffers.push(value);
-                  }
-                  const out = new Blob(buffers);
-                  gc();
-                  expect(out.size).toBe(expectedSize);
-                  expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(expectedHash);
-                  expect(req.headers.get("x-custom")).toBe("hello");
-                  expect(req.headers.get("content-type")).toBe("text/plain");
-                  expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
-                  gc();
-                  return new Response(out, {
-                    headers: req.headers,
-                  });
-                } catch (e) {
-                  console.error(e);
-                  throw e;
-                }
-              },
-            },
-            async url => {
+          it(
+            `works with ${thisArray.constructor.name}(${
+              thisArray.byteLength ?? thisArray.size
+            }:${inputLength}) via req.body.getReader() in chunks` + (withDelay ? " with delay" : ""),
+            async () => {
+              var huge = thisArray;
+              var called = false;
               gc();
-              const response = await fetch(url, {
-                body: huge,
-                method: "POST",
-                headers: {
-                  "content-type": "text/plain",
-                  "x-custom": "hello",
-                  "x-typed-array": thisArray.constructor.name,
+
+              const expectedHash =
+                huge instanceof Blob
+                  ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
+                  : Bun.SHA1.hash(huge, "base64");
+              const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
+
+              const out = await runInServer(
+                {
+                  async fetch(req) {
+                    try {
+                      if (withDelay) await 1;
+
+                      expect(req.headers.get("x-custom")).toBe("hello");
+                      expect(req.headers.get("content-type")).toBe("text/plain");
+                      expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                      gc();
+                      expect(req.headers.get("x-custom")).toBe("hello");
+                      expect(req.headers.get("content-type")).toBe("text/plain");
+                      expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+
+                      var reader = req.body.getReader();
+                      called = true;
+                      var buffers = [];
+                      while (true) {
+                        var { done, value } = await reader.read();
+                        if (done) break;
+                        buffers.push(value);
+                      }
+                      const out = new Blob(buffers);
+                      gc();
+                      expect(out.size).toBe(expectedSize);
+                      expect(Bun.SHA1.hash(await out.arrayBuffer(), "base64")).toBe(expectedHash);
+                      expect(req.headers.get("x-custom")).toBe("hello");
+                      expect(req.headers.get("content-type")).toBe("text/plain");
+                      expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+                      gc();
+                      return new Response(out, {
+                        headers: req.headers,
+                      });
+                    } catch (e) {
+                      console.error(e);
+                      throw e;
+                    }
+                  },
                 },
-              });
-              huge = undefined;
-              expect(response.status).toBe(200);
-              const response_body = new Uint8Array(await response.arrayBuffer());
+                async url => {
+                  gc();
+                  if (withDelay) await 1;
+                  const pendingResponse = await fetch(url, {
+                    body: huge,
+                    method: "POST",
+                    headers: {
+                      "content-type": "text/plain",
+                      "x-custom": "hello",
+                      "x-typed-array": thisArray.constructor.name,
+                    },
+                  });
+                  if (withDelay) {
+                    await 1;
+                  }
+                  const response = await pendingResponse;
+                  huge = undefined;
+                  expect(response.status).toBe(200);
+                  const response_body = new Uint8Array(await response.arrayBuffer());
 
-              expect(response_body.byteLength).toBe(expectedSize);
-              expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
+                  expect(response_body.byteLength).toBe(expectedSize);
+                  expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
 
+                  gc();
+                  expect(response.headers.get("content-type")).toBe("text/plain");
+                  gc();
+                },
+              );
+              expect(called).toBe(true);
               gc();
-              expect(response.headers.get("content-type")).toBe("text/plain");
-              gc();
+              return out;
             },
           );
-          expect(called).toBe(true);
-          gc();
-          return out;
-        });
 
-        for (let isDirectStream of [true, false]) {
-          const positions = ["begin", "end"];
-          const inner = thisArray => {
-            for (let position of positions) {
-              it(`streaming back ${thisArray.constructor.name}(${
-                thisArray.byteLength ?? thisArray.size
-              }:${inputLength}) starting request.body.getReader() at ${position}`, async () => {
-                var huge = thisArray;
-                var called = false;
-                gc();
+          for (let isDirectStream of [true, false]) {
+            const positions = ["begin", "end"];
+            const inner = thisArray => {
+              for (let position of positions) {
+                it(`streaming back ${thisArray.constructor.name}(${
+                  thisArray.byteLength ?? thisArray.size
+                }:${inputLength}) starting request.body.getReader() at ${position}`, async () => {
+                  var huge = thisArray;
+                  var called = false;
+                  gc();
 
-                const expectedHash =
-                  huge instanceof Blob
-                    ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
-                    : Bun.SHA1.hash(huge, "base64");
-                const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
+                  const expectedHash =
+                    huge instanceof Blob
+                      ? Bun.SHA1.hash(new Uint8Array(await huge.arrayBuffer()), "base64")
+                      : Bun.SHA1.hash(huge, "base64");
+                  const expectedSize = huge instanceof Blob ? huge.size : huge.byteLength;
 
-                const out = await runInServer(
-                  {
-                    async fetch(req) {
-                      try {
-                        var reader;
+                  const out = await runInServer(
+                    {
+                      async fetch(req) {
+                        try {
+                          var reader;
 
-                        if (position === "begin") {
-                          reader = req.body.getReader();
-                        }
+                          if (withDelay) await 1;
 
-                        if (position === "end") {
-                          await 1;
-                          reader = req.body.getReader();
-                        }
+                          if (position === "begin") {
+                            reader = req.body.getReader();
+                          }
 
-                        expect(req.headers.get("x-custom")).toBe("hello");
-                        expect(req.headers.get("content-type")).toBe("text/plain");
-                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+                          if (position === "end") {
+                            await 1;
+                            reader = req.body.getReader();
+                          }
 
-                        gc();
-                        expect(req.headers.get("x-custom")).toBe("hello");
-                        expect(req.headers.get("content-type")).toBe("text/plain");
-                        expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
+                          expect(req.headers.get("x-custom")).toBe("hello");
+                          expect(req.headers.get("content-type")).toBe("text/plain");
+                          expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
-                        const direct = {
-                          type: "direct",
-                          async pull(controller) {
-                            while (true) {
-                              const { done, value } = await reader.read();
-                              if (done) {
-                                called = true;
-                                controller.end();
+                          gc();
+                          expect(req.headers.get("x-custom")).toBe("hello");
+                          expect(req.headers.get("content-type")).toBe("text/plain");
+                          expect(req.headers.get("user-agent")).toBe(navigator.userAgent);
 
-                                return;
+                          const direct = {
+                            type: "direct",
+                            async pull(controller) {
+                              if (withDelay) await 1;
+
+                              while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) {
+                                  called = true;
+                                  controller.end();
+
+                                  return;
+                                }
+                                controller.write(value);
                               }
-                              controller.write(value);
-                            }
-                          },
-                        };
+                            },
+                          };
 
-                        const web = {
-                          async pull(controller) {
-                            while (true) {
-                              const { done, value } = await reader.read();
-                              if (done) {
-                                called = true;
-                                controller.close();
-                                return;
+                          const web = {
+                            async start() {
+                              if (withDelay) await 1;
+                            },
+                            async pull(controller) {
+                              while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) {
+                                  called = true;
+                                  controller.close();
+                                  return;
+                                }
+                                controller.enqueue(value);
                               }
-                              controller.enqueue(value);
-                            }
-                          },
-                        };
+                            },
+                          };
 
-                        return new Response(new ReadableStream(isDirectStream ? direct : web), {
-                          headers: req.headers,
-                        });
-                      } catch (e) {
-                        console.error(e);
-                        throw e;
-                      }
-                    },
-                  },
-                  async url => {
-                    gc();
-                    const response = await fetch(url, {
-                      body: huge,
-                      method: "POST",
-                      headers: {
-                        "content-type": "text/plain",
-                        "x-custom": "hello",
-                        "x-typed-array": thisArray.constructor.name,
+                          return new Response(new ReadableStream(isDirectStream ? direct : web), {
+                            headers: req.headers,
+                          });
+                        } catch (e) {
+                          console.error(e);
+                          throw e;
+                        }
                       },
-                    });
-                    huge = undefined;
-                    expect(response.status).toBe(200);
-                    const response_body = new Uint8Array(await response.arrayBuffer());
+                    },
+                    async url => {
+                      gc();
+                      const response = await fetch(url, {
+                        body: huge,
+                        method: "POST",
+                        headers: {
+                          "content-type": "text/plain",
+                          "x-custom": "hello",
+                          "x-typed-array": thisArray.constructor.name,
+                        },
+                      });
+                      huge = undefined;
+                      expect(response.status).toBe(200);
+                      const response_body = new Uint8Array(await response.arrayBuffer());
 
-                    expect(response_body.byteLength).toBe(expectedSize);
-                    expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
+                      expect(response_body.byteLength).toBe(expectedSize);
+                      expect(Bun.SHA1.hash(response_body, "base64")).toBe(expectedHash);
 
-                    gc();
-                    if (!response.headers.has("content-type")) {
-                      console.error(Object.fromEntries(response.headers.entries()));
-                    }
+                      gc();
+                      if (!response.headers.has("content-type")) {
+                        console.error(Object.fromEntries(response.headers.entries()));
+                      }
 
-                    expect(response.headers.get("content-type")).toBe("text/plain");
-                    gc();
-                  },
-                );
-                expect(called).toBe(true);
-                gc();
-                return out;
-              });
+                      expect(response.headers.get("content-type")).toBe("text/plain");
+                      gc();
+                    },
+                  );
+                  expect(called).toBe(true);
+                  gc();
+                  return out;
+                });
+              }
+            };
+
+            if (isDirectStream) {
+              describe(" direct stream", () => inner(thisArray));
+            } else {
+              describe("default stream", () => inner(thisArray));
             }
-          };
-
-          if (isDirectStream) {
-            describe(" direct stream", () => inner(thisArray));
-          } else {
-            describe("default stream", () => inner(thisArray));
           }
         }
       }
+    } catch (e) {
+      console.error(e);
+      throw e;
     }
-  } catch (e) {
-    console.error(e);
-    throw e;
   }
 });

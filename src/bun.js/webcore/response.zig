@@ -490,7 +490,14 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
     ) callconv(.C) ?*Response {
-        const args_list = callframe.arguments(2);
+        const args_list = brk: {
+            var args = callframe.arguments(2);
+            if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
+                args.len = 1;
+            }
+            break :brk args;
+        };
+
         const arguments = args_list.ptr[0..args_list.len];
         const body: Body = @as(?Body, brk: {
             switch (arguments.len) {
@@ -501,10 +508,11 @@ pub const Response = struct {
                     break :brk Body.extract(globalThis, arguments[0]);
                 },
                 else => {
-                    if (arguments[1].isUndefinedOrNull()) break :brk Body.extract(globalThis, arguments[0]);
                     if (arguments[1].isObject()) {
                         break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
                     }
+
+                    std.debug.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
                     const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
                     globalThis.throwValue(err);

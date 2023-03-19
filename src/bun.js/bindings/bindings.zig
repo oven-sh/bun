@@ -1041,6 +1041,12 @@ pub const FetchHeaders = opaque {
         });
     }
 
+    pub fn isEmpty(this: *FetchHeaders) bool {
+        return shim.cppFn("isEmpty", .{
+            this,
+        });
+    }
+
     pub fn createFromUWS(
         global: *JSGlobalObject,
         uws_request: *anyopaque,
@@ -1422,6 +1428,7 @@ pub const FetchHeaders = opaque {
         "remove",
         "toJS",
         "toUWSResponse",
+        "isEmpty",
     };
 };
 
@@ -3604,6 +3611,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return FFI.EncodedJSValue{ .asJSValue = this };
     }
 
+    pub fn fromCell(ptr: *anyopaque) JSValue {
+        return (FFI.EncodedJSValue{ .asPtr = ptr }).asJSValue;
+    }
+
     pub fn isInt32(this: JSValue) bool {
         return FFI.JSVALUE_IS_INT32(.{ .asJSValue = this });
     }
@@ -3773,6 +3784,13 @@ pub const JSValue = enum(JSValueReprInt) {
         return str;
     }
 
+    /// Convert a JSValue to a string, potentially calling `toString` on the
+    /// JSValue in JavaScript.
+    ///
+    /// This function can throw an exception in the `JSC::VM`. **If
+    /// the exception is not handled correctly, Bun will segfault**
+    ///
+    /// To handle exceptions, use `JSValue.toSliceOrNull`.
     pub inline fn toSlice(this: JSValue, global: *JSGlobalObject, allocator: std.mem.Allocator) ZigString.Slice {
         return getZigString(this, global).toSlice(allocator);
     }
@@ -3786,9 +3804,37 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("jsonStringify", .{ this, globalThis, indent, out });
     }
 
-    // On exception, this returns null, to make exception checks faster.
+    /// On exception, this returns null, to make exception checks clearer.
     pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
         return cppFn("toStringOrNull", .{ this, globalThis });
+    }
+
+    /// Call `toString()` on the JSValue and clone the result.
+    /// On exception, this returns null.
+    pub fn toSliceOrNull(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
+        var str = this.toStringOrNull(globalThis) orelse return null;
+        return str.toSlice(globalThis, globalThis.allocator());
+    }
+
+    /// Call `toString()` on the JSValue and clone the result.
+    /// On exception or out of memory, this returns null.
+    ///
+    /// Remember that `Symbol` throws an exception when you call `toString()`.
+    pub fn toSliceClone(this: JSValue, globalThis: *JSGlobalObject) ?ZigString.Slice {
+        return this.toSliceCloneWithAllocator(globalThis, globalThis.allocator());
+    }
+
+    /// On exception or out of memory, this returns null, to make exception checks clearer.
+    pub fn toSliceCloneWithAllocator(
+        this: JSValue,
+        globalThis: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+    ) ?ZigString.Slice {
+        var str = this.toStringOrNull(globalThis) orelse return null;
+        return str.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch {
+            globalThis.throwOutOfMemory();
+            return null;
+        };
     }
 
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
@@ -3807,7 +3853,16 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("eqlCell", .{ this, other });
     }
 
-    pub const BuiltinName = enum(u8) { method, headers, status, url, body, data };
+    pub const BuiltinName = enum(u8) {
+        method,
+        headers,
+        status,
+        url,
+        body,
+        data,
+        toString,
+        redirect,
+    };
 
     // intended to be more lightweight than ZigString
     pub fn fastGet(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
@@ -3819,11 +3874,24 @@ pub const JSValue = enum(JSValueReprInt) {
         return result;
     }
 
+    pub fn fastGetDirect(this: JSValue, global: *JSGlobalObject, builtin_name: BuiltinName) ?JSValue {
+        const result = fastGetDirect_(this, global, @enumToInt(builtin_name));
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
+    }
+
     pub fn fastGet_(this: JSValue, global: *JSGlobalObject, builtin_name: u8) JSValue {
         return cppFn("fastGet_", .{ this, global, builtin_name });
     }
 
-    // intended to be more lightweight than ZigString
+    pub fn fastGetDirect_(this: JSValue, global: *JSGlobalObject, builtin_name: u8) JSValue {
+        return cppFn("fastGetDirect_", .{ this, global, builtin_name });
+    }
+
+    /// Do not use this directly! Use `get` instead.
     pub fn getIfPropertyExistsImpl(this: JSValue, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue {
         return cppFn("getIfPropertyExistsImpl", .{ this, global, ptr, len });
     }
@@ -3863,6 +3931,12 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn get(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @intCast(u32, property.len));
         return if (@enumToInt(value) != 0) value else return null;
+    }
+
+    pub fn implementsToString(this: JSValue, global: *JSGlobalObject) bool {
+        std.debug.assert(this.isCell());
+        const function = this.fastGet(global, BuiltinName.toString) orelse return false;
+        return function.isCell() and function.isCallable(global.vm());
     }
 
     pub fn getTruthy(this: JSValue, global: *JSGlobalObject, property: []const u8) ?JSValue {
@@ -4131,6 +4205,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "eqlCell",
         "eqlValue",
         "fastGet_",
+        "fastGetDirect_",
         "forEach",
         "forEachProperty",
         "forEachPropertyOrdered",

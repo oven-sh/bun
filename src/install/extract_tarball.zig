@@ -110,7 +110,7 @@ pub fn buildURLWithPrinter(
 
     var name = full_name;
     if (name[0] == '@') {
-        if (std.mem.indexOfScalar(u8, name, '/')) |i| {
+        if (strings.indexOfChar(name, '/')) |i| {
             name = name[i + 1 ..];
         }
     }

@@ -304,7 +304,7 @@ it("new Request({body: stream}).body", async () => {
     },
     cancel() {},
   });
-  var response = new Request({ body: stream });
+  var response = new Request({ body: stream, url: "https://example.com" });
   expect(response.body).toBe(stream);
   expect(await response.text()).toBe("helloworld");
 });

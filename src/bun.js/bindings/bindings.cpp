@@ -700,6 +700,11 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
 extern "C" {
 
+bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
+{
+    return arg0->size() == 0;
+}
+
 void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
 {
     if (is_ssl) {
@@ -3566,11 +3571,14 @@ enum class BuiltinNamesMap : uint8_t {
     url,
     body,
     data,
+    toString,
+    redirect,
 };
 
 static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
     switch (static_cast<BuiltinNamesMap>(name)) {
     case BuiltinNamesMap::method: {
         return clientData->builtinNames().methodPublicName();
@@ -3590,7 +3598,24 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     case BuiltinNamesMap::data: {
         return clientData->builtinNames().dataPublicName();
     }
+    case BuiltinNamesMap::toString: {
+        return vm.propertyNames->toString;
     }
+    case BuiltinNamesMap::redirect: {
+        return clientData->builtinNames().redirectPublicName();
+    }
+    }
+}
+
+JSC__JSValue JSC__JSValue__fastGetDirect_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isCell()) {
+        return JSValue::encode({});
+    }
+
+    return JSValue::encode(
+        value.getObject()->getDirect(globalObject->vm(), PropertyName(builtinNameMap(globalObject, arg2))));
 }
 
 JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)

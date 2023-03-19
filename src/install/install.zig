@@ -323,11 +323,21 @@ const NetworkTask = struct {
 
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
-        const env = this.package_manager.env;
 
-        var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = env.getHttpProxy(url);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
+        const url = URL.parse(this.url_buf);
+        this.http = AsyncHTTP.init(
+            allocator,
+            .GET,
+            url,
+            header_builder.entries,
+            header_builder.content.ptr.?[0..header_builder.content.len],
+            &this.response_buffer,
+            "",
+            0,
+            this.getCompletionCallback(),
+            this.package_manager.httpProxy(url),
+            null,
+        );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{
             .package_manifest = .{
@@ -389,12 +399,21 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
-        const env = this.package_manager.env;
+        const url = URL.parse(this.url_buf);
 
-        var url = URL.parse(this.url_buf);
-        var http_proxy: ?URL = env.getHttpProxy(url);
-
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), http_proxy, null);
+        this.http = AsyncHTTP.init(
+            allocator,
+            .GET,
+            url,
+            header_builder.entries,
+            header_buf,
+            &this.response_buffer,
+            "",
+            0,
+            this.getCompletionCallback(),
+            this.package_manager.httpProxy(url),
+            null,
+        );
         this.http.max_retry_count = this.package_manager.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }
@@ -1589,6 +1608,10 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn httpProxy(this: *PackageManager, url: URL) ?URL {
+        return this.env.getHttpProxy(url);
+    }
 
     pub const WakeHandler = struct {
         // handler: fn (ctx: *anyopaque, pm: *PackageManager) void = undefined,
@@ -6561,11 +6584,14 @@ pub const PackageManager = struct {
             const cwd = std.fs.cwd();
 
             while (iterator.nextNodeModulesFolder()) |node_modules| {
-                try cwd.makePath(bun.span(node_modules.relative_path));
                 // We deliberately do not close this folder.
                 // If the package hasn't been downloaded, we will need to install it later
                 // We use this file descriptor to know where to put it.
-                installer.node_modules_folder = try cwd.openIterableDir(node_modules.relative_path, .{});
+                installer.node_modules_folder = cwd.openIterableDir(node_modules.relative_path, .{}) catch brk: {
+                    // Avoid extra mkdir() syscall
+                    try cwd.makePath(bun.span(node_modules.relative_path));
+                    break :brk try cwd.openIterableDir(node_modules.relative_path, .{});
+                };
 
                 var remaining = node_modules.dependencies;
 

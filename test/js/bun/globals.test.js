@@ -5,7 +5,7 @@ it("extendable", () => {
   // None of these should error
   for (let Class of classes) {
     var Foo = class extends Class {};
-    var bar = new Foo();
+    var bar = Class === Request ? new Request({ url: "https://example.com" }) : new Foo();
     expect(bar instanceof Class).toBe(true);
     expect(!!Class.prototype).toBe(true);
     expect(typeof Class.prototype).toBe("object");

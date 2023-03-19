@@ -1,10 +1,51 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunExe, bunEnv } from "harness";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkdtemp, rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+
+it("shouldn't crash when async test runner callback throws", async () => {
+  const code = `
+  beforeEach(async () => {
+    await 1;
+    throw "##123##";
+  });
+ 
+  afterEach(async () => {
+    await 1;
+    console.error("#[Test passed successfully]");
+  });
+
+  it("current", async () => {
+    await 1;
+    throw "##456##";
+  })
+`;
+
+  const test_dir = realpathSync(await mkdtemp(join(tmpdir(), "test")));
+  try {
+    await writeFile(join(test_dir, "bad.test.js"), code);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "test", "bad.test.js"],
+      cwd: test_dir,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const err = await new Response(stderr).text();
+    expect(err).toContain("Test passed successfully");
+    expect(err).toContain("error: ##123##");
+    expect(err).toContain("error: ##456##");
+    expect(stdout).toBeDefined();
+    expect(await new Response(stdout).text()).toBe("");
+    expect(await exited).toBe(1);
+  } finally {
+    await rm(test_dir, { force: true, recursive: true });
+  }
+});
 
 test("toStrictEqual() vs toEqual()", () => {
   expect([1, , 3]).toEqual([1, , 3]);
@@ -176,6 +217,43 @@ test("toThrow", () => {
   expect(() => {
     return true;
   }).not.toThrow(err);
+
+  const weirdThings = [
+    /watttt/g,
+    BigInt(123),
+    -42,
+    NaN,
+    Infinity,
+    -Infinity,
+    undefined,
+    null,
+    true,
+    false,
+    0,
+    1,
+    "",
+    "hello",
+    {},
+    [],
+    new Date(),
+    new Error(),
+    new RegExp("foo"),
+    new Map(),
+    new Set(),
+    Promise.resolve(),
+    Promise.reject(Symbol("123")).finally(() => {}),
+    Symbol("123"),
+  ];
+  for (const weirdThing of weirdThings) {
+    expect(() => {
+      throw weirdThing;
+    }).toThrow();
+  }
+
+  err.message = "null";
+  expect(() => {
+    throw null;
+  }).toThrow(err);
 });
 
 test("deepEquals derived strings and strings", () => {

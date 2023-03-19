@@ -111,14 +111,16 @@ describe("AbortSignal", () => {
       expect(AbortSignal.abort()).toHaveProperty("reason");
       expect(AbortSignal.timeout(0)).toHaveProperty("reason");
     });
-    test("onabort", () => {
+    test("onabort", done => {
       const signal = AbortSignal.timeout(0);
       expect(signal.onabort).toBeNull();
       const onabort = (event: Event) => {
         expect(event instanceof Event).toBe(true);
+        done();
       };
       expect(() => (signal.onabort = onabort)).not.toThrow();
       expect(signal.onabort).toStrictEqual(onabort);
+      setTimeout(() => {}, 1);
     });
   });
 });

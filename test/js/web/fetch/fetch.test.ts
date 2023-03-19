@@ -718,7 +718,8 @@ describe("Blob", () => {
         it(`${Constructor.name} arrayBuffer() with ${TypedArray.name}${withGC ? " with gc" : ""}`, async () => {
           const data = new TypedArray(sample);
           if (withGC) gc();
-          const input = Constructor === Blob ? [data] : Constructor === Request ? { body: data } : data;
+          const input =
+            Constructor === Blob ? [data] : Constructor === Request ? { body: data, url: "http://example.com" } : data;
           if (withGC) gc();
           const blob = new Constructor(input);
           if (withGC) gc();

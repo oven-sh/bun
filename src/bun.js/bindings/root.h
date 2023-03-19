@@ -70,7 +70,7 @@
 #endif
 
 #if defined(__APPLE__)
-#include <mach/vm_param.h>
+#include <mach/vm_types.h> // mach_vm_offset_t
 #endif
 
 #include "wtf/PlatformCallingConventions.h"

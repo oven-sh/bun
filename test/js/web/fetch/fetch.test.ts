@@ -1099,3 +1099,30 @@ it("body nullable", async () => {
     expect(req.body).not.toBeNull();
   }
 });
+
+it("Request({}) throws", async () => {
+  expect(() => new Request({})).toThrow();
+});
+
+it("Request({toString() { throw 'wat'; } }) throws", async () => {
+  expect(
+    () =>
+      new Request({
+        toString() {
+          throw "wat";
+        },
+      }),
+  ).toThrow("wat");
+});
+
+it("should not be able to parse json from empty body", () => {
+  expect(async () => await new Response().json()).toThrow(SyntaxError);
+  expect(async () => await new Request("http://example.com/").json()).toThrow(SyntaxError);
+});
+
+it("#874", () => {
+  expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
+  expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
+  // @ts-expect-error
+  expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
+});

@@ -12,7 +12,7 @@ test("bad workspace path", () => {
     JSON.stringify(
       {
         name: "hey",
-        workspaces: ["i-dont-exist","**/i-have-a-2-stars-and-i-dont-exist",  "*/i-have-a-star-and-i-dont-exist"],
+        workspaces: ["i-dont-exist", "**/i-have-a-2-stars-and-i-dont-exist", "*/i-have-a-star-and-i-dont-exist"],
       },
       null,
       2,
@@ -28,9 +28,9 @@ test("bad workspace path", () => {
   const text = stderr!.toString();
 
   expect(text).toContain('Workspace not found "i-dont-exist"');
-  expect(text).toContain('multiple levels deep glob star');
-  expect(text).toContain('glob star * in the middle of a path');
-  console.log(text)
+  expect(text).toContain("multiple levels deep glob star");
+  expect(text).toContain("glob star * in the middle of a path");
+  console.log(text);
   expect(exitCode).toBe(1);
   rmSync(cwd, { recursive: true, force: true });
 });

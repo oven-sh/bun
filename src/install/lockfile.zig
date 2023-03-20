@@ -2420,6 +2420,7 @@ pub const Package = extern struct {
         dir: std.fs.Dir,
         path: []const u8,
         path_buf: *[bun.MAX_PATH_BYTES]u8,
+        name_to_copy: *[1024]u8,
         log: *logger.Log,
     ) !WorkspaceIterator.Entry {
         const path_to_use = if (path.len == 0) "package.json" else brk: {
@@ -2439,9 +2440,9 @@ pub const Package = extern struct {
         if (!workspace_json.has_found_name) {
             return error.MissingPackageName;
         }
-
+        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
         return WorkspaceIterator.Entry{
-            .name = workspace_json.found_name,
+            .name = name_to_copy[0..workspace_json.found_name.len],
             .path = path_to_use,
         };
     }
@@ -2460,6 +2461,8 @@ pub const Package = extern struct {
 
         var fallback = std.heap.stackFallback(1024, allocator);
         var workspace_allocator = fallback.get();
+        var workspace_name_buf = allocator.create([1024]u8) catch unreachable;
+        defer allocator.destroy(workspace_name_buf);
 
         const orig_msgs_len = log.msgs.items.len;
 
@@ -2506,7 +2509,15 @@ pub const Package = extern struct {
                 continue;
             }
 
-            const workspace_entry = processWorkspaceName(allocator, workspace_allocator, std.fs.cwd(), input_path, filepath_buf, log) catch |err| {
+            const workspace_entry = processWorkspaceName(
+                allocator,
+                workspace_allocator,
+                std.fs.cwd(),
+                input_path,
+                filepath_buf,
+                workspace_name_buf,
+                log,
+            ) catch |err| {
                 switch (err) {
                     error.FileNotFound => {
                         log.addErrorFmt(
@@ -2553,9 +2564,21 @@ pub const Package = extern struct {
         }
 
         if (asterisked_workspace_paths.items.len > 0) {
+            // max path bytes is not enough in real codebases
+            var second_buf = allocator.create([4096]u8) catch unreachable;
+            var second_buf_fixed = std.heap.FixedBufferAllocator.init(second_buf);
+            defer allocator.destroy(second_buf);
+
             for (asterisked_workspace_paths.items) |user_path| {
-                var dir_prefix = user_path;
+                var dir_prefix = strings.withoutLeadingSlash(user_path);
                 dir_prefix = user_path[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
+
+                if (dir_prefix.len == 0 or
+                    strings.eqlComptime(dir_prefix, ".") or
+                    strings.eqlComptime(dir_prefix, "./"))
+                {
+                    dir_prefix = ".";
+                }
 
                 const entries_option = FileSystem.instance.fs.readDirectory(
                     dir_prefix,
@@ -2623,6 +2646,7 @@ pub const Package = extern struct {
                         },
                         "",
                         filepath_buf,
+                        workspace_name_buf,
                         log,
                     ) catch |err| {
                         switch (err) {
@@ -2653,10 +2677,13 @@ pub const Package = extern struct {
                     if (workspace_entry.name.len == 0) continue;
 
                     string_builder.count(workspace_entry.name);
-                    const relative = FileSystem.instance.relative(
+                    second_buf_fixed.reset();
+                    const relative = std.fs.path.relative(
+                        second_buf_fixed.allocator(),
                         Fs.FileSystem.instance.top_level_dir,
                         bun.span(entry_path),
-                    );
+                    ) catch unreachable;
+
                     string_builder.count(relative);
                     string_builder.cap += bun.MAX_PATH_BYTES;
 

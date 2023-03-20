@@ -2357,6 +2357,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn send(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
+
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
             if (this.requested_end and !this.res.state().isHttpWriteCalled()) {

@@ -199,6 +199,7 @@ pub const Arguments = struct {
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
     };
 
     const build_params_public = public_params ++ build_only_params;
@@ -358,6 +359,14 @@ pub const Arguments = struct {
 
         if (cmd == .TestCommand) {
             ctx.test_options.update_snapshots = args.flag("--update-snapshots");
+            if (args.option("--rerun-each")) |repeat_count| {
+                if (repeat_count.len > 0) {
+                    ctx.test_options.repeat_count = std.fmt.parseInt(u32, repeat_count, 10) catch |e| {
+                        Output.prettyErrorln("--rerun-each expects a number: {s}", .{@errorName(e)});
+                        Global.exit(1);
+                    };
+                }
+            }
         }
 
         ctx.args.absolute_working_dir = cwd;
@@ -862,6 +871,7 @@ pub const Command = struct {
 
     pub const TestOptions = struct {
         update_snapshots: bool = false,
+        repeat_count: u32 = 0,
     };
 
     pub const Context = struct {

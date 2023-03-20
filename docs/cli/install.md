@@ -424,6 +424,7 @@ $ bun pm bin
 To print a list of packages installed in the current project and their resolved versions, excluding their dependencies. Use the `--all` flag to print the entire tree, including all nth-order dependencies.
 
 ```bash
+$ bun pm ls
 /path/to/project node_modules (5)
 ├── eslint@8.33.0
 ├── react@18.2.0

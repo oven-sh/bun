@@ -42,6 +42,8 @@ pub const lstat = lstat64;
 pub const fstat = fstat64;
 pub const stat = stat64;
 
+pub extern "c" fn strchr(str: [*]const u8, char: u8) ?[*]const u8;
+
 pub fn lstat_absolute(path: [:0]const u8) !Stat {
     if (builtin.os.tag == .windows) {
         @compileError("Not implemented yet");

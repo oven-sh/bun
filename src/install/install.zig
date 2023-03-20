@@ -1058,9 +1058,8 @@ const PackageInstall = struct {
     fn installWithClonefile(this: *PackageInstall) CloneFileError!Result {
         if (comptime !Environment.isMac) @compileError("clonefileat() is macOS only.");
 
-        if (this.package_name[0] == '@') {
-            const current = bun.span(this.destination_dir_subpath);
-            if (strings.indexOfChar(current, std.fs.path.sep)) |slash| {
+        if (this.destination_dir_subpath[0] == '@') {
+            if (strings.indexOfCharZ(this.destination_dir_subpath, std.fs.path.sep)) |slash| {
                 this.destination_dir_subpath_buf[slash] = 0;
                 var subdir = this.destination_dir_subpath_buf[0..slash :0];
                 this.destination_dir.dir.makeDirZ(subdir) catch {};

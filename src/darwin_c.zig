@@ -748,6 +748,7 @@ pub const RemoveFileFlags = struct {
     pub const allow_long_paths: u32 = (1 << 8);
 };
 pub const removefile_state_t = opaque {};
+pub extern fn removefile(path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
 pub extern fn removefileat(fd: c_int, path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
 
 // As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers

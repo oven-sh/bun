@@ -3469,7 +3469,7 @@ pub const DescribeScope = struct {
         }
 
         this.pending_tests.deinit(getAllocator(globalThis));
-        this.tests.deinit(getAllocator(globalThis));
+        this.tests.clearAndFree(getAllocator(globalThis));
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);

@@ -35,7 +35,7 @@ afterAll(() => {
   }
 });
 
-[100, 101, 418, 999].forEach(statusCode => {
+[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -45,14 +45,14 @@ afterAll(() => {
       },
       async server => {
         const response = await fetch(`http://${server.hostname}:${server.port}`);
-        expect(response.status).toBe(statusCode);
+        expect(response.status).toBe(Number(statusCode));
         expect(await response.text()).toBe("Foo Bar");
       },
     );
   });
 });
 
-[-200, 42, 12345, Math.PI].forEach(statusCode => {
+[-200, 42, 100, 102, 12345, Math.PI, 999, 600, 199, 199n, 600n, 100n, 102n].forEach(statusCode => {
   it(`should ignore invalid HTTP status code (${statusCode})`, async () => {
     await runTest(
       {

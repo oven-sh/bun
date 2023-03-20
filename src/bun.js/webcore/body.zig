@@ -179,17 +179,17 @@ pub const Body = struct {
                         .less_than => true,
                         else => false,
                     };
-                    const greater_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(99))) {
+                    const greater_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(199))) {
                         .greater_than => true,
                         else => false,
                     };
 
-                    if (less_than and greater_than) {
+                    if ((less_than and greater_than) or status_value.asBigIntCompare(ctx, JSValue.jsNumber(101)) == .equal) {
                         result.status_code = @truncate(u16, @intCast(u64, status_value.toInt64()));
                     }
                 } else if (status_value.isNumber()) {
                     const number = status_value.to(i32);
-                    if (100 <= number and number < 999)
+                    if ((200 <= number and number < 600) or number == 101)
                         result.status_code = @truncate(u16, @intCast(u32, number));
                 }
             }

@@ -159,5 +159,5 @@ test("EventEmitter GCs", async () => {
     myEmitter.emit("foo");
   })();
 
-  await expectMaxObjectTypeCount("EventEmitter", startCount);
+  await expectMaxObjectTypeCount(expect, "EventEmitter", startCount);
 });

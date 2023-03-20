@@ -1,6 +1,5 @@
 import { gc as bunGC, unsafe } from "bun";
 import { heapStats } from "bun:jsc";
-import { expect } from "bun:test";
 
 export const bunEnv: any = {
   ...process.env,
@@ -30,7 +29,12 @@ export function gc(force = true) {
  * @param maxWait
  * @returns
  */
-export async function expectMaxObjectTypeCount(type: string, count: number, maxWait = 1000) {
+export async function expectMaxObjectTypeCount(
+  expect: typeof import("bun:test").expect,
+  type: string,
+  count: number,
+  maxWait = 1000,
+) {
   gc();
   if (heapStats().objectTypeCounts[type] <= count) return;
   gc(true);

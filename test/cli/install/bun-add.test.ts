@@ -366,7 +366,7 @@ it("should add dependency alongside workspaces", async () => {
     JSON.stringify({
       name: "foo",
       version: "0.0.1",
-      workspaces: ["packages/bar"],
+      workspaces: ["packages/*"],
     }),
   );
   await mkdir(join(package_dir, "packages", "bar"), { recursive: true });
@@ -417,7 +417,7 @@ it("should add dependency alongside workspaces", async () => {
   expect(await file(join(package_dir, "package.json")).json()).toEqual({
     name: "foo",
     version: "0.0.1",
-    workspaces: ["packages/bar"],
+    workspaces: ["packages/*"],
     dependencies: {
       baz: "^0.0.3",
     },

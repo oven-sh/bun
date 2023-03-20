@@ -310,12 +310,12 @@ To try it, specify a list of sub-packages in the `workspaces` field of your `pac
 {
   "name": "my-project",
   "version": "1.0.0",
-  "workspaces": ["packages/a", "packages/b"]
+  "workspaces": ["packages/*"]
 }
 ```
 
 {% callout %}
-**Glob support** — Bun doesn't support globs for workspace names yet, but this is coming soon!
+**Glob support** — Bun v0.5.8 added support for simple globs for workspace names, with a "*/" at the end. Nothing too fancy.
 {% /callout %}
 
 This has a couple major benefits.

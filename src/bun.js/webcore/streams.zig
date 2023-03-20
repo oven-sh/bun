@@ -2356,6 +2356,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
+            //send works as nonop if already aborted
+            if (this.aborted) return false;
+
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 
@@ -2391,7 +2394,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("onWritable ({d})", .{write_offset});
 
             if (this.done) {
-                this.res.endStream(false);
+                if (this.aborted == false) {
+                    this.res.endStream(false);
+                }
                 this.finalize();
                 return false;
             }
@@ -2435,7 +2440,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         pub fn start(this: *@This(), stream_start: StreamStart) JSC.Node.Maybe(void) {
-            if (this.res.hasResponded()) {
+            if (this.aborted or this.res.hasResponded()) {
                 this.done = true;
                 this.signal.close(null);
                 return .{ .result = {} };
@@ -2766,9 +2771,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         pub fn abort(this: *@This()) void {
             log("onAborted()", .{});
-            this.signal.close(null);
             this.done = true;
             this.aborted = true;
+            this.signal.close(null);
             this.flushPromise();
             this.finalize();
         }

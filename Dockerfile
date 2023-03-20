@@ -417,6 +417,7 @@ ARG BUN_BASE_VERSION
 
 ENV BUN_BASE_VERSION=${BUN_BASE_VERSION}
 ENV GIT_SHA=${GIT_SHA}
+ENV IS_BUN_RELEASE_BUILD=true
 
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out

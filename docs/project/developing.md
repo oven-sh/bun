@@ -108,6 +108,8 @@ Use [`zigup`](https://github.com/marler8997/zigup) to install the version of Zig
 $ zigup 0.11.0-dev.1783+436e99d13
 ```
 
+[Zig Language Server](https://github.com/zigtools/zls) is automatically compiled & installed to `zls/zig-out/bin/zls` when you run `bun install` (or npm install) in bun's repository.
+
 ### Building
 
 To install and build dependencies:

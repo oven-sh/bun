@@ -164,6 +164,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
         run: |
           brew install ccache rust llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "export PATH=$(brew --prefix ccache)/bin:\$PATH" >> $GITHUB_ENV
@@ -184,6 +185,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
@@ -200,6 +202,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
@@ -215,6 +218,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
@@ -281,6 +285,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
         run: |
           brew install rust ccache llvm@15 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
@@ -299,6 +304,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
         run: |
           rm -rf $JSC_BASE_DIR
           mkdir -p $JSC_BASE_DIR
@@ -326,6 +332,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
@@ -342,6 +349,7 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          IS_BUN_RELEASE_BUILD: true
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
           WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit

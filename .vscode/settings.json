@@ -10,6 +10,7 @@
   "zig.buildArgs": ["obj", "-Dfor-editor"],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "zig.zls.path": "${workspaceFolder}/zls/zig-out/bin/zls",
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,

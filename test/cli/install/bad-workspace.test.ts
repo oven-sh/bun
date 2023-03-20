@@ -30,7 +30,7 @@ test("bad workspace path", () => {
   expect(text).toContain('Workspace not found "i-dont-exist"');
   expect(text).toContain("multiple levels deep glob star");
   expect(text).toContain("glob star * in the middle of a path");
-  console.log(text);
+
   expect(exitCode).toBe(1);
   rmSync(cwd, { recursive: true, force: true });
 });

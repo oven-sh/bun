@@ -2774,7 +2774,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             log("onAborted()", .{});
             this.done = true;
             this.aborted = true;
-            this.requested_end = true;
             this.signal.close(null);
             this.flushPromise();
             this.finalize();

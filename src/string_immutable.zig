@@ -3187,6 +3187,18 @@ test "indexOfNeedsEscape" {
     try std.testing.expectEqual(out.?, 48);
 }
 
+pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
+    const ptr = bun.C.strchr(sliceZ.ptr, char) orelse return null;
+    const pos = @ptrToInt(ptr) - @ptrToInt(sliceZ.ptr);
+
+    if (comptime Environment.allow_assert)
+        std.debug.assert(@ptrToInt(sliceZ.ptr) >= @ptrToInt(ptr) and
+            @ptrToInt(ptr) < @ptrToInt(sliceZ.ptr + sliceZ.len) and
+            pos <= sliceZ.len);
+
+    return @truncate(u63, pos);
+}
+
 pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
     var remaining = slice;
     if (remaining.len == 0)

@@ -105,7 +105,7 @@ $ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@15)/include"
 Use [`zigup`](https://github.com/marler8997/zigup) to install the version of Zig (`ZIG_VERSION`) specified in the official [`Dockerfile`](https://github.com/oven-sh/bun/blob/main/Dockerfile). For example:
 
 ```bash
-$ zigup 0.11.0-dev.1783+436e99d13
+$ zigup 0.11.0-dev.2168+322ace70f
 ```
 
 ### Building

@@ -28,7 +28,7 @@ test("bad workspace path", () => {
   const text = stderr!.toString();
 
   expect(text).toContain('Workspace not found "i-dont-exist"');
-  expect(text).toContain("multiple levels deep glob star");
+  expect(text).toContain("multi level globs");
   expect(text).toContain("glob star * in the middle of a path");
 
   expect(exitCode).toBe(1);

@@ -3604,7 +3604,7 @@ pub const NodeFS = struct {
                             flags |= bun.C.darwin.RemoveFileFlags.recursive;
                         }
 
-                        if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
+                        if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefile(dest, null, flags), .unlink)) |errno| {
                             switch (@intToEnum(os.E, errno.err.errno)) {
                                 .AGAIN, .INTR => continue,
                                 .NOENT => {

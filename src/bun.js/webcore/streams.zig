@@ -2356,9 +2356,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
-            // send is a no-op when already aborted
-            if (this.aborted) return false;
-
             std.debug.assert(!this.done);
             defer log("send: {d} bytes (backpressure: {any})", .{ buf.len, this.has_backpressure });
 

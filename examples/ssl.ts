@@ -1,4 +1,5 @@
 import { resolve } from "path";
+import type { ServeOptions } from "bun";
 
 const development = process.env.NODE_ENV !== "production";
 export default {
@@ -11,4 +12,4 @@ export default {
   keyFile: process.env.SSL_KEY_FILE || "./key.pem",
   certFile: process.env.SSL_CERTIFICATE_FILE || "./cert.pem",
   development,
-} as Bun.Serve;
+} as ServeOptions;

@@ -14,15 +14,14 @@
     "src/test",
     "packages",
     "bench",
-    "examples/react-fast-refresh-test",
-    "examples/macros",
+    "examples/*/*",
+    "test",
     "src/deps",
     "bun-webkit",
     // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
     "src/bun.js/builtins",
     "src/bun.js/WebKit",
     "src/api/demo",
-    "test/snapshots",
-    "node_modules"
+    "node_modules",
   ]
 }

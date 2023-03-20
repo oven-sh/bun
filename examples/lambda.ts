@@ -9,6 +9,9 @@ const sourceDir = LAMBDA_TASK_ROOT;
 if (!sourceDir) {
   throw new Error("handler is not set");
 }
+if (!_HANDLER) {
+  throw new Error("handler is not set");
+}
 
 // don't care if this fails
 if (process.cwd() !== sourceDir) {

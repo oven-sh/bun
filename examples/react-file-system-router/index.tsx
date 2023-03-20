@@ -14,7 +14,7 @@ export default {
 
     const route = router.match(request);
 
-    const { default: Root } = await import(route.filePath);
+    const { default: Root } = await import(route.filePath!);
     return new Response(await renderToReadableStream(<Root {...route.params} />));
   },
 };

@@ -187,7 +187,10 @@ it("should support catch-all routes", () => {
   });
 
   for (let fixture of ["/posts/123", "/posts/hey", "/posts/zorp", "/posts", "/index", "/posts/"]) {
-    expect(router.match(fixture)?.name).not.toBe("/posts/[...id]");
+    console.log(`matching ${fixture}`);
+    const match = router.match(fixture);
+    console.log(match);
+    expect(match?.name).not.toBe("/posts/[...id]");
   }
 
   for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123", "/posts/wow/hey/there"]) {

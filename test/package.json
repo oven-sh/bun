@@ -13,5 +13,8 @@
     "lodash": "^4.17.21",
     "svelte": "^3.55.1",
     "undici": "^5.20.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
   }
 }

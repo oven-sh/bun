@@ -1975,10 +1975,14 @@ interface AbortSignal extends EventTarget {
    * Returns true if this AbortSignal's AbortController has signaled to abort, and false otherwise.
    */
   readonly aborted: boolean;
+<<<<<<< HEAD
   /**
    * The reason the signal aborted, or undefined if not aborted.
    */
   readonly reason: any;
+=======
+  reason: unknown;
+>>>>>>> 85413486 (WIP)
   onabort: ((this: AbortSignal, ev: Event) => any) | null;
   addEventListener<K extends keyof AbortSignalEventMap>(
     type: K,

@@ -267,6 +267,6 @@ describe("tcp socket binaryType", () => {
 it("should not leak memory", async () => {
   // assert we don't leak the sockets
   // we expect 1 because that's the prototype / structure
-  await expectMaxObjectTypeCount("Listener", 1);
-  await expectMaxObjectTypeCount("TCPSocket", 1);
+  await expectMaxObjectTypeCount(expect, "Listener", 1);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 1);
 });

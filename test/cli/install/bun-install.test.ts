@@ -212,7 +212,7 @@ it("should handle workspaces", async () => {
     JSON.stringify({
       name: "Foo",
       version: "0.0.1",
-      workspaces: ["bar"],
+      workspaces: ["bar", "packages/*"],
     }),
   );
   await mkdir(join(package_dir, "bar"));
@@ -223,6 +223,34 @@ it("should handle workspaces", async () => {
       version: "0.0.2",
     }),
   );
+
+  await mkdir(join(package_dir, "packages", "nominally-scoped"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "nominally-scoped", "package.json"),
+    JSON.stringify({
+      name: "@org/nominally-scoped",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "second-asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "second-asterisk", "package.json"),
+    JSON.stringify({
+      name: "AsteriskTheSecond",
+      version: "0.1.4",
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "asterisk"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "asterisk", "package.json"),
+    JSON.stringify({
+      name: "Asterisk",
+      version: "0.0.4",
+    }),
+  );
+
   const { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "install"],
     cwd: package_dir,
@@ -237,14 +265,30 @@ it("should handle workspaces", async () => {
   expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    " + @org/nominally-scoped@workspace:packages/nominally-scoped",
+    " + Asterisk@workspace:packages/asterisk",
+    " + AsteriskTheSecond@workspace:packages/second-asterisk",
     " + Bar@workspace:bar",
     "",
-    " 1 packages installed",
+    " 4 packages installed",
   ]);
   expect(await exited).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "Bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([
+    ".cache",
+    "@org",
+    "Asterisk",
+    "AsteriskTheSecond",
+    "Bar",
+  ]);
   expect(await readlink(join(package_dir, "node_modules", "Bar"))).toBe(join("..", "bar"));
+  expect(await readlink(join(package_dir, "node_modules", "Asterisk"))).toBe(join("..", "packages", "asterisk"));
+  expect(await readlink(join(package_dir, "node_modules", "AsteriskTheSecond"))).toBe(
+    join("..", "packages", "second-asterisk"),
+  );
+  expect(await readlink(join(package_dir, "node_modules", "@org", "nominally-scoped"))).toBe(
+    join("..", "..", "packages", "nominally-scoped"),
+  );
   await access(join(package_dir, "bun.lockb"));
 });
 
@@ -2290,8 +2334,9 @@ it("should report error on duplicated workspace packages", async () => {
     "",
     'error: Workspace name "moo" already exists',
     '{"name":"foo","version":"0.0.1","workspaces":["bar","baz"]}',
-    "                                                    ^",
-    `${package_dir}/package.json:1:53 52`,
+    // we don't have a name location anymore
+    "^",
+    `${package_dir}/package.json:1:1 0`,
     "",
   ]);
   expect(stdout).toBeDefined();

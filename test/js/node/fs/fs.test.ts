@@ -389,7 +389,7 @@ describe("lstat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = lstatSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -424,7 +424,7 @@ describe("stat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = statSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);

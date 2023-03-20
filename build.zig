@@ -1,5 +1,4 @@
 const std = @import("std");
-const Output = @import("src/output.zig");
 
 fn moduleSource(comptime out: []const u8) FileSource {
     if (comptime std.fs.path.dirname(@src().file)) |base| {
@@ -224,12 +223,12 @@ pub fn build(b: *Build) !void {
             !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
 
         var git_sha: [:0]const u8 = "";
-        if (std.os.getenvZ("GITHUB_SHA") orelse std.os.getenvZ("GIT_SHA")) |sha| {
-            git_sha = std.heap.page_allocator.dupeZ(u8, sha) catch unreachable;
+        if (b.env_map.get("GITHUB_SHA") orelse b.env_map.get("GIT_SHA")) |sha| {
+            git_sha = b.allocator.dupeZ(u8, sha) catch unreachable;
         } else {
             sha: {
                 const result = std.ChildProcess.exec(.{
-                    .allocator = std.heap.page_allocator,
+                    .allocator = b.allocator,
                     .argv = &.{
                         "git",
                         "rev-parse",
@@ -238,12 +237,9 @@ pub fn build(b: *Build) !void {
                     },
                     .cwd = b.pathFromRoot("."),
                     .expand_arg0 = .expand,
-                }) catch {
-                    std.debug.print("Warning: failed to get git HEAD", .{});
-                    break :sha;
-                };
+                }) catch break :sha;
 
-                git_sha = std.heap.page_allocator.dupeZ(u8, std.mem.trim(u8, result.stdout, "\n \t")) catch unreachable;
+                git_sha = b.allocator.dupeZ(u8, std.mem.trim(u8, result.stdout, "\n \t")) catch unreachable;
             }
         }
 
@@ -279,13 +275,14 @@ pub fn build(b: *Build) !void {
             obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
         }
 
-        std.log.info("Build {s} v{} - v{} ({s})", .{
+        // we have to dump to stderr because stdout is read by zls
+        std.io.getStdErr().writer().print("Build {s} v{} - v{} ({s})\n", .{
             triplet,
             min_version,
             max_version,
             obj.target.getCpuModel().name,
-        });
-        std.log.info("Output: {s}/{s}\n", .{ output_dir, bun_executable_name });
+        }) catch unreachable;
+        std.io.getStdErr().writer().print("Output: {s}/{s}\n\n", .{ output_dir, bun_executable_name }) catch unreachable;
 
         defer obj_step.dependOn(&obj.step);
 
@@ -494,6 +491,7 @@ pub fn build(b: *Build) !void {
     }
     if (obj.emit_bin != .no_emit)
         obj.setOutputDir(output_dir);
+
     b.default_step.dependOn(obj_step);
 }
 

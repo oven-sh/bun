@@ -2734,6 +2734,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             if (this.done or this.res.hasResponded()) {
+                this.requested_end = true;
                 this.signal.close(null);
                 this.done = true;
                 this.finalize();

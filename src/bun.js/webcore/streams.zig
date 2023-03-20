@@ -2356,7 +2356,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn send(this: *@This(), buf: []const u8) bool {
-            //send works as nonop if already aborted
+            // send is a no-op when already aborted
             if (this.aborted) return false;
 
             std.debug.assert(!this.done);

@@ -3265,7 +3265,7 @@ pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
     const pos = @ptrToInt(ptr) - @ptrToInt(sliceZ.ptr);
 
     if (comptime Environment.allow_assert)
-        std.debug.assert(@ptrToInt(sliceZ.ptr) >= @ptrToInt(ptr) and
+        std.debug.assert(@ptrToInt(sliceZ.ptr) <= @ptrToInt(ptr) and
             @ptrToInt(ptr) < @ptrToInt(sliceZ.ptr + sliceZ.len) and
             pos <= sliceZ.len);
 

@@ -2298,8 +2298,8 @@ pub const Package = extern struct {
         workspace_path: ?String,
         external_name: ExternalString,
         version: string,
-        key: Expr,
-        value: Expr,
+        key_loc: logger.Loc,
+        value_loc: logger.Loc,
     ) !?Dependency {
         const external_version = string_builder.append(String, version);
         var buf = lockfile.buffers.string_bytes.items;
@@ -2352,7 +2352,7 @@ pub const Package = extern struct {
                 dependency_version.value.workspace = path;
                 var workspace_entry = try lockfile.workspace_paths.getOrPut(allocator, @truncate(u32, external_name.hash));
                 if (workspace_entry.found_existing) {
-                    log.addErrorFmt(&source, key.loc, allocator, "Workspace name \"{s}\" already exists", .{
+                    log.addErrorFmt(&source, logger.Loc.Empty, allocator, "Workspace name \"{s}\" already exists", .{
                         external_name.slice(buf),
                     }) catch {};
                     return error.InstallFailed;
@@ -2392,7 +2392,7 @@ pub const Package = extern struct {
 
                     try log.addRangeErrorFmtWithNotes(
                         &source,
-                        source.rangeOfString(key.loc),
+                        source.rangeOfString(key_loc),
                         lockfile.allocator,
                         notes,
                         "Duplicate dependency: \"{s}\" specified in package.json",
@@ -2401,14 +2401,54 @@ pub const Package = extern struct {
                 }
             }
 
-            entry.value_ptr.* = value.loc;
+            entry.value_ptr.* = value_loc;
         }
 
         return this_dep;
     }
 
+    const WorkspaceIterator = struct {
+        pub const Entry = struct {
+            path: []const u8 = "",
+            name: []const u8 = "",
+        };
+    };
+
+    fn processWorkspaceName(
+        allocator: std.mem.Allocator,
+        workspace_allocator: std.mem.Allocator,
+        dir: std.fs.Dir,
+        path: []const u8,
+        path_buf: *[bun.MAX_PATH_BYTES]u8,
+        name_to_copy: *[1024]u8,
+        log: *logger.Log,
+    ) !WorkspaceIterator.Entry {
+        const path_to_use = if (path.len == 0) "package.json" else brk: {
+            const paths = [_]string{ path, "package.json" };
+            break :brk bun.path.joinStringBuf(path_buf, &paths, .auto);
+        };
+        var workspace_file = try dir.openFile(path_to_use, .{ .mode = .read_only });
+        defer workspace_file.close();
+
+        const workspace_bytes = try workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize));
+        defer workspace_allocator.free(workspace_bytes);
+        const workspace_source = logger.Source.initPathString(path, workspace_bytes);
+
+        var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
+
+        _ = try workspace_json.parseExpr();
+        if (!workspace_json.has_found_name) {
+            return error.MissingPackageName;
+        }
+        bun.copy(u8, name_to_copy[0..], workspace_json.found_name);
+        return WorkspaceIterator.Entry{
+            .name = name_to_copy[0..workspace_json.found_name.len],
+            .path = path_to_use,
+        };
+    }
+
     fn processWorkspaceNamesArray(
-        workspace_names_ptr: *[]string,
+        workspace_names: *bun.StringArrayHashMap(string),
         allocator: Allocator,
         log: *logger.Log,
         arr: *JSAst.E.Array,
@@ -2416,19 +2456,26 @@ pub const Package = extern struct {
         loc: logger.Loc,
         string_builder: *StringBuilder,
     ) !u32 {
-        var workspace_names = try allocator.alloc(string, arr.items.len);
-        defer workspace_names_ptr.* = workspace_names;
+        workspace_names.* = bun.StringArrayHashMap(string).init(allocator);
+        workspace_names.ensureTotalCapacity(arr.items.len) catch unreachable;
 
         var fallback = std.heap.stackFallback(1024, allocator);
         var workspace_allocator = fallback.get();
+        var workspace_name_buf = allocator.create([1024]u8) catch unreachable;
+        defer allocator.destroy(workspace_name_buf);
 
         const orig_msgs_len = log.msgs.items.len;
 
-        for (arr.slice(), workspace_names) |item, *name| {
+        var asterisked_workspace_paths = std.ArrayList(string).init(allocator);
+        defer asterisked_workspace_paths.deinit();
+        var filepath_buf = allocator.create([bun.MAX_PATH_BYTES]u8) catch unreachable;
+        defer allocator.destroy(filepath_buf);
+
+        for (arr.slice()) |item| {
             defer fallback.fixed_buffer_allocator.reset();
-            const path = item.asString(allocator) orelse {
+            var input_path = item.asString(allocator) orelse {
                 log.addErrorFmt(source, item.loc, allocator,
-                    \\Workspaces expects an array of strings, e.g.
+                    \\Workspaces expects an array of strings, like:
                     \\"workspaces": [
                     \\  "path/to/package"
                     \\]
@@ -2436,97 +2483,239 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
-            var workspace_dir = std.fs.cwd().openIterableDir(path, .{}) catch |err| {
-                if (err == error.FileNotFound) {
-                    log.addErrorFmt(
-                        source,
-                        item.loc,
-                        allocator,
-                        "Workspace not found \"{s}\" in \"{s}\"",
-                        .{
-                            path,
-                            std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                        },
+            if (strings.containsChar(input_path, '*')) {
+                if (strings.contains(input_path, "**")) {
+                    log.addError(source, item.loc,
+                        \\TODO multi level globs. For now, try something like "packages/*"
                     ) catch {};
-                } else log.addErrorFmt(
-                    source,
-                    item.loc,
-                    allocator,
-                    "{s} opening workspace package \"{s}\" from \"{s}\"",
-                    .{
-                        @errorName(err),
-                        path,
-                        std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable,
-                    },
-                ) catch {};
-                name.* = "";
-                // report errors for multiple workspaces
-                continue;
-            };
-            defer workspace_dir.close();
+                    continue;
+                }
 
-            var workspace_file = workspace_dir.dir.openFile("package.json", .{ .mode = .read_only }) catch |err| {
-                if (err == error.FileNotFound) {
-                    log.addErrorFmt(
-                        source,
-                        item.loc,
-                        allocator,
-                        "package.json not found in workspace package \"{s}\" from \"{s}\"",
-                        .{ path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                const without_trailing_slash = strings.withoutTrailingSlash(input_path);
+
+                if (!strings.endsWithComptime(without_trailing_slash, "/*") and !strings.eqlComptime(without_trailing_slash, "*")) {
+                    log.addError(source, item.loc,
+                        \\TODO glob star * in the middle of a path. For now, try something like "packages/*", at the end of the path.
                     ) catch {};
-                } else log.addErrorFmt(
-                    source,
-                    item.loc,
-                    allocator,
-                    "{s} opening package.json for workspace package \"{s}\" from \"{s}\"",
-                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
-                ) catch {};
-                name.* = "";
-                // report errors for multiple workspaces
+                    continue;
+                }
+
+                asterisked_workspace_paths.append(without_trailing_slash) catch unreachable;
                 continue;
-            };
-            defer workspace_file.close();
-
-            const workspace_bytes = workspace_file.readToEndAlloc(workspace_allocator, std.math.maxInt(usize)) catch |err| {
-                log.addErrorFmt(
-                    source,
-                    item.loc,
-                    allocator,
-                    "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
-                    .{ @errorName(err), path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+            } else if (strings.containsAny(input_path, "!{}[]")) {
+                log.addError(source, item.loc,
+                    \\TODO fancy glob patterns. For now, try something like "packages/*"
                 ) catch {};
-                name.* = "";
-                // report errors for multiple workspaces
-                continue;
-            };
-            defer workspace_allocator.free(workspace_bytes);
-            const workspace_source = logger.Source.initPathString(path, workspace_bytes);
-
-            var workspace_json = try json_parser.PackageJSONVersionChecker.init(allocator, &workspace_source, log);
-
-            _ = try workspace_json.parseExpr();
-            if (!workspace_json.has_found_name) {
-                log.addErrorFmt(
-                    source,
-                    loc,
-                    allocator,
-                    "Missing \"name\" from package.json in {s}",
-                    .{workspace_source.path.text},
-                ) catch {};
-                // report errors for multiple workspaces
                 continue;
             }
 
-            const workspace_name = workspace_json.found_name;
+            const workspace_entry = processWorkspaceName(
+                allocator,
+                workspace_allocator,
+                std.fs.cwd(),
+                input_path,
+                filepath_buf,
+                workspace_name_buf,
+                log,
+            ) catch |err| {
+                switch (err) {
+                    error.FileNotFound => {
+                        log.addErrorFmt(
+                            source,
+                            item.loc,
+                            allocator,
+                            "Workspace not found \"{s}\"",
+                            .{input_path},
+                        ) catch {};
+                    },
+                    error.MissingPackageName => {
+                        log.addErrorFmt(
+                            source,
+                            loc,
+                            allocator,
+                            "Missing \"name\" from package.json in {s}",
+                            .{input_path},
+                        ) catch {};
+                    },
+                    else => {
+                        log.addErrorFmt(
+                            source,
+                            item.loc,
+                            allocator,
+                            "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
+                            .{ @errorName(err), input_path, std.os.getcwd(allocator.alloc(u8, bun.MAX_PATH_BYTES) catch unreachable) catch unreachable },
+                        ) catch {};
+                    },
+                }
+                continue;
+            };
 
-            string_builder.count(workspace_name);
-            string_builder.count(path);
+            if (workspace_entry.name.len == 0) continue;
+
+            string_builder.count(workspace_entry.name);
+            string_builder.count(input_path);
             string_builder.cap += bun.MAX_PATH_BYTES;
-            name.* = try allocator.dupe(u8, workspace_name);
+
+            var result = try workspace_names.getOrPut(input_path);
+            if (!result.found_existing) {
+                result.key_ptr.* = try allocator.dupe(u8, input_path);
+                result.value_ptr.* = try allocator.dupe(u8, workspace_entry.name);
+            }
+        }
+
+        if (asterisked_workspace_paths.items.len > 0) {
+            // max path bytes is not enough in real codebases
+            var second_buf = allocator.create([4096]u8) catch unreachable;
+            var second_buf_fixed = std.heap.FixedBufferAllocator.init(second_buf);
+            defer allocator.destroy(second_buf);
+
+            for (asterisked_workspace_paths.items) |user_path| {
+                var dir_prefix = strings.withoutLeadingSlash(user_path);
+                dir_prefix = user_path[0 .. strings.indexOfChar(dir_prefix, '*') orelse continue];
+
+                if (dir_prefix.len == 0 or
+                    strings.eqlComptime(dir_prefix, ".") or
+                    strings.eqlComptime(dir_prefix, "./"))
+                {
+                    dir_prefix = ".";
+                }
+
+                const entries_option = FileSystem.instance.fs.readDirectory(
+                    dir_prefix,
+                    null,
+                ) catch |err| switch (err) {
+                    error.FileNotFound => {
+                        log.addWarningFmt(
+                            source,
+                            loc,
+                            allocator,
+                            "workspaces directory prefix not found \"{s}\"",
+                            .{dir_prefix},
+                        ) catch {};
+                        continue;
+                    },
+                    error.NotDir => {
+                        log.addWarningFmt(
+                            source,
+                            loc,
+                            allocator,
+                            "workspaces directory prefix is not a directory \"{s}\"",
+                            .{dir_prefix},
+                        ) catch {};
+                        continue;
+                    },
+                    else => continue,
+                };
+                if (entries_option.* != .entries) continue;
+                var entries = entries_option.entries.data.iterator();
+                const skipped_names = &[_][]const u8{ "node_modules", ".git" };
+
+                while (entries.next()) |entry_iter| {
+                    const name = entry_iter.key_ptr.*;
+                    if (strings.eqlAnyComptime(name, skipped_names))
+                        continue;
+                    var entry: *FileSystem.Entry = entry_iter.value_ptr.*;
+                    if (entry.kind(&Fs.FileSystem.instance.fs) != .dir) continue;
+
+                    var parts = [2]string{ entry.dir, entry.base() };
+                    var entry_path = Path.joinAbsStringBufZ(
+                        Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
+                        filepath_buf,
+                        &parts,
+                        .auto,
+                    );
+
+                    if (entry.cache.fd == 0) {
+                        entry.cache.fd = std.os.openatZ(
+                            std.os.AT.FDCWD,
+                            entry_path,
+                            std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.NOCTTY,
+                            0,
+                        ) catch continue;
+                    }
+
+                    const dir_fd = entry.cache.fd;
+                    std.debug.assert(dir_fd != 0); // kind() should've opened
+                    defer fallback.fixed_buffer_allocator.reset();
+
+                    const workspace_entry = processWorkspaceName(
+                        allocator,
+                        workspace_allocator,
+                        std.fs.Dir{
+                            .fd = dir_fd,
+                        },
+                        "",
+                        filepath_buf,
+                        workspace_name_buf,
+                        log,
+                    ) catch |err| {
+                        switch (err) {
+                            error.FileNotFound, error.PermissionDenied => continue,
+                            error.MissingPackageName => {
+                                log.addErrorFmt(
+                                    source,
+                                    logger.Loc.Empty,
+                                    allocator,
+                                    "Missing \"name\" from package.json in {s}" ++ std.fs.path.sep_str ++ "{s}",
+                                    .{ entry.dir, entry.base() },
+                                ) catch {};
+                            },
+                            else => {
+                                log.addErrorFmt(
+                                    source,
+                                    logger.Loc.Empty,
+                                    allocator,
+                                    "{s} reading package.json for workspace package \"{s}\" from \"{s}\"",
+                                    .{ @errorName(err), entry.dir, entry.base() },
+                                ) catch {};
+                            },
+                        }
+
+                        continue;
+                    };
+
+                    if (workspace_entry.name.len == 0) continue;
+
+                    string_builder.count(workspace_entry.name);
+                    second_buf_fixed.reset();
+                    const relative = std.fs.path.relative(
+                        second_buf_fixed.allocator(),
+                        Fs.FileSystem.instance.top_level_dir,
+                        bun.span(entry_path),
+                    ) catch unreachable;
+
+                    string_builder.count(relative);
+                    string_builder.cap += bun.MAX_PATH_BYTES;
+
+                    var result = try workspace_names.getOrPut(relative);
+                    if (!result.found_existing) {
+                        result.value_ptr.* = try allocator.dupe(
+                            u8,
+                            workspace_entry.name,
+                        );
+                        result.key_ptr.* = try allocator.dupe(u8, relative);
+                    }
+                }
+            }
         }
 
         if (orig_msgs_len != log.msgs.items.len) return error.InstallFailed;
-        return @truncate(u32, arr.items.len);
+
+        // Sort the names for determinism
+        workspace_names.sort(struct {
+            values: []const string,
+            pub fn lessThan(
+                self: @This(),
+                a: usize,
+                b: usize,
+            ) bool {
+                return std.mem.order(u8, self.values[a], self.values[b]) == .lt;
+            }
+        }{
+            .values = workspace_names.values(),
+        });
+
+        return @truncate(u32, workspace_names.count());
     }
 
     fn parseWithJSON(
@@ -2641,6 +2830,7 @@ pub const Package = extern struct {
                     @as(usize, @boolToInt(features.workspaces))
             ]DependencyGroup = undefined;
             var out_group_i: usize = 0;
+
             if (features.dependencies) {
                 out_groups[out_group_i] = DependencyGroup.dependencies;
                 out_group_i += 1;
@@ -2668,7 +2858,15 @@ pub const Package = extern struct {
             break :brk out_groups;
         };
 
-        var workspace_names: []string = &.{};
+        var workspace_names = bun.StringArrayHashMap(string).init(allocator);
+        defer {
+            for (workspace_names.values(), workspace_names.keys()) |name, path| {
+                allocator.free(name);
+                allocator.free(path);
+            }
+            workspace_names.deinit();
+        }
+
         inline for (dependency_groups) |group| {
             if (json.asProperty(group.prop)) |dependencies_q| brk: {
                 switch (dependencies_q.expr.data) {
@@ -2910,130 +3108,76 @@ pub const Package = extern struct {
 
         total_dependencies_count = 0;
         const in_workspace = lockfile.workspace_paths.contains(@truncate(u32, package.name_hash));
+
         inline for (dependency_groups) |group| {
-            if (json.asProperty(group.prop)) |dependencies_q| brk: {
-                switch (dependencies_q.expr.data) {
-                    .e_array => |arr| {
-                        if (arr.items.len == 0) break :brk;
+            if (group.behavior.isWorkspace()) {
+                for (workspace_names.values(), workspace_names.keys()) |name, path| {
+                    const external_name = string_builder.append(ExternalString, name);
 
-                        for (arr.slice(), workspace_names) |item, name| {
-                            defer allocator.free(name);
+                    if (try parseDependency(
+                        lockfile,
+                        allocator,
+                        log,
+                        source,
+                        group,
+                        &string_builder,
+                        features,
+                        package_dependencies,
+                        total_dependencies_count,
+                        in_workspace,
+                        .workspace,
+                        null,
+                        external_name,
+                        path,
+                        logger.Loc.Empty,
+                        logger.Loc.Empty,
+                    )) |dep| {
+                        package_dependencies[total_dependencies_count] = dep;
+                        total_dependencies_count += 1;
+                    }
+                }
+            } else {
+                if (json.asProperty(group.prop)) |dependencies_q| {
+                    switch (dependencies_q.expr.data) {
+                        .e_object => |obj| {
+                            for (obj.properties.slice()) |item| {
+                                const key = item.key.?;
+                                const value = item.value.?;
+                                const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
+                                const version = value.asString(allocator) orelse "";
+                                var tag: ?Dependency.Version.Tag = null;
+                                var workspace_path: ?String = null;
 
-                            const external_name = string_builder.append(ExternalString, name);
-                            const path = item.asString(allocator).?;
+                                if (lockfile.workspace_paths.get(@truncate(u32, external_name.hash))) |path| {
+                                    tag = .workspace;
+                                    workspace_path = path;
+                                }
 
-                            if (try parseDependency(
-                                lockfile,
-                                allocator,
-                                log,
-                                source,
-                                group,
-                                &string_builder,
-                                features,
-                                package_dependencies,
-                                total_dependencies_count,
-                                in_workspace,
-                                .workspace,
-                                null,
-                                external_name,
-                                path,
-                                item,
-                                item,
-                            )) |dep| {
-                                package_dependencies[total_dependencies_count] = dep;
-                                total_dependencies_count += 1;
-                            }
-                        }
-
-                        allocator.free(workspace_names);
-                    },
-                    .e_object => |obj| {
-                        if (group.behavior.isWorkspace()) {
-                            // yarn workspaces expects a "workspaces" property shaped like this:
-                            //
-                            //    "workspaces": {
-                            //        "packages": [
-                            //           "path/to/package"
-                            //        ]
-                            //    }
-                            //
-                            if (obj.get("packages")) |packages_q| {
-                                if (packages_q.data == .e_array) {
-                                    var arr = packages_q.data.e_array;
-                                    if (arr.items.len == 0) break :brk;
-
-                                    for (arr.slice(), workspace_names) |item, name| {
-                                        defer allocator.free(name);
-
-                                        const external_name = string_builder.append(ExternalString, name);
-                                        const path = item.asString(allocator).?;
-
-                                        if (try parseDependency(
-                                            lockfile,
-                                            allocator,
-                                            log,
-                                            source,
-                                            group,
-                                            &string_builder,
-                                            features,
-                                            package_dependencies,
-                                            total_dependencies_count,
-                                            in_workspace,
-                                            .workspace,
-                                            null,
-                                            external_name,
-                                            path,
-                                            item,
-                                            item,
-                                        )) |dep| {
-                                            package_dependencies[total_dependencies_count] = dep;
-                                            total_dependencies_count += 1;
-                                        }
-                                    }
-
-                                    allocator.free(workspace_names);
-                                    break :brk;
+                                if (try parseDependency(
+                                    lockfile,
+                                    allocator,
+                                    log,
+                                    source,
+                                    group,
+                                    &string_builder,
+                                    features,
+                                    package_dependencies,
+                                    total_dependencies_count,
+                                    in_workspace,
+                                    tag,
+                                    workspace_path,
+                                    external_name,
+                                    version,
+                                    key.loc,
+                                    value.loc,
+                                )) |dep| {
+                                    package_dependencies[total_dependencies_count] = dep;
+                                    total_dependencies_count += 1;
                                 }
                             }
-                        }
-
-                        for (obj.properties.slice()) |item| {
-                            const key = item.key.?;
-                            const value = item.value.?;
-                            const external_name = string_builder.append(ExternalString, key.asString(allocator).?);
-                            const version = value.asString(allocator) orelse "";
-                            var tag: ?Dependency.Version.Tag = null;
-                            var workspace_path: ?String = null;
-
-                            if (lockfile.workspace_paths.get(@truncate(u32, external_name.hash))) |path| {
-                                tag = .workspace;
-                                workspace_path = path;
-                            }
-
-                            if (try parseDependency(
-                                lockfile,
-                                allocator,
-                                log,
-                                source,
-                                group,
-                                &string_builder,
-                                features,
-                                package_dependencies,
-                                total_dependencies_count,
-                                in_workspace,
-                                tag,
-                                workspace_path,
-                                external_name,
-                                version,
-                                key,
-                                value,
-                            )) |dep| {
-                                package_dependencies[total_dependencies_count] = dep;
-                                total_dependencies_count += 1;
-                            }
-                        }
-                    },
-                    else => unreachable,
+                        },
+                        else => unreachable,
+                    }
                 }
             }
         }

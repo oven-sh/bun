@@ -1775,17 +1775,16 @@ pub const Path = struct {
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();
         var path = path_slice.slice();
-        var path_name = if (isWindows) Fs.PathName.init_win32(path) else Fs.PathName.init(path);
+        var path_name = if (isWindows) Fs.PathName.initWindows(path) else Fs.PathName.init(path);
         var root = JSC.ZigString.init(path_name.dir);
         const is_absolute = (isWindows and isZigStringAbsoluteWindows(root)) or (!isWindows and path_name.dir.len > 0 and path_name.dir[0] == '/');
-    
         // Build root for windows in any case
         if (isWindows) {
             if (path.len > 1 and path[1] == ':') {
                 // Windows root can be like "C:", "C:/" and "C:\\", but only the last two patterns
                 // are for absolute paths.
                 if (path.len > 2 and (path[2] == '/' or path[2] == '\\')) {
-                    
+
                     // Fix the dir if the path is absolute.
                     if (is_absolute)
                         path_name.dir = path[0..3];

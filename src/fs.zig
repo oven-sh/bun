@@ -1136,7 +1136,7 @@ pub const PathName = struct {
         var is_absolute = true;
 
         var _i = strings.lastIndexOfChar(path, '/');
-        
+
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len) {
@@ -1176,7 +1176,7 @@ pub const PathName = struct {
     }
 
     // Same as init but consider '\\' characters
-    pub fn init_win32(_path: string) PathName {
+    pub fn initWindows(_path: string) PathName {
         var path = _path;
         var base = path;
 
@@ -1190,7 +1190,7 @@ pub const PathName = struct {
         if (strings.lastIndexOfChar(path, '\\')) |win32_i| {
             _i = if (_i) |posix_i| @max(posix_i, win32_i) else win32_i;
         }
-        
+
         while (_i) |i| {
             // Stop if we found a non-trailing slash
             if (i + 1 != path.len) {

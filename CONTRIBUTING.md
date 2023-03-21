@@ -6,7 +6,7 @@ All contributions need test coverage. If you are adding a new feature, please ad
 
 Bun is written mostly in Zig, but WebKit & JavaScriptCore (the JavaScript engine) is written in C++.
 
-Today (Feburary 2023), Bun's codebase has five distinct parts:
+Today (February 2023), Bun's codebase has five distinct parts:
 
 - JavaScript, JSX, & TypeScript transpiler, module resolver, and related code
 - JavaScript runtime ([`src/bun.js/`](src/bun.js/))

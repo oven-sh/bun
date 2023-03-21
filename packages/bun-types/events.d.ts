@@ -56,7 +56,12 @@ declare module "events" {
   interface StaticEventEmitterOptions {
     signal?: AbortSignal | undefined;
   }
-  interface EventEmitter<Events extends Record<string | symbol, any>> {
+  interface EventEmitter<
+    Events extends Record<string | symbol, any[]> = Record<
+      string | symbol,
+      any[]
+    >,
+  > {
     /**
      * Alias for `emitter.on(eventName, listener)`.
      */
@@ -93,7 +98,10 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    on<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
+    on<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
+    ): this;
     /**
      * Adds a **one-time**`listener` function for the event named `eventName`. The
      * next time `eventName` is triggered, this listener is removed and then invoked.
@@ -121,7 +129,11 @@ declare module "events" {
      * @param eventName The name of the event.
      * @param listener The callback function
      */
-    once<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;    /**
+    once<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
+    ): this;
+    /**
      * Removes the specified `listener` from the listener array for the event named`eventName`.
      *
      * ```js
@@ -206,7 +218,10 @@ declare module "events" {
     /**
      * Alias for `emitter.removeListener()`.
      */
-    off<K extends keyof Events>(eventName: K, listener: (...args: Events[K]) => void): this;
+    off<K extends keyof Events>(
+      eventName: K,
+      listener: (...args: Events[K]) => void,
+    ): this;
     /**
      * Removes all listeners, or those of the specified `eventName`.
      *
@@ -216,7 +231,7 @@ declare module "events" {
      *
      * Returns a reference to the `EventEmitter`, so that calls can be chained.
      */
-    removeAllListeners<K extends keyof Events>(event?: keyof Events): this;
+    removeAllListeners(event?: keyof Events): this;
     /**
      * By default `EventEmitter`s will print a warning if more than `10` listeners are
      * added for a particular event. This is a useful default that helps finding
@@ -271,7 +286,7 @@ declare module "events" {
      * emitter.emit('log');
      * ```
      */
-    rawListeners(eventName: K): Function[];
+    rawListeners(eventName: keyof Events): Function[];
     /**
      * Synchronously calls each of the listeners registered for the event named`eventName`, in the order they were registered, passing the supplied arguments
      * to each.
@@ -316,7 +331,7 @@ declare module "events" {
      * Returns the number of listeners listening to the event named `eventName`.
      * @param eventName The name of the event being listened for
      */
-    listenerCount(eventName: K): number;
+    listenerCount(eventName: keyof Events): number;
     /**
      * Adds the `listener` function to the _beginning_ of the listeners array for the
      * event named `eventName`. No checks are made to see if the `listener` has
@@ -386,7 +401,7 @@ declare module "events" {
    *
    * It supports the following option:
    */
-  class EventEmitter<Events extends Record<string | symbol, any>> {
+  class EventEmitter {
     constructor(options?: EventEmitterOptions);
     /**
      * Creates a `Promise` that is fulfilled when the `EventEmitter` emits the given

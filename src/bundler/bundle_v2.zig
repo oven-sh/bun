@@ -1694,7 +1694,10 @@ const LinkerContext = struct {
     };
 
     fn isExternalDynamicImport(this: *LinkerContext, record: *const ImportRecord, source_index: u32) bool {
-        return record.kind == .dynamic and this.graph.files.items(.entry_point_kind)[record.source_index.get()].isEntryPoint() and record.source_index.get() != source_index;
+        return this.graph.code_splitting and
+            record.kind == .dynamic and
+            this.graph.files.items(.entry_point_kind)[record.source_index.get()].isEntryPoint() and
+            record.source_index.get() != source_index;
     }
 
     inline fn shouldCallRuntimeRequire(format: options.OutputFormat) bool {
@@ -3243,18 +3246,9 @@ const LinkerContext = struct {
     }
 
     pub noinline fn computeCrossChunkDependencies(c: *LinkerContext, chunks: []Chunk) !void {
-        var js_chunks_count: usize = 0;
-        for (chunks) |*chunk| {
-            js_chunks_count += @boolToInt(chunk.content == .javascript);
-            if (js_chunks_count > 1)
-                break;
-        }
-
-        // TODO: remove this branch before release. We are keeping it to assert this code is correct
-        if (comptime !Environment.allow_assert) {
+        if (!c.graph.code_splitting) {
             // No need to compute cross-chunk dependencies if there can't be any
-            if (js_chunks_count < 2)
-                return;
+            return;
         }
 
         const ChunkMeta = struct {

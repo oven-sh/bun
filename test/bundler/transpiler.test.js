@@ -1246,17 +1246,17 @@ console.log(resolve.length)
         // 'Expected identifier but found "("\n'
       );
 
-      expectPrinted_("for (x in y) ;", "for (x in y) {\n}");
-      expectPrinted_("for ([] in y) ;", "for ([] in y) {\n}");
-      expectPrinted_("for ({} in y) ;", "for ({} in y) {\n}");
-      expectPrinted_("for ((x) in y) ;", "for (x in y) {\n}");
+      expectPrinted_("for (x in y) ;", "for (x in y)");
+      expectPrinted_("for ([] in y) ;", "for ([] in y)");
+      expectPrinted_("for ({} in y) ;", "for ({} in y)");
+      expectPrinted_("for ((x) in y) ;", "for (x in y)");
       expectParseError("for (([]) in y) ;", "Invalid assignment target");
       expectParseError("for (({}) in y) ;", "Invalid assignment target");
 
-      expectPrinted_("for (x of y) ;", "for (x of y) {\n}");
-      expectPrinted_("for ([] of y) ;", "for ([] of y) {\n}");
-      expectPrinted_("for ({} of y) ;", "for ({} of y) {\n}");
-      expectPrinted_("for ((x) of y) ;", "for (x of y) {\n}");
+      expectPrinted_("for (x of y) ;", "for (x of y)");
+      expectPrinted_("for ([] of y) ;", "for ([] of y)");
+      expectPrinted_("for ({} of y) ;", "for ({} of y)");
+      expectPrinted_("for ((x) of y) ;", "for (x of y)");
       expectParseError("for (([]) of y) ;", "Invalid assignment target");
       expectParseError("for (({}) of y) ;", "Invalid assignment target");
 
@@ -1271,10 +1271,10 @@ console.log(resolve.length)
       expectParseError("({x = {a = b}} = c)", 'Unexpected "="');
       expectParseError("[a = {b = c}] = d", 'Unexpected "="');
 
-      expectPrinted_("for ([{a = {}}] in b) {}", "for ([{ a = {} }] in b) {\n}");
-      expectPrinted_("for ([{a = {}}] of b) {}", "for ([{ a = {} }] of b) {\n}");
-      expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b) {\n}");
-      expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b) {\n}");
+      expectPrinted_("for ([{a = {}}] in b) {}", "for ([{ a = {} }] in b)");
+      expectPrinted_("for ([{a = {}}] of b) {}", "for ([{ a = {} }] of b)");
+      expectPrinted_("for ({a = {}} in b) {}", "for ({ a = {} } in b)");
+      expectPrinted_("for ({a = {}} of b) {}", "for ({ a = {} } of b)");
 
       expectParseError("({a = {}} in b)", 'Unexpected "="');
       expectParseError("[{a = {}}]\nof()", 'Unexpected "="');

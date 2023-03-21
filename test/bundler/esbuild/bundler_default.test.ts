@@ -2061,9 +2061,7 @@ describe("bundler", () => {
     },
     external: ["@scope/foo"],
   });
-  return;
   itBundled("default/ExternalModuleExclusionRelativePath", {
-    // GENERATED
     files: {
       "/Users/user/project/src/index.js": `import './nested/folder/test'`,
       "/Users/user/project/src/nested/folder/test.js": /* js */ `
@@ -2074,10 +2072,25 @@ describe("bundler", () => {
         console.log(foo, out, sha256, config)
       `,
     },
-    outdir: "/Users/user/project/out",
+    outdir: "/Users/user/project/out/",
+    external: [
+      "{{root}}/Users/user/project/out/in-out-dir.js",
+      "{{root}}/Users/user/project/src/nested/folder/foo.js",
+      "{{root}}/Users/user/project/src/sha256.min.js",
+      "/api/config?a=1&b=2",
+    ],
+    onAfterBundle(api) {
+      const file = api.readFile("/Users/user/project/out/index.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([
+        { kind: "import-statement", path: "../src/nested/folder/foo.js" },
+        { kind: "import-statement", path: "./in-out-dir.js" },
+        { kind: "import-statement", path: "../src/sha256.min.js" },
+        { kind: "import-statement", path: "/api/config?a=1&b=2" },
+      ]);
+    },
   });
   itBundled("default/ImportWithHashInPath", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import foo from './file#foo.txt'
@@ -2087,9 +2100,11 @@ describe("bundler", () => {
       "/file#foo.txt": `foo`,
       "/file#bar.txt": `bar`,
     },
+    run: {
+      stdout: "foo bar",
+    },
   });
   itBundled("default/ImportWithHashParameter", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2099,9 +2114,11 @@ describe("bundler", () => {
       `,
       "/file.txt": `This is some text`,
     },
+    run: {
+      stdout: "This is some text This is some text",
+    },
   });
   itBundled("default/ImportWithQueryParameter", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
@@ -2111,55 +2128,61 @@ describe("bundler", () => {
       `,
       "/file.txt": `This is some text`,
     },
+    run: {
+      stdout: "This is some text This is some text",
+    },
   });
   itBundled("default/ImportAbsPathWithQueryParameter", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
         // Each of these should have a separate identity (i.e. end up in the output file twice)
-        import foo from '/Users/user/project/file.txt?foo'
-        import bar from '/Users/user/project/file.txt#bar'
+        import foo from '{{root}}/Users/user/project/file.txt?foo'
+        import bar from '{{root}}/Users/user/project/file.txt#bar'
         console.log(foo, bar)
       `,
       "/Users/user/project/file.txt": `This is some text`,
     },
+    run: {
+      stdout: "This is some text This is some text",
+    },
   });
   itBundled("default/ImportAbsPathAsFile", {
-    // GENERATED
     files: {
       "/Users/user/project/entry.js": /* js */ `
-        import pkg from '/Users/user/project/node_modules/pkg/index'
+        import pkg from '{{root}}/Users/user/project/node_modules/pkg/index'
         console.log(pkg)
       `,
       "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
     },
+    run: {
+      stdout: "123",
+    },
   });
-  bundlerTest.skip("default/ImportAbsPathAsDir", () => {
-    expectBundled("default/ImportAbsPathAsDirUnix", {
-      // GENERATED
-      host: "unix",
-      files: {
-        "/Users/user/project/entry.js": /* js */ `
-          import pkg from '/Users/user/project/node_modules/pkg'
-          console.log(pkg)
-        `,
-        "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
-      },
-    });
-    expectBundled("default/ImportAbsPathAsDirWindows", {
-      // GENERATED
-      host: "windows",
-      files: {
-        "/Users/user/project/entry.js": /* js */ `
-          import pkg from 'C:\\Users\\user\\project\\node_modules\\pkg'
-          console.log(pkg)
-        `,
-        "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
-      },
-    });
+  itBundled("default/ImportAbsPathAsDirUnix", {
+    files: {
+      "/Users/user/project/entry.js": /* js */ `
+        import pkg from '{{root}}/Users/user/project/node_modules/pkg'
+        console.log(pkg)
+      `,
+      "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
+    },
+    run: {
+      stdout: "123",
+    },
   });
+  // itBundled("default/ImportBackslashNormalization", {
+  //   files: {
+  //     "/Users/user/project/entry.js": /* js */ `
+  //       import pkg from '{{root}}\\\\Users\\\\user\\\\project\\\\node_modules\\\\pkg'
+  //       console.log(pkg)
+  //     `,
+  //     "/Users/user/project/node_modules/pkg/index.js": `export default 123`,
+  //   },
+  //   run: {
+  //     stdout: "123",
+  //   },
+  // });
   itBundled("default/AutoExternal", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2169,9 +2192,18 @@ describe("bundler", () => {
         import "data:application/javascript;base64,ZXhwb3J0IGRlZmF1bHQgMTIz";
       `,
     },
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([
+        { kind: "import-statement", path: "http://example.com/code.js" },
+        { kind: "import-statement", path: "https://example.com/code.js" },
+        { kind: "import-statement", path: "//example.com/code.js" },
+        { kind: "import-statement", path: "data:application/javascript;base64,ZXhwb3J0IGRlZmF1bHQgMTIz" },
+      ]);
+    },
   });
   itBundled("default/AutoExternalNode", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // These URLs should be external automatically
@@ -2185,9 +2217,17 @@ describe("bundler", () => {
         import "node:what-is-this";
       `,
     },
+    platform: "node",
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([
+        { kind: "import-statement", path: "node:fs/promises" },
+        { kind: "import-statement", path: "node:what-is-this" },
+      ]);
+    },
   });
   itBundled("default/ExternalWithWildcard", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         // Should match
@@ -2202,138 +2242,37 @@ describe("bundler", () => {
         import "./file.ping";
       `,
     },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Could not resolve "/sassets/images/test.jpg"
-  entry.js: ERROR: Could not resolve "/dir/file.gif"
-  entry.js: ERROR: Could not resolve "./file.ping"
-  `, */
+    external: ["/assets/*", "*.png", "/dir/*/file.gif"],
+    bundleErrors: {
+      "/entry.js": [
+        'Could not resolve "/sassets/images/test.jpg"',
+        'Could not resolve "/dir/file.gif"',
+        'Could not resolve "./file.ping"',
+      ],
+    },
   });
   itBundled("default/ExternalWildcardDoesNotMatchEntryPoint", {
-    // GENERATED
+    skipOnEsbuild: true,
     files: {
       "/entry.js": `import "foo"`,
     },
+    external: ["*"],
   });
   itBundled("default/ManyEntryPoints", {
-    // GENERATED
-    files: {
-      "/shared.js": `export default 123`,
-      "/e00.js": `import x from './shared'; console.log(x)`,
-      "/e01.js": `import x from './shared'; console.log(x)`,
-      "/e02.js": `import x from './shared'; console.log(x)`,
-      "/e03.js": `import x from './shared'; console.log(x)`,
-      "/e04.js": `import x from './shared'; console.log(x)`,
-      "/e05.js": `import x from './shared'; console.log(x)`,
-      "/e06.js": `import x from './shared'; console.log(x)`,
-      "/e07.js": `import x from './shared'; console.log(x)`,
-      "/e08.js": `import x from './shared'; console.log(x)`,
-      "/e09.js": `import x from './shared'; console.log(x)`,
-      "/e10.js": `import x from './shared'; console.log(x)`,
-      "/e11.js": `import x from './shared'; console.log(x)`,
-      "/e12.js": `import x from './shared'; console.log(x)`,
-      "/e13.js": `import x from './shared'; console.log(x)`,
-      "/e14.js": `import x from './shared'; console.log(x)`,
-      "/e15.js": `import x from './shared'; console.log(x)`,
-      "/e16.js": `import x from './shared'; console.log(x)`,
-      "/e17.js": `import x from './shared'; console.log(x)`,
-      "/e18.js": `import x from './shared'; console.log(x)`,
-      "/e19.js": `import x from './shared'; console.log(x)`,
-      "/e20.js": `import x from './shared'; console.log(x)`,
-      "/e21.js": `import x from './shared'; console.log(x)`,
-      "/e22.js": `import x from './shared'; console.log(x)`,
-      "/e23.js": `import x from './shared'; console.log(x)`,
-      "/e24.js": `import x from './shared'; console.log(x)`,
-      "/e25.js": `import x from './shared'; console.log(x)`,
-      "/e26.js": `import x from './shared'; console.log(x)`,
-      "/e27.js": `import x from './shared'; console.log(x)`,
-      "/e28.js": `import x from './shared'; console.log(x)`,
-      "/e29.js": `import x from './shared'; console.log(x)`,
-      "/e30.js": `import x from './shared'; console.log(x)`,
-      "/e31.js": `import x from './shared'; console.log(x)`,
-      "/e32.js": `import x from './shared'; console.log(x)`,
-      "/e33.js": `import x from './shared'; console.log(x)`,
-      "/e34.js": `import x from './shared'; console.log(x)`,
-      "/e35.js": `import x from './shared'; console.log(x)`,
-      "/e36.js": `import x from './shared'; console.log(x)`,
-      "/e37.js": `import x from './shared'; console.log(x)`,
-      "/e38.js": `import x from './shared'; console.log(x)`,
-      "/e39.js": `import x from './shared'; console.log(x)`,
-    },
-    entryPoints: [
-      "/e00.js",
-      "/e01.js",
-      "/e02.js",
-      "/e03.js",
-      "/e04.js",
-      "/e05.js",
-      "/e06.js",
-      "/e07.js",
-      "/e08.js",
-      "/e09.js",
-      "/e10.js",
-      "/e11.js",
-      "/e12.js",
-      "/e13.js",
-      "/e14.js",
-      "/e15.js",
-      "/e16.js",
-      "/e17.js",
-      "/e18.js",
-      "/e19.js",
-      "/e20.js",
-      "/e21.js",
-      "/e22.js",
-      "/e23.js",
-      "/e24.js",
-      "/e25.js",
-      "/e26.js",
-      "/e27.js",
-      "/e28.js",
-      "/e29.js",
-      "/e30.js",
-      "/e31.js",
-      "/e32.js",
-      "/e33.js",
-      "/e34.js",
-      "/e35.js",
-      "/e36.js",
-      "/e37.js",
-      "/e38.js",
-      "/e39.js",
-    ],
-  });
-  itBundled("default/RenamePrivateIdentifiersNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        class Foo {
-          #foo
-          foo = class {
-            #foo
-            #foo2
-            #bar
-          }
-          get #bar() {}
-          set #bar(x) {}
-        }
-        class Bar {
-          #foo
-          foo = class {
-            #foo2
-            #foo
-            #bar
-          }
-          get #bar() {}
-          set #bar(x) {}
-        }
-      `,
-    },
-    mode: "transform",
+    files: Object.fromEntries([
+      ["/shared.js", "export default 123"],
+      ...Array.from({ length: 40 }, (_, i) => [
+        `/e${String(i).padStart(2, "0")}.js`,
+        `import x from "./shared"; console.log(x)`,
+      ]),
+    ]),
+    entryPoints: Array.from({ length: 40 }, (_, i) => `/e${String(i).padStart(2, "0")}.js`),
   });
   itBundled("default/MinifyPrivateIdentifiersNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         class Foo {
+          doNotRenameMe
           #foo
           foo = class {
             #foo
@@ -2344,6 +2283,7 @@ describe("bundler", () => {
           set #bar(x) {}
         }
         class Bar {
+          doNotRenameMe
           #foo
           foo = class {
             #foo2
@@ -2357,35 +2297,14 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
-  });
-  itBundled("default/RenameLabelsNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.js": /* js */ `
-        foo: {
-          bar: {
-            if (x) break bar
-            break foo
-          }
-        }
-        foo2: {
-          bar2: {
-            if (x) break bar2
-            break foo2
-          }
-        }
-        foo: {
-          bar: {
-            if (x) break bar
-            break foo
-          }
-        }
-      `,
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      assert(text.includes("doNotRenameMe"), "bundler should not have renamed `doNotRenameMe`");
+      assert(!text.includes("#foo"), "bundler should have renamed `#foo`");
     },
-    mode: "transform",
   });
+  // These labels should all share the same minified names
   itBundled("default/MinifySiblingLabelsNoBundle", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         foo: {
@@ -2410,35 +2329,39 @@ describe("bundler", () => {
     },
     minifyIdentifiers: true,
     mode: "transform",
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      const labels = [...text.matchAll(/([a-z0-9]+):/gi)].map(x => x[1]);
+      expect(labels).toStrictEqual([labels[0], labels[1], labels[0], labels[1], labels[0], labels[1]]);
+    },
   });
   itBundled("default/MinifyNestedLabelsNoBundle", {
-    // GENERATED
     files: {
-      "/entry.js": /* js */ `
-        L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{nl('\n')
-        L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{nl('\n')
-        L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{nl('\n')
-        L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{nl('\n')
-        L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{nl('\n')
-        L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{nl('\n')
-        L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{nl('\n')
-        L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{nl('\n')
-        L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{nl('\n')
-        L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{nl('\n')
-        L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{nl('\n')
-        L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{nl('\n')
-        L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{nl('\n')
-        L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{nl('\n')
-        L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{nl('\n')
-        L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{nl('\n')
-        L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{nl('\n')
-        L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{nl('\n')
-        L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{nl('\n')
-        L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{nl('\n')
-        L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}nl('\n')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}nl('\n')
+      "/entry.js": dedent`
+        L001:{L002:{L003:{L004:{L005:{L006:{L007:{L008:{L009:{L010:{L011:{L012:{L013:{L014:{L015:{L016:{console.log('a')
+        L017:{L018:{L019:{L020:{L021:{L022:{L023:{L024:{L025:{L026:{L027:{L028:{L029:{L030:{L031:{L032:{console.log('a')
+        L033:{L034:{L035:{L036:{L037:{L038:{L039:{L040:{L041:{L042:{L043:{L044:{L045:{L046:{L047:{L048:{console.log('a')
+        L049:{L050:{L051:{L052:{L053:{L054:{L055:{L056:{L057:{L058:{L059:{L060:{L061:{L062:{L063:{L064:{console.log('a')
+        L065:{L066:{L067:{L068:{L069:{L070:{L071:{L072:{L073:{L074:{L075:{L076:{L077:{L078:{L079:{L080:{console.log('a')
+        L081:{L082:{L083:{L084:{L085:{L086:{L087:{L088:{L089:{L090:{L091:{L092:{L093:{L094:{L095:{L096:{console.log('a')
+        L097:{L098:{L099:{L100:{L101:{L102:{L103:{L104:{L105:{L106:{L107:{L108:{L109:{L110:{L111:{L112:{console.log('a')
+        L113:{L114:{L115:{L116:{L117:{L118:{L119:{L120:{L121:{L122:{L123:{L124:{L125:{L126:{L127:{L128:{console.log('a')
+        L129:{L130:{L131:{L132:{L133:{L134:{L135:{L136:{L137:{L138:{L139:{L140:{L141:{L142:{L143:{L144:{console.log('a')
+        L145:{L146:{L147:{L148:{L149:{L150:{L151:{L152:{L153:{L154:{L155:{L156:{L157:{L158:{L159:{L160:{console.log('a')
+        L161:{L162:{L163:{L164:{L165:{L166:{L167:{L168:{L169:{L170:{L171:{L172:{L173:{L174:{L175:{L176:{console.log('a')
+        L177:{L178:{L179:{L180:{L181:{L182:{L183:{L184:{L185:{L186:{L187:{L188:{L189:{L190:{L191:{L192:{console.log('a')
+        L193:{L194:{L195:{L196:{L197:{L198:{L199:{L200:{L201:{L202:{L203:{L204:{L205:{L206:{L207:{L208:{console.log('a')
+        L209:{L210:{L211:{L212:{L213:{L214:{L215:{L216:{L217:{L218:{L219:{L220:{L221:{L222:{L223:{L224:{console.log('a')
+        L225:{L226:{L227:{L228:{L229:{L230:{L231:{L232:{L233:{L234:{L235:{L236:{L237:{L238:{L239:{L240:{console.log('a')
+        L241:{L242:{L243:{L244:{L245:{L246:{L247:{L248:{L249:{L250:{L251:{L252:{L253:{L254:{L255:{L256:{console.log('a')
+        L257:{L258:{L259:{L260:{L261:{L262:{L263:{L264:{L265:{L266:{L267:{L268:{L269:{L270:{L271:{L272:{console.log('a')
+        L273:{L274:{L275:{L276:{L277:{L278:{L279:{L280:{L281:{L282:{L283:{L284:{L285:{L286:{L287:{L288:{console.log('a')
+        L289:{L290:{L291:{L292:{L293:{L294:{L295:{L296:{L297:{L298:{L299:{L300:{L301:{L302:{L303:{L304:{console.log('a')
+        L305:{L306:{L307:{L308:{L309:{L310:{L311:{L312:{L313:{L314:{L315:{L316:{L317:{L318:{L319:{L320:{console.log('a')
+        L321:{L322:{L323:{L324:{L325:{L326:{L327:{L328:{L329:{L330:{L331:{L332:{L333:{}}}}}}}}}}}}}}}}}}console.log('a')
+        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
+        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}console.log('a')
         }}}}}}}}}}}}}}}}}}}}}}}}}}}
       `,
     },
@@ -2448,7 +2371,6 @@ describe("bundler", () => {
     mode: "transform",
   });
   itBundled("default/ExportsAndModuleFormatCommonJS", {
-    // GENERATED
     files: {
       "/entry.js": /* js */ `
         import * as foo from './foo/test'
@@ -2460,6 +2382,7 @@ describe("bundler", () => {
     },
     format: "cjs",
   });
+  return;
   itBundled("default/MinifiedExportsAndModuleFormatCommonJS", {
     // GENERATED
     files: {
@@ -4577,71 +4500,71 @@ describe("bundler", () => {
   });
   const relocateFiles = {
     "/top-level.js": /* js */ `
-  		var a;
-  		for (var b; 0;);
-  		for (var { c, x: [d] } = {}; 0;);
-  		for (var e of []);
-  		for (var { f, x: [g] } of []);
-  		for (var h in {});
-  		for (var i = 1 in {});
-  		for (var { j, x: [k] } in {});
-  		function l() {}
-  	`,
+      var a;
+      for (var b; 0;);
+      for (var { c, x: [d] } = {}; 0;);
+      for (var e of []);
+      for (var { f, x: [g] } of []);
+      for (var h in {});
+      for (var i = 1 in {});
+      for (var { j, x: [k] } in {});
+      function l() {}
+    `,
     "/nested.js": /* js */ `
-  		if (true) {
-  			var a;
-  			for (var b; 0;);
-  			for (var { c, x: [d] } = {}; 0;);
-  			for (var e of []);
-  			for (var { f, x: [g] } of []);
-  			for (var h in {});
-  			for (var i = 1 in {});
-  			for (var { j, x: [k] } in {});
-  			function l() {}
-  		}
-  	`,
+      if (true) {
+        var a;
+        for (var b; 0;);
+        for (var { c, x: [d] } = {}; 0;);
+        for (var e of []);
+        for (var { f, x: [g] } of []);
+        for (var h in {});
+        for (var i = 1 in {});
+        for (var { j, x: [k] } in {});
+        function l() {}
+      }
+    `,
     "/let.js": /* js */ `
-  		if (true) {
-  			let a;
-  			for (let b; 0;);
-  			for (let { c, x: [d] } = {}; 0;);
-  			for (let e of []);
-  			for (let { f, x: [g] } of []);
-  			for (let h in {});
-  			// for (let i = 1 in {});
-  			for (let { j, x: [k] } in {});
-  		}
-  	`,
+      if (true) {
+        let a;
+        for (let b; 0;);
+        for (let { c, x: [d] } = {}; 0;);
+        for (let e of []);
+        for (let { f, x: [g] } of []);
+        for (let h in {});
+        // for (let i = 1 in {});
+        for (let { j, x: [k] } in {});
+      }
+    `,
     "/function.js": /* js */ `
-  		function x() {
-  			var a;
-  			for (var b; 0;);
-  			for (var { c, x: [d] } = {}; 0;);
-  			for (var e of []);
-  			for (var { f, x: [g] } of []);
-  			for (var h in {});
-  			for (var i = 1 in {});
-  			for (var { j, x: [k] } in {});
-  			function l() {}
-  		}
-  		x()
-  	`,
+      function x() {
+        var a;
+        for (var b; 0;);
+        for (var { c, x: [d] } = {}; 0;);
+        for (var e of []);
+        for (var { f, x: [g] } of []);
+        for (var h in {});
+        for (var i = 1 in {});
+        for (var { j, x: [k] } in {});
+        function l() {}
+      }
+      x()
+    `,
     "/function-nested.js": /* js */ `
-  		function x() {
-  			if (true) {
-  				var a;
-  				for (var b; 0;);
-  				for (var { c, x: [d] } = {}; 0;);
-  				for (var e of []);
-  				for (var { f, x: [g] } of []);
-  				for (var h in {});
-  				for (var i = 1 in {});
-  				for (var { j, x: [k] } in {});
-  				function l() {}
-  			}
-  		}
-  		x()
-  	`,
+      function x() {
+        if (true) {
+          var a;
+          for (var b; 0;);
+          for (var { c, x: [d] } = {}; 0;);
+          for (var e of []);
+          for (var { f, x: [g] } of []);
+          for (var h in {});
+          for (var i = 1 in {});
+          for (var { j, x: [k] } in {});
+          function l() {}
+        }
+      }
+      x()
+    `,
   };
   const relocateEntries = ["/top-level.js", "/nested.js", "/let.js", "/function.js", "/function-nested.js"];
 

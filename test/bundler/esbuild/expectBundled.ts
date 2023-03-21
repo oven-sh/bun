@@ -136,6 +136,9 @@ export interface BundlerTestInput {
    */
   dce?: boolean;
 
+  /** Used on tests in the esbuild suite that fail and skip. */
+  skipOnEsbuild?: boolean;
+
   // hooks
 
   /** Run after bundle happens but before runtime. */
@@ -207,7 +210,9 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     run,
     runtimeFiles,
     sourceMap,
+    host,
     banner,
+    skipOnEsbuild,
     ...unknownProps
   } = opts;
 
@@ -230,15 +235,25 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
+  const useOutFile = outfile ? true : outdir ? false : entryPoints.length === 1;
 
   if (!ESBUILD && jsx.automaticRuntime) {
-    throw new Error("jsx.automaticRuntime not implemented");
+    throw new Error("jsx.automaticRuntime not implemented in bun bun");
   }
   if (!ESBUILD && format !== "esm") {
     throw new Error("formats besides esm not implemented in bun bun");
   }
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun bun");
+  }
+  if (!ESBUILD && !useOutFile) {
+    throw new Error("outdir not implemented in bun bun");
+  }
+  if (host === "windows") {
+    throw new Error('"host: windows" is not implemented in expectBundled');
+  }
+  if (ESBUILD && skipOnEsbuild) {
+    return;
   }
 
   if (dryRun) {
@@ -250,7 +265,9 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
 
   const entryPaths = entryPoints.map(file => path.join(root, file));
 
-  const useOutFile = outfile ? true : entryPoints.length === 1;
+  if (external) {
+    external = external.map(x => x.replace(/\{\{root\}\}/g, root));
+  }
 
   outfile = useOutFile ? path.join(root, outfile ?? "/out.js") : undefined;
   outdir = !useOutFile ? path.join(root, outdir ?? "/out") : undefined;
@@ -268,7 +285,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   for (const [file, contents] of Object.entries(files)) {
     const filename = path.join(root, file);
     mkdirSync(path.dirname(filename), { recursive: true });
-    writeFileSync(filename, dedent(contents));
+    writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
   // Run bun bun cli. In the future we can move to using `Bun.Bundler`
@@ -528,7 +545,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   // Write runtime files to disk as well as run the post bundle hook.
   for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-    writeFileSync(path.join(root, file), dedent(contents));
+    writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
   }
 
   const readCache: Record<string, string> = {};

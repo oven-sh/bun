@@ -1254,10 +1254,6 @@ console.log(resolve.length)
       expectPrintedNoTrim("for ([] in y) ;", "for ([] in y)\n  ;\n");
       expectPrintedNoTrim("for ({} in y) ;", "for ({} in y)\n  ;\n");
       expectPrintedNoTrim("for ((x) in y) ;", "for (x in y)\n  ;\n");
-      expectPrintedNoTrim("for (x in y) {}", "for (x in y)\n  ;\n");
-      expectPrintedNoTrim("for ([] in y) {}", "for ([] in y)\n  ;\n");
-      expectPrintedNoTrim("for ({} in y) {}", "for ({} in y)\n  ;\n");
-      expectPrintedNoTrim("for ((x) in y) {}", "for (x in y)\n  ;\n");
       expectParseError("for (x in y)", "Unexpected end of file");
       expectParseError("for ([] in y)", "Unexpected end of file");
       expectParseError("for ({} in y)", "Unexpected end of file");
@@ -1291,10 +1287,6 @@ console.log(resolve.length)
       expectParseError("({x = {a = b}} = c)", 'Unexpected "="');
       expectParseError("[a = {b = c}] = d", 'Unexpected "="');
 
-      expectPrintedNoTrim("for ([{a = {}}] in b) {}", "for ([{ a = {} }] in b)\n  ;\n");
-      expectPrintedNoTrim("for ([{a = {}}] of b) {}", "for ([{ a = {} }] of b)\n  ;\n");
-      expectPrintedNoTrim("for ({a = {}} in b) {}", "for ({ a = {} } in b)\n  ;\n");
-      expectPrintedNoTrim("for ({a = {}} of b) {}", "for ({ a = {} } of b)\n  ;\n");
       expectPrintedNoTrim("for ([{a = {}}] in b) ;", "for ([{ a = {} }] in b)\n  ;\n");
       expectPrintedNoTrim("for ([{a = {}}] of b) ;", "for ([{ a = {} }] of b)\n  ;\n");
       expectPrintedNoTrim("for ({a = {}} in b) ;", "for ({ a = {} } in b)\n  ;\n");
@@ -1304,8 +1296,18 @@ console.log(resolve.length)
       expectParseError("for ({a = {}} in b)", "Unexpected end of file");
       expectParseError("for ({a = {}} of b)", "Unexpected end of file");
 
-      expectPrintedNoTrim("while (true) ;", "while (true)\n  ;\n");
+      // this is different from esbuild
+      expectPrintedNoTrim("for ([{a = {}}] in b) {}", "for ([{ a = {} }] in b)\n  ;\n");
+      expectPrintedNoTrim("for ([{a = {}}] of b) {}", "for ([{ a = {} }] of b)\n  ;\n");
+      expectPrintedNoTrim("for ({a = {}} in b) {}", "for ({ a = {} } in b)\n  ;\n");
+      expectPrintedNoTrim("for ({a = {}} of b) {}", "for ({ a = {} } of b)\n  ;\n");
+      expectPrintedNoTrim("for (x in y) {}", "for (x in y)\n  ;\n");
+      expectPrintedNoTrim("for ([] in y) {}", "for ([] in y)\n  ;\n");
+      expectPrintedNoTrim("for ({} in y) {}", "for ({} in y)\n  ;\n");
+      expectPrintedNoTrim("for ((x) in y) {}", "for (x in y)\n  ;\n");
       expectPrintedNoTrim("while (true) {}", "while (true)\n  ;\n");
+
+      expectPrintedNoTrim("while (true) ;", "while (true)\n  ;\n");
       expectParseError("while (1)", "Unexpected end of file");
 
       expectParseError("({a = {}} in b)", 'Unexpected "="');

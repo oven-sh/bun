@@ -167,6 +167,15 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+// second half of JSObject::getOwnPropertySlotByIndex()
+JSValue tryGetOwnPropertySlotByIndex(JSGlobalObject* globalObject, JSObject* obj, unsigned i)
+{
+    PropertySlot slot(obj, PropertySlot::InternalMethodType::Get);
+    if (obj->methodTable()->getOwnPropertySlotByIndex(obj, globalObject, i, slot))
+        return slot.getValue(globalObject, i);
+    return JSValue();
+}
+
 template<bool isStrict>
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
@@ -478,15 +487,14 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (uint64_t i = 0; i < length; i++) {
-            // array holes come back as empty values with tryGetIndexQuickly()
             JSValue left = o1->canGetIndexQuickly(i)
                 ? o1->getIndexQuickly(i)
-                : o1->tryGetIndexQuickly(i);
+                : tryGetOwnPropertySlotByIndex(globalObject, o1, i);
             RETURN_IF_EXCEPTION(*scope, false);
 
             JSValue right = o2->canGetIndexQuickly(i)
                 ? o2->getIndexQuickly(i)
-                : o2->tryGetIndexQuickly(i);
+                : tryGetOwnPropertySlotByIndex(globalObject, o2, i);
             RETURN_IF_EXCEPTION(*scope, false);
 
             if constexpr (isStrict) {

@@ -252,4 +252,29 @@ extern "C" int posix_spawn_file_actions_addfchdir_np(void* ptr,
     return ((int (*)(void*, int))posix_spawn_file_actions_addfchdir_np_ptr)(ptr, fd);
 }
 
+#include <mach/clock_types.h>
+  
+extern "C" int __ulock_wait(uint32_t operation, void *addr, uint64_t value, uint64_t timeout_us);
+
+extern "C" int __ulock_wait2(uint32_t operation, void *addr, uint64_t value, uint64_t timeout_ns, uint64_t value2)
+{
+    static void* __ulock_wait2_ptr = nullptr;
+    static bool __ulock_wait2_ptr_initialized = false;
+    if (UNLIKELY(!__ulock_wait2_ptr_initialized)) {
+        __ulock_wait2_ptr_initialized = true;
+        __ulock_wait2_ptr = dlsym(RTLD_DEFAULT, "__ulock_wait2");
+    }
+
+    if (UNLIKELY(__ulock_wait2_ptr == nullptr)) {
+        uint64_t timeout_us = timeout_ns / NSEC_PER_USEC;
+        if (timeout_us == 0 && timeout_ns != 0) {
+            // have at least a microsecond timeout if timeout_ns is non-zero
+            timeout_us = 1;
+        }
+        return __ulock_wait(operation, addr, value, timeout_us);
+    }
+
+    return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
+}
+
 #endif

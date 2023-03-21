@@ -715,6 +715,8 @@ fn NewPrinter(
 
         symbol_counter: u32 = 0,
 
+        temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
+
         const Printer = @This();
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
@@ -1004,14 +1006,124 @@ fn NewPrinter(
             p.print("}");
         }
 
-        pub fn printDecls(p: *Printer, comptime keyword: string, decls: []G.Decl, flags: ExprFlag.Set) void {
+        pub fn printDecls(p: *Printer, comptime keyword: string, decls_: []G.Decl, flags: ExprFlag.Set) void {
             p.print(keyword);
             p.printSpace();
+            var decls = decls_;
 
             if (decls.len == 0) {
                 // "var ;" is invalid syntax
                 // assert we never reach it
                 unreachable;
+            }
+
+            if (comptime FeatureFlags.same_target_becomes_destructuring) {
+                // Minify
+                //
+                //    var a = obj.foo, b = obj.bar, c = obj.baz;
+                //
+                // to
+                //
+                //    var {a, b, c} = obj;
+                //
+                // Caveats:
+                //   - Same consecutive target
+                //   - No optional chaining
+                //   - No computed property access
+                //   - Identifier bindings only
+
+                if (decls.len > 1) brk: {
+                    if (decls[0].binding.data != .b_identifier) break :brk;
+                    const target_value = decls[0].value orelse break :brk;
+                    const target_e_dot: *E.Dot = if (target_value.data == .e_dot)
+                        target_value.data.e_dot
+                    else
+                        break :brk;
+                    const target_ref = if (target_e_dot.target.data == .e_identifier and target_e_dot.optional_chain == null)
+                        target_e_dot.target.data.e_identifier.ref
+                    else
+                        break :brk;
+
+                    const second_decl = decls[1];
+
+                    if (second_decl.value == null or
+                        second_decl.value.?.data != .e_dot or
+                        second_decl.binding.data != .b_identifier)
+                    {
+                        break :brk;
+                    }
+
+                    const second_e_dot = second_decl.value.?.data.e_dot;
+                    if (second_e_dot.target.data != .e_identifier or second_e_dot.optional_chain != null) {
+                        break :brk;
+                    }
+
+                    const second_ref = second_e_dot.target.data.e_identifier.ref;
+                    if (!second_ref.eql(target_ref)) {
+                        break :brk;
+                    }
+
+                    var temp_bindings = p.temporary_bindings;
+
+                    p.temporary_bindings = .{};
+                    defer {
+                        if (p.temporary_bindings.capacity > 0) {
+                            temp_bindings.deinit(bun.default_allocator);
+                        } else {
+                            temp_bindings.clearRetainingCapacity();
+                            p.temporary_bindings = temp_bindings;
+                        }
+                    }
+                    temp_bindings.ensureUnusedCapacity(bun.default_allocator, 2) catch unreachable;
+                    temp_bindings.appendAssumeCapacity(.{
+                        .key = Expr.init(E.String, E.String.init(target_e_dot.name), target_e_dot.name_loc),
+                        .value = decls[0].binding,
+                    });
+                    temp_bindings.appendAssumeCapacity(.{
+                        .key = Expr.init(E.String, E.String.init(second_e_dot.name), second_e_dot.name_loc),
+                        .value = decls[1].binding,
+                    });
+
+                    decls = decls[2..];
+                    while (decls.len > 0) {
+                        const decl = decls[0];
+
+                        if (decl.value == null or decl.value.?.data != .e_dot) {
+                            break;
+                        }
+
+                        const e_dot = decl.value.?.data.e_dot;
+                        if (e_dot.target.data != .e_identifier or e_dot.optional_chain != null) {
+                            break;
+                        }
+
+                        const ref = e_dot.target.data.e_identifier.ref;
+                        if (!ref.eql(target_ref)) {
+                            break;
+                        }
+
+                        temp_bindings.append(bun.default_allocator, .{
+                            .key = Expr.init(E.String, E.String.init(e_dot.name), e_dot.name_loc),
+                            .value = decl.binding,
+                        }) catch unreachable;
+                        decls = decls[1..];
+                    }
+                    var b_object = B.Object{
+                        .properties = temp_bindings.items,
+                        .is_single_line = false,
+                    };
+                    const binding = Binding.init(&b_object, target_e_dot.target.loc);
+                    p.printBinding(binding);
+                    p.printWhitespacer(ws(" = "));
+                    p.printExpr(second_e_dot.target, .comma, flags);
+
+                    if (decls.len == 0) {
+                        return;
+                    }
+
+                    p.print(",");
+                    p.printSpace();
+                }
             }
 
             {
@@ -5669,6 +5781,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         undefined,
     );
+    defer printer.temporary_bindings.deinit(bun.default_allocator);
     defer _writer.* = printer.writer.*;
     defer {
         imported_module_ids_list = printer.imported_module_ids;

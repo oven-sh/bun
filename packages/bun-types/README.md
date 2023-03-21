@@ -19,17 +19,13 @@ bun add bun-types
 
 Add this to your `tsconfig.json` or `jsconfig.json`:
 
-```jsonc
-{
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "module": "ESNext",
-    "target": "ESNext",
-    "moduleResolution": "bundler",
-    // "bun-types" is the important part
-    "types": ["bun-types"]
+```jsonc-diff
+  {
+    "compilerOptions": {
+      // ...
++     "types": ["bun-types"]
+    }
   }
-}
 ```
 
 # Contributing

@@ -28,6 +28,8 @@ Bun's runtime implements [modern ECMAScript features](https://github.com/sudheer
 
 These are the recommended `compilerOptions` for a Bun project.
 
+> The config below sets `moduleResolution` to `bundler` which requires TypeScript option is set to `"bundler"` to support [path mapping](#path-mapping).
+
 ```jsonc
 {
   "compilerOptions": {
@@ -35,10 +37,13 @@ These are the recommended `compilerOptions` for a Bun project.
     "lib": ["esnext"],
     "module": "esnext",
     "target": "esnext",
-    "moduleResolution": "nodenext",
+    
+    // requires typescript 5.x+
+    // use "nodenext" for earlier versions
+    "moduleResolution": "bundler",
 
     // support JSX, CommonJS
-    "jsx": "preserve", // support JSX (value doesn't matter)
+    "jsx": "react-jsx", // support JSX (value doesn't matter)
     "allowJs": true, // allow importing `.js` from `.ts`
     "esModuleInterop": true, // allow default imports for CommonJS modules
 

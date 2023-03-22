@@ -27,5 +27,5 @@ jobs:
           bun-version: canary
       - name: Install dependencies
         run: bun install
-      - name: Generate package
+      - name: Typecheck tests
         run: bun run typecheck

@@ -16,7 +16,7 @@ import {
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 
-let link_dir;
+let link_dir: string;
 
 beforeEach(async () => {
   link_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-link.test"));

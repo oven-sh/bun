@@ -500,7 +500,7 @@ declare module "bun" {
          * `"system"` uses the same API underneath (except non-blocking).
          *
          */
-        backend?: "c-ares" | "system" | "getaddrinfo";
+        backend?: "libc" | "c-ares" | "system" | "getaddrinfo";
       },
     ): Promise<DNSLookup[]>;
   };
@@ -1492,6 +1492,7 @@ declare module "bun" {
     ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
   }
 
+  export type AnyFunction = (..._: any[]) => any;
   export interface ServeOptions extends GenericServeOptions {
     /**
      * Handle HTTP requests
@@ -2819,7 +2820,7 @@ declare module "bun" {
     reload(options: Pick<Partial<SocketOptions>, "socket">): void;
     data: Data;
   }
-  interface TCPSocketListener<Data> extends SocketListener<Data> {
+  interface TCPSocketListener<Data = unknown> extends SocketListener<Data> {
     readonly port: number;
     readonly hostname: string;
   }
@@ -3175,6 +3176,8 @@ declare module "bun" {
       /** The base path to use when routing */
       assetPrefix?: string;
       origin?: string;
+      /** Limit the pages to those with particular file extensions. */
+      fileExtensions?: string[];
     });
 
     // todo: URL
@@ -3370,7 +3373,9 @@ type TypedArray =
   | Int32Array
   | Uint32Array
   | Float32Array
-  | Float64Array;
+  | Float64Array
+  | BigInt64Array
+  | BigUint64Array;
 
 type TimeLike = string | number | Date;
 type StringOrBuffer = string | TypedArray | ArrayBufferLike;

@@ -35,7 +35,7 @@ it("should log .env by default", async () => {
   expect(stderr?.toString().includes(".env")).toBe(true);
 });
 
-function writeDirectoryTree(base, paths) {
+function writeDirectoryTree(base: string, paths: Record<string, any>) {
   for (const path of Object.keys(paths)) {
     const content = paths[path];
     const joined = join(base, path);

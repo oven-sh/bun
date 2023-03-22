@@ -1,6 +1,6 @@
 import { dlopen, ptr } from "bun:ffi";
 
-var lazyMkfifo;
+var lazyMkfifo: any;
 export function mkfifo(path: string, permissions: number = 0o666): void {
   if (!lazyMkfifo) {
     const suffix = process.platform === "darwin" ? "dylib" : "so.6";

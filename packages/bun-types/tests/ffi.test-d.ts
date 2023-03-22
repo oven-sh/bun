@@ -60,7 +60,7 @@ tsd.expectType<number>(lib.symbols.add(1, 2));
 
 tc.assert<
   tc.IsExact<
-    typeof lib["symbols"]["allArgs"],
+    (typeof lib)["symbols"]["allArgs"],
     [
       number,
       number,

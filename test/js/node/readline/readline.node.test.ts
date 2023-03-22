@@ -1,3 +1,4 @@
+// @ts-nocheck
 import readline from "node:readline";
 import { Writable, PassThrough } from "node:stream";
 import { EventEmitter } from "node:events";
@@ -7,6 +8,7 @@ const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert }
 var {
   CSI,
   utils: { getStringWidth, stripVTControlCharacters },
+  // @ts-ignore
 } = readline[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")];
 
 // ----------------------------------------------------------------------------

@@ -1,15 +1,16 @@
 import { Readable } from "stream";
 import { it, expect } from "bun:test";
 
-function makeUint8Array(str) {
+function makeUint8Array(str: string) {
   return new Uint8Array(
-    [].map.call(str, function (ch) {
+    [].map.call(str, function (ch: string) {
       return ch.charCodeAt(0);
-    }),
+    }) as number[],
   );
 }
 
 it("should work with .clear()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push({})).toBeUndefined();
@@ -21,6 +22,7 @@ it("should work with .clear()", () => {
 });
 
 it("should work with .concat()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("foo"))).toBeUndefined();
@@ -32,6 +34,7 @@ it("should work with .concat()", () => {
 });
 
 it("should fail on .concat() with invalid items", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
@@ -41,6 +44,7 @@ it("should fail on .concat() with invalid items", () => {
 });
 
 it("should fail on .concat() buffer overflow", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("foo"))).toBeUndefined();
@@ -56,6 +60,7 @@ it("should fail on .concat() buffer overflow", () => {
 });
 
 it("should work with .consume() on strings", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.consume(42, true)).toBe("");
@@ -74,6 +79,7 @@ it("should work with .consume() on strings", () => {
 });
 
 it("should work with .consume() on buffers", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.consume(42, false)).toEqual(new Uint8Array());
@@ -94,6 +100,7 @@ it("should work with .consume() on buffers", () => {
 });
 
 it("should fail on .consume() with invalid items", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
@@ -114,6 +121,7 @@ it("should fail on .consume() with invalid items", () => {
 });
 
 it("should work with .first()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.first()).toBeUndefined();
@@ -124,6 +132,7 @@ it("should work with .first()", () => {
 });
 
 it("should work with .join()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push(42)).toBeUndefined();
@@ -137,6 +146,7 @@ it("should work with .join()", () => {
 });
 
 it("should work with .push()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   const item1 = {};
@@ -152,6 +162,7 @@ it("should work with .push()", () => {
 });
 
 it("should work with .shift()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.shift()).toBeUndefined();
@@ -163,6 +174,7 @@ it("should work with .shift()", () => {
 });
 
 it("should work with .unshift()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   const item1 = {};
@@ -183,6 +195,7 @@ it("should work with .unshift()", () => {
 });
 
 it("should work with partial .consume() followed by .first()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push("foo")).toBeUndefined();
@@ -195,6 +208,7 @@ it("should work with partial .consume() followed by .first()", () => {
 });
 
 it("should work with partial .consume() followed by .shift()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("foo"))).toBeUndefined();
@@ -207,6 +221,7 @@ it("should work with partial .consume() followed by .shift()", () => {
 });
 
 it("should work with partial .consume() followed by .unshift()", () => {
+  // @ts-ignore
   const list = new Readable().readableBuffer;
   expect(list.length).toBe(0);
   expect(list.push(makeUint8Array("😋😋😋"))).toBeUndefined();

@@ -64,11 +64,12 @@ it("should recover from errors", async () => {
 
   var queue = [onReloadError, onReloadGood, onReloadError, onReloadGood];
   var errors: string[] = [];
-  var onError;
+  var onError: (...args: any[]) => void;
   (async () => {
     for await (let line of runner.stderr!) {
       var str = new TextDecoder().decode(line);
       errors.push(str);
+      // @ts-ignore
       onError && onError(str);
     }
   })();

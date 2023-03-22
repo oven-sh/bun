@@ -1,3 +1,6 @@
+// @ts-nocheck
+// can't use @types/express or @types/body-parser because they
+// depend on @types/node which conflicts with bun-types
 import { test, expect } from "bun:test";
 import express, { Application, Request, Response } from "express";
 import { json } from "body-parser";

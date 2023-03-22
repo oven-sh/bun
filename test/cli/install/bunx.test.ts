@@ -7,7 +7,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
 
-let x_dir;
+let x_dir: string;
 
 beforeEach(async () => {
   x_dir = realpathSync(await mkdtemp(join(tmpdir(), "bun-x.test")));

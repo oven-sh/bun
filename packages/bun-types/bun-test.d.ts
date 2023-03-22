@@ -199,7 +199,12 @@ declare module "bun:test" {
    *
    * @param actual the actual value
    */
-  export function expect(actual: unknown): Expect;
+  export const expect: {
+    (actual: unknown): Expect;
+    any: (
+      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
+    ) => Expect;
+  };
   /**
    * Asserts that a value matches some criteria.
    *
@@ -211,7 +216,7 @@ declare module "bun:test" {
    *
    * @param actual the actual value
    */
-  export type Expect = {
+  export type Expect<T = unknown> = {
     /**
      * Negates the result of a subsequent assertion.
      *
@@ -219,7 +224,7 @@ declare module "bun:test" {
      * expect(1).not.toBe(0);
      * expect(null).not.toBeNull();
      */
-    not: Expect;
+    not: Expect<unknown>;
     /**
      * Asserts that a value equals what is expected.
      *
@@ -235,7 +240,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: unknown): void;
+    toBe(expected: T): void;
     /**
      * Asserts that a value is deeply equal to what is expected.
      *
@@ -247,7 +252,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(expected: unknown): void;
+    toEqual(expected: T): void;
     /**
      * Asserts that a value is deeply and strictly equal to
      * what is expected.
@@ -271,7 +276,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual(expected: unknown): void;
+    toStrictEqual(expected: T): void;
     /**
      * Asserts that a value contains what is expected.
      *
@@ -341,7 +346,15 @@ declare module "bun:test" {
      * expect(undefined).toBeDefined(); // fail
      */
     toBeDefined(): void;
-     /**
+    /**
+     * Asserts that the expected value is an instance of value
+     *
+     * @example
+     * expect([]).toBeInstanceOf(Array);
+     * expect(null).toBeInstanceOf(Array); // fail
+     */
+    toBeInstanceOf(value: unknown): void;
+    /**
      * Asserts that the expected value is an instance of value
      *
      * @example
@@ -462,7 +475,7 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
-  }
+  };
 }
 
 declare module "test" {

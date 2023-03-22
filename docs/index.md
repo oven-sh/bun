@@ -21,7 +21,7 @@ $ bunx cowsay "Hello, world!"   # execute a package
 
 ### Get started
 
-{% block className="gap-[10px] grid grid-flow-row grid-cols-1 md:grid-cols-2" %}
+{% block className="gap-2 grid grid-flow-row grid-cols-1 md:grid-cols-2" %}
 {% arrowbutton href="/docs/installation" text="Install Bun" /%}
 {% arrowbutton href="/docs/quickstart" text="Do the quickstart" /%}
 {% arrowbutton href="/docs/cli/install" text="Install a package" /%}

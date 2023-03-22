@@ -185,7 +185,7 @@ describe("net.createServer listen", () => {
 
 it("should receive data", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout;
+  let timeout: number | Timer;
 
   const onData = mustCall(data => {
     clearTimeout(timeout);
@@ -195,7 +195,7 @@ it("should receive data", done => {
     done();
   });
 
-  const server = createServer(socket => {
+  const server = createServer((socket: any) => {
     socket.on("data", onData);
   });
 
@@ -232,7 +232,7 @@ it("should receive data", done => {
 
 it("should call end", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
-  let timeout;
+  let timeout: number | Timer;
 
   const onEnd = mustCall(() => {
     clearTimeout(timeout);
@@ -240,7 +240,7 @@ it("should call end", done => {
     done();
   });
 
-  const server = createServer(socket => {
+  const server = createServer((socket: any) => {
     socket.on("end", onEnd);
     socket.end();
   });
@@ -286,7 +286,7 @@ it("should call close", done => {
 it("should call connection and drop", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-  let timeout;
+  let timeout: number | Timer;
   const server = createServer();
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
@@ -350,7 +350,7 @@ it("should call connection and drop", done => {
 it("should call listening", done => {
   const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
-  let timeout;
+  let timeout: number | Timer;
   const server = createServer();
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
@@ -381,7 +381,7 @@ it("should call listening", done => {
 it("should call error", done => {
   const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
 
-  let timeout;
+  let timeout: number | Timer;
   const server = createServer();
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
@@ -415,7 +415,7 @@ it("should call abort with signal", done => {
   const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
 
   const controller = new AbortController();
-  let timeout;
+  let timeout: number | Timer;
   const server = createServer();
   let maxClients = 2;
   server.maxConnections = maxClients - 1;
@@ -446,9 +446,9 @@ it("should call abort with signal", done => {
 
 it("should echo data", done => {
   const { mustCall, mustNotCall, closeTimers } = createCallCheckCtx(done);
-  let timeout;
+  let timeout: number | Timer;
 
-  const server = createServer(socket => {
+  const server = createServer((socket: any) => {
     socket.pipe(socket);
   });
 

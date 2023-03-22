@@ -20,7 +20,7 @@ import {
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 
-let add_dir;
+let add_dir: string;
 
 beforeEach(async () => {
   add_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
@@ -860,7 +860,7 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
 });
 
 it("should prefer optionalDependencies over dependencies of the same name", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.2": {
@@ -920,7 +920,7 @@ it("should prefer optionalDependencies over dependencies of the same name", asyn
 });
 
 it("should prefer dependencies over peerDependencies of the same name", async () => {
-  const urls = [];
+  const urls: string[] = [];
   setHandler(
     dummyRegistry(urls, {
       "0.0.2": {

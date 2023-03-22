@@ -14,7 +14,7 @@
  * For test debugging, I have a utility script `run-single-test.sh` which gets around bun's inability
  * to run a single test.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtemp, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import dedent from "dedent";
 import { bunEnv, bunExe } from "harness";
@@ -44,7 +44,7 @@ const DEBUG = process.env.BUN_BUNDLER_TEST_DEBUG;
 /** Set this to the id of a bundle test to run just that test */
 const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 
-const outBase = path.join(tmpdir(), "bun-bundler-tests");
+const outBase = path.join(tmpdir(), mkdtempSync(ESBUILD ? "esbuild" : "bun" ), "./bun-bundler-tests");
 const testsRan = new Set();
 const tempPathToBunDebug = Bun.which("bun-new-bundler") ?? Bun.which("bun-debug") ?? bunExe();
 
@@ -285,6 +285,8 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
     mkdirSync(path.dirname(filename), { recursive: true });
     writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
   }
+
+  console.log(root)
 
   // Run bun bun cli. In the future we can move to using `Bun.Bundler`
   const cmd = (

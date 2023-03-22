@@ -42,10 +42,14 @@ String URLDecomposition::origin() const
     if (protocol.isEmpty() && host.isEmpty())
         return {};
 
-    if (!port)
-        return makeString(protocol, "://", host);
+    if (!fullURL.protocolIsInHTTPFamily() && !fullURL.protocolIsInFTPFamily()) {
+        return "null"_s;
+    }
 
-    return makeString(protocol, "://", host, ':', static_cast<uint32_t>(*port));
+    if (!port)
+        return makeString(protocol, "://"_s, host);
+
+    return makeString(protocol, "://"_s, host, ':', static_cast<uint32_t>(*port));
 }
 
 String URLDecomposition::protocol() const

@@ -9,10 +9,14 @@
   },
   "private": true,
   "scripts": {
+    "prebuild": "echo $(pwd)",
+    "prebundle": "echo $(pwd)",
+    "prefmt": "echo $(pwd)",
+    "pretest": "echo $(pwd)",
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",
     "bundle": "bun scripts/bundle.ts ./dist",
     "test": "tsd",
-    "fmt": "which prettier && prettier --write './**/*.{ts,tsx,js,jsx}'"
+    "fmt": "echo $(which prettier) && prettier --write './**/*.{ts,tsx,js,jsx}'"
   },
   "tsd": {
     "directory": "tests"

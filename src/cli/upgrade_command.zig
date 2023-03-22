@@ -295,6 +295,10 @@ pub const UpgradeCommand = struct {
         if (expr.asProperty("tag_name")) |tag_name_| {
             if (tag_name_.expr.asString(allocator)) |tag_name| {
                 version.tag = tag_name;
+
+                if (version.isCurrent()) {
+                    return version;
+                }
             }
         }
 

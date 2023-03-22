@@ -7,7 +7,10 @@
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
-  "zig.buildArgs": ["obj", "-Dfor-editor"],
+  "zig.buildArgs": [
+    "obj",
+    "-Dfor-editor"
+  ],
   "zig.buildOption": "build",
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "[zig]": {
@@ -208,5 +211,8 @@
   },
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "Enabled",
-  "eslint.workingDirectories": ["packages/bun-types"]
+  "eslint.workingDirectories": [
+    "packages/bun-types"
+  ],
+  "files.insertFinalNewline": true
 }

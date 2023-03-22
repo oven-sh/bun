@@ -16947,7 +16947,7 @@ fn NewParser_(
                             .target = p.newExpr(E.Identifier{ .ref = p.enclosing_namespace_arg_ref.? }, stmt.loc),
                             .name = p.symbols.items[data.class.class_name.?.ref.?.innerIndex()].original_name,
                             .name_loc = data.class.class_name.?.loc,
-                        }, stmt.loc), p.newExpr(E.Identifier{ .ref = data.class.class_name.?.ref.? }, data.class.class_name.?.loc), p.allocator));
+                        }, stmt.loc), p.newExpr(E.Identifier{ .ref = data.class.class_name.?.ref.? }, data.class.class_name.?.loc), p.allocator,),);
                     }
 
                     return;

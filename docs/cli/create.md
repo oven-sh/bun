@@ -129,7 +129,7 @@ Each of these can correspond to a string or array of strings. An array of comman
     "react-dom": "^17.0.2"
   },
   "bun-create": {
-    "postinstall": "echo 'Installing...'", // a single command
+    "preinstall": "echo 'Installing...'", // a single command
     "postinstall": ["echo 'Done!'"], // an array of commands
     "start": "bun run echo 'Hello world!'"
   }

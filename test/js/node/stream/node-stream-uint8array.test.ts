@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { Readable, Writable } from "stream";
+import { Readable, Writable, WritableOptions } from "stream";
 
 const ABC = new Uint8Array([0x41, 0x42, 0x43]);
 const DEF = new Uint8Array([0x44, 0x45, 0x46]);
 const GHI = new Uint8Array([0x47, 0x48, 0x49]);
 
 describe("Writable", () => {
-  let called;
+  let called: number[];
 
-  function logCall(fn, id) {
+  function logCall(fn: WritableOptions["write"], id: number) {
     return function () {
       called[id] = (called[id] || 0) + 1;
+      // @ts-ignore
       return fn.apply(this, arguments);
     };
   }
@@ -56,7 +57,7 @@ describe("Writable", () => {
   });
 
   it("should handle multiple writes carried out via writev()", () => {
-    let callback;
+    let callback!: () => void;
 
     const writable = new Writable({
       write: logCall((chunk, encoding, cb) => {

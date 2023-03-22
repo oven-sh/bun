@@ -25,3 +25,9 @@ const req = http.request({ host: "localhost", port: 3000, method: "GET" });
 req.abort;
 req.end();
 export {};
+
+// URLSearchParams should be iterable
+const sp = new URLSearchParams("q=foo&bar=baz");
+for (const q of sp) {
+  console.log(q);
+}

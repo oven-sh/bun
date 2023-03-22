@@ -21,12 +21,12 @@ test("spawn can read from stdout multiple chunks", async () => {
       var chunks = [];
       let counter = 0;
       try {
-        for await (var chunk of proc.stdout) {
+        for await (var chunk of proc.stdout!) {
           chunks.push(chunk);
           counter++;
           if (counter > 3) break;
         }
-      } catch (e) {
+      } catch (e: any) {
         console.log(e.stack);
         throw e;
       }

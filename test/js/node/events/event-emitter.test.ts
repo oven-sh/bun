@@ -100,7 +100,7 @@ const waysOfCreating = [
   () => {
     const FakeEmitter: any = function FakeEmitter(this: any) {
       EventEmitter.call(this);
-    };
+    } as any;
     Object.assign(FakeEmitter.prototype, EventEmitter.prototype);
     Object.assign(FakeEmitter, EventEmitter);
     return new FakeEmitter();
@@ -118,6 +118,7 @@ for (let create of waysOfCreating) {
     var called = false;
     (myEmitter as EventEmitter).once("event", function () {
       called = true;
+      // @ts-ignore
       expect(this).toBe(myEmitter);
     });
     var firstEvents = myEmitter._events;
@@ -153,8 +154,8 @@ test("EventEmitter GCs", async () => {
 
     Object.setPrototypeOf(EventEmitterSubclass.prototype, EventEmitter.prototype);
     Object.setPrototypeOf(EventEmitterSubclass, EventEmitter);
-
-    var myEmitter = new (EventEmitterSubclass as any)();
+    // @ts-ignore
+    var myEmitter = new EventEmitterSubclass();
     myEmitter.on("foo", () => {});
     myEmitter.emit("foo");
   })();

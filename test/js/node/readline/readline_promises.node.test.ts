@@ -11,7 +11,7 @@ class FakeInput extends EventEmitter {
   output = "";
   resume() {}
   pause() {}
-  write(data) {
+  write(data: any) {
     this.output += data;
   }
   end() {}
@@ -30,6 +30,7 @@ describe("readline/promises.createInterface()", () => {
     const { mustCall, mustNotCall } = createCallCheckCtx(createDone());
 
     const fi = new FakeInput();
+    // @ts-ignore
     const rli = new readlinePromises.Interface({
       input: fi,
       output: fi,

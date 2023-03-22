@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import fs, { chmodSync, unlinkSync } from "fs";
+import { gc, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
-import { gc, withoutAggressiveGC } from "../../gc";
+
+gc;
 
 describe("FormData", () => {
   it("should be able to append a string", () => {
@@ -14,14 +16,14 @@ describe("FormData", () => {
   it("should be able to append a Blob", async () => {
     const formData = new FormData();
     formData.append("foo", new Blob(["bar"]));
-    expect(await formData.get("foo")!.text()).toBe("bar");
+    expect(await ((await formData.get("foo")) as Blob)!.text()).toBe("bar");
     expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
   });
 
   it("should be able to set a Blob", async () => {
     const formData = new FormData();
     formData.set("foo", new Blob(["bar"]));
-    expect(await formData.get("foo")!.text()).toBe("bar");
+    expect(await ((await formData.get("foo")) as Blob).text()).toBe("bar");
     expect(formData.getAll("foo")[0] instanceof Blob).toBe(true);
   });
 
@@ -135,8 +137,8 @@ describe("FormData", () => {
           C === Response ? new Response(body, { headers }) : new Request({ headers, body, url: "http://hello.com" });
         const formData = await response.formData();
         expect(formData instanceof FormData).toBe(true);
-        const entry = {};
-        const expected = Object.assign({}, expected_);
+        const entry: { [k: string]: any } = {};
+        const expected: { [k: string]: any } = Object.assign({}, expected_);
 
         for (const key of formData.keys()) {
           const values = formData.getAll(key);
@@ -180,7 +182,7 @@ describe("FormData", () => {
             const b = bValues[i];
             if (a instanceof Blob) {
               expect(b instanceof Blob).toBe(true);
-              expect(await a.text()).toBe(await b.text());
+              expect(await a.text()).toBe(await (b as Blob).text());
             } else {
               expect(a).toBe(b);
             }
@@ -200,7 +202,7 @@ describe("FormData", () => {
             const b = bValues[i];
             if (c instanceof Blob) {
               expect(b instanceof Blob).toBe(true);
-              expect(await c.text()).toBe(await b.text());
+              expect(await c.text()).toBe(await (b as Blob).text());
             } else {
               expect(c).toBe(b);
             }
@@ -219,7 +221,7 @@ describe("FormData", () => {
     try {
       await response.formData();
       throw "should have thrown";
-    } catch (e) {
+    } catch (e: any) {
       expect(typeof e.message).toBe("string");
     }
   });
@@ -233,7 +235,7 @@ describe("FormData", () => {
     try {
       await response.formData();
       throw "should have thrown";
-    } catch (e) {
+    } catch (e: any) {
       expect(typeof e.message).toBe("string");
     }
   });
@@ -247,7 +249,7 @@ describe("FormData", () => {
     try {
       await response.formData();
       throw "should have thrown";
-    } catch (e) {
+    } catch (e: any) {
       expect(typeof e.message).toBe("string");
     }
   });

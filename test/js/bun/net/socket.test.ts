@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount } from "harness";
-import { connect, spawn } from "bun";
+import { connect, SocketHandler, spawn } from "bun";
 
 it("should keep process alive only when active", async () => {
   const { exited, stdout, stderr } = spawn({
@@ -29,10 +29,11 @@ it("should keep process alive only when active", async () => {
 
 it("listen() should throw connection error for invalid host", () => {
   expect(() => {
-    const handlers = {
+    const handlers: SocketHandler = {
       open(socket) {
-        socket.close();
+        socket.end();
       },
+      close() {},
       data() {},
     };
 

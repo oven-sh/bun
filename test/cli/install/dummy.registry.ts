@@ -11,12 +11,23 @@ import { mkdtemp, readdir, realpath, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { basename, join } from "path";
 
-type RequestHandler = (request: Request) => Response | Promise<Response>;
-let handler: RequestHandler, server: Server;
-export let package_dir: string, requested: number, root_url: string;
+type Handler = (req: Request) => Response | Promise<Response>;
+type Pkg = {
+  name: string;
+  version: string;
+  dist: {
+    tarball: string;
+  };
+};
+let handler: Handler;
+let server: Server;
 let testCounter = 0;
-export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }): RequestHandler {
-  return async request => {
+export let package_dir: string;
+export let requested: number;
+export let root_url: string;
+
+export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }) {
+  const _handler: Handler = async request => {
     urls.push(request.url);
     expect(request.method).toBe("GET");
     if (request.url.endsWith(".tgz")) {
@@ -28,7 +39,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }): Requ
     expect(request.headers.get("npm-auth-type")).toBe(null);
     expect(await request.text()).toBe("");
     const name = request.url.slice(request.url.indexOf("/", root_url.length) + 1);
-    const versions: any = {};
+    const versions: Record<string, Pkg> = {};
     let version;
     for (version in info) {
       if (!/^[0-9]/.test(version)) continue;
@@ -51,6 +62,7 @@ export function dummyRegistry(urls: string[], info: any = { "0.0.2": {} }): Requ
       }),
     );
   };
+  return _handler;
 }
 
 export async function readdirSorted(path: PathLike): Promise<string[]> {
@@ -59,11 +71,11 @@ export async function readdirSorted(path: PathLike): Promise<string[]> {
   return results;
 }
 
-export function setHandler(newHandler: RequestHandler) {
+export function setHandler(newHandler: Handler) {
   handler = newHandler;
 }
 
-function resetHanlder() {
+function resetHandler() {
   setHandler(() => new Response("Tea Break~", { status: 418 }));
 }
 
@@ -86,7 +98,7 @@ var packageDirGetter: () => Promise<string> = async () => {
   return await realpath(await mkdtemp(join(await realpath(tmpdir()), "bun-install-test-" + testCounter++ + "--")));
 };
 export async function dummyBeforeEach() {
-  resetHanlder();
+  resetHandler();
   requested = 0;
   package_dir = await packageDirGetter();
 
@@ -101,7 +113,7 @@ registry = "http://localhost:${server.port}/"
 }
 
 export async function dummyAfterEach() {
-  resetHanlder();
+  resetHandler();
   await rm(package_dir, { force: true, recursive: true });
 }
 

@@ -1,9 +1,10 @@
+// @ts-nocheck
 import { test, it, describe, expect } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import * as _ from "lodash";
 
 function rebase(str, inBase, outBase) {
-  const mapBase = b => (b === 2 ? 32 : b === 16 ? 8 : null);
+  const mapBase = (b: number) => (b === 2 ? 32 : b === 16 ? 8 : null);
   const stride = mapBase(inBase);
   const pad = mapBase(outBase);
   if (!stride) throw new Error(`Bad inBase ${inBase}`);

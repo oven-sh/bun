@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it } from "bun:test";
-import { gc, gcTick } from "harness";
+import { describe, expect, it } from "bun:test";
+import { gc } from "harness";
 import fs, {
   closeSync,
   existsSync,
@@ -41,7 +41,7 @@ if (!import.meta.dir) {
   import.meta.dir = ".";
 }
 
-function mkdirForce(path) {
+function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
@@ -368,7 +368,7 @@ describe("writeFileSync", () => {
   });
 });
 
-function triggerDOMJIT(target, fn, result) {
+function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) {
   for (let i = 0; i < 9999; i++) {
     if (fn.apply(target) !== result) {
       throw new Error("DOMJIT failed");

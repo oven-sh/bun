@@ -3,13 +3,14 @@ import { afterEach, describe, it, expect, afterAll } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
+type Handler = (req: Request) => Response;
 afterEach(() => gc(true));
 
 const count = 200;
 let port = 10000;
 let server: Server | undefined;
 
-async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Serve<any>) => Promise<void> | void) {
+async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {
@@ -72,6 +73,7 @@ afterAll(() => {
 it("should display a welcome message when the response value type is incorrect", async () => {
   await runTest(
     {
+      // @ts-ignore
       fetch(req) {
         return Symbol("invalid response type");
       },
@@ -116,7 +118,7 @@ it("request.signal works in trivial case", async () => {
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
   var didAbort = false;
-  var leaky;
+  var leaky: Request | undefined;
   await runTest(
     {
       async fetch(req) {
@@ -133,7 +135,7 @@ it("request.signal works in leaky case", async () => {
 
         await Bun.sleep(1);
 
-        leaky.signal.addEventListener("abort", () => {
+        leaky!.signal.addEventListener("abort", () => {
           didAbort = true;
         });
 
@@ -170,7 +172,7 @@ it("should work for a file", async () => {
 it("request.url should log successfully", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
-  var expected;
+  var expected: string;
   await runTest(
     {
       fetch(req) {
@@ -379,7 +381,7 @@ describe("streaming", () => {
 
   it("text from JS throws on start has error handler", async () => {
     var pass = false;
-    var err;
+    var err: Error;
     await runTest(
       {
         error(e) {
@@ -758,8 +760,8 @@ describe("parallel", () => {
 });
 
 it("should support reloading", async () => {
-  const first = req => new Response("first");
-  const second = req => new Response("second");
+  const first: Handler = req => new Response("first");
+  const second: Handler = req => new Response("second");
   await runTest(
     {
       fetch: first,
@@ -835,7 +837,7 @@ describe("status code text", () => {
     508: "Loop Detected",
     510: "Not Extended",
     511: "Network Authentication Required",
-  };
+  } as Record<string, string>;
 
   for (let code in fixture) {
     it(`should return ${code} ${fixture[code]}`, async () => {

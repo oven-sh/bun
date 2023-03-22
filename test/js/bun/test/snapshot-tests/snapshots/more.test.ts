@@ -1,3 +1,4 @@
+import { it, test, expect, describe } from "bun:test";
 describe("d0", () => {
   test("snapshot serialize edgecases", () => {
     expect(1).toMatchSnapshot();

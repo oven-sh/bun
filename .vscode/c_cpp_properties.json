@@ -2,7 +2,9 @@
   "configurations": [
     {
       "name": "Mac",
-      "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
+      "forcedInclude": [
+        "${workspaceFolder}/src/bun.js/bindings/root.h"
+      ],
       "includePath": [
         "${workspaceFolder}/../webkit-build/include/",
         "${workspaceFolder}/bun-webkit/include/",
@@ -18,7 +20,6 @@
         "${workspaceFolder}/src/bun.js/builtins/",
         "${workspaceFolder}/src/bun.js/builtins/cpp",
         "${workspaceFolder}/src/deps/boringssl/include/",
-
         "${workspaceFolder}/src/deps",
         "${workspaceFolder}/src/deps/uws/uSockets/src"
       ],

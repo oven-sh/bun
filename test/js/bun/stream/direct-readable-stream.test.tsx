@@ -5,9 +5,11 @@ import {
   readableStreamToBlob,
   readableStreamToText,
   serve,
+  Server,
 } from "bun";
 import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, gc } from "harness";
+// @ts-ignore
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { renderToReadableStream as renderToReadableStreamBun } from "react-dom/server";
 import React from "react";
@@ -89,7 +91,7 @@ const fixtures = [
       😋L😋l😋L😋
     </>,
   ],
-];
+] as const;
 
 describe("React", () => {
   it("React.createContext works", () => {
@@ -243,7 +245,7 @@ describe("ReactDOM", () => {
         it(`http server, ${count} requests`, async () => {
           var remain = count;
           await (async () => {
-            let server;
+            let server!: Server;
             try {
               server = serve({
                 port: 0,

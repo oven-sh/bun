@@ -158,6 +158,7 @@ describe("Server", () => {
           req.signal.addEventListener("abort", () => {
             signalOnServer = true;
           });
+
           return new Response(
             new ReadableStream({
               async pull(controller) {

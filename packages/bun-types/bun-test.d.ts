@@ -199,7 +199,12 @@ declare module "bun:test" {
    *
    * @param actual the actual value
    */
-  export function expect(actual: unknown): Expect;
+  export const expect: {
+    (actual: unknown): Expect;
+    any: (
+      constructor: ((..._: any[]) => any) | { new (..._: any[]): any },
+    ) => Expect;
+  };
   /**
    * Asserts that a value matches some criteria.
    *
@@ -341,7 +346,7 @@ declare module "bun:test" {
      * expect(undefined).toBeDefined(); // fail
      */
     toBeDefined(): void;
-     /**
+    /**
      * Asserts that the expected value is an instance of value
      *
      * @example
@@ -448,7 +453,6 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      */
     toThrow(expected?: string | Error | ErrorConstructor | RegExp): void;
-<<<<<<< HEAD
     /**
      * Asserts that a value matches a regular expression or includes a substring.
      *
@@ -471,10 +475,7 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: Object, hint?: string): void;
-  }
-=======
   };
->>>>>>> 85413486 (WIP)
 }
 
 declare module "test" {

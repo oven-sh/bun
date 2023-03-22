@@ -4,12 +4,12 @@ import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, exe
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
-const expect: typeof expect_ = (actual: unknown) => {
+const expect = ((actual: unknown) => {
   gcTick();
   const ret = expect_(actual);
   gcTick();
   return ret;
-};
+}) as typeof expect_;
 
 const it = ((label, fn) => {
   const hasDone = fn.length === 1;

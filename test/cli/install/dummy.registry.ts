@@ -12,13 +12,13 @@ import { tmpdir } from "os";
 import { basename, join } from "path";
 
 type Handler = (req: Request) => Response | Promise<Response>;
-type Pkg  = {
+type Pkg = {
   name: string;
   version: string;
   dist: {
-    tarball: string
-  },
-}
+    tarball: string;
+  };
+};
 let handler: Handler;
 let server: Server;
 let testCounter = 0;

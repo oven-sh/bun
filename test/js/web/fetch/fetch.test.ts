@@ -1101,12 +1101,14 @@ it("body nullable", async () => {
 });
 
 it("Request({}) throws", async () => {
+  // @ts-expect-error
   expect(() => new Request({})).toThrow();
 });
 
 it("Request({toString() { throw 'wat'; } }) throws", async () => {
   expect(
     () =>
+      // @ts-expect-error
       new Request({
         toString() {
           throw "wat";
@@ -1123,6 +1125,5 @@ it("should not be able to parse json from empty body", () => {
 it("#874", () => {
   expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
   expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
-  // @ts-expect-error
   expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
 });

@@ -639,7 +639,7 @@ declare class Blob implements BlobInterface {
 interface ResponseInit {
   headers?: HeadersInit;
   /** @default 200 */
-  status?: number;
+  status?: number | bigint;
 
   /** @default "OK" */
   statusText?: string;

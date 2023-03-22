@@ -10,7 +10,7 @@
     ],
     "module": "ESNext",
     "target": "ESNext",
-    "moduleResolution": "nodenext",
+    "moduleResolution": "bundler",
     "strict": true,
     "downlevelIteration": true,
     "skipLibCheck": true,

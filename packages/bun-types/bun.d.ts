@@ -1492,6 +1492,7 @@ declare module "bun" {
     ) => Response | Promise<Response> | undefined | void | Promise<undefined>;
   }
 
+  export type AnyFunction = (..._: any[]) => any;
   export interface ServeOptions extends GenericServeOptions {
     /**
      * Handle HTTP requests
@@ -2819,7 +2820,7 @@ declare module "bun" {
     reload(options: Pick<Partial<SocketOptions>, "socket">): void;
     data: Data;
   }
-  interface TCPSocketListener<Data> extends SocketListener<Data> {
+  interface TCPSocketListener<Data = unknown> extends SocketListener<Data> {
     readonly port: number;
     readonly hostname: string;
   }

@@ -211,7 +211,7 @@ it("scrypt badargs", () => {
     try {
       crypto.scryptSync(...args);
       expect(() => {}).toThrow();
-    } catch (e) {
+    } catch (e: any) {
       if (!("code" in e)) throw e;
       expect(e.code).toBe(expected.code);
     }

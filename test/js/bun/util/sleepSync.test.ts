@@ -10,17 +10,15 @@ it("sleepSync uses milliseconds", async () => {
 });
 
 it("sleepSync with no arguments throws", async () => {
+  // @ts-expect-error
   expect(() => sleepSync()).toThrow();
 });
 
 it("sleepSync with non-numbers throws", async () => {
-  expect(() => sleepSync(true)).toThrow();
-  expect(() => sleepSync(false)).toThrow();
-  expect(() => sleepSync("hi")).toThrow();
-  expect(() => sleepSync({})).toThrow();
-  expect(() => sleepSync([])).toThrow();
-  expect(() => sleepSync(undefined)).toThrow();
-  expect(() => sleepSync(null)).toThrow();
+  const invalidValues = [true, false, "hi", {}, [], undefined, null] as any[];
+  for (const v of invalidValues) {
+    expect(() => sleepSync(v)).toThrow();
+  }
 });
 
 it("sleepSync with negative number throws", async () => {

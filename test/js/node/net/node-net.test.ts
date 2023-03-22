@@ -1,3 +1,4 @@
+import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { connect, isIP, isIPv4, isIPv6, Socket } from "net";
 import { realpathSync, mkdtempSync } from "fs";
@@ -38,9 +39,9 @@ describe("net.Socket read", () => {
     ["Hello!", "short message"],
   ]) {
     describe(label, () => {
-      function runWithServer(cb, unix_domain_path) {
-        return done => {
-          function drain(socket) {
+      function runWithServer(cb: (..._: any[]) => void, unix_domain_path?: any) {
+        return (done: (_: any) => void) => {
+          function drain(socket: _BunSocket<{ message: string }>) {
             const message = socket.data.message;
             const written = socket.write(message);
             if (written < message.length) {
@@ -50,44 +51,42 @@ describe("net.Socket read", () => {
             }
           }
 
-          var server = Bun.listen(
-            unix_domain_path
-              ? {
-                  unix: join(unix_domain_path, `${unix_servers++}.sock`),
-                  socket: {
-                    open(socket) {
-                      socket.data.message = message;
-                      drain(socket);
-                    },
-                    drain,
-                    error(socket, err) {
-                      done(err);
-                    },
+          var server = unix_domain_path
+            ? Bun.listen({
+                unix: join(unix_domain_path, `${unix_servers++}.sock`),
+                socket: {
+                  open(socket) {
+                    socket.data.message = message;
+                    drain(socket);
                   },
-                  data: {
-                    message: "",
-                  },
-                }
-              : {
-                  hostname: "localhost",
-                  port: 0,
-                  socket: {
-                    open(socket) {
-                      socket.data.message = message;
-                      drain(socket);
-                    },
-                    drain,
-                    error(socket, err) {
-                      done(err);
-                    },
-                  },
-                  data: {
-                    message: "",
+                  drain,
+                  error(socket, err) {
+                    done(err);
                   },
                 },
-          );
+                data: {
+                  message: "",
+                },
+              })
+            : Bun.listen({
+                hostname: "localhost",
+                port: 0,
+                socket: {
+                  open(socket) {
+                    socket.data.message = message;
+                    drain(socket);
+                  },
+                  drain,
+                  error(socket, err) {
+                    done(err);
+                  },
+                },
+                data: {
+                  message: "",
+                },
+              });
 
-          function onDone(err) {
+          function onDone(err: any) {
             server.stop();
             done(err);
           }
@@ -237,11 +236,11 @@ describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
   let port = 53213;
 
-  function runWithServer(cb) {
-    return done => {
-      let server;
+  function runWithServer(cb: (..._: any[]) => void) {
+    return (done: (_?: any) => void) => {
+      let server: TCPSocketListener<unknown>;
 
-      function close(socket) {
+      function close(socket: _BunSocket<Buffer[]>) {
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
         done();
       }
@@ -273,7 +272,7 @@ describe("net.Socket write", () => {
         data: [] as Buffer[],
       });
 
-      function onDone(err) {
+      function onDone(err: any) {
         server.stop();
         done(err);
       }
@@ -334,6 +333,7 @@ describe("net.Socket write", () => {
 
 it("should handle connection error", done => {
   var data = {};
+  // @ts-ignore
   connect(55555, () => {
     done(new Error("Should not have connected"));
   }).on("error", error => {

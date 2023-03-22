@@ -199,7 +199,7 @@ declare module "bun:test" {
    *
    * @param actual the actual value
    */
-  export function expect<T>(actual: T): Expect<T>;
+  export function expect(actual: unknown): Expect;
   /**
    * Asserts that a value matches some criteria.
    *
@@ -247,14 +247,7 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(
-      expected: T &
-        (T extends any[]
-          ? unknown
-          : T extends object
-          ? { [k: string | number | symbol]: unknown }
-          : unknown),
-    ): void;
+    toEqual(expected: T): void;
     /**
      * Asserts that a value is deeply and strictly equal to
      * what is expected.

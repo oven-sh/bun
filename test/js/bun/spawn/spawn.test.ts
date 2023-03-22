@@ -1,7 +1,7 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync, write } from "bun";
 import { describe, expect, it } from "bun:test";
 import { gcTick as _gcTick, bunEnv } from "harness";
-import { rmdirSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 
 for (let [gcTick, label] of [
   [_gcTick, "gcTick"],

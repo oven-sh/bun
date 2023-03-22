@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
-import { serve } from "bun";
+import { serve, ServerWebSocket } from "bun";
 
 describe("websocket server", () => {
   it("remoteAddress works", done => {
@@ -80,7 +80,7 @@ describe("websocket server", () => {
           server.publish("all", "hello");
         },
         message(ws, msg) {
-          if (new TextDecoder().decode(msg) !== "hello") {
+          if (new TextDecoder().decode(msg as Uint8Array) !== "hello") {
             done(new Error("unexpected message"));
           }
         },
@@ -108,7 +108,7 @@ describe("websocket server", () => {
     done();
   });
 
-  for (let method of ["publish", "publishText", "publishBinary"]) {
+  for (let method of ["publish", "publishText", "publishBinary"] as const) {
     describe(method, () => {
       it("in close() should work", async () => {
         var count = 0;
@@ -120,7 +120,7 @@ describe("websocket server", () => {
             },
             message(ws, msg) {},
             close(ws) {
-              ws[method]("all", method === "publishBinary" ? Buffer.from("bye!") : "bye!");
+              (ws[method] as any)("all", method === "publishBinary" ? Buffer.from("bye!") : "bye!");
               count++;
 
               if (count >= 2) {
@@ -170,7 +170,7 @@ describe("websocket server", () => {
   }
 
   it("close inside open", async () => {
-    var resolve;
+    var resolve: () => void;
     console.trace("here");
     var server = serve({
       port: 0,
@@ -574,7 +574,7 @@ describe("websocket server", () => {
 
   it("publishText()", async () => {
     await new Promise<void>((resolve, reject) => {
-      var websocket;
+      var websocket: WebSocket;
       var server = serve({
         port: 0,
         websocket: {
@@ -604,7 +604,7 @@ describe("websocket server", () => {
     const bytes = Buffer.from("hello");
 
     await new Promise<void>((resolve, reject) => {
-      var websocket;
+      var websocket: WebSocket;
       var server = serve({
         port: 0,
         websocket: {
@@ -632,7 +632,7 @@ describe("websocket server", () => {
 
   it("sendText()", async () => {
     await new Promise<void>((resolve, reject) => {
-      var websocket;
+      var websocket: WebSocket;
       var server = serve({
         port: 0,
         websocket: {
@@ -660,7 +660,7 @@ describe("websocket server", () => {
   it("sendBinary()", async () => {
     const bytes = Buffer.from("hello");
     await new Promise<void>((resolve, reject) => {
-      var websocket;
+      var websocket: WebSocket;
       var server = serve({
         port: 0,
         websocket: {
@@ -907,7 +907,10 @@ describe("websocket server", () => {
     await new Promise<void>(done => {
       for (var i = 0; i < connections.length; i++) {
         var j = i;
-        var resolve, reject, resolveConnection, rejectConnection;
+        var resolve: (_?: unknown) => void,
+          reject: (_?: unknown) => void,
+          resolveConnection: (_?: unknown) => void,
+          rejectConnection: (_?: unknown) => void;
         connections[j] = new Promise((res, rej) => {
           resolveConnection = res;
           rejectConnection = rej;

@@ -663,7 +663,13 @@ interface ResponseInit {
  */
 declare class Response implements BlobInterface {
   constructor(
-    body?: ReadableStream | BlobPart | BlobPart[] | null | FormData,
+    body?:
+      | ReadableStream
+      | BlobPart
+      | BlobPart[]
+      | null
+      | FormData
+      | URLSearchParams,
     options?: ResponseInit,
   );
 
@@ -853,7 +859,7 @@ type ReferrerPolicy =
   | "unsafe-url";
 // type RequestInfo = Request | string | RequestInit;
 
-type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
+type BodyInit = ReadableStream | XMLHttpRequestBodyInit | URLSearchParams;
 type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
 type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
 type ReadableStreamDefaultReadResult<T> =
@@ -1378,7 +1384,7 @@ declare function clearImmediate(id?: number | Timer): void;
  */
 
 declare function fetch(
-  url: string | URL,
+  url: string | URL | Request,
   init?: FetchRequestInit,
 ): Promise<Response>;
 
@@ -1587,7 +1593,7 @@ declare var EventTarget: {
 };
 
 /** An event which takes place in the DOM. */
-interface Event {
+interface Event<T extends EventTarget = EventTarget> {
   /**
    * Returns true or false depending on how event was initialized. True
    * if event goes through its target's ancestors in reverse tree order,
@@ -1612,7 +1618,7 @@ interface Event {
    * Returns the object whose event listener's callback is currently
    * being invoked.
    */
-  readonly currentTarget: EventTarget | null;
+  readonly currentTarget: T | null;
   /**
    * Returns true if preventDefault() was invoked successfully to
    * indicate cancelation, and false otherwise.
@@ -1912,6 +1918,7 @@ interface URLSearchParams {
   ): void;
   /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
   toString(): string;
+  [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]>;
 }
 
 declare var URLSearchParams: {
@@ -1960,7 +1967,7 @@ interface EventMap {
 }
 
 interface AbortSignalEventMap {
-  abort: Event;
+  abort: Event<AbortSignal>;
 }
 
 interface AddEventListenerOptions extends EventListenerOptions {
@@ -1975,14 +1982,12 @@ interface AbortSignal extends EventTarget {
    * Returns true if this AbortSignal's AbortController has signaled to abort, and false otherwise.
    */
   readonly aborted: boolean;
-<<<<<<< HEAD
+
   /**
    * The reason the signal aborted, or undefined if not aborted.
    */
   readonly reason: any;
-=======
-  reason: unknown;
->>>>>>> 85413486 (WIP)
+
   onabort: ((this: AbortSignal, ev: Event) => any) | null;
   addEventListener<K extends keyof AbortSignalEventMap>(
     type: K,

@@ -32,7 +32,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          bun install --backend symlink
+          bun install
 
       - name: Generate package
         run: bun run build

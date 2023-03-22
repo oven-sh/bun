@@ -1,4 +1,4 @@
-name: Test bun-types
+name: bun-types
 on:
   push:
     paths:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   tests:
-    name: Build and test
+    name: type-tests
     runs-on: ubuntu-latest
     defaults:
       run:

@@ -1,4 +1,4 @@
-name: Typecheck tests
+name: typecheck
 on:
   push:
     branches: [main]
@@ -13,7 +13,7 @@ on:
 
 jobs:
   tests:
-    name: Build and test
+    name: check-tests
     runs-on: ubuntu-latest
     defaults:
       run:

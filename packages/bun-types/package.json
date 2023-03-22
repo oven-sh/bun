@@ -4,7 +4,7 @@
   "private": true,
   "repository": "https://github.com/oven-sh/bun",
   "scripts": {
-    "build": "rm -rf ./dist && bun run bundle && bun run fmt",
+    "build": "rm -rf ./dist && bun run fmt && bun run bundle",
     "bundle": "bun scripts/bundle.ts ./dist",
     "test": "tsd",
     "fmt": "bunx prettier --write './**/*.{ts,tsx,js,jsx}'"

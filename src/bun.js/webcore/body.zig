@@ -186,11 +186,24 @@ pub const Body = struct {
 
                     if ((less_than and greater_than) or status_value.asBigIntCompare(ctx, JSValue.jsNumber(101)) == .equal) {
                         result.status_code = @truncate(u16, @intCast(u64, status_value.toInt64()));
+                    } else {
+                        const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{status_value.toInt64()});
+                        ctx.throwValue(err);
+                        return null;
                     }
                 } else if (status_value.isNumber()) {
                     const number = status_value.to(i32);
-                    if ((200 <= number and number < 600) or number == 101)
+                    if ((200 <= number and number < 600) or number == 101) {
                         result.status_code = @truncate(u16, @intCast(u32, number));
+                    } else {
+                        const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                        ctx.throwValue(err);
+                        return null;
+                    }
+                } else {
+                    const err = ctx.createRangeErrorInstance("The status code must be a number in the range of [200, 599] or 101", .{});
+                    ctx.throwValue(err);
+                    return null;
                 }
             }
 

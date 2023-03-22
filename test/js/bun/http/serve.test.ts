@@ -57,13 +57,18 @@ afterAll(() => {
     await runTest(
       {
         fetch() {
-          return new Response("Foo Bar", { status: statusCode });
+          try {
+            return new Response("Foo Bar", { status: statusCode });
+          } catch (err) {
+            expect(err).toBeInstanceOf(RangeError);
+            return new Response("Error!", { status: 500 });
+          }
         },
       },
       async server => {
         const response = await fetch(`http://${server.hostname}:${server.port}`);
-        expect(response.status).toBe(200);
-        expect(await response.text()).toBe("Foo Bar");
+        expect(response.status).toBe(500);
+        expect(await response.text()).toBe("Error!");
       },
     );
   });

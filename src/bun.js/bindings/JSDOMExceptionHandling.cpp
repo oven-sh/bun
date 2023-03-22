@@ -194,11 +194,6 @@ JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, Exception&& exce
     return createDOMException(&lexicalGlobalObject, exception.code(), exception.releaseMessage());
 }
 
-JSValue createDOMException(JSGlobalObject& lexicalGlobalObject, ExceptionCode code)
-{
-    return createDOMException(&lexicalGlobalObject, code, emptyString());
-}
-
 void propagateExceptionSlowPath(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& throwScope, Exception&& exception)
 {
     throwScope.assertNoExceptionExceptTermination();

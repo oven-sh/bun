@@ -1,7 +1,7 @@
 import assert from "assert";
 import exp from "constants";
 import dedent from "dedent";
-import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled";
+import { bundlerTest, expectBundled, itBundled, testForFile } from "./expectBundled.ts";
 var { describe, test, expect } = testForFile(import.meta.path);
 
 // Tests ported from:

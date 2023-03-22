@@ -5820,23 +5820,9 @@ const LinkerContext = struct {
             }
         }
 
-        outer: for (parts[source_index].slice()) |part| {
+        for (parts[source_index].slice()) |part| {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
-                    if (c.graph.files.items(.entry_point_kind)[dependency.source_index.get()] == .react_client_component and
-                        has_any_client_component_imports)
-                    {
-                        allow: {
-                            for (part.import_record_indices.slice()) |record_id| {
-                                if (import_records[source_index].slice()[record_id].tag == .react_client_component) {
-                                    break :allow;
-                                }
-                            }
-
-                            continue :outer;
-                        }
-                    }
-
                     c.markFileReachableForCodeSplitting(
                         dependency.source_index.get(),
                         entry_points_count,
@@ -5897,11 +5883,6 @@ const LinkerContext = struct {
                     // considered to have no side effects
                     if (side_effects[other_source_index] != .has_side_effects and !c.options.ignore_dce_annotations) {
                         continue;
-                    }
-
-                    if (entry_point_kinds[other_source_index] == .react_client_component) {
-                        record.tag = .react_client_component;
-                        continue :outer;
                     }
 
                     // Otherwise, include this module for its side effects

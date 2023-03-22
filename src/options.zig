@@ -1217,7 +1217,7 @@ pub const BundleOptions = struct {
     allow_runtime: bool = true,
 
     trim_unused_imports: ?bool = null,
-
+    mark_bun_builtins_as_external: bool = false,
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},

@@ -561,6 +561,12 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+        if (r.opts.mark_bun_builtins_as_external) {
+            if (bun.JSC.HardcodedModule.Aliases.has(import_path)) {
+                return true;
+            }
+        }
+
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,

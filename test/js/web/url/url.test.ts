@@ -1,6 +1,47 @@
 import { describe, it, expect } from "bun:test";
 
 describe("url", () => {
+  it("should have correct origin and protocol", () => {
+    var url = new URL("https://example.com");
+    expect(url.protocol).toBe("https:");
+    expect(url.origin).toBe("https://example.com");
+    url = new URL("about:blank");
+    expect(url.protocol).toBe("about:");
+    expect(url.origin).toBe("null");
+    url = new URL("http://example.com");
+    expect(url.protocol).toBe("http:");
+    expect(url.origin).toBe("http://example.com");
+    url = new URL("ftp://example.com");
+    expect(url.protocol).toBe("ftp:");
+    expect(url.origin).toBe("ftp://example.com");
+    url = new URL("file://example.com");
+    expect(url.protocol).toBe("file:");
+    expect(url.origin).toBe("null");
+    url = new URL("ws://example.com");
+    expect(url.protocol).toBe("ws:");
+    expect(url.origin).toBe("ws://example.com");
+    url = new URL("wss://example.com");
+    expect(url.protocol).toBe("wss:");
+    expect(url.origin).toBe("wss://example.com");
+    url = new URL("kekjafek://example.com");
+    expect(url.protocol).toBe("kekjafek:");
+    expect(url.origin).toBe("null");
+    url = new URL("data:text/plain,Hello%2C%20World!");
+    expect(url.protocol).toBe("data:");
+    expect(url.origin).toBe("null");
+    url = new URL("blob://example.com");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("null");
+    url = new URL("blob:https://example.com/1234-5678");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("null");
+    url = new URL("javascript:alert('Hello World!')");
+    expect(url.protocol).toBe("javascript:");
+    expect(url.origin).toBe("null");
+    url = new URL("mailto:");
+    expect(url.protocol).toBe("mailto:");
+    expect(url.origin).toBe("null");
+  });
   it("prints", () => {
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
   "href": "https://example.com/",

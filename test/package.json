@@ -13,7 +13,7 @@
     "iconv-lite": "^0.6.3",
     "lodash": "^4.17.21",
     "svelte": "^3.55.1",
-    "typescript": "latest",
+    "typescript": "^5.0.2",
     "undici": "^5.20.0"
   },
   "private": true,

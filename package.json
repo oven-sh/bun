@@ -7,7 +7,7 @@
     "prettier": "^2.4.1",
     "react": "next",
     "react-dom": "next",
-    "typescript": "latest"
+    "typescript": "^5.0.2"
   },
   "private": true,
   "scripts": {

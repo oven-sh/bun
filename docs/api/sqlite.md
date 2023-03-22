@@ -18,7 +18,7 @@ Features include:
 - Datatype conversions (`BLOB` becomes `Uint8Array`)
 - The fastest performance of any SQLite driver for JavaScript
 
-The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](<[./bench/sqlite](https://github.com/oven-sh/bun/tree/main/bench/sqlite)>).
+The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 
 {% image width="738" alt="SQLite benchmarks for Bun, better-sqlite3, and deno.land/x/sqlite" src="https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png" caption="Benchmarked on an M1 MacBook Pro (64GB) running macOS 12.3.1" /%}
 

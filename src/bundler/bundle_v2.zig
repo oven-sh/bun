@@ -958,7 +958,7 @@ const ParseTask = struct {
 
                         switch (err) {
                             error.ModuleNotFound => {
-                                const addError = Logger.Log.addResolveErrorWithTextDupeMaybeWarn;
+                                const addError = Logger.Log.addResolveErrorWithTextDupe;
 
                                 if (!import_record.handles_import_errors) {
                                     last_error = err;
@@ -972,7 +972,6 @@ const ParseTask = struct {
                                                 "Could not resolve Node.js builtin: \"{s}\".",
                                                 .{import_record.path.text},
                                                 import_record.kind,
-                                                platform.isBun(),
                                             );
                                         } else {
                                             try addError(
@@ -983,7 +982,6 @@ const ParseTask = struct {
                                                 "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                                 .{import_record.path.text},
                                                 import_record.kind,
-                                                platform.isBun(),
                                             );
                                         }
                                     } else if (!platform.isBun()) {
@@ -997,7 +995,6 @@ const ParseTask = struct {
                                                 import_record.path.text,
                                             },
                                             import_record.kind,
-                                            platform.isBun(),
                                         );
                                     }
                                 }

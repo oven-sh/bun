@@ -667,9 +667,9 @@ declare class Response implements BlobInterface {
       | ReadableStream
       | BlobPart
       | BlobPart[]
-      | null
       | FormData
-      | URLSearchParams,
+      | URLSearchParams
+      | null,
     options?: ResponseInit,
   );
 

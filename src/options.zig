@@ -1250,6 +1250,7 @@ pub const BundleOptions = struct {
     log: *logger.Log,
     external: ExternalModules = ExternalModules{},
     entry_points: []const string,
+    entry_names: []const u8 = "",
     extension_order: []const string = &Defaults.ExtensionOrder,
     esm_extension_order: []const string = &Defaults.ModuleExtensionOrder,
     out_extensions: bun.StringHashMap(string),

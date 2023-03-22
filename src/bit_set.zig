@@ -521,7 +521,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
         pub fn setUnion(self: *Self, other: *const Self) void {
-            for (self.masks, other[0..self.masks.len]) |*mask, alt| {
+            for (&self.masks, other[0..self.masks.len]) |*mask, alt| {
                 mask.* |= alt;
             }
         }
@@ -530,7 +530,7 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
         /// the result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in both inputs.
         pub fn setIntersection(self: *Self, other: *const Self) void {
-            for (self.masks, other[0..self.masks.len]) |*mask, alt| {
+            for (&self.masks, other.masks[0..self.masks.len]) |*mask, alt| {
                 mask.* &= alt;
             }
         }
@@ -606,6 +606,14 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             var result = self.*;
             result.setIntersection(other);
             return result;
+        }
+
+        pub fn hasIntersection(self: *const Self, other: *const Self) bool {
+            for (self.masks, other.masks) |a, b| {
+                if (a & b != 0) return true;
+            }
+
+            return false;
         }
 
         /// Returns the xor of two bit sets. Bits in the
@@ -799,6 +807,15 @@ pub const DynamicBitSetUnmanaged = struct {
             total += @popCount(mask);
         }
         return total;
+    }
+
+    pub fn hasIntersection(self: Self, other: Self) bool {
+        const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
+        for (self.masks[0..num_masks], other.masks[0..num_masks]) |mask, other_mask| {
+            if ((mask & other_mask) != 0) return true;
+        }
+
+        return false;
     }
 
     /// Changes the value of the specified bit of the bit
@@ -1103,6 +1120,18 @@ pub const AutoBitSet = union(enum) {
         };
     }
 
+    /// Are any of the bits in `this` also set in `other`?
+    pub fn hasIntersection(this: *const AutoBitSet, other: *const AutoBitSet) bool {
+        if (std.meta.activeTag(this.*) != std.meta.activeTag(other.*)) {
+            return false;
+        }
+
+        return switch (std.meta.activeTag(this.*)) {
+            .static => this.static.hasIntersection(&other.static),
+            .dynamic => this.dynamic.hasIntersection(other.dynamic),
+        };
+    }
+
     pub fn clone(this: *const AutoBitSet, allocator: std.mem.Allocator) !AutoBitSet {
         return switch (std.meta.activeTag(this.*)) {
             .static => AutoBitSet{ .static = this.static },
@@ -1117,15 +1146,40 @@ pub const AutoBitSet = union(enum) {
         }
     }
 
-    pub fn bytes(this: *const AutoBitSet) []const u8 {
+    pub fn rawBytes(this: *const AutoBitSet) []const u8 {
         return switch (std.meta.activeTag(this.*)) {
             .static => std.mem.asBytes(&this.static.masks),
             .dynamic => this.dynamic.bytes(),
         };
     }
 
+    pub fn bytes(this: *const AutoBitSet, _: usize) []const u8 {
+        return this.rawBytes();
+    }
+
     pub fn eql(this: *const AutoBitSet, b: *const AutoBitSet) bool {
-        return bun.strings.eqlLong(this.bytes(), b.bytes(), true);
+        return bun.strings.eqlLong(this.rawBytes(), b.rawBytes(), true);
+    }
+
+    pub fn hash(this: *const AutoBitSet) u64 {
+        return bun.hash(this.rawBytes());
+    }
+
+    pub fn forEach(this: *const AutoBitSet, comptime Ctx: type, ctx: *Ctx, comptime Function: fn (*Ctx, usize) void) void {
+        return switch (std.meta.activeTag(this.*)) {
+            .static => {
+                var iter = this.static.iterator(.{});
+                while (iter.next()) |index| {
+                    Function(ctx, index);
+                }
+            },
+            .dynamic => {
+                var iter = this.dynamic.iterator(.{});
+                while (iter.next()) |index| {
+                    Function(ctx, index);
+                }
+            },
+        };
     }
 
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {

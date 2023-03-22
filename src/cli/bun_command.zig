@@ -102,6 +102,11 @@ pub const BunCommand = struct {
         estimated_input_lines_of_code_ = 0;
 
         var this_bundler = try bundler.Bundler.init(allocator, log, ctx.args, null, null);
+        this_bundler.options.entry_names = ctx.bundler_options.entry_names;
+        this_bundler.resolver.opts.entry_names = ctx.bundler_options.entry_names;
+        this_bundler.options.output_dir = ctx.bundler_options.outdir;
+        this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+
         this_bundler.configureLinker();
         var filepath: [*:0]const u8 = "node_modules.bun";
         // var server_bundle_filepath: [*:0]const u8 = "node_modules.server.bun";
@@ -203,10 +208,10 @@ pub const BunCommand = struct {
                 dump: {
                     defer Output.flush();
                     var writer = Output.errorWriter();
-                    var output_dir = ctx.args.output_dir orelse "";
-                    if (ctx.debug.output_file.len > 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
-                        output_dir = std.fs.path.dirname(ctx.debug.output_file) orelse ".";
-                        output_files.items[0].input.text = std.fs.path.basename(ctx.debug.output_file);
+                    var output_dir = this_bundler.options.output_dir;
+                    if (ctx.bundler_options.outfile.len > 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {
+                        output_dir = std.fs.path.dirname(ctx.bundler_options.outfile) orelse ".";
+                        output_files.items[0].input.text = std.fs.path.basename(ctx.bundler_options.outfile);
                     }
 
                     if (output_dir.len == 0 and output_files.items.len == 1 and output_files.items[0].value == .buffer) {

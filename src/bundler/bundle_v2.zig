@@ -1784,18 +1784,18 @@ const LinkerContext = struct {
         var js_chunks = bun.StringArrayHashMap(Chunk).init(this.allocator);
         try js_chunks.ensureUnusedCapacity(this.graph.entry_points.len);
 
-        var entry_source_indices = this.graph.entry_points.items(.source_index);
+        const entry_source_indices = this.graph.entry_points.items(.source_index);
 
         // Create chunks for entry points
         for (entry_source_indices, 0..) |source_index, entry_id_| {
             const entry_bit = @truncate(Chunk.EntryPoint.ID, entry_id_);
 
-            var entry_bits = try bun.bit_set.AutoBitSet.initEmpty(this.allocator, this.graph.entry_points.len);
+            var entry_bits = &this.graph.files.items(.entry_bits)[source_index];
             entry_bits.set(entry_bit);
 
             // Create a chunk for the entry point here to ensure that the chunk is
             // always generated even if the resulting file is empty
-            var js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes()));
+            var js_chunk_entry = try js_chunks.getOrPut(try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)));
 
             js_chunk_entry.value_ptr.* = .{
                 .entry_point = .{
@@ -1803,7 +1803,7 @@ const LinkerContext = struct {
                     .source_index = source_index,
                     .is_entry_point = true,
                 },
-                .entry_bits = entry_bits,
+                .entry_bits = entry_bits.*,
                 .content = .{
                     .javascript = .{},
                 },
@@ -1814,25 +1814,42 @@ const LinkerContext = struct {
         // Figure out which JS files are in which chunk
         for (this.graph.reachable_files) |source_index| {
             if (this.graph.files_live.isSet(source_index.get())) {
-                var entry_bits: *AutoBitSet = &file_entry_bits[source_index.get()];
-                var js_chunk_entry = try js_chunks.getOrPut(
-                    try temp_allocator.dupe(u8, entry_bits.bytes()),
-                );
+                const entry_bits: *const AutoBitSet = &file_entry_bits[source_index.get()];
 
-                if (!js_chunk_entry.found_existing) {
-                    js_chunk_entry.value_ptr.* = .{
-                        .entry_bits = try entry_bits.clone(this.allocator),
-                        .entry_point = .{
-                            .source_index = source_index.get(),
-                        },
-                        .content = .{
-                            .javascript = .{},
-                        },
+                if (this.graph.code_splitting) {} else {
+                    const Handler = struct {
+                        chunks: []Chunk,
+                        allocator: std.mem.Allocator,
+                        source_id: u32,
+                        pub fn next(c: *@This(), chunk_id: usize) void {
+                            _ = c.chunks[chunk_id].files_with_parts_in_chunk.getOrPut(c.allocator, @truncate(u32, c.source_id)) catch unreachable;
+                        }
                     };
-                } else {}
+                    var handler = Handler{
+                        .chunks = js_chunks.values(),
+                        .allocator = this.allocator,
+                        .source_id = source_index.get(),
+                    };
+                    entry_bits.forEach(Handler, &handler, Handler.next);
+                }
 
-                var files = try js_chunk_entry.value_ptr.files_with_parts_in_chunk.getOrPut(this.allocator, source_index.get());
-                _ = files;
+                // var js_chunk_entry = try js_chunks.getOrPut(
+                //     try temp_allocator.dupe(u8, entry_bits.bytes(this.graph.entry_points.len)),
+                // );
+
+                // if (!js_chunk_entry.found_existing) {
+                //     js_chunk_entry.value_ptr.* = .{
+                //         .entry_bits = try entry_bits.clone(this.allocator),
+                //         .entry_point = .{
+                //             .source_index = source_index.get(),
+                //         },
+                //         .content = .{
+                //             .javascript = .{},
+                //         },
+                //     };
+                // }
+
+                // _ = js_chunk_entry.value_ptr.*.files_with_parts_in_chunk.getOrPut(temp_allocator, source_index.get()) catch unreachable;
             }
         }
 
@@ -1872,6 +1889,8 @@ const LinkerContext = struct {
 
             if (chunk.entry_point.is_entry_point) {
                 chunk.template = PathTemplate.file;
+                if (this.resolver.opts.entry_names.len > 0)
+                    chunk.template.data = this.resolver.opts.entry_names;
                 const pathname = Fs.PathName.init(this.graph.entry_points.items(.output_path)[chunk.entry_point.entry_point_id].slice());
                 chunk.template.placeholder.name = pathname.base;
                 chunk.template.placeholder.ext = "js";
@@ -1958,7 +1977,7 @@ const LinkerContext = struct {
                 const visited_entry = v.visited.getOrPut(source_index) catch unreachable;
                 if (visited_entry.found_existing) return;
 
-                var is_file_in_chunk = v.entry_bits.eql(&v.c.graph.files.items(.entry_bits)[source_index]);
+                var is_file_in_chunk = v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
 
                 // Wrapped files can't be split because they are all inside the wrapper
                 const can_be_split = v.flags[source_index].wrap == .none;
@@ -3488,14 +3507,17 @@ const LinkerContext = struct {
                 var dynamic_chunk_indices = chunk_meta.dynamic_imports.keys();
                 std.sort.sort(Index.Int, dynamic_chunk_indices, void{}, std.sort.asc(Index.Int));
 
-                chunk.cross_chunk_imports = @TypeOf(chunk.cross_chunk_imports).initCapacity(c.allocator, dynamic_chunk_indices.len) catch unreachable;
-                chunk.cross_chunk_imports.len = @truncate(u32, dynamic_chunk_indices.len);
-                for (dynamic_chunk_indices, chunk.cross_chunk_imports.slice()) |dynamic_chunk_index, *item| {
+                var imports = chunk.cross_chunk_imports.listManaged(c.allocator);
+                imports.ensureUnusedCapacity(dynamic_chunk_indices.len) catch unreachable;
+                const prev_len = imports.items.len;
+                imports.items.len += dynamic_chunk_indices.len;
+                for (dynamic_chunk_indices, imports.items[prev_len..]) |dynamic_chunk_index, *item| {
                     item.* = .{
                         .import_kind = .dynamic,
                         .chunk_index = dynamic_chunk_index,
                     };
                 }
+                chunk.cross_chunk_imports.update(imports);
             }
         }
 
@@ -3599,7 +3621,6 @@ const LinkerContext = struct {
                                 .import_kind = .stmt,
                                 .chunk_index = cross_chunk_import.chunk_index,
                             }) catch unreachable;
-
                             var import = c.allocator.create(js_ast.S.Import) catch unreachable;
                             import.* = .{
                                 .items = clauses.items,
@@ -5711,8 +5732,9 @@ const LinkerContext = struct {
 
         if (comptime bun.Environment.allow_assert)
             debug(
-                "markFileReachableForCodeSplitting: {s} ({d})",
+                "markFileReachableForCodeSplitting(entry: {d}): {s} ({d})",
                 .{
+                    entry_points_count,
                     c.parse_graph.input_files.get(source_index).source.path.text,
                     out_dist,
                 },

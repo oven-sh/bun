@@ -246,9 +246,7 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
   if (!ESBUILD && metafile) {
     throw new Error("metafile not implemented in bun bun");
   }
-  if (!ESBUILD && !useOutFile) {
-    throw new Error("outdir not implemented in bun bun");
-  }
+
   if (host === "windows") {
     throw new Error('"host: windows" is not implemented in expectBundled');
   }

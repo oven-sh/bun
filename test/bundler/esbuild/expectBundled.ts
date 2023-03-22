@@ -653,7 +653,12 @@ export function expectBundled(id: string, opts: BundlerTestInput, dryRun?: boole
       }
 
       if (run.stdout !== undefined) {
-        expect(stdout!.toString("utf-8").trim()).toBe(dedent(run.stdout).trim());
+        const result = stdout!.toString("utf-8").trim();
+        const expected = dedent(run.stdout).trim();
+        if (expected !== result) {
+          console.log({file});
+        }
+        expect(result).toBe(expected);
       }
     }
   }

@@ -193,6 +193,7 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
+        clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
     };
 
@@ -491,12 +492,16 @@ pub const Arguments = struct {
         if (cmd == .BuildCommand or cmd == .BunCommand) {
             if (args.option("--outdir")) |outdir| {
                 if (outdir.len > 0) {
-                    output_dir = outdir;
+                    ctx.bundler_options.outdir = outdir;
                 }
             } else if (args.option("--outfile")) |outfile| {
                 if (outfile.len > 0) {
-                    output_file = outfile;
+                    ctx.bundler_options.outfile = outfile;
                 }
+            }
+
+            if (args.option("--entry-names")) |entry_names| {
+                ctx.bundler_options.entry_names = entry_names;
             }
 
             if (args.option("--sourcemap")) |setting| {
@@ -885,9 +890,16 @@ pub const Command = struct {
 
         debug: DebugOptions = DebugOptions{},
         test_options: TestOptions = TestOptions{},
+        bundler_options: BundlerOptions = BundlerOptions{},
 
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
+
+        pub const BundlerOptions = struct {
+            outdir: []const u8 = "",
+            outfile: []const u8 = "",
+            entry_names: []const u8 = "./[name].[ext]",
+        };
 
         const _ctx = Command.Context{
             .args = std.mem.zeroes(Api.TransformOptions),

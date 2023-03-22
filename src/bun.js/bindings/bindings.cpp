@@ -478,9 +478,13 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (uint64_t i = 0; i < length; i++) {
-            JSValue left = o1->getDirectIndex(globalObject, i);
+            JSValue left = o1->canGetIndexQuickly(i)
+                ? o1->getIndexQuickly(i)
+                : o1->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
-            JSValue right = o2->getDirectIndex(globalObject, i);
+            JSValue right = o2->canGetIndexQuickly(i)
+                ? o2->getIndexQuickly(i)
+                : o2->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
 
             if constexpr (isStrict) {

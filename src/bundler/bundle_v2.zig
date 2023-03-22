@@ -5803,10 +5803,7 @@ const LinkerContext = struct {
 
         // TODO: CSS AST
 
-        var has_any_client_component_imports = false;
         for (import_records[source_index].slice()) |*record| {
-            has_any_client_component_imports = has_any_client_component_imports or record.tag == .react_client_component;
-
             if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
                 c.markFileReachableForCodeSplitting(
                     record.source_index.get(),
@@ -5866,7 +5863,7 @@ const LinkerContext = struct {
         if (@as(usize, id) >= c.graph.ast.len)
             return;
         var _parts = parts[id].slice();
-        outer: for (_parts, 0..) |part, part_index| {
+        for (_parts, 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             // Also include any statement-level imports

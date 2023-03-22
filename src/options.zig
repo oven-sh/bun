@@ -1218,6 +1218,7 @@ pub const BundleOptions = struct {
 
     trim_unused_imports: ?bool = null,
     mark_bun_builtins_as_external: bool = false,
+    react_server_components: bool = false,
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},

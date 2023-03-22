@@ -117,3 +117,5 @@ pub const use_simdutf = !@import("bun").JSC.is_bindgen;
 pub const inline_properties_in_transpiler = true;
 
 pub const same_target_becomes_destructuring = true;
+
+pub const react_server_components = true;

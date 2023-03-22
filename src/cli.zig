@@ -195,6 +195,7 @@ pub const Arguments = struct {
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
         clap.parseParam("--entry-names <STR>              Pattern to use for entry point filenames") catch unreachable,
         clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--react-server-components        Enable React Server Components (experimental)") catch unreachable,
     };
 
     // TODO: update test completions
@@ -502,6 +503,12 @@ pub const Arguments = struct {
 
             if (args.option("--entry-names")) |entry_names| {
                 ctx.bundler_options.entry_names = entry_names;
+            }
+
+            if (comptime FeatureFlags.react_server_components) {
+                if (args.flag("--react-server-components")) {
+                    ctx.bundler_options.react_server_components = true;
+                }
             }
 
             if (args.option("--sourcemap")) |setting| {
@@ -899,6 +906,7 @@ pub const Command = struct {
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             entry_names: []const u8 = "./[name].[ext]",
+            react_server_components: bool = false,
         };
 
         const _ctx = Command.Context{

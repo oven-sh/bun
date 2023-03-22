@@ -106,6 +106,8 @@ pub const BunCommand = struct {
         this_bundler.resolver.opts.entry_names = ctx.bundler_options.entry_names;
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
+        this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
+        this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
 
         this_bundler.configureLinker();
         var filepath: [*:0]const u8 = "node_modules.bun";

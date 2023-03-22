@@ -838,6 +838,48 @@ fn NewPrinter(
             printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
         }
 
+        fn printReactClientComponentImportStatement(p: *Printer, import: S.Import, record: *const ImportRecord) void {
+            if (comptime !is_bun_platform) unreachable;
+
+            if (import.default_name) |default| {
+                p.print("var ");
+                p.printSymbol(default.ref.?);
+                p.printWhitespacer(ws(" = () => {$$typeof: {value: RSC_CLIENT_COMPONENT}, $$id: {value: '"));
+                p.printModuleId(bun.hash32(record.path.text));
+                p.print("-");
+                p.printModuleId(bun.hash32("default"));
+                p.print("'}}");
+            }
+
+            if (import.items.len > 0) {
+                if (import.default_name != null)
+                    p.printWhitespacer(ws(", "))
+                else
+                    p.print("var ");
+
+                for (import.items, 0..) |item, i| {
+                    if (i > 0) {
+                        p.print(",");
+                        p.printSpace();
+
+                        if (!import.is_single_line) {
+                            p.printNewline();
+                            p.printIndent();
+                        }
+                    }
+
+                    p.printSymbol(item.name.ref.?);
+                    p.printWhitespacer(ws("= {$$typeof: {value: RSC_CLIENT_COMPONENT}, $$id: {value: '"));
+                    p.printModuleId(bun.hash32(record.path.text));
+                    p.print("-");
+                    p.printModuleId(bun.hash32(item.alias));
+                    p.print("'}}");
+                }
+
+                p.printSemicolonAfterStatement();
+            }
+        }
+
         fn printHardcodedImportStatement(p: *Printer, import: S.Import) void {
             if (comptime !is_bun_platform) unreachable;
             printInternalBunImport(p, import, void, void{});
@@ -4330,6 +4372,10 @@ fn NewPrinter(
                             },
                             .hardcoded => {
                                 p.printHardcodedImportStatement(s.*);
+                                return;
+                            },
+                            .react_client_component => {
+                                p.printReactClientComponentImportStatement(s.*, record);
                                 return;
                             },
                             else => {},

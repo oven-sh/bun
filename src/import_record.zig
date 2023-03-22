@@ -184,6 +184,9 @@ pub const ImportRecord = struct {
         macro,
         internal,
 
+        /// Referenced "use client"; at the start of the file
+        react_client_component,
+
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;
         }

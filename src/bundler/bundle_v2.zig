@@ -559,6 +559,7 @@ pub const BundleV2 = struct {
         var chunks = try this.linker.link(
             this,
             this.graph.entry_points.items,
+            this.graph.react_client_component_entry_points.items,
             try this.findReachableFiles(),
             unique_key,
         );
@@ -650,6 +651,9 @@ pub const BundleV2 = struct {
                 result.ast.import_records = import_records;
 
                 graph.ast.set(result.source.index.get(), result.ast);
+                if (result.is_react_client_component) {
+                    graph.react_client_component_entry_points.append(graph.allocator, result.source.index.get()) catch unreachable;
+                }
                 // schedule as early as possible
                 graph.pool.pool.schedule(batch);
             },
@@ -743,6 +747,8 @@ const ParseTask = struct {
             resolve_queue: ResolveQueue,
             source: Logger.Source,
             log: Logger.Log,
+
+            is_react_client_component: bool = false,
         };
 
         pub const Error = struct {
@@ -851,6 +857,10 @@ const ParseTask = struct {
             return null;
         }
 
+        const is_react_client_component = this.ctx.bundler.options.react_server_components and
+            // TODO: make this more resilient.
+            strings.hasPrefixComptime(entry.contents, "\"use client\";\n");
+
         var source = Logger.Source{
             .path = file_path,
             .key_path = file_path,
@@ -861,8 +871,14 @@ const ParseTask = struct {
 
         const source_dir = file_path.sourceDir();
         const loader = task.loader orelse bundler.options.loader(file_path.name.ext);
-        const platform = bundler.options.platform;
+        const platform = if (!is_react_client_component)
+            bundler.options.platform
+        else
+            options.Platform.browser;
+
         var resolve_queue = ResolveQueue.init(bun.default_allocator);
+        // TODO: react-server ESM condition
+
         errdefer resolve_queue.clearAndFree();
 
         switch (loader) {
@@ -873,11 +889,12 @@ const ParseTask = struct {
                 opts.transform_require_to_import = false;
                 opts.can_import_from_bundle = false;
                 opts.features.allow_runtime = !source.index.isRuntime();
-                opts.features.dynamic_require = bundler.options.platform.isBun();
+                opts.features.dynamic_require = platform.isBun();
                 opts.warn_about_unbundled_modules = false;
                 opts.macro_context = &this.data.macro_context;
                 opts.bundle = true;
                 opts.features.top_level_await = true;
+                opts.features.jsx_optimization_inline = platform.isBun();
                 opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.tree_shaking = task.tree_shaking;
@@ -1016,11 +1033,15 @@ const ParseTask = struct {
                 _ = js_ast.Expr.Data.Store.toOwnedSlice();
                 _ = js_ast.Stmt.Data.Store.toOwnedSlice();
 
+                // never a react client component if RSC is not enabled.
+                std.debug.assert(!is_react_client_component or bundler.options.react_server_components);
+
                 return Result.Success{
                     .ast = ast,
                     .source = source,
                     .resolve_queue = resolve_queue,
                     .log = log.*,
+                    .is_react_client_component = is_react_client_component,
                 };
             },
             else => return null,
@@ -1273,6 +1294,8 @@ pub const Graph = struct {
     /// Stable source index mapping
     path_to_source_index_map: PathToSourceIndexMap = .{},
 
+    react_client_component_entry_points: std.ArrayListUnmanaged(Index.Int) = .{},
+
     pub const InputFile = struct {
         source: Logger.Source,
         loader: options.Loader = options.Loader.file,
@@ -1302,10 +1325,11 @@ const EntryPoint = struct {
 
     pub const List = MultiArrayList(EntryPoint);
 
-    pub const Kind = enum(u2) {
-        none = 0,
-        user_specified = 1,
-        dynamic_import = 2,
+    pub const Kind = enum {
+        none,
+        user_specified,
+        dynamic_import,
+        react_client_component,
 
         pub inline fn isEntryPoint(this: Kind) bool {
             return this != .none;
@@ -1529,7 +1553,12 @@ const LinkerGraph = struct {
         return &.{};
     }
 
-    pub fn load(this: *LinkerGraph, entry_points: []const Index, sources: []const Logger.Source) !void {
+    pub fn load(
+        this: *LinkerGraph,
+        entry_points: []const Index,
+        sources: []const Logger.Source,
+        react_client_component_entry_points: []Index.Int,
+    ) !void {
         try this.files.ensureTotalCapacity(this.allocator, sources.len);
         this.files.zero();
         this.files_live = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(
@@ -1547,7 +1576,7 @@ const LinkerGraph = struct {
 
         // Setup entry points
         {
-            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len);
+            try this.entry_points.ensureTotalCapacity(this.allocator, entry_points.len + react_client_component_entry_points.len);
             this.entry_points.len = entry_points.len;
             var source_indices = this.entry_points.items(.source_index);
 
@@ -1565,6 +1594,15 @@ const LinkerGraph = struct {
                 entry_point_kinds[source.index.get()] = EntryPoint.Kind.user_specified;
                 path_string.* = bun.PathString.init(source.path.text);
                 source_index.* = source.index.get();
+            }
+
+            for (react_client_component_entry_points) |source_id| {
+                entry_point_kinds[source_id] = .react_client_component;
+                this.entry_points.appendAssumeCapacity(.{
+                    .source_index = source_id,
+                    .output_path = bun.PathString.init(sources[source_id].path.text),
+                    .output_path_was_auto_generated = true,
+                });
             }
         }
 
@@ -1710,6 +1748,9 @@ const LinkerContext = struct {
         if (part.stmts.len == 1) {
             if (part.stmts[0].data == .s_import) {
                 const record = c.graph.ast.items(.import_records)[source_index].at(part.stmts[0].data.s_import.import_record_index);
+                if (record.tag == .react_client_component)
+                    return true;
+
                 if (record.source_index.isValid() and c.graph.meta.items(.flags)[record.source_index.get()].wrap == .none) {
                     return false;
                 }
@@ -1719,7 +1760,13 @@ const LinkerContext = struct {
         return true;
     }
 
-    fn load(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index, reachable: []Index) !void {
+    fn load(
+        this: *LinkerContext,
+        bundle: *BundleV2,
+        entry_points: []Index,
+        react_client_component_entry_points: []Index.Int,
+        reachable: []Index,
+    ) !void {
         this.parse_graph = &bundle.graph;
 
         this.graph.code_splitting = bundle.bundler.options.code_splitting;
@@ -1733,7 +1780,7 @@ const LinkerContext = struct {
 
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
-        try this.graph.load(entry_points, sources);
+        try this.graph.load(entry_points, sources, react_client_component_entry_points);
         this.wait_group.init();
         this.ambiguous_result_pool = std.ArrayList(MatchImport).init(this.allocator);
 
@@ -1747,10 +1794,16 @@ const LinkerContext = struct {
         this: *LinkerContext,
         bundle: *BundleV2,
         entry_points: []Index,
+        react_client_component_entry_points: []Index.Int,
         reachable: []Index,
         unique_key: u64,
     ) ![]Chunk {
-        try this.load(bundle, entry_points, reachable);
+        try this.load(
+            bundle,
+            entry_points,
+            react_client_component_entry_points,
+            reachable,
+        );
 
         try this.scanImportsAndExports();
 
@@ -1948,6 +2001,7 @@ const LinkerContext = struct {
             visited: std.AutoHashMap(Index.Int, void) = undefined,
             parts_prefix: std.ArrayList(PartRange) = undefined,
             c: *LinkerContext,
+            entry_point: Chunk.EntryPoint,
 
             fn appendOrExtendRange(
                 ranges: *std.ArrayList(PartRange),
@@ -1978,6 +2032,15 @@ const LinkerContext = struct {
 
                 var is_file_in_chunk = v.entry_bits.hasIntersection(&v.c.graph.files.items(.entry_bits)[source_index]);
 
+                if (is_file_in_chunk and
+                    v.entry_point.is_entry_point and
+                    v.entry_point.source_index != source_index and
+                    v.c.graph.files.items(.entry_point_kind)[v.entry_point.source_index] != .react_client_component and
+                    v.c.graph.files.items(.entry_point_kind)[source_index] == .react_client_component)
+                {
+                    return;
+                }
+
                 // Wrapped files can't be split because they are all inside the wrapper
                 const can_be_split = v.flags[source_index].wrap == .none;
 
@@ -1991,13 +2054,11 @@ const LinkerContext = struct {
                 for (parts, 0..) |part, part_index_| {
                     const part_index = @truncate(u32, part_index_);
                     const is_part_in_this_chunk = is_file_in_chunk and part.is_live;
-
                     for (part.import_record_indices.slice()) |record_id| {
                         const record = &records[record_id];
                         if (record.source_index.isValid() and (record.kind == .stmt or is_part_in_this_chunk)) {
                             if (v.c.isExternalDynamicImport(record, source_index)) {
                                 // Don't follow import() dependencies
-
                                 continue;
                             }
 
@@ -2053,6 +2114,7 @@ const LinkerContext = struct {
             .import_records = this.graph.ast.items(.import_records),
             .entry_bits = chunk.entryBits(),
             .c = this,
+            .entry_point = chunk.entry_point,
         };
         defer {
             part_ranges_shared.* = visitor.part_ranges;
@@ -4595,6 +4657,8 @@ const LinkerContext = struct {
         ast: *const js_ast.Ast,
     ) !bool {
         const record = ast.import_records.at(import_record_index);
+        if (record.tag == .react_client_component)
+            return false;
 
         // Is this an external import?
         if (!record.source_index.isValid()) {
@@ -4646,9 +4710,7 @@ const LinkerContext = struct {
 
         const other_flags = c.graph.meta.items(.flags)[record.source_index.get()];
         switch (other_flags.wrap) {
-            .none => {
-                // Remove the statement entirely if this module is not wrapped
-            },
+            .none => {},
             .cjs => {
                 // Replace the statement with a call to "require()" if this module is not wrapped
                 try stmts.inside_wrapper_prefix.append(
@@ -5741,7 +5803,10 @@ const LinkerContext = struct {
 
         // TODO: CSS AST
 
+        var has_any_client_component_imports = false;
         for (import_records[source_index].slice()) |*record| {
+            has_any_client_component_imports = has_any_client_component_imports or record.tag == .react_client_component;
+
             if (record.source_index.isValid() and !c.isExternalDynamicImport(record, source_index)) {
                 c.markFileReachableForCodeSplitting(
                     record.source_index.get(),
@@ -5755,9 +5820,23 @@ const LinkerContext = struct {
             }
         }
 
-        for (parts[source_index].slice()) |part| {
+        outer: for (parts[source_index].slice()) |part| {
             for (part.dependencies.slice()) |dependency| {
                 if (dependency.source_index.get() != source_index) {
+                    if (c.graph.files.items(.entry_point_kind)[dependency.source_index.get()] == .react_client_component and
+                        has_any_client_component_imports)
+                    {
+                        allow: {
+                            for (part.import_record_indices.slice()) |record_id| {
+                                if (import_records[source_index].slice()[record_id].tag == .react_client_component) {
+                                    break :allow;
+                                }
+                            }
+
+                            continue :outer;
+                        }
+                    }
+
                     c.markFileReachableForCodeSplitting(
                         dependency.source_index.get(),
                         entry_points_count,
@@ -5801,7 +5880,7 @@ const LinkerContext = struct {
         if (@as(usize, id) >= c.graph.ast.len)
             return;
         var _parts = parts[id].slice();
-        for (_parts, 0..) |part, part_index| {
+        outer: for (_parts, 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             // Also include any statement-level imports
@@ -5818,6 +5897,11 @@ const LinkerContext = struct {
                     // considered to have no side effects
                     if (side_effects[other_source_index] != .has_side_effects and !c.options.ignore_dce_annotations) {
                         continue;
+                    }
+
+                    if (entry_point_kinds[other_source_index] == .react_client_component) {
+                        record.tag = .react_client_component;
+                        continue :outer;
                     }
 
                     // Otherwise, include this module for its side effects

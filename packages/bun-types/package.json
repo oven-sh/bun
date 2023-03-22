@@ -12,7 +12,7 @@
     "build": "rm -rf ./dist && bun run bundle && bun run fmt",
     "bundle": "bun scripts/bundle.ts ./dist",
     "test": "tsd",
-    "fmt": "./node_modules/.bin/prettier --write './**/*.{ts,tsx,js,jsx}'"
+    "fmt": "which prettier && prettier --write './**/*.{ts,tsx,js,jsx}'"
   },
   "tsd": {
     "directory": "tests"

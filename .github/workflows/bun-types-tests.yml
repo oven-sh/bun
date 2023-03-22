@@ -31,10 +31,8 @@ jobs:
           node-version: latest
 
       - name: Install dependencies
-        run: | 
-          bun install
-          bun install
-
+        run: |
+          bun install --backend symlink
 
       - name: Generate package
         run: bun run build

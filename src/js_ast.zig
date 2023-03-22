@@ -2061,15 +2061,19 @@ pub const E = struct {
         expr: ExprNodeIndex,
         import_record_index: u32,
 
-        // Comments inside "import()" expressions have special meaning for Webpack.
-        // Preserving comments inside these expressions makes it possible to use
-        // esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
-        // performance. We intentionally do not interpret these comments in esbuild
-        // because esbuild is not Webpack. But we do preserve them since doing so is
-        // harmless, easy to maintain, and useful to people. See the Webpack docs for
-        // more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        // TODO:
+        /// Comments inside "import()" expressions have special meaning for Webpack.
+        /// Preserving comments inside these expressions makes it possible to use
+        /// esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
+        /// performance. We intentionally do not interpret these comments in esbuild
+        /// because esbuild is not Webpack. But we do preserve them since doing so is
+        /// harmless, easy to maintain, and useful to people. See the Webpack docs for
+        /// more info: https://webpack.js.org/api/module-methods/#magic-comments.
+        /// TODO:
         leading_interior_comments: []G.Comment = &([_]G.Comment{}),
+
+        pub fn isImportRecordNull(this: *const Import) bool {
+            return this.import_record_index == std.math.maxInt(u32);
+        }
     };
 };
 

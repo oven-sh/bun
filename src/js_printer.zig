@@ -2102,7 +2102,7 @@ fn NewPrinter(
                 .e_import => |e| {
 
                     // Handle non-string expressions
-                    if (Ref.isSourceIndexNull(e.import_record_index)) {
+                    if (e.isImportRecordNull()) {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
                         if (wrap) {
                             p.print("(");

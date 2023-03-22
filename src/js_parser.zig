@@ -4141,7 +4141,7 @@ fn NewParser_(
 
             return p.newExpr(E.Import{
                 .expr = arg,
-                .import_record_index = Ref.None.sourceIndex(),
+                .import_record_index = std.math.maxInt(u32),
             }, state.loc);
         }
 
@@ -12759,7 +12759,7 @@ fn NewParser_(
                 }
             }
 
-            return p.newExpr(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = 0 }, loc);
+            return p.newExpr(E.Import{ .expr = value, .leading_interior_comments = comments, .import_record_index = std.math.maxInt(u32) }, loc);
         }
 
         fn parseJSXPropValueIdentifier(p: *P, previous_string_with_backslash_loc: *logger.Loc) !Expr {

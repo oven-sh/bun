@@ -417,7 +417,7 @@ interface BlobInterface {
   formData(): Promise<FormData>;
 }
 
-type BlobPart = string | Blob | BufferSource | ArrayBuffer;
+type BlobPart = string | Blob | BufferSource;
 interface BlobPropertyBag {
   /** Set a default "type" */
   type?: string;

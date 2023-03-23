@@ -46,7 +46,7 @@ const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 
 const outBase = path.join(tmpdir(), mkdtempSync(ESBUILD ? "esbuild" : "bun" ), "./bun-bundler-tests");
 const testsRan = new Set();
-const tempPathToBunDebug = Bun.which("bun-new-bundler") ?? Bun.which("bun-debug") ?? bunExe();
+const tempPathToBunDebug =  process.env.BUN_EXE ?? Bun.which("bun-new-bundler") ?? Bun.which("bun-debug") ?? bunExe();
 
 if (ESBUILD) {
   console.warn("WARNING: using esbuild for bun bundler tests");

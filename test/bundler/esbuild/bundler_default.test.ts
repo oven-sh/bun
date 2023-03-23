@@ -448,6 +448,7 @@ describe("bundler", () => {
     jsx: {
       factory: "elem",
       fragment: "frag",
+      runtime: "automatic",
     },
     run: {
       stdout: `
@@ -543,7 +544,7 @@ describe("bundler", () => {
     jsx: {
       automaticRuntime: true,
     },
-    external: ["react/jsx-runtime"],
+    external: ["react"],
     run: {
       stdout: `
         <div jsx="jsx" /> <>
@@ -566,7 +567,7 @@ describe("bundler", () => {
     jsx: {
       automaticRuntime: true,
     },
-    external: ["react/jsx-runtime"],
+    external: ["react"],
     run: {
       stdout: `
         <div jsx="jsx function" /> <>
@@ -577,14 +578,14 @@ describe("bundler", () => {
   });
   itBundled("default/JSXAutomaticSyntaxInJS", {
     files: {
-      "/entry.js": `console.log(<div/>)`,
+      "/entry.mjs": `console.log(<div/>)`,
     },
     jsx: {
       automaticRuntime: true,
     },
-    external: ["react/jsx-runtime"],
+    external: ["react"],
     bundleErrors: {
-      "/entry.js": ["The JSX syntax extension is not currently enabled"],
+      "/entry.mjs": ["The JSX syntax extension is not currently enabled"],
     },
   });
   itBundled("default/NodeModules", {

@@ -32,15 +32,33 @@ describe("url", () => {
     url = new URL("blob://example.com");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("null");
-    url = new URL("blob:https://example.com/1234-5678");
-    expect(url.protocol).toBe("blob:");
-    expect(url.origin).toBe("null");
     url = new URL("javascript:alert('Hello World!')");
     expect(url.protocol).toBe("javascript:");
     expect(url.origin).toBe("null");
     url = new URL("mailto:");
     expect(url.protocol).toBe("mailto:");
     expect(url.origin).toBe("null");
+  });
+  it.skip("should work with blob urls", () => {
+    // TODO
+    var url = new URL("blob:https://example.com/1234-5678");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("https://example.com");
+    url = new URL("blob:file://text.txt");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("file://text.txt");
+    url = new URL("blob:kjka://example.com");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("null");
+    url = new URL("blob:blob://example.com");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("null");
+    url = new URL("blob:blob://example.com");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("null");
+    url = new URL("blob:ws://example.com");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("ws://example.com");
   });
   it("prints", () => {
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {

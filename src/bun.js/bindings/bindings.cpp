@@ -2849,6 +2849,11 @@ int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
         return value.toBigInt64(arg1);
     }
 
+    int64_t result = tryConvertToInt52(value.asDouble());
+    if (result != JSValue::notInt52) {
+        return result;
+    }
+
     return value.toInt32(arg1);
 }
 

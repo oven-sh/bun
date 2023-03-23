@@ -5381,7 +5381,7 @@ const LinkerContext = struct {
         // evaluated (well, except for cyclic import scenarios). We need to preserve
         // these semantics even when modules imported via ES6 import statements end
         // up being CommonJS modules.
-        stmts.all_stmts.ensureUnusedCapacity(stmts.outside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
+        stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch unreachable;
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
         stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
         stmts.inside_wrapper_prefix.items.len = 0;

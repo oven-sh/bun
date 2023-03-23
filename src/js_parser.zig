@@ -17141,7 +17141,7 @@ fn NewParser_(
 
                     // Handle exporting this class from a namespace
                     if (was_export_inside_namespace) {
-                        stmts.appendAssumeCapacity(
+                        stmts.append(
                             Stmt.assign(
                                 p.newExpr(
                                     E.Dot{
@@ -17160,7 +17160,7 @@ fn NewParser_(
                                 ),
                                 p.allocator,
                             ),
-                        );
+                        ) catch unreachable;
                     }
 
                     return;

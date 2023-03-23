@@ -13589,7 +13589,7 @@ fn NewParser_(
 
             // oroigianlly was !=- modepassthrough
             if (!p.fn_only_data_visit.is_this_nested) {
-                if (p.has_es_module_syntax) {
+                if (p.has_es_module_syntax and p.commonjs_named_exports.count() == 0) {
                     // In an ES6 module, "this" is supposed to be undefined. Instead of
                     // doing this at runtime using "fn.call(undefined)", we do it at
                     // compile time using expression substitution here.

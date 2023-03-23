@@ -101,11 +101,11 @@ pub const ThreadPool = struct {
         v2.bundler.env.loadProcess();
         this.v2 = v2;
 
-        this.cpu_count = @truncate(u32, @divFloor((try std.Thread.getCpuCount()) + 1, 2));
+        this.cpu_count = @truncate(u32, @max(std.Thread.getCpuCount() catch 2, 2));
 
         if (v2.bundler.env.map.get("GOMAXPROCS")) |max_procs| {
             if (std.fmt.parseInt(u32, max_procs, 10)) |cpu_count| {
-                this.cpu_count = std.math.min(this.cpu_count, cpu_count);
+                this.cpu_count = @max(cpu_count, 2);
             } else |_| {}
         }
 

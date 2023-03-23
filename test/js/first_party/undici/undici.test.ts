@@ -1,17 +1,38 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { request } from "undici";
 
+import type { Server } from "bun";
+
+import { createServer } from "../../../http-test-server";
+
 describe("undici", () => {
+  let server: Server;
+  let hostUrl: string;
+  let hostname = "localhost";
+  let port: number;
+  let host: string;
+
+  beforeAll(() => {
+    server = createServer();
+    port = server.port;
+    host = `${hostname}:${port}`;
+    hostUrl = `http://${host}`;
+  });
+
+  afterAll(() => {
+    server.stop();
+  });
+
   describe("request", () => {
     it("should make a GET request when passed a URL string", async () => {
-      const { body } = await request("https://httpbin.org/get");
+      const { body } = await request(`${hostUrl}/get`);
       expect(body).toBeDefined();
       const json = (await body.json()) as { url: string };
-      expect(json.url).toBe("https://httpbin.org/get");
+      expect(json.url).toBe(`${hostUrl}/get`);
     });
 
     it("should error when body has already been consumed", async () => {
-      const { body } = await request("https://httpbin.org/get");
+      const { body } = await request(`${hostUrl}/get`);
       await body.json();
       expect(body.bodyUsed).toBe(true);
       try {
@@ -23,7 +44,7 @@ describe("undici", () => {
     });
 
     it("should make a POST request when provided a body and POST method", async () => {
-      const { body } = await request("https://httpbin.org/post", {
+      const { body } = await request(`${hostUrl}/post`, {
         method: "POST",
         body: "Hello world",
       });
@@ -33,23 +54,23 @@ describe("undici", () => {
     });
 
     it("should accept a URL class object", async () => {
-      const { body } = await request(new URL("https://httpbin.org/get"));
+      const { body } = await request(new URL(`${hostUrl}/get`));
       expect(body).toBeDefined();
       const json = (await body.json()) as { url: string };
-      expect(json.url).toBe("https://httpbin.org/get");
+      expect(json.url).toBe(`${hostUrl}/get`);
     });
 
     // it("should accept an undici UrlObject", async () => {
     //   // @ts-ignore
-    //   const { body } = await request({ protocol: "https:", hostname: "httpbin.org", path: "/get" });
+    //   const { body } = await request({ protocol: "https:", hostname: host, path: "/get" });
     //   expect(body).toBeDefined();
     //   const json = (await body.json()) as { url: string };
-    //   expect(json.url).toBe("https://httpbin.org/get");
+    //   expect(json.url).toBe(`${hostUrl}/get`);
     // });
 
     it("should prevent body from being attached to GET or HEAD requests", async () => {
       try {
-        await request("https://httpbin.org/get", {
+        await request(`${hostUrl}/get`, {
           method: "GET",
           body: "Hello world",
         });
@@ -59,7 +80,7 @@ describe("undici", () => {
       }
 
       try {
-        await request("https://httpbin.org/head", {
+        await request(`${hostUrl}/head`, {
           method: "HEAD",
           body: "Hello world",
         });
@@ -70,12 +91,12 @@ describe("undici", () => {
     });
 
     it("should allow a query string to be passed", async () => {
-      const { body } = await request("https://httpbin.org/get?foo=bar");
+      const { body } = await request(`${hostUrl}/get?foo=bar`);
       expect(body).toBeDefined();
       const json = (await body.json()) as { args: { foo: string } };
       expect(json.args.foo).toBe("bar");
 
-      const { body: body2 } = await request("https://httpbin.org/get", {
+      const { body: body2 } = await request(`${hostUrl}/get`, {
         query: { foo: "bar" },
       });
       expect(body2).toBeDefined();
@@ -85,14 +106,14 @@ describe("undici", () => {
 
     it("should throw on HTTP 4xx or 5xx error when throwOnError is true", async () => {
       try {
-        await request("https://httpbin.org/status/404", { throwOnError: true });
+        await request(`${hostUrl}/status/404`, { throwOnError: true });
         throw new Error("Should have errored");
       } catch (e) {
         expect((e as Error).message).toBe("Request failed with status code 404");
       }
 
       try {
-        await request("https://httpbin.org/status/500", { throwOnError: true });
+        await request(`${hostUrl}/status/500`, { throwOnError: true });
         throw new Error("Should have errored");
       } catch (e) {
         expect((e as Error).message).toBe("Request failed with status code 500");
@@ -102,8 +123,8 @@ describe("undici", () => {
     it("should allow us to abort the request with a signal", async () => {
       const controller = new AbortController();
       try {
-        setTimeout(() => controller.abort(), 1000);
-        const req = await request("https://httpbin.org/delay/5", {
+        setTimeout(() => controller.abort(), 500);
+        const req = await request(`${hostUrl}/delay/5`, {
           signal: controller.signal,
         });
         await req.body.json();
@@ -114,20 +135,20 @@ describe("undici", () => {
     });
 
     it("should properly append headers to the request", async () => {
-      const { body } = await request("https://httpbin.org/headers", {
+      const { body } = await request(`${hostUrl}/headers`, {
         headers: {
           "x-foo": "bar",
         },
       });
       expect(body).toBeDefined();
-      const json = (await body.json()) as { headers: { "X-Foo": string } };
-      expect(json.headers["X-Foo"]).toBe("bar");
+      const json = (await body.json()) as { headers: { "x-foo": string } };
+      expect(json.headers["x-foo"]).toBe("bar");
     });
 
     // it("should allow the use of FormData", async () => {
     //   const form = new FormData();
     //   form.append("foo", "bar");
-    //   const { body } = await request("https://httpbin.org/post", {
+    //   const { body } = await request(`${hostUrl}/post`, {
     //     method: "POST",
     //     body: form,
     //   });

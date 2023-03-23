@@ -40,13 +40,10 @@ describe("readline/promises.createInterface()", () => {
 
     rli.on("line", mustNotCall());
     fi.emit("data", "\t");
-    const outCheckDone = createDone();
     process.nextTick(() => {
-      console.log("output", fi.output);
-      assert.match(fi.output, /^Tab completion error/);
-      fi.reset();
-      outCheckDone();
+      expect(fi.output).toMatch(/^Tab completion error/);
+      rli.close();
+      done();
     });
-    rli.close();
   });
 });

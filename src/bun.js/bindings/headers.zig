@@ -201,6 +201,7 @@ pub extern fn JSC__JSValue__asObject(JSValue0: JSC__JSValue) bJSC__JSObject;
 pub extern fn JSC__JSValue__asPromise(JSValue0: JSC__JSValue) ?*bindings.JSPromise;
 pub extern fn JSC__JSValue__asString(JSValue0: JSC__JSValue) [*c]bindings.JSString;
 pub extern fn JSC__JSValue__coerceToInt32(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) i32;
+pub extern fn JSC__JSValue__coerceToInt64(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) i64;
 pub extern fn JSC__JSValue__createEmptyArray(arg0: *bindings.JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__createEmptyObject(arg0: *bindings.JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__createInternalPromise(arg0: *bindings.JSGlobalObject) JSC__JSValue;

@@ -53,7 +53,7 @@ afterAll(() => {
 });
 
 [-200, 42, 100, 102, 12345, Math.PI, 999, 600, 199, 199n, 600n, 100n, 102n].forEach(statusCode => {
-  it(`should ignore invalid HTTP status code (${statusCode})`, async () => {
+  it(`should error on invalid HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
         fetch() {

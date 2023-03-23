@@ -2832,9 +2832,23 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
+// truncates values larger than int32
 int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value.isCell() && value.isHeapBigInt()) {
+        return static_cast<int32_t>(value.toBigInt64(arg1));
+    }
+    return value.toInt32(arg1);
+}
+
+int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSValue value = JSValue::decode(JSValue0);
+    if (value.isCell() && value.isHeapBigInt()) {
+        return static_cast<int32_t>(value.toBigInt64(arg1));
+    }
+
     return value.toInt32(arg1);
 }
 

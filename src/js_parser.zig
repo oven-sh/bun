@@ -9778,7 +9778,14 @@ fn NewParser_(
             }
 
             // For now, we silently strip import assertions
-            if (!p.lexer.has_newline_before and p.lexer.isContextualKeyword("assert")) {
+            if (!p.lexer.has_newline_before and (
+            // Import Assertions are deprecated.
+            // Import Attributes are the new way to do this.
+            // But some code may still use "assert"
+            // We support both and treat them identically.
+            // Once Prettier & TypeScript support import attributes, we will add runtime support
+                p.lexer.isContextualKeyword("assert") or p.lexer.isContextualKeyword("with")))
+            {
                 try p.lexer.next();
                 try p.lexer.expect(.t_open_brace);
 

@@ -109,6 +109,8 @@ pub const ThreadPool = struct {
             } else |_| {}
         }
 
+        this.cpu_count = @min(this.cpu_count, this.workers.len - 1);
+
         this.pool = ThreadPoolLib.init(.{
             .max_threads = this.cpu_count,
         });

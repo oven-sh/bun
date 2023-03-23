@@ -12,7 +12,7 @@ describe("undici", () => {
 
   beforeAll(() => {
     serverCtl = createServer();
-    port = server.port;
+    port = serverCtl.port;
     host = `${hostname}:${port}`;
     hostUrl = `http://${host}`;
   });

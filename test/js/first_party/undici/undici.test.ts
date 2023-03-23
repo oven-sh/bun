@@ -6,7 +6,7 @@ import type { Server } from "bun";
 import { createServer } from "../../../http-test-server";
 
 describe("undici", () => {
-  let server: Server;
+  let server: { server: Server; port: number; stop: () => void };
   let hostUrl: string;
   let hostname = "localhost";
   let port: number;

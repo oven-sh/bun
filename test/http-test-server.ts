@@ -27,7 +27,6 @@ function getDefaultJSONBody(request: Request) {
   };
 }
 
-// TODO: Make different ones based on whether json or plaintext
 function makeTestJsonResponse(
   request: Request,
   opts: ResponseInit & { type?: "plaintext" | "json" } = { status: 200, type: "json" },
@@ -77,11 +76,6 @@ function makeTestJsonResponse(
     headers: { ...defaultOpts.headers, ...headers },
   });
 }
-
-// TODO: Figure out why not timing out
-// TODO: Headers should echo back headers
-
-// TODO: What other behavior to validate?
 
 export function createServer() {
   const server = serve({

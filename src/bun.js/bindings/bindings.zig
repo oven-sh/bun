@@ -3058,6 +3058,10 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("coerceToInt32", .{ this, globalThis });
     }
 
+    pub fn coerceToInt64(this: JSValue, globalThis: *JSC.JSGlobalObject) i64 {
+        return cppFn("coerceToInt64", .{ this, globalThis });
+    }
+
     const PropertyIteratorFn = *const fn (
         globalObject_: *JSGlobalObject,
         ctx_ptr: ?*anyopaque,
@@ -4192,6 +4196,7 @@ pub const JSValue = enum(JSValueReprInt) {
         "asPromise",
         "asString",
         "coerceToInt32",
+        "coerceToInt64",
         "createEmptyArray",
         "createEmptyObject",
         "createInternalPromise",

@@ -389,7 +389,7 @@ describe("lstat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = lstatSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = lstatSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -424,7 +424,7 @@ describe("stat", () => {
   });
 
   it("folder metadata is correct", () => {
-    const fileStats = statSync(new URL("../../test", import.meta.url).toString().slice("file://".length - 1));
+    const fileStats = statSync(new URL("../../../../test", import.meta.url).toString().slice("file://".length - 1));
     expect(fileStats.isSymbolicLink()).toBe(false);
     expect(fileStats.isFile()).toBe(false);
     expect(fileStats.isDirectory()).toBe(true);
@@ -605,11 +605,97 @@ describe("createReadStream", () => {
     return await new Promise(resolve => {
       stream.on("data", chunk => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(chunk.length).toBe(1);
-        expect(chunk.toString()).toBe(data[i++]);
+        expect(chunk.length).toBe(22);
+        expect(chunk.toString()).toBe(data);
       });
 
       stream.on("end", () => {
+        resolve(true);
+      });
+    });
+  });
+
+  it("works (highWaterMark 1, 512 chunk)", async () => {
+    var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
+      highWaterMark: 1,
+    });
+
+    var data = readFileSync(import.meta.dir + "/readLargeFileSync.txt", "utf8");
+    var i = 0;
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.length).toBe(512);
+        expect(chunk.toString()).toBe(data.slice(i, i + 512));
+        i += 512;
+      });
+
+      stream.on("end", () => {
+        resolve(true);
+      });
+    });
+  });
+
+  it("works (512 chunk)", async () => {
+    var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
+      highWaterMark: 512,
+    });
+
+    var data = readFileSync(import.meta.dir + "/readLargeFileSync.txt", "utf8");
+    var i = 0;
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.length).toBe(512);
+        expect(chunk.toString()).toBe(data.slice(i, i + 512));
+        i += 512;
+      });
+
+      stream.on("end", () => {
+        resolve(true);
+      });
+    });
+  });
+
+  it("works with larger highWaterMark (1024 chunk)", async () => {
+    var stream = createReadStream(import.meta.dir + "/readLargeFileSync.txt", {
+      highWaterMark: 1024,
+    });
+
+    var data = readFileSync(import.meta.dir + "/readLargeFileSync.txt", "utf8");
+    var i = 0;
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.length).toBe(1024);
+        expect(chunk.toString()).toBe(data.slice(i, i + 1024));
+        i += 1024;
+      });
+
+      stream.on("end", () => {
+        resolve(true);
+      });
+    });
+  });
+
+  it("works with very large file", async () => {
+    const tempFile = tmpdir() + "/" + "large-file" + Date.now() + ".txt";
+    await Bun.write(Bun.file(tempFile), "big data big data big data".repeat(10000));
+    var stream = createReadStream(tempFile, {
+      highWaterMark: 512,
+    });
+
+    var data = readFileSync(tempFile, "utf8");
+    var i = 0;
+    return await new Promise(resolve => {
+      stream.on("data", chunk => {
+        expect(chunk instanceof Buffer).toBe(true);
+        expect(chunk.toString()).toBe(data.slice(i, i + chunk.length));
+        i += chunk.length;
+      });
+      stream.on("end", () => {
+        expect(i).toBe("big data big data big data".repeat(10000).length);
+        rmSync(tempFile);
         resolve(true);
       });
     });

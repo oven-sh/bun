@@ -959,8 +959,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
 
     if (!stringToEncode.isAllLatin1()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        // TODO: DOMException
-        JSC::throwTypeError(globalObject, scope, "The string contains invalid characters."_s);
+        throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
@@ -991,8 +990,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
                                                         });
     if (!decodedData) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        // TODO: DOMException
-        JSC::throwTypeError(globalObject, scope, "The string contains invalid characters."_s);
+        throwException(globalObject, scope, createDOMException(globalObject, ExceptionCode::InvalidCharacterError));
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 

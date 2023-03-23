@@ -223,8 +223,8 @@ export var ReadStream = (function (InternalReadStream) {
   });
 
   return Object.defineProperty(
-    function ReadStream(options) {
-      return new InternalReadStream(options);
+    function ReadStream(path, options) {
+      return new InternalReadStream(path, options);
     },
     Symbol.hasInstance,
     {

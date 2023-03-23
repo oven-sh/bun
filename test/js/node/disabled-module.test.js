@@ -24,7 +24,7 @@ test("AsyncLocalStorage polyfill", () => {
 test("AsyncResource polyfill", () => {
   const { AsyncResource } = import.meta.require("async_hooks");
 
-  const resource = new AsyncResource("test");
+  const resource = new AsyncResource("prisma-client-request");
   var called = false;
   resource.runInAsyncScope(
     () => {

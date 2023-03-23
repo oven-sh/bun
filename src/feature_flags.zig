@@ -119,3 +119,5 @@ pub const inline_properties_in_transpiler = true;
 pub const same_target_becomes_destructuring = true;
 
 pub const react_server_components = true;
+
+pub const help_catch_memory_issues = @import("bun").Environment.allow_assert;

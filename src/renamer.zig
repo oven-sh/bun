@@ -270,7 +270,7 @@ pub const NumberRenamer = struct {
 
     pub fn nameForSymbol(renamer: *NumberRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
-            unreachable;
+            bun.unreachablePanic("Unexpected unbound symobl!\n{any}", .{ref});
         }
 
         const resolved = renamer.symbols.follow(ref);

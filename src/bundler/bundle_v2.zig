@@ -1065,7 +1065,11 @@ const ParseTask = struct {
         var step: ParseTask.Result.Error.Step = .pending;
         var log = Logger.Log.init(worker.allocator);
         std.debug.assert(this.source_index.isValid()); // forgot to set source_index
-
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                worker.heap.gc(false);
+            }
+        }
         var result = bun.default_allocator.create(Result) catch unreachable;
         result.* = .{
             .value = brk: {
@@ -2894,6 +2898,7 @@ const LinkerContext = struct {
         // WARNING: This method is run in parallel over all files. Do not mutate data
         // for other files within this method or you will create a data race.
         ////////////////////////////////////////////////////////////////////////////////
+
         Stmt.Disabler.disable();
         defer Stmt.Disabler.enable();
         Expr.Disabler.disable();
@@ -3131,6 +3136,14 @@ const LinkerContext = struct {
         );
         // we must use this allocator here
         const allocator_ = worker.allocator;
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            worker.heap.gc(false);
+        }
+        defer {
+            if (comptime FeatureFlags.help_catch_memory_issues) {
+                worker.heap.gc(false);
+            }
+        }
 
         var resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
 
@@ -3896,6 +3909,10 @@ const LinkerContext = struct {
         _ = chunk_index;
         defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get();
+
+        if (comptime FeatureFlags.help_catch_memory_issues) {
+            worker.heap.gc(false);
+        }
         const allocator = worker.allocator;
         const c = ctx.c;
         std.debug.assert(chunk.content == .javascript);

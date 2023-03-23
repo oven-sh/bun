@@ -52,7 +52,7 @@ test("which", () => {
   } catch (e) {}
 });
 
-function writeFixture(path) {
+function writeFixture(path: string) {
   var fs = require("fs");
   try {
     fs.unlinkSync(path);

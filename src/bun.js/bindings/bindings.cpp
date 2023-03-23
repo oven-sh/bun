@@ -478,12 +478,10 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
 
         for (uint64_t i = 0; i < length; i++) {
-            // array holes come back as empty values with tryGetIndexQuickly()
             JSValue left = o1->canGetIndexQuickly(i)
                 ? o1->getIndexQuickly(i)
                 : o1->tryGetIndexQuickly(i);
             RETURN_IF_EXCEPTION(*scope, false);
-
             JSValue right = o2->canGetIndexQuickly(i)
                 ? o2->getIndexQuickly(i)
                 : o2->tryGetIndexQuickly(i);
@@ -2834,9 +2832,28 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
     return JSC::JSValue::decode(JSValue0).asInt32();
 }
 
+// truncates values larger than int32
 int32_t JSC__JSValue__coerceToInt32(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (value.isCell() && value.isHeapBigInt()) {
+        return static_cast<int32_t>(value.toBigInt64(arg1));
+    }
+    return value.toInt32(arg1);
+}
+
+int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
+{
+    JSValue value = JSValue::decode(JSValue0);
+    if (value.isCell() && value.isHeapBigInt()) {
+        return value.toBigInt64(arg1);
+    }
+
+    int64_t result = tryConvertToInt52(value.asDouble());
+    if (result != JSValue::notInt52) {
+        return result;
+    }
+
     return value.toInt32(arg1);
 }
 

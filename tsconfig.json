@@ -8,22 +8,20 @@
   },
   "include": [
     ".",
-    "**/*.d.ts"
+    "packages/bun-types/index.d.ts"
   ],
   "exclude": [
     "src/test",
     "packages",
     "bench",
-    "examples/react-fast-refresh-test",
-    "examples/macros",
+    "examples/*/*",
+    "test",
     "src/deps",
     "bun-webkit",
     // JavaScriptCore builtins use a non-standard "@" symbol to indicate a private identifier which no other tool supports
     "src/bun.js/builtins",
     "src/bun.js/WebKit",
     "src/api/demo",
-    "test/snapshots",
-    "test/snapshots-no-hmr",
-    "node_modules"
+    "node_modules",
   ]
 }

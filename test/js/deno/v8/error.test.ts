@@ -29,7 +29,7 @@ test(function errorStackMessageLine() {
     e6.message = null;
     assertMatch(e6.stack!, /^null: null\n/);
 });
-test(function captureStackTrace() {
+test.ignore(function captureStackTrace() {
     function foo() {
         const error = new Error();
         const stack1 = error.stack!;

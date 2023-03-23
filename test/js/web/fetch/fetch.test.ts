@@ -1,4 +1,4 @@
-import { serve, sleep } from "bun";
+import { AnyFunction, serve, ServeOptions, Server, sleep } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, it, beforeEach } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { mkfifo } from "mkfifo";
@@ -10,8 +10,8 @@ const tmp_dir = mkdtempSync(join(realpathSync(tmpdir()), "fetch.test"));
 
 const fixture = readFileSync(join(import.meta.dir, "fetch.js.txt"), "utf8");
 
-let server;
-function startServer({ fetch, ...options }) {
+let server: Server;
+function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
     ...options,
     fetch,
@@ -38,7 +38,7 @@ describe("AbortSignal", () => {
           return new Response("Hello");
         }
         if (request.url.endsWith("/stream")) {
-          const reader = request.body.getReader();
+          const reader = request.body!.getReader();
           const body = new ReadableStream({
             async pull(controller) {
               if (!reader) controller.close();
@@ -113,11 +113,11 @@ describe("AbortSignal", () => {
     const controller = new AbortController();
     const signal = controller.signal;
     signal.addEventListener("abort", ev => {
-      const target = ev.currentTarget;
+      const target = ev.currentTarget!;
       expect(target).toBeDefined();
       expect(target.aborted).toBe(true);
       expect(target.reason).toBeDefined();
-      expect(target.reason.name).toBe("AbortError");
+      expect(target.reason!.name).toBe("AbortError");
     });
 
     expect(async () => {
@@ -257,6 +257,7 @@ describe("Headers", () => {
     headers.append("Set-cookie", "baz=bar");
     const actual = [...headers];
     expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
       ["set-cookie", "foo=baz"],
       ["set-cookie", "baz=bar"],
     ]);
@@ -280,11 +281,11 @@ describe("fetch", () => {
     "http://example.com",
     new URL("https://example.com"),
     new Request({ url: "https://example.com" }),
-    { toString: () => "https://example.com" },
+    { toString: () => "https://example.com" } as string,
   ];
   for (let url of urls) {
     gc();
-    let name;
+    let name: string;
     if (url instanceof URL) {
       name = "URL: " + url;
     } else if (url instanceof Request) {
@@ -292,7 +293,7 @@ describe("fetch", () => {
     } else if (url.hasOwnProperty("toString")) {
       name = "Object: " + url.toString();
     } else {
-      name = url;
+      name = url as string;
     }
     it(name, async () => {
       gc();
@@ -347,7 +348,7 @@ describe("fetch", () => {
       fetch(req) {
         return new Response(req.body);
       },
-      host: "localhost",
+      hostname: "localhost",
     });
 
     // POST with body
@@ -388,7 +389,7 @@ it("website with tlsextname", async () => {
   await fetch("https://bun.sh", { method: "HEAD" });
 });
 
-function testBlobInterface(blobbyConstructor, hasBlobFn?) {
+function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?: boolean) {
   for (let withGC of [false, true]) {
     for (let jsonObject of [
       { hello: true },
@@ -534,7 +535,7 @@ describe("Bun.file", () => {
   let count = 0;
   testBlobInterface(data => {
     const blob = new Blob([data]);
-    const buffer = Bun.peek(blob.arrayBuffer());
+    const buffer = Bun.peek(blob.arrayBuffer()) as ArrayBuffer;
     const path = join(tmp_dir, `tmp-${count++}.bytes`);
     writeFileSync(path, buffer);
     const file = Bun.file(path);
@@ -549,8 +550,8 @@ describe("Bun.file", () => {
     expect(size).toBe(Infinity);
   });
 
-  function forEachMethod(fn, skip?) {
-    const method = ["arrayBuffer", "text", "json"];
+  const method = ["arrayBuffer", "text", "json"] as const;
+  function forEachMethod(fn: (m: (typeof method)[number]) => any, skip?: AnyFunction) {
     for (const m of method) {
       (skip ? it.skip : it)(m, fn(m));
     }
@@ -643,7 +644,7 @@ describe("Blob", () => {
         "😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳",
       ),
     ],
-  ];
+  ] as any[];
 
   var expected = [
     "123456",
@@ -721,7 +722,7 @@ describe("Blob", () => {
           const input =
             Constructor === Blob ? [data] : Constructor === Request ? { body: data, url: "http://example.com" } : data;
           if (withGC) gc();
-          const blob = new Constructor(input);
+          const blob = new Constructor(input as any);
           if (withGC) gc();
           const out = await blob.arrayBuffer();
           if (withGC) gc();
@@ -1101,12 +1102,14 @@ it("body nullable", async () => {
 });
 
 it("Request({}) throws", async () => {
+  // @ts-expect-error
   expect(() => new Request({})).toThrow();
 });
 
 it("Request({toString() { throw 'wat'; } }) throws", async () => {
   expect(
     () =>
+      // @ts-expect-error
       new Request({
         toString() {
           throw "wat";
@@ -1123,6 +1126,5 @@ it("should not be able to parse json from empty body", () => {
 it("#874", () => {
   expect(new Request(new Request("https://example.com"), {}).url).toBe("https://example.com");
   expect(new Request(new Request("https://example.com")).url).toBe("https://example.com");
-  // @ts-expect-error
   expect(new Request({ url: "https://example.com" }).url).toBe("https://example.com");
 });

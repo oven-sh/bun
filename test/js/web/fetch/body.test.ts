@@ -245,11 +245,9 @@ for (const { body, fn } of bodyTypes) {
       });
       test(body.name, async () => {
         for (const { string, buffer } of utf8) {
-          // @ts-expect-error
           expect(() => {
             fn(buffer);
           }).not.toThrow();
-          // @ts-expect-error
           expect(await fn(buffer).text()).toBe(string);
         }
       });

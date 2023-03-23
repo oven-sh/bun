@@ -1,4 +1,6 @@
-function test1000000(arg1, arg218718132) {}
+import { it, test, expect, describe } from "bun:test";
+
+function test1000000(arg1: any, arg218718132: any) {}
 
 test("most types", () => {
   expect(test1000000).toMatchSnapshot("Function");
@@ -19,6 +21,7 @@ test("most types", () => {
   expect([[], [], [], []]).toMatchSnapshot("Array with multiple empty arrays");
   expect([1, 2, [3, 4], [4, [5, 6]], 8]).toMatchSnapshot("Array with nested arrays");
   let buf = new Buffer("hello");
+  // @ts-ignore
   buf.x = "yyyyyyyyyy";
   expect(buf).toMatchSnapshot("Buffer with property");
   expect(new Buffer("hello")).toMatchSnapshot("Buffer2");
@@ -36,7 +39,7 @@ test("most types", () => {
     new Map([
       [1, "eight"],
       ["seven", "312390840812"],
-    ]),
+    ] as any),
   ).toMatchSnapshot("Map");
   expect(new Set()).toMatchSnapshot("Set");
   expect(new Set([1, 2, 3, 4, 5, 6, 7, 8, 9])).toMatchSnapshot("Set2");
@@ -78,6 +81,7 @@ test("most types", () => {
     a = 1;
     b = 2;
     constructor() {
+      // @ts-ignore
       this.c = 3;
     }
     d() {
@@ -87,6 +91,7 @@ test("most types", () => {
       return 5;
     }
     set e(value) {
+      // @ts-ignore
       this.f = value;
     }
   }

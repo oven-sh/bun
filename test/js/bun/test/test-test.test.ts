@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";

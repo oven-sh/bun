@@ -5301,7 +5301,7 @@ function createNativeStreamReadable(nativeType, Readable) {
   var DYNAMICALLY_ADJUST_CHUNK_SIZE = process.env.BUN_DISABLE_DYNAMIC_CHUNK_SIZE !== "1";
 
   const finalizer = new FinalizationRegistry(ptr => ptr && deinit(ptr));
-  const MIN_BUFFER_SIZE = 256;
+  const MIN_BUFFER_SIZE = 512;
   var NativeReadable = class NativeReadable extends Readable {
     #ptr;
     #refCount = 1;

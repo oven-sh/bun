@@ -1,3 +1,4 @@
+import type { Serve } from "bun";
 import { heapStats } from "bun:jsc";
 var prevCounts: Record<string, number>;
 export default {
@@ -26,4 +27,4 @@ export default {
       },
     });
   },
-};
+} satisfies Serve;

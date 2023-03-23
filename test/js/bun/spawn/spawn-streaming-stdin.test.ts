@@ -19,13 +19,13 @@ test("spawn can write to stdin multiple chunks", async () => {
       exited = proc.exited;
       var counter = 0;
       var inCounter = 0;
-      var chunks = [];
+      var chunks: any[] = [];
       const prom = (async function () {
         try {
-          for await (var chunk of proc.stdout) {
+          for await (var chunk of proc.stdout!) {
             chunks.push(chunk);
           }
-        } catch (e) {
+        } catch (e: any) {
           console.log(e.stack);
           throw e;
         }
@@ -33,13 +33,13 @@ test("spawn can write to stdin multiple chunks", async () => {
 
       const prom2 = (async function () {
         while (true) {
-          proc.stdin.write("Wrote to stdin!\n");
+          proc.stdin!.write("Wrote to stdin!\n");
           inCounter++;
           await new Promise(resolve => setTimeout(resolve, 8));
 
           if (inCounter === 4) break;
         }
-        proc.stdin.end();
+        proc.stdin!.end();
       })();
 
       await Promise.all([prom, prom2]);

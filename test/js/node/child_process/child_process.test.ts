@@ -4,14 +4,14 @@ import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, exe
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
-const expect: typeof expect_ = (actual: unknown) => {
+const expect = ((actual: unknown) => {
   gcTick();
   const ret = expect_(actual);
   gcTick();
   return ret;
-};
+}) as typeof expect_;
 
-const it: typeof it_ = (label, fn) => {
+const it = ((label, fn) => {
   const hasDone = fn.length === 1;
   if (fn.constructor.name === "AsyncFunction" && hasDone) {
     return it_(label, async done => {
@@ -38,7 +38,7 @@ const it: typeof it_ = (label, fn) => {
       gcTick();
     });
   }
-};
+}) as typeof it_;
 
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -56,6 +56,7 @@ describe("ChildProcess.spawn()", () => {
       proc.on("spawn", () => {
         resolve(true);
       });
+      // @ts-ignore
       proc.spawn({ file: "bun", args: ["bun", "-v"] });
     });
     expect(result).toBe(true);
@@ -67,7 +68,7 @@ describe("ChildProcess.spawn()", () => {
       proc.on("exit", () => {
         resolve(true);
       });
-
+      // @ts-ignore
       proc.spawn({ file: "bun", args: ["bun", "-v"] });
       proc.kill();
     });
@@ -174,14 +175,15 @@ describe("spawn()", () => {
   it("should allow us to timeout hanging processes", async () => {
     const child = spawn("sleep", ["2"], { timeout: 3 });
     const start = performance.now();
-    let end;
+    let end: number;
     await new Promise(resolve => {
       child.on("exit", () => {
         end = performance.now();
         resolve(true);
       });
     });
-    expect(end - start < 2000).toBe(true);
+    expect(end!).toBeDefined();
+    expect(end! - start < 2000).toBe(true);
   });
 
   it("should allow us to set env", async () => {
@@ -195,7 +197,7 @@ describe("spawn()", () => {
   });
 
   it("should allow explicit setting of argv0", async () => {
-    var resolve;
+    var resolve: (_?: any) => void;
     const promise = new Promise<string>(resolve1 => {
       resolve = resolve1;
     });

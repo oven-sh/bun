@@ -87,3 +87,9 @@ global.Bun;
 const er = new DOMException();
 er.name;
 er.HIERARCHY_REQUEST_ERR;
+
+new Request(new Request("https://example.com"), {});
+new Request("", { method: "POST" });
+
+Bun.sleepSync(1); // sleep for 1 ms (not recommended)
+await Bun.sleep(1); // sleep for 1 ms (recommended)

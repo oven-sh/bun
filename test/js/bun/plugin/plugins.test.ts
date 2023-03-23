@@ -3,6 +3,16 @@ import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { resolve } from "path";
 
+declare global {
+  var failingObject: any;
+  var objectModuleResult: any;
+  var laterCode: any;
+  var asyncOnLoad: any;
+  var asyncObject: any;
+  var asyncfail: any;
+  var asyncret: any;
+}
+
 plugin({
   name: "boop beep beep",
   setup(builder) {

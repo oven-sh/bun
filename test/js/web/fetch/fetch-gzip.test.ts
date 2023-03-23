@@ -1,7 +1,6 @@
-import { concatArrayBuffers } from "bun";
-import { it, describe, expect } from "bun:test";
-import fs from "fs";
-import { gc, gcTick } from "harness";
+import { concatArrayBuffers, Socket, TCPSocketListener } from "bun";
+import { it, expect } from "bun:test";
+import { gcTick } from "harness";
 
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
   var server = Bun.serve({
@@ -122,9 +121,15 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay", asyn
   server.stop();
 });
 
+const arg = Bun.listen({
+  hostname: "asdf",
+  port: 1234,
+  socket: {},
+});
+
 it("fetch() with a gzip response works (multiple chunks, TCP server", async done => {
   const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
-  var socketToClose;
+  var socketToClose!: Socket;
   const server = Bun.listen({
     port: 0,
     hostname: "0.0.0.0",
@@ -134,7 +139,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server", async done
 
         var corked: any[] = [];
         var cork = true;
-        async function write(chunk) {
+        async function write(chunk: any) {
           await new Promise<void>((resolve, reject) => {
             if (cork) {
               corked.push(chunk);

@@ -37,7 +37,7 @@ describe("Web Crypto", () => {
   });
 
   it("should verify and sign", async () => {
-    async function importKey(secret) {
+    async function importKey(secret: string) {
       return await crypto.subtle.importKey(
         "raw",
         new TextEncoder().encode(secret),
@@ -47,7 +47,7 @@ describe("Web Crypto", () => {
       );
     }
 
-    async function signResponse(message, secret) {
+    async function signResponse(message: string, secret: string) {
       const key = await importKey(secret);
       const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message));
 
@@ -55,7 +55,7 @@ describe("Web Crypto", () => {
       return btoa(String.fromCharCode(...new Uint8Array(signature)));
     }
 
-    async function verifySignature(message, signature, secret) {
+    async function verifySignature(message: string, signature: string, secret: string) {
       const key = await importKey(secret);
 
       // Convert Base64 to Uint8Array

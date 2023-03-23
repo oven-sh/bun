@@ -1,3 +1,4 @@
+import { AnyFunction } from "bun";
 import { gcTick, hideFromStackTrace } from "harness";
 import assertNode from "node:assert";
 
@@ -44,10 +45,20 @@ export function createTest(path: string) {
     expect(true).toBe(true);
   };
 
+  interface NodeAssert {
+    (args: any): void;
+    strictEqual: typeof strictEqual;
+    deepStrictEqual: typeof deepStrictEqual;
+    notStrictEqual: typeof notStrictEqual;
+    throws: typeof throws;
+    ok: typeof ok;
+    ifError: typeof ifError;
+    match: typeof match;
+  }
   const assert = function (...args: any[]) {
     // @ts-ignore
     assertNode(...args);
-  };
+  } as NodeAssert;
 
   hideFromStackTrace(strictEqual);
   hideFromStackTrace(notStrictEqual);
@@ -87,8 +98,8 @@ export function createTest(path: string) {
     // });
 
     // TODO: Implement this to be exact only
-    function mustCall(fn?: (...args) => any, exact?: number) {
-      return mustCallAtLeast(fn, exact);
+    function mustCall(fn?: (...args: any[]) => any, exact?: number) {
+      return mustCallAtLeast(fn!, exact!);
     }
 
     function closeTimers() {
@@ -114,11 +125,12 @@ export function createTest(path: string) {
       }, exact);
     }
 
-    function mustCallAtLeast(fn, minimum) {
+    function mustCallAtLeast(fn: AnyFunction, minimum: number) {
       return _mustCallInner(fn, minimum, "minimum");
     }
 
-    function _mustCallInner(fn, criteria = 1, field) {
+    function _mustCallInner(fn: AnyFunction, criteria = 1, field: string) {
+      // @ts-ignore
       if (process._exiting) throw new Error("Cannot use common.mustCall*() in process exit handler");
       if (typeof fn === "number") {
         criteria = fn;
@@ -134,7 +146,7 @@ export function createTest(path: string) {
 
       // mustCallChecks.push(context);
       const done = createDone();
-      const _return = (...args) => {
+      const _return = (...args: any[]) => {
         try {
           // @ts-ignore
           const result = fn(...args);

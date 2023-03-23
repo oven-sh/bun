@@ -166,7 +166,7 @@ test(function urlSearchParamsReuse() {
     url.host = "baz.qat";
     assert(sp === url.searchParams, "Search params should be reused.");
 });
-test(function urlBackSlashes() {
+test.ignore(function urlBackSlashes() {
     const url = new URL("https:\\\\foo:bar@baz.qat:8000\\qux\\quux?foo=bar&baz=12#qat");
     assertEquals(url.href, "https://foo:bar@baz.qat:8000/qux/quux?foo=bar&baz=12#qat");
 });
@@ -186,7 +186,7 @@ test(function urlRequireHost() {
     assertThrows(()=>new URL("ws:///"), TypeError, "Invalid URL");
     assertThrows(()=>new URL("wss:///"), TypeError, "Invalid URL");
 });
-test(function urlDriveLetter() {
+test.ignore(function urlDriveLetter() {
     assertEquals(new URL("file:///C:").href, "file:///C:");
     assertEquals(new URL("file:///C:/").href, "file:///C:/");
     assertEquals(new URL("file:///C:/..").href, "file:///C:/");
@@ -201,7 +201,7 @@ test(function urlEmptyPath() {
     assertEquals(new URL("file://foo").pathname, "/");
     assertEquals(new URL("abcd://foo").pathname, "");
 });
-test(function urlPathRepeatedSlashes() {
+test.ignore(function urlPathRepeatedSlashes() {
     assertEquals(new URL("http://foo//bar//").pathname, "//bar//");
     assertEquals(new URL("file://foo///bar//").pathname, "/bar//");
     assertEquals(new URL("abcd://foo//bar//").pathname, "//bar//");

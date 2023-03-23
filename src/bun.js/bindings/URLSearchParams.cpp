@@ -151,7 +151,8 @@ void URLSearchParams::remove(const String& name)
 {
     if (!m_pairs.removeAllMatching([&](const auto& pair) {
             return pair.key == name;
-        }))
+        })
+        && m_pairs.size() > 0)
         return;
     updateURL();
     needsSorting = true;

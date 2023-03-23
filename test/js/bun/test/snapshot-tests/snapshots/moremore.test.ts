@@ -1,22 +1,24 @@
+import { it, test, expect, describe } from "bun:test";
+
 class Number2 extends Number {
-  constructor(value) {
+  constructor(value: number) {
     super(value);
   }
 }
 class Number3 extends Number2 {
-  constructor(value) {
+  constructor(value: number) {
     super(value);
   }
 }
 
 class Boolean2 extends Boolean {
-  constructor(value) {
+  constructor(value: boolean) {
     super(value);
   }
 }
 
 class Boolean3 extends Boolean2 {
-  constructor(value) {
+  constructor(value: boolean) {
     super(value);
   }
 

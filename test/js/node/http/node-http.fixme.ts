@@ -1,8 +1,9 @@
+// @ts-nocheck
 import { createServer, request, get, Agent, globalAgent, Server } from "node:http";
 import { createTest } from "node-harness";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
 
-function listen(server: any): Promise<URL> {
+function listen(server: Server): Promise<URL> {
   return new Promise((resolve, reject) => {
     server.listen({ port: 0 }, (err, hostname, port) => {
       if (err) {

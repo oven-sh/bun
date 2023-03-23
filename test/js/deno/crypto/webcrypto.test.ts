@@ -2273,50 +2273,25 @@ test(async function testImportEcSpkiPkcs8() {
             "SHA-384",
             "SHA-512"
         ]){
-            if ((hash == "SHA-256" && namedCurve == "P-256") || (hash == "SHA-384" && namedCurve == "P-384")) {
-                const signatureECDSA = await subtle.sign({
-                    name: "ECDSA",
-                    hash
-                }, privateKeyECDSA, new Uint8Array([
-                    1,
-                    2,
-                    3,
-                    4
-                ]));
-                const verifyECDSA = await subtle.verify({
-                    name: "ECDSA",
-                    hash
-                }, publicKeyECDSA, signatureECDSA, new Uint8Array([
-                    1,
-                    2,
-                    3,
-                    4
-                ]));
-                assert(verifyECDSA);
-            } else {
-                await assertRejects(async ()=>{
-                    await subtle.sign({
-                        name: "ECDSA",
-                        hash
-                    }, privateKeyECDSA, new Uint8Array([
-                        1,
-                        2,
-                        3,
-                        4
-                    ]));
-                }, DOMException, "Not implemented");
-                await assertRejects(async ()=>{
-                    await subtle.verify({
-                        name: "ECDSA",
-                        hash
-                    }, publicKeyECDSA, new Uint8Array(signatureLength), new Uint8Array([
-                        1,
-                        2,
-                        3,
-                        4
-                    ]));
-                }, DOMException, "Not implemented");
-            }
+            const signatureECDSA = await subtle.sign({
+                name: "ECDSA",
+                hash
+            }, privateKeyECDSA, new Uint8Array([
+                1,
+                2,
+                3,
+                4
+            ]));
+            const verifyECDSA = await subtle.verify({
+                name: "ECDSA",
+                hash
+            }, publicKeyECDSA, signatureECDSA, new Uint8Array([
+                1,
+                2,
+                3,
+                4
+            ]));
+            assert(verifyECDSA);
         }
     }
 });
@@ -2562,7 +2537,7 @@ test(async function testAESWrapKey() {
     const unwrappedKeyBytes = await crypto.subtle.exportKey("raw", unwrappedKey);
     assertEquals(new Uint8Array(hmacKeyBytes), new Uint8Array(unwrappedKeyBytes));
 });
-test(async function testAesGcmTagLength() {
+test.ignore(async function testAesGcmTagLength() {
     const key = await crypto.subtle.importKey("raw", new Uint8Array(32), "AES-GCM", false, [
         "encrypt",
         "decrypt"

@@ -1,6 +1,5 @@
 {
   "name": "test",
-  "type": "module",
   "devDependencies": {},
   "dependencies": {
     "@swc/core": "^1.3.38",

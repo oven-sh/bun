@@ -2751,7 +2751,39 @@ pub const Parser = struct {
         var did_import_fast_refresh = false;
 
         if (p.commonjs_named_exports.count() > 0) {
-            const export_refs = p.commonjs_named_exports.values();
+            var export_refs = p.commonjs_named_exports.values();
+
+            if (!p.commonjs_named_exports_deoptimized) {
+                // We make this safe by doing toCommonJS() at runtimes
+                for (export_refs) |*export_ref| {
+                    if (export_ref.needs_decl) {
+                        var this_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                        var decls = p.allocator.alloc(Decl, 1) catch unreachable;
+                        const ref = export_ref.loc_ref.ref.?;
+                        decls[0] = .{
+                            .binding = p.b(B.Identifier{ .ref = ref }, export_ref.loc_ref.loc),
+                            .value = null,
+                        };
+                        p.module_scope.generated.push(p.allocator, ref) catch unreachable;
+                        var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
+                        declared_symbols.appendAssumeCapacity(.{ .ref = ref, .is_top_level = true });
+                        this_stmts[0] = p.s(
+                            S.Local{
+                                .kind = .k_var,
+                                .is_export = true,
+                                .decls = decls,
+                            },
+                            export_ref.loc_ref.loc,
+                        );
+                        export_ref.needs_decl = false;
+                        before.append(.{
+                            .stmts = this_stmts,
+                            .declared_symbols = declared_symbols,
+                            .can_be_removed_if_unused = true,
+                        }) catch unreachable;
+                    }
+                }
+            }
 
             if (!p.commonjs_named_exports_deoptimized and p.es6_export_keyword.len == 0) {
                 p.es6_export_keyword.loc = export_refs[0].loc_ref.loc;

@@ -58,10 +58,13 @@ export var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 
+var moduleCache = new WeakMap();
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
 export var __toCommonJS = from => {
+  var cached = moduleCache.get(from);
+  if (cached) return cached;
   var to = __defProp({}, "__esModule", { value: true });
   var desc = { enumerable: false };
   if ((from && typeof from === "object") || typeof from === "function")
@@ -72,6 +75,7 @@ export var __toCommonJS = from => {
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
         });
 
+  moduleCache.set(from, to);
   return to;
 };
 

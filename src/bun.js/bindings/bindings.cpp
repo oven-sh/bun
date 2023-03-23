@@ -2846,7 +2846,7 @@ int64_t JSC__JSValue__coerceToInt64(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
 {
     JSValue value = JSValue::decode(JSValue0);
     if (value.isCell() && value.isHeapBigInt()) {
-        return static_cast<int64_t>(value.toBigInt64(arg1));
+        return value.toBigInt64(arg1);
     }
 
     return value.toInt32(arg1);

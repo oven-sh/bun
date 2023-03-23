@@ -231,7 +231,7 @@ const NetworkTask = struct {
                         scope.url.displayProtocol(),
                         scope.url.displayHostname(),
                         port_number,
-                        pathname,
+                        strings.withoutTrailingSlash(pathname),
                         name,
                     },
                 );
@@ -242,7 +242,7 @@ const NetworkTask = struct {
                     .{
                         scope.url.displayProtocol(),
                         scope.url.displayHostname(),
-                        pathname,
+                        strings.withoutTrailingSlash(pathname),
                         name,
                     },
                 );

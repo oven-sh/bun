@@ -284,18 +284,7 @@ bool HTTPHeaderMap::remove(HTTPHeaderName name)
 void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
 {
     if (name == HTTPHeaderName::SetCookie) {
-        auto cookieName = extractCookieName(value);
-
-        size_t length = m_setCookieHeaders.size();
-        const auto& cookies = m_setCookieHeaders.data();
-        for (size_t i = 0; i < length; ++i) {
-            if (extractCookieName(cookies[i]) == cookieName) {
-                m_setCookieHeaders[i] = value;
-                return;
-            }
-        }
         m_setCookieHeaders.append(value);
-
         return;
     }
 

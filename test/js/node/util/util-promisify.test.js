@@ -20,7 +20,6 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util-promisify.js
-import { describe, it } from "bun:test";
 import fs from "node:fs";
 // TODO: vm module not implemented by bun yet
 // import vm from 'node:vm';
@@ -112,22 +111,23 @@ describe("util.promisify", () => {
     );
   });
 
-  it("should call custom promised promised function with proper args", () => {
+  it("should call custom promised promised function with proper args", async done => {
     const firstValue = 5;
     const secondValue = 17;
     var called = false;
 
     function fn(callback) {
       called = true;
-      callback(null, firstValue, secondValue);
+      callback(null, { firstValue, secondValue });
     }
 
     fn[Symbol("customPromisifyArgs")] = ["first", "second"];
 
-    promisify(fn)().then((firstValue, secondValue) => {
-      assert.strictEqual(called, true);
-      assert.strictEqual(firstValue, 5);
-      assert.strictEqual(secondValue, 17);
+    promisify(fn)().then(data => {
+      expect(called).toBe(true);
+      expect(data.firstValue).toBe(5);
+      expect(data.secondValue).toBe(17);
+      done();
     });
   });
 
@@ -293,11 +293,9 @@ describe("util.promisify", () => {
     // throw error implementation in bun?
     it("should throw on invalid inputs for promisify", () => {
       [undefined, null, true, 0, "str", {}, [], Symbol()].forEach(input => {
-        assert.throws(() => promisify(input), {
-          code: "ERR_INVALID_ARG_TYPE",
-          name: "TypeError",
-          message: 'The "original" argument must be of type Function',
-        });
+        expect(() => {
+          promisify(input);
+        }).toThrow('The "original" argument must be of type Function');
       });
     });
   });

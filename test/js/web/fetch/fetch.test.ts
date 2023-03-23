@@ -257,6 +257,7 @@ describe("Headers", () => {
     headers.append("Set-cookie", "baz=bar");
     const actual = [...headers];
     expect(actual).toEqual([
+      ["set-cookie", "foo=bar"],
       ["set-cookie", "foo=baz"],
       ["set-cookie", "baz=bar"],
     ]);

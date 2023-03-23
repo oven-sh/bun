@@ -174,23 +174,13 @@ pub const Body = struct {
             }
 
             if (response_init.fastGet(ctx, .status)) |status_value| {
-                if (status_value.isHeapBigInt()) {
-                    const less_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(600))) {
-                        .less_than => true,
-                        else => false,
-                    };
-                    const greater_than = switch (status_value.asBigIntCompare(ctx, JSValue.jsNumber(99))) {
-                        .greater_than => true,
-                        else => false,
-                    };
-
-                    if (less_than and greater_than) {
-                        result.status_code = @truncate(u16, @intCast(u64, status_value.toInt64()));
-                    }
-                } else if (status_value.isNumber()) {
-                    const number = status_value.to(i32);
-                    if (100 <= number and number < 999)
-                        result.status_code = @truncate(u16, @intCast(u32, number));
+                const number = status_value.coerceToInt64(ctx);
+                if ((200 <= number and number < 600) or number == 101) {
+                    result.status_code = @truncate(u16, @intCast(u32, number));
+                } else {
+                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                    ctx.throwValue(err);
+                    return null;
                 }
             }
 

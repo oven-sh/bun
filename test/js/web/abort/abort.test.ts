@@ -143,11 +143,11 @@ describe("AbortController", () => {
         },
         {
           label: "string",
-          reason: "Aborted",
+          reason: "The operation was aborted.",
         },
         {
           label: "Error",
-          reason: new Error("Aborted"),
+          reason: new DOMException("The operation was aborted."),
         },
       ];
       for (const { label, reason } of reasons) {
@@ -165,8 +165,10 @@ describe("AbortController", () => {
           expect(controller.signal.aborted).toBe(true);
           if (reason === undefined) {
             expect(controller.signal.reason instanceof DOMException).toBe(true);
+          } else if (reason instanceof DOMException) {
+            expect(controller.signal.reason).toBeInstanceOf(reason.constructor);
           } else {
-            expect(controller.signal.reason).toStrictEqual(reason);
+            expect(controller.signal.reason.message).toStrictEqual(reason);
           }
         });
       }

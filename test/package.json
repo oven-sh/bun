@@ -1,6 +1,5 @@
 {
   "name": "test",
-  "type": "module",
   "devDependencies": {
     "@types/dedent": "^0.7.0"
   },
